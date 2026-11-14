@@ -199,6 +199,13 @@ hours 35 days, and days 400 days. Each machine saves its own observations in its
 local catalog. Catalogs are not replicated until R10a, so these totals are per machine
 ([multi-region-replication.md](https://github.com/TerraScale/terrascale/blob/0d5d2b64c89553bf66ed30388b0624adc43d2741/docs/terrabase/multi-region-replication.md) section 15).
 
+The receiving region decides request and byte attribution when a forwarded REST request ends. A complete
+answer belongs to the final destination region; a terminal refusal, unreachable destination or source timeout
+belongs to the receiving region. Intermediate refused attempts contribute no request or byte observations.
+The receiving catalog stores that completion decision, and the owning region's analytics reads the attributed
+observations from peer catalogs through the authenticated internal usage listener. Operations remain observed
+where executed. Peer observation reads share the analytics deadline and memory admission.
+
 These are best-effort dashboard observations. A crash can lose counts since the
 last successful flush; memory pressure can omit observations. Pending records
 admit at most 256 keys and 256 meter dimensions per key; open replication

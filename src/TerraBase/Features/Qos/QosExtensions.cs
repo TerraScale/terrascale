@@ -20,6 +20,7 @@ internal static class QosExtensions
 
     public static IServiceCollection AddTerraBaseQos(this IServiceCollection services) => services
         .AddSingleton<IQosAdmission, QosAdmission>()
+        .AddSingleton<QosSessions>()
         .AddSingleton<IStorageQuota, StorageQuota>();
 
     public static WebApplication UseTerraBaseQosMemory(this WebApplication app)
@@ -58,7 +59,7 @@ internal static class QosExtensions
         return app;
     }
 
-    private static async Task AdmitAsync(HttpContext context, RequestDelegate next, IMemoryBudget budget)
+    internal static async Task AdmitAsync(HttpContext context, RequestDelegate next, IMemoryBudget budget)
     {
         var resolved = await ResolveTenantAsync(context).ConfigureAwait(false);
 
@@ -80,6 +81,12 @@ internal static class QosExtensions
         using var lease = tenant is not null ? admission.TryEnter(tenant, out retryAfter) : null;
         if (tenant is not null && lease is null)
         {
+            if (context.WebSockets.IsWebSocketRequest && context.Response.HasStarted)
+            {
+                await Regions.HomeSocketRelay.RefuseBusyAsync(context, retryAfter).ConfigureAwait(false);
+                return;
+            }
+
             context.Response.Headers.RetryAfter = retryAfter.ToString(CultureInfo.InvariantCulture);
             context.Response.Headers.CacheControl = "no-store";
             await BadRequests.WriteAsync(context, StatusCodes.Status429TooManyRequests, "tenant_busy", "organization request budget exceeded", null).ConfigureAwait(false);

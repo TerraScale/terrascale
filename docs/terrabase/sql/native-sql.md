@@ -20,7 +20,7 @@ Each result has `columns`, `rows`, `rows_affected` and `last_insert_rowid`. SQL 
 
 - One HTTP request is one atomic batch of 1–256 statements, all or nothing. `BEGIN`, `COMMIT` and `ROLLBACK` are refused; savepoint statements are supported.
 - A PostgreSQL simple-protocol Query message with several statements runs as one implicit transaction: a failed statement rolls back the whole message. A message that itself contains `BEGIN`, `COMMIT` or `ROLLBACK` runs statement by statement instead. Single-statement messages and the extended protocol are unchanged.
-- WebSocket transaction frames and PostgreSQL transactions pin one session. Transactions live at most five seconds, then roll back and release the writer. See [WebSocket](websocket.md).
+- WebSocket transaction frames and PostgreSQL transactions pin one session. The five-second idle-in-transaction and total limits apply only while waiting for the next message. Once bytes arrive the message-progress budget applies; an accepted statement or commit finishes under its existing execution budget, even past the transaction limit. Expiry closes the session and rolls back. See [WebSocket](websocket.md).
 - A failed statement inside an explicit transaction uses the session's savepoint/error rules; PostgreSQL aborted transactions require rollback or rollback to a savepoint.
 - Statement text is at most 16 KiB, the HTTP body at most 1 MiB, results at most 10,000 rows and 8 MiB, and a transaction changes at most 1,024 rows or grows the file by at most 8 MiB.
 - Native query cancellation and value-length bounds apply before large results are materialized. Request cancellation retains resource ownership until the running native work drains.
@@ -70,6 +70,7 @@ SELECT terrascale_expect_changes(changes(), 1);
 | `read_only_transaction`, `transaction_state` | 25006, 25000 |
 | `quota_exceeded`, `tenant_busy` | 53100, 53300 |
 | `unauthorized`, `unavailable` | 28000, 57P03 |
+| `write_outcome_unknown` | 08007 |
 
 The served [API reference](../api-reference.md) includes HTTP statuses and the complete response schemas.
 
@@ -80,3 +81,7 @@ A push stream that returns NATS error 10074 is not retried, because the stream w
 SQL reads are free with monthly fair use. Shape reads are free and unmetered. Committed writes bill the larger of changed rows and started 4 KiB of database growth; rollback and refused statements add no write units. See [operation allowances](../operation-allowance.md).
 
 SQL storage counts toward the organization quota. The used-page delta is checked at commit and persisted in `_tb_sql_storage`; SQL commit offsets invalidate cached accounting. [Continuous backup](../backup.md) captures committed SQL changes, including schema changes, for recovery.
+
+Relayed answers use the same progress rule as input. Once an answer starts arriving, its deadline is its start plus 30 seconds plus the bytes received divided by 16 KiB/s. Before the first answer byte, the entry waits at most ten minutes, then closes without cancelling accepted execution or commit at the home. A close drain shares the two-second closing budget from the start of closing. Transaction age limits govern waiting for input; there is no hard wall-clock lifetime for a transaction. There is no end-to-end guarantee while old and new builds serve together.
+
+A session closes after a `write_outcome_unknown` answer (SQLSTATE 08007, HTTP 503). WebSocket uses close reason `write_outcome_unknown`; PostgreSQL sends a fatal error stating that the session is closed. The outcome is unknown, not rolled back or retryable. Reconcile by reading back the expected data from a new session before writing again.

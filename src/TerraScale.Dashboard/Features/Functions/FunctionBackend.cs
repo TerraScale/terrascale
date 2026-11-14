@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using TerraScale.Dashboard.Features.Auth;
@@ -12,9 +14,18 @@ namespace TerraScale.Dashboard.Features.Functions
 
     public sealed partial class FunctionBackend(DatabaseService databases, IProjectAccessTokens tokens, TerraBaseRpcClient rpc)
     {
+        public const string NameInputPattern = "[a-z][a-z0-9_-]{0,62}";
+
+        public const string StarterSource = "async function handler(event) {\n  const rows = await sql.query(\"SELECT 1 AS ok\");\n  return { rows };\n}\n";
+
         public static bool ValidName(string name)
         {
             return NamePattern().IsMatch(name);
+        }
+
+        public static bool DeployName(string name)
+        {
+            return DeployNamePattern().IsMatch(name) && !ReservedName().IsMatch(name);
         }
 
         public static string InvokeUrl(AccountContext context, DatabaseRecord database, string name)
@@ -25,7 +36,7 @@ namespace TerraScale.Dashboard.Features.Functions
 
         public async Task<IReadOnlyList<FunctionRecord>> ListAsync(AccountContext context, DatabaseRecord database, CancellationToken ct)
         {
-            var target = await ClientAsync(context, database, false, ct);
+            var target = await ClientAsync(context, database, false, WriteScopes, ct);
             var result = await target.Client.ListAsync(target.ProjectId, target.Database);
             IReadOnlyList<FunctionRecord> functions = [.. result.Select(Record)];
             Validate(functions);
@@ -35,7 +46,7 @@ namespace TerraScale.Dashboard.Features.Functions
         public async Task<FunctionRecord?> ReadAsync(AccountContext context, DatabaseRecord database, string name, CancellationToken ct)
         {
             CheckName(name);
-            var target = await ClientAsync(context, database, false, ct);
+            var target = await ClientAsync(context, database, false, WriteScopes, ct);
             try
             {
                 var result = Record(await target.Client.GetAsync(target.ProjectId, target.Database, name));
@@ -51,7 +62,7 @@ namespace TerraScale.Dashboard.Features.Functions
         public async Task<IReadOnlyList<FunctionInvocation>> LogsAsync(AccountContext context, DatabaseRecord database, string name, CancellationToken ct)
         {
             CheckName(name);
-            var target = await ClientAsync(context, database, false, ct);
+            var target = await ClientAsync(context, database, false, WriteScopes, ct);
             var result = await target.Client.LogsAsync(target.ProjectId, target.Database, name, 25);
             IReadOnlyList<FunctionInvocation> logs = [.. result.Select(item => new FunctionInvocation(item.Id, item.At, item.Trigger,
                 item.Status, item.DurationMs, item.Lines, item.Error))];
@@ -62,7 +73,7 @@ namespace TerraScale.Dashboard.Features.Functions
         public async Task<bool> DeleteAsync(AccountContext context, DatabaseRecord database, string name, CancellationToken ct)
         {
             CheckName(name);
-            var target = await ClientAsync(context, database, true, ct);
+            var target = await ClientAsync(context, database, true, WriteScopes, ct);
             try
             {
                 return await target.Client.DeleteAsync(target.ProjectId, target.Database, name);
@@ -73,7 +84,33 @@ namespace TerraScale.Dashboard.Features.Functions
             }
         }
 
-        private async Task<(IFunctionsService Client, string ProjectId, string Database)> ClientAsync(AccountContext context, DatabaseRecord database, bool write, CancellationToken ct)
+        public async Task<FunctionRecord> DeployAsync(AccountContext context, DatabaseRecord database, string name, string source, string? cron, CancellationToken ct)
+        {
+            if (!DeployName(name))
+            {
+                throw new AccountAccessException("Function names start with a lowercase letter and use at most 63 lowercase letters, digits, underscores or hyphens.", 400);
+            }
+
+            if (Encoding.UTF8.GetByteCount(source) is 0 or > 256 * 1024)
+            {
+                throw new AccountAccessException("source is required and at most 256 KiB", 400);
+            }
+
+            var target = await ClientAsync(context, database, true, WriteScopes, ct);
+            var result = Record(await target.Client.DeployAsync(target.ProjectId, target.Database, name, new TerraBaseFunctionDeploy(source, cron)));
+            Validate(result);
+            return result;
+        }
+
+        public async Task<string> InvokeAsync(AccountContext context, DatabaseRecord database, string name, string body, CancellationToken ct)
+        {
+            CheckName(name);
+            var target = await ClientAsync(context, database, false, ReadScopes, ct);
+            var result = await target.Client.InvokeAsync(target.ProjectId, target.Database, name, body);
+            return string.Concat(result.Status.ToString(CultureInfo.InvariantCulture), "\n", result.ContentType, "\n", result.Body);
+        }
+
+        private async Task<(IFunctionsService Client, string ProjectId, string Database)> ClientAsync(AccountContext context, DatabaseRecord database, bool write, IReadOnlyList<string> scopes, CancellationToken ct)
         {
             context = await databases.CurrentAsync(context, ct);
             database = DatabaseService.Database(context, database.Id);
@@ -89,7 +126,7 @@ namespace TerraScale.Dashboard.Features.Functions
             }
 
             var home = await databases.HomeAsync(context, database, ct);
-            var access = await tokens.GetAsync(context.Session, scope.OrganizationId, scope.ProjectId, ["sql:read", "sql:write"], ct);
+            var access = await tokens.GetAsync(context.Session, scope.OrganizationId, scope.ProjectId, scopes, ct);
             return (rpc.User<IFunctionsService>(access, home.Id).WithCancellationToken(ct).WithDeadline(DateTime.UtcNow.AddSeconds(30)), scope.ProjectId, database.Name);
         }
 
@@ -130,7 +167,17 @@ namespace TerraScale.Dashboard.Features.Functions
             (function.Cron is null || function.Cron.Length > 0);
         }
 
+        private static readonly string[] ReadScopes = ["sql:read"];
+
+        private static readonly string[] WriteScopes = ["sql:read", "sql:write"];
+
         [GeneratedRegex("^[a-z0-9][a-z0-9_-]{0,62}$")]
         private static partial Regex NamePattern();
+
+        [GeneratedRegex(@"\A[a-z][a-z0-9_-]{0,62}\z")]
+        private static partial Regex DeployNamePattern();
+
+        [GeneratedRegex(@"\A(con|prn|aux|nul|com[0-9]|lpt[0-9])\z")]
+        private static partial Regex ReservedName();
     }
 }

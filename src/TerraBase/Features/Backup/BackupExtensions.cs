@@ -1,8 +1,10 @@
+using System.Diagnostics.Metrics;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.Clock;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
+using ZLogger;
 
 namespace TerraBase.Features.Backup;
 
@@ -14,6 +16,7 @@ public static class BackupExtensions
         if (options.Backup is not { } settings)
         {
             return services.AddSingleton<NoBackup>()
+                .AddHostedService(provider => provider.GetRequiredService<NoBackup>())
                 .AddSingleton<IContinuousBackup>(provider => provider.GetRequiredService<NoBackup>())
                 .AddSingleton<IPointInTimeRestore>(provider => provider.GetRequiredService<NoBackup>())
                 .AddSingleton<IBackupKeyShredding>(provider => provider.GetRequiredService<NoBackup>());
@@ -27,7 +30,6 @@ public static class BackupExtensions
                 provider.GetRequiredService<ICustomerBackupDns>(), provider.GetRequiredService<ICustomerBackupConnector>()))
             .AddHttpMessageHandler<CustomerBackupResponseLimits>();
         services.AddTransient<CustomerBackupResponseLimits>();
-        var master = new MasterKey(settings.MasterKey);
         services.AddGrpc().AddServiceOptions<KeyRevocationService>(grpc =>
         {
             grpc.CompressionProviders = [new ClockCompression()];
@@ -39,14 +41,13 @@ public static class BackupExtensions
             .AddSingleton(settings)
             .AddSingleton<S3ObjectStore>()
             .AddSingleton<IObjectStore>(provider => provider.GetRequiredService<S3ObjectStore>())
-            .AddSingleton<IMasterKey>(master)
             .AddSingleton<KeyCustody>()
             .AddSingleton<KeyRevocationLocal>()
             .AddSingleton<KeyRevocationPeers>()
             .AddSingleton<IShreddedDatabases>(provider => provider.GetRequiredService<Management.EngineManagementService>())
             .AddSingleton<ShreddedDatabaseSweep>()
             .AddHostedService(provider => provider.GetRequiredService<ShreddedDatabaseSweep>())
-            .AddSingleton(provider => new DataKeys(provider.GetRequiredService<KeyCustody>().Store, provider.GetRequiredService<IMasterKey>(),
+            .AddSingleton(provider => new DataKeys(provider.GetRequiredService<KeyCustody>().Store, provider.GetRequiredService<IKeyring>(),
                 provider.GetRequiredService<TimeProvider>(), provider.GetRequiredService<BackupSettings>(),
                 revocations: provider.GetRequiredService<KeyCustody>().Revocations))
             .AddHostedService<DataKeyRefresh>()
@@ -69,8 +70,18 @@ public static class BackupExtensions
         }
     }
 
-    private sealed class NoBackup : IContinuousBackup, IPointInTimeRestore, IBackupKeyShredding
+    private sealed class NoBackup(IMeterFactory meters, ILogger<NoBackup> logger) : IContinuousBackup, IPointInTimeRestore, IBackupKeyShredding, IHostedService
     {
+        public Task StartAsync(CancellationToken cancellationToken)
+        {
+            meters.Create(Telemetry.MeterName).CreateObservableGauge("terrabase.backup.disabled", () => 1,
+                description: "Continuous backup is disabled on this node; no new recovery points are stored.");
+            logger.ZLogCritical($"Continuous backup is disabled on this node; no new recovery points are stored");
+            return Task.CompletedTask;
+        }
+
+        public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
         public Task<bool> DestroyAsync(TenantContext database, DateTimeOffset until, CancellationToken cancellationToken) => Task.FromResult(true);
 
         public void Shred(TenantContext database)
@@ -78,6 +89,10 @@ public static class BackupExtensions
         }
 
         public BackupStatus Status { get; } = new(false, []);
+
+        public bool Healthy => false;
+
+        public Task<BackupHoles> HolesAsync(TenantContext database, CancellationToken cancellationToken) => Task.FromResult(new BackupHoles([], null));
 
         public DateTimeOffset? LastShipped(TenantContext database, Ulid? generation = null) => null;
 

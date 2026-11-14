@@ -1,4 +1,4 @@
 @inherits RazorSlice
 <div class="ts-auth-map" data-region-surface>
-    @(await RenderPartialAsync<TerraScale.Dashboard.Common.UI.Slices.RegionMap, RegionMapModel>(RegionMapModel.ReadOnly("auth-region-map", ["gru", "fra", "sjc"]) with { Bleed = true }))
+    @(await RenderPartialAsync<TerraScale.Dashboard.Common.UI.Slices.RegionMap, RegionMapModel>(RegionMapModel.ReadOnly("auth-region-map", ["gru", "fra", "sjc"]) with { Bleed = true, Pings = false }))
 </div>

@@ -133,7 +133,9 @@ try
     callers.Observe(app.Services.GetRequiredService<IMeterFactory>(), app.Services.GetRequiredService<TimeProvider>());
     try
     {
-        _ = app.Services.GetRequiredService<IStorageEngine>();
+        var engine = app.Services.GetRequiredService<IStorageEngine>();
+        await engine.InventoryKeysAsync(app.Lifetime.ApplicationStopping);
+        _ = app.Services.GetRequiredService<IDatabaseReplicas>();
     }
     catch (TerraBaseConfigurationException error)
     {
@@ -149,9 +151,15 @@ try
         app.Services.GetRequiredService<InternalCredential>().CorrelationKey);
     app.UseTerraBasePrivateResponses();
     app.UseTerraBasePressure();
+    ProxyRequestBudget.UseTerraBaseProxyBudget(app);
     app.UseTerraBaseUsage();
     app.UseTerraBaseBadRequests();
     app.UseRouting();
+    app.Use((context, next) =>
+    {
+        SqlSocketInput.Wrap(context);
+        return next(context);
+    });
     app.UseWebSockets();
     app.UseTerraBaseClientCors();
     app.UseTerraBaseShapeNoStore();
@@ -167,7 +175,7 @@ try
 
         return next(context);
     });
-    app.UseTerraBaseRegionalWriter();
+    app.UseTerraBaseRegionalServices();
     app.UseTerraBaseQosMemory();
     app.UseTerraBaseCatalogGate();
     SqlRequestTiming.Checkpoint(app, "admission");
@@ -176,11 +184,12 @@ try
     app.UseTerraBaseProjectCheck();
     app.UseAuthorization();
     SqlRequestTiming.Checkpoint(app, "auth");
-    app.UseTerraBaseHomeForwarding();
-    SqlRequestTiming.Checkpoint(app, "home_lookup");
     app.UseTerraBaseQos();
-    SqlRequestTiming.Checkpoint(app, "qos");
+    app.UseTerraBaseRegionalWriter();
+    app.UseTerraBaseHomeForwarding();
     app.UseTerraBaseProjectCatalog();
+    SqlRequestTiming.Checkpoint(app, "home_lookup");
+    SqlRequestTiming.Checkpoint(app, "qos");
     SqlRequestTiming.Checkpoint(app, "project");
     app.UseTerraBaseDatabasePlacement();
     SqlRequestTiming.Checkpoint(app, "placement");

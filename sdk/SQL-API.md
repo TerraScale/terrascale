@@ -10,7 +10,7 @@ async conventions. The .NET SDK (`sdk/dotnet`, `TerraBaseSqlClient`) is the refe
 | Concept | .NET | Notes |
 |---|---|---|
 | Client | `new TerraBaseSqlClient(http, options)` | options: `BaseAddress` or `Region` (default origin `https://api.terrascale.tech`), `ApiKey` or `AccessTokenProvider`, and `AuthAddress`, the ts-auth origin that exchanges an `ApiKey` |
-| Client from the environment | `TerraBaseSqlClient.FromEnvironment()` | `TERRASCALE_API_KEY`; optional `TERRASCALE_BASE_URL`, default `https://api.terrascale.tech`, and `TERRASCALE_REGION`, which pins every request to that region |
+| Client from the environment | `TerraBaseSqlClient.FromEnvironment()` | `TERRASCALE_API_KEY`; optional `TERRASCALE_BASE_URL`, default `https://api.terrascale.tech`, and `TERRASCALE_REGION`, which selects the entry region; see [source-only proxy behavior](region-proxy.md) |
 | Database | `client.Database(projectId, database)` | name or ULID; no request |
 
 | .NET | JS/TS | Go | Python | Rust |
@@ -130,9 +130,10 @@ returns `409 move_in_progress`. SDKs preserve these distinct codes and do not au
 The intermediate superset must also fit the nine-member limit before any membership is written; remove other
 non-writers first to make room. Unresolved moves settle through the existing move mechanism.
 
-A direct request through a region no longer selected returns `421 wrong_region`, with routing hints in
-`X-TerraBase-Database-Home` and `X-TerraBase-Database-Regions`; the global API edge replays it.
-Each SDK preserves the code and available diagnostics; callers using a pinned endpoint choose a current region.
+Source-only, unreleased server behavior: a request reaching a region that does not hold the database is served
+through one proxy hop by a region that does. A region pin selects the entry region and has no effect on the
+serving region for these calls; the proxy removes it. Stale forwarded placement or an unreachable destination
+returns `503 unavailable` with `Retry-After: 1`. See [release scope and proxy behavior](region-proxy.md).
 `GET …/databases/{database}/regions` returns `databaseId`, `observedAt` and `regions` entries with `region`,
 nullable `role` (`"writer"` on the writer), `revision`, `lastPulledAt`, `lagMs` and `lastVerified`.
 Pull observations describe completed served pulls, not application or checksum acknowledgements.
@@ -183,12 +184,12 @@ A refused reconnect raises the same HTTP error types as `connect()`.
 
 | Event | What happens |
 |---|---|
-| An idle socket | TerraBase pings every 20 seconds and drops a client that does not answer a ping within 20 seconds. |
-| The client takes no data for 120 seconds | The edge ends the socket: an HTTP/1.1 connection closes, an HTTP/2 stream gets RST_STREAM. |
+| An idle socket | TerraBase sends a keep-alive pong every 20 seconds without an acknowledgement deadline. With no message in flight or open transaction, 30 minutes without a protocol message closes the session. Keep-alive traffic does not renew that input deadline. |
+| An answer is still being written | TCP acknowledged bytes renew a 30-second no-progress allowance, including during a blocked write. A progressing reader keeps the session; queued keep-alives impose no answer deadline. Bearer-token expiry and revocation still apply. |\n| The client takes no data for 120 seconds | The edge ends the socket: an HTTP/1.1 connection closes, an HTTP/2 stream gets RST_STREAM. |
 | An upgrade without `Authorization` sends no auth frame within 5 seconds | TerraBase closes the socket with 1008. |
 | The region's writer starts handing off to another node (regional handoff), socket through the edge (`api.terrascale.tech`) | The edge ends every socket to the region when its own hold starts, before TerraBase's fence: the client sees an abnormal close (1006), and a call in flight has an unknown outcome, so it may have committed. |
 | The same handoff, socket straight to TerraBase | TerraBase answers every frame it admitted before the handoff, then closes the socket with 1012 (service restart); a call still waiting for its answer when the 1012 arrives did not run. The handoff does not wait for an answer that is still being sent: a client still receiving one when the old writer stops sees an abnormal close (1006), and that call has an unknown outcome, so it may have committed. While the handoff holds the region's ingress, and on a node that was drained for a handoff (the old writer after the hold, or a follower drained for retirement) until that node stops, an upgrade answers 503 with `Retry-After: 1`. Reconnect: the new socket reaches the region's writer. |
-| TerraBase closes the socket with 1012, or with 1001 at a restart | TerraBase still sends every answer queued before the close, runs no frame that arrives later and waits for the client to answer the close. A 1001 does not wait for the call in flight: that call may have run, and its answer is not sent. A client that keeps sending after the 1012 instead of answering it gets no answer to those frames and stays connected until the node stops; close the socket when you read a 1012. A client that sends nothing and never answers is dropped by the ping timeout, 40 to 50 seconds after its last frame; at a restart every connection still open 2 seconds after shutdown starts is dropped. |
+| TerraBase closes the socket with 1012, or with 1001 at a restart | TerraBase still sends every answer queued before the close, runs no frame that arrives later and waits for the client to answer the close. A 1001 does not wait for the call in flight: that call may have run, and its answer is not sent. A client that keeps sending after the 1012 instead of answering it gets no answer to those frames and stays connected until the node stops; close the socket when you read a 1012. A peer that does not answer the close remains until the node stops or its input or credential deadline expires; at a restart every connection still open 2 seconds after shutdown starts is dropped. |
 | TerraBase closes the socket for a client fault (1003, 1008, 1009, 1011) and the client does not answer within 2 seconds | TerraBase drops the connection. |
 
 For any close code, an unanswered committing request keeps the session uncertain:

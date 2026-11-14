@@ -18,7 +18,7 @@ namespace TerraBase.Features.UserAuth;
 
 internal sealed record TsAuthTokenResponse([property: JsonPropertyName("access_token")] string? AccessToken);
 
-internal sealed record TsAuthKeyGrant(string Subject, string ProjectId, string? Database, IReadOnlySet<string> Scopes, DateTimeOffset ValidTo, IReadOnlyList<IPNetwork[]> Allowlists, KeyToken? Key);
+internal sealed record TsAuthKeyGrant(string Subject, string OrganizationId, string ProjectId, string? Database, IReadOnlySet<string> Scopes, DateTimeOffset ValidTo, IReadOnlyList<IPNetwork[]> Allowlists, KeyToken? Key);
 
 internal readonly union TsAuthKeyResult(TsAuthKeyGrant, NotFound, Unavailable);
 
@@ -42,9 +42,16 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
     private readonly ConcurrentDictionary<string, Lazy<Task<TsAuthKeyResult>>> _exchanging = new(StringComparer.Ordinal);
     private int _inFlight;
 
-    public static bool IsKey(string secret) =>
-        secret.Length is > 27 and <= MaxKeyLength && secret[26] == '_' && EntityIds.IsValid(secret[..26])
-        && !secret.AsSpan(27).ContainsAnyExcept(SecretCharacters);
+    public static bool IsKey(string secret)
+    {
+        if (secret.StartsWith("sk_", StringComparison.Ordinal))
+        {
+            secret = secret[3..];
+        }
+
+        return secret.Length is > 27 and <= MaxKeyLength && secret[26] == '_' && EntityIds.IsValid(secret[..26])
+            && !secret.AsSpan(27).ContainsAnyExcept(SecretCharacters);
+    }
 
     public async ValueTask<TsAuthKeyResult> ExchangeAsync(string secret, string? project, CancellationToken cancellationToken)
     {
@@ -110,7 +117,8 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
 
     private async ValueTask<TsAuthKeyResult> RequestAsync(string issuer, string secret, string? project, CancellationToken cancellationToken)
     {
-        var basic = Convert.ToBase64String(Encoding.UTF8.GetBytes(secret[..26] + ":" + secret));
+        var body = secret.StartsWith("sk_", StringComparison.Ordinal) ? secret[3..] : secret;
+        var basic = Convert.ToBase64String(Encoding.UTF8.GetBytes(body[..26] + ":" + secret));
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(issuer.TrimEnd('/') + "/oauth/token"))
         {
             Content = new FormUrlEncodedContent(project is null
@@ -200,6 +208,7 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
 
         if (!result.IsValid || result.SecurityToken is not JsonWebToken jwt
             || !jwt.TryGetPayloadValue<string>(JwtRegisteredClaimNames.Sub, out var subject) || !EntityIds.IsValid(subject)
+            || !jwt.TryGetPayloadValue<string>("org_id", out var organization) || !EntityIds.IsValid(organization)
             || !jwt.TryGetPayloadValue<string>("project_id", out var granted) || !EntityIds.IsValid(granted) || granted != (project ?? granted)
             || jwt.Alg != SecurityAlgorithms.EcdsaSha256 || string.IsNullOrEmpty(jwt.Kid))
         {
@@ -244,7 +253,7 @@ internal sealed class TsAuthKeyExchange(TerraBaseOptions options, IHttpClientFac
             }
         }
 
-        return new TsAuthKeyGrant(subject, granted, database, scopes, new DateTimeOffset(jwt.ValidTo, TimeSpan.Zero), allowlists,
+        return new TsAuthKeyGrant(subject, organization, granted, database, scopes, new DateTimeOffset(jwt.ValidTo, TimeSpan.Zero), allowlists,
             hasKey ? new KeyToken(subject, generation!, granted, token) { ValidTo = new DateTimeOffset(jwt.ValidTo, TimeSpan.Zero) } : null);
     }
 

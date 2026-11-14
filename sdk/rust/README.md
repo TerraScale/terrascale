@@ -56,7 +56,7 @@ spelling.
 
 Every call is one `POST /v1/projects/{project}/databases/{database}/sql/execute` request and one transaction:
 all statements commit or none do, and `BEGIN`/`COMMIT`/`ROLLBACK` are refused. The server forwards a timed-out local publish with
-`TerraBase-Publish-Id` set to the same transaction id, and the home applies that write once.
+`TerraBase-Publish-Id` set to the same transaction id, and the writer applies that write once.
 
 | Method | Returns |
 |---|---|
@@ -75,7 +75,7 @@ on the outer error, returns it); over a WebSocket session it is `Error::Sql` dir
 (constants in `sql_error_codes`), `message`, zero-based `statement` and `sqlstate`, and `is_transient()` is
 true for `serialization_conflict` and `tenant_busy`. A `409 serialization_conflict` rolled back and is
 resent at most twice with jitter; other refusals return at once. Failures before execution keep the generic
-error variants (401, 404, 421, 429, 503).
+error variants (401, 404, 429, 503).
 
 ### Sessions: interactive transactions
 
@@ -209,7 +209,7 @@ across clones; create a new client with a replacement key. A refused token excha
 terminal `Error::TokenExchange` code `invalid_key` (upstream bodies remain redacted). `503 auth_unavailable`
 uses the existing replay-safe backoff and `Retry-After` policy without discarding the token.
 
-A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+A push stream that returns NATS error 10074 is not retried, because it requests more regional copies than the cluster provides.
 
 
 ## Region-set placement
@@ -219,7 +219,15 @@ and from a rename. Response `regions` are sorted without ordering meaning; integ
 with membership or the writer and stays unchanged for an identical set. Transitional response fields are ignored.
 Region status exposes every selected region in `regions`, with nullable `role`, `revision`, `lastPulledAt`,
 `lagMs` and `lastVerified` (Python uses snake_case; .NET PascalCase).
-A removed regional endpoint returns `421 wrong_region`; use the global API or a current selected region.
+An SDK needs no knowledge of a database's region: it can connect to any region. A region that does not hold the
+database authenticates the client and proxies to a region that holds it, which authenticates again. This adds one
+inter-region round trip (about 170 ms between the current regions) and passes two request admissions, one in each
+region. Completed requests and bytes are attributed to the final destination. A terminal forwarding failure is counted at the receiving region; intermediate placement refusals are not counted. Operation units are recorded where executed.
+
+A writer move closes pinned WebSocket sessions with 1012 and PostgreSQL sessions with 57P01; an open transaction is
+rolled back. Reconnect for later requests. If the proxy leg drops while a statement or commit is in flight, its
+outcome is unknown (`write_outcome_unknown` for REST/WebSocket, SQLSTATE 08007 for PostgreSQL). The proxy never
+replays that request. Check the committed state before deciding whether to send a new write.
 
 Dropping the region ordering writes can return `503 replica_not_ready` after adding requested regions.
 Additions remain selected. Repeat the same request after replication (about 30 seconds for a new region).

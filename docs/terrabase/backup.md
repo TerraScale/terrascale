@@ -23,7 +23,8 @@ of TS-633 are done. Not done yet:
 
 Continuous backup is always on. Outside Development a node refuses to start (exit code 2, before it opens any file)
 unless its Tigris bucket and master key are present, so no deployed node runs without backup. Only Development runs
-without backup; tests use an in-memory S3 fake. Retention and rotation use the correct settings in code; there is no
+without backup; those nodes emit `terrabase_backup_disabled = 1` and a critical startup log. Development refuses
+cluster discovery through `TS_PEERS_FILE`. Retention and rotation use the correct settings in code; there is no
 backup activation step or operator tuning table.
 
 Tigris bucket settings use `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `BUCKET_NAME`,
@@ -126,8 +127,8 @@ restored database's name comes from polling `GET …/restores/{operation}` until
 field) or `failed`. A hidden legacy request retains its organization route and the source database's ID in `Location`.
 Encryption and `TBK1` objects are unchanged; restoring either source still requires the master key (`TERRABASE_MASTER_KEY`).
 In `both` mode, shipping succeeds only when both uploads succeed; a failed destination delays this project's progress
-and starts a fresh generation after backoff to avoid overlapping WAL segments after a partial upload (a drop with
-reason `destination`, see [How shipping works](#how-shipping-works)). Platform files
+and retains the same segment until both copies are stored. A configured destination change starts a new generation with
+a base snapshot in the new destination: a new lineage, not a hole ([Holes](#holes)). Platform files
 and eligible customer jobs in other organizations continue shipping. Retention scans both configured buckets
 independently, including earlier platform backups in customer-only mode; drills exercise the customer copy.
 Retention processes at most 10,000 expired snapshots per file
@@ -161,6 +162,8 @@ rollout is performed by this repository change.
 Each node ships the files it holds. `Engine/IShipperLeases` is `LocalShipperLeases`: `ShipperEpochAsync(database)` always
 returns epoch 1, so the local node ships every local file and a generation changes only with a new snapshot. There is no
 member ring, NATS membership or lease takeover. Every node taps every file and trims its change log as it ships it.
+A node that never acknowledged a file's backup holds no [backup floor](#change-log-before-the-tap-opens) in it and trims
+that file's log freely, so only the member that ships a file keeps its unshipped history.
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 
 ## How shipping works
@@ -179,16 +182,23 @@ transaction. The backup's tap reads that table:
    transaction whose times are missing or go back is logged with a plain commit. When a read appended changes up to the
    newest COMMIT row that existed when it started (not a read stopped at 32 MiB), a read mark follows them with that
    start time: every transaction committed before it is in the log before the mark. Both records are additive: the
-   object format, the bucket layout and older logs (plain commits only) stay readable.
-2. It then deletes, on the writer, the rows before its anchor, always keeping the newest: an empty the native capture table
-   restarts its ids at 1 after a reopen. The engine does not capture changes to the capture table itself. A read that fails,
-   including this delete, puts its anchor back: the shipper drops what that read appended, and the next read appends
-   the same changes again (or finds a hole, if the delete ran). The change retention of peer streams follows the new
-   anchor only once the delete has succeeded.
-3. Anything that moves the log under the tap is a **hole**: the file starts a new generation, and
-   `terrabase_backup_holes_total` counts it. Two cases:
-   - the anchor row is gone: something else deleted changes the tap had not read;
-   - a schema row the tap cannot place by name: an update (`ALTER`), or a delete of a rowid it does not know.
+   object format, the bucket layout and older logs (plain commits only) stay readable. After a read appends changes,
+   the first caught-up read starting after that read's completion second appends one more read mark, even without
+   another change.
+   That witness closes the last transaction's second so every acknowledged write can be restored without a later write.
+   Reopening or rewinding the tap also schedules one witness after the current second. Once caught up and witnessed,
+   an idle tap appends nothing until another change arrives.
+2. Reading advances a cursor without acknowledging it. Only a stored snapshot or segment advances the stored cursor.
+   Its generation, schema map, byte offset and capture position are saved immediately with each upload in the node's
+   durable backup accounting record in the system database. An intent containing the object key and sealed-content hash
+   precedes the upload. After a crash, a completed object matching that intent establishes the saved cursor; an absent
+   object leaves the earlier cursor in place. This accounting is uncaptured engine bookkeeping, so storing the system
+   database's cursor does not itself create another change to ship. The periodic public status is advisory.
+   Acknowledgement follows the saved stored cursor, allowing the engine to trim older rows while retaining the anchor.
+   On reopen, the saved account is loaded, an interrupted upload is resolved, and the decision of [Holes](#holes) runs.
+3. A schema row the tap cannot place by name (an update such as `ALTER`, or a delete of a rowid it does not know) cannot
+   be written to the log. Nothing the engine retains is lost, so it is not a hole: the next pass starts a new generation
+   whose base snapshot holds the change (`terrabase_backup_generation_restarts_total{reason="log_unplaceable"}`).
 
    A delete in mode `after` carries only the rowid, and the engine does not capture every schema row (`ANALYZE` adds
    `sqlite_stat1` uncaptured), so `sqlite_schema` rowids differ between a file and a restore of it. The tap keeps the
@@ -201,8 +211,13 @@ A **generation** is one unbroken run of the log from one file on one member. It 
 the database's writer gate, so nothing commits, the tap reads what is left, moves its anchor to the newest change and
 opens a read transaction; then writers go on, and the database is copied row by row, every rowid kept, as of that
 transaction. The copy leaves out the engine's own tables (the native capture table, `sqlite_stat1`).
-A generation starts when shipping starts (every process start), when another member's lease or a new customer
-destination takes over, after a hole, or after unstored log was dropped (below). Before a generation's snapshot holds
+An intact generation resumes after a process restart or a lease handoff. A new generation starts for a file that has no
+account yet, after a hole, for a new lineage (below), when a generation key is unavailable, or when the log cannot express
+a schema change. The account is new with this build, so on the first start after the upgrade every existing file has none
+and its first pass takes one full snapshot, as every start of the previous build did for every file; history before
+that snapshot stays readable in the previous build's generations. Passes run as at most four jobs per node, so at most
+four of these first snapshots (and their uploads) run at once, and the rest wait for a free job in the same pass order
+as any other work. Before a generation's snapshot holds
 writers, the tap reads any backlog to discard it, so the gate covers only what commits meanwhile. Within a generation a
 snapshot is taken daily, but not while a backlog remains, because the snapshot reads what is left while it holds
 writers. The log read in one pass becomes one **segment**. A backlog, such as the writes committed during a long
@@ -226,32 +241,179 @@ next segment, starting where the failed one ends. So two segments never share a 
 segment only repeats its own bytes.
 
 After a failed upload or snapshot, a file waits before the next attempt: 1 s, doubling to 5 minutes. When the attempt
-is due, the failed segment is sent again before anything more is read. Between attempts reads and trimming go on, so
-the native capture table stays small, but only while no backlog remains and less than 256 MiB waits in scratch; otherwise the rest
-stays in the native capture table, where the backup's anchor keeps it, and a short outage costs nothing. Once failures reach the
-longest backoff (about eight and a half minutes into an outage) while log still waits there, the outage counts as
-sustained: the log is **dropped**, the generation ends, reads trim the native capture table again, and the file starts a new
-generation with a snapshot once the bucket answers. A log is dropped only then, after a failed snapshot read, or after
-any failure on a customer destination (below). Every drop logs a warning and counts in
-`terrabase_backup_abandoned_total{reason}` (`outage`, `read`, `destination`); a hole counts in
-`terrabase_backup_holes_total`. A new shipper lease, a destination change and shutdown also end a generation, on
-purpose, without counting a drop. At shutdown a file ships its whole backlog, read after read, while the shutdown
-budget lasts and its passes succeed; a daily snapshot upload that shutdown cancels does not stop that. Shutdown starts
-no generation, whose full snapshot would spend the budget other files need: a file without one waits for the next
-start. The exception is a file whose customer destination was just detached, which stores its final snapshot in the
-platform bucket. A daily snapshot due while a backlog remains, or
-while snapshot uploads are busy, waits for a later pass; `terrabase_backup_snapshots_deferred_total{reason}`
-(`backlog`, `busy`) counts each such pass. A daily snapshot upload that fails counts in
-`terrabase_backup_failures_total`, shows as `lastError` until a snapshot is stored, and puts off the next attempt by
-its own backoff (1 s, doubling to 5 minutes), while segments keep shipping.
+is due, the failed segment is sent again before anything more is read. Daily snapshots upload in the background while
+segments ship; a failed upload keeps the segments going, and daily snapshot attempts back off on their own. Shutdown
+ships each file's backlog within its budget and then closes the taps; it writes no accounting of its own.
 
-Lag (`terrabase_backup_lag_seconds`, `lagSeconds`) is how long the oldest committed data not yet in the bucket has
-waited, as far as the shipper can tell: it starts when a read first finds unstored changes (or a snapshot is pinned,
-or a read fails), stays above zero while a backlog remains, a failed upload is pending or the file has no generation
-after a drop or hole, and returns to 0 once a pass stores everything it read and nothing is left. It is not a bound on
-loss: data dropped or behind a hole is not in the bucket even after lag returns to 0. While a generation's first
-snapshot is copied and uploaded nothing of that file ships, so lag counts from before the copy until the pass after the
-snapshot is stored.
+### The backup account
+
+Each file has one durable account in the node's system database (`_tb_records`, kind `backup_continuity`, keyed by the
+file's bucket directory), replaced whole on every write. It holds:
+
+- the lineage: the engine file's incarnation and the destination revision it ships to;
+- the stored generation: its id, data key, snapshot time, byte offset, the time of the newest stored read and the
+  proven restore time, and the **stored cursor**, the capture position up to which history is in the object store,
+  with the incarnation that position belongs to;
+- whether the generation is being replaced: set when a new generation must start (a hole, a new lineage, `key_lost`,
+  `log_unplaceable`) and cleared only by storing the replacement's base snapshot. While it is set, the stored cursor is
+  kept for comparison but never resumed;
+- the upload intent: the object key and sealed-content hash of an upload that has not been confirmed yet;
+- the hole history: the number of holes and the last 32 holes, each with its incarnation, its range (from the stored
+  cursor to the history start) with their times, and whether it is still open; when a 33rd hole is recorded, the oldest
+  closed hole already written to the bucket is dropped and its end raises the account's **unavailable-before** time, so
+  a restore to any time before it is refused by this node even though the range itself is no longer listed;
+- the hole objects already written to the bucket (below).
+
+The rule: the last durably stored position is never discarded until a newer durable position replaces it. A generation
+restart keeps it; only a destination change empties it, because the new destination's history starts with its own base
+snapshot.
+
+No path writes an account before it has loaded the existing one, so a file whose recovery has not run is never written
+to, shutdown included. A successful upload is always ordered the same way: the intent is saved, the bucket accepts the
+object, the stored cursor is saved, and only then is the retained history released to the engine.
+
+### Holes
+
+A **hole** is history that the engine no longer retains and that never reached the object store. It is a fact about
+two durable positions, read at any time: the **retained anchor**, the oldest capture position from which the engine can
+still read the file's log forward, and the account's stored cursor. When the retained anchor is beyond the stored
+cursor, the changes in between are gone.
+
+The retained anchor is not derived from the rows that are left. Each file's log records where its history starts, in a
+keyed row of the log's own version table in the same file. The one trim function writes it in the same transaction that
+deletes the rows below it, so a trim that removes everything before position P records P, and the value never
+decreases; a trim held back by another reader removes less and records the lower start. A file that existed before the
+start was recorded gets it once, when its backup tap first opens: its oldest retained change, or the log's first
+position when the log is empty. A log emptied outside the trim would restart its numbering at 1, so a stored cursor
+beyond the newest retained change is also a hole: that reading can only report a loss that did not happen, never hide
+one. When rows remain, their oldest position must equal the recorded start; a difference is logged as an error, and the
+later of the two decides.
+
+That comparison is made in one place: at the start of every shipping pass of a file, before anything is read (the
+recovery after a start runs the same code), also while a replacement generation waits for its base snapshot. Positions
+are only compared within one incarnation: the stored cursor and every hole carry the incarnation they were measured in,
+and the history start is read with the file's current incarnation. When the anchor is beyond the cursor and no open hole
+starts at that cursor, one account write records the hole (the count plus one, the range from the cursor to the anchor)
+and marks the generation as being replaced, keeping the cursor. A later pass that finds the anchor further on moves the
+open hole's end to it, so the range is what was lost at the time of reading, and counts nothing. Storing the
+replacement's base snapshot closes the hole at the snapshot's position and time. Because the write that counts the hole
+also writes the open hole the next pass looks for, a crash at any point leaves either the old account (the next pass
+makes the same decision) or the new one (the open hole is found and only extended), so a hole is counted once.
+Until this change, a generation restart emptied the stored cursor before its replacement was stored, so history trimmed
+while that replacement could not be stored was lost without a hole.
+
+The bytes read from the log and the cursor that describes them are one unit. The tap keeps its cursor (position,
+incarnation and the schema map as of that position) in memory beside its read position, changed by the same assignment,
+so taking it cannot fail on its own. Every read site (a pass's read and a daily snapshot's read) notes the tap's cursor
+and the buffer's length before it reads; on any failure after that (an error, a cancelled pass, a shutdown) it cuts the
+buffer back to that length and returns the tap to that cursor. When the tap cannot be returned (it was closed), the
+file drops every unstored byte and resumes from the stored cursor on its next pass, where the decision below runs; so a
+later pass never stores changes after a gap the buffer does not hold.
+
+No event records a hole. Shutdown, a cancelled or failed capture or read, a lease or epoch change, a lost upload
+acknowledgement and buffered log waiting in scratch stop the pass or retry it, nothing more. Whatever they cost shows up
+in the two positions, and the next pass finds it. A SIGKILL with the engine's history intact finds the anchor at or
+before the cursor and resumes; a restart after history was trimmed finds the anchor beyond it and records one hole.
+
+### Change log before the tap opens
+
+A restarted node writes before its backup taps open: the system database at once (its lease session, keys and
+platform seed), a tenant database whenever it is written before discovery opens its tap. Those changes, and every
+change the previous process committed but did not store, stay in the log until the tap ships them. Each
+acknowledgement writes the file's **backup floor**, the stored position, into the log's version table in the same
+transaction as its trim, keyed by the file's incarnation (`backup_floor:<incarnation>`), and it never decreases. While
+no tap is open, the commit, revision and idle trims cut the log only below the floor of the current incarnation, so the
+tap that opens next resumes from its stored cursor with nothing missing. A file with no floor for its incarnation (one
+this node never backed up, or one restored or rewritten into another incarnation, which starts a new generation
+anyway) is trimmed whole as before.
+
+The kept log is bounded. While no tap is open, the engine counts the bytes it keeps above the floor (the same measure as
+the tap's cap: before and after images plus 32 bytes a row). Past 256 MiB it deletes the floor and trims the whole log in
+one transaction, logs a warning with the floor and the size, and counts it in
+`terrabase_cdc_unshipped_discarded_total`. When the tap opens, the stored cursor is behind the history start, and the
+backup records that loss as one hole (above). A file this node stops shipping (its registration is gone) keeps its log
+only up to that bound.
+
+A destination change, a restore or a fork gives the file a new lineage (another incarnation or destination than the
+account's). It starts a new generation with a base snapshot and is not a hole, because nothing of the file's history
+was lost; `terrabase_backup_generation_restarts_total{reason="lineage"}` counts it, beside `key_lost` (the
+generation's data key is gone) and `log_unplaceable` (step 3 above). The hole history is kept across lineages. When the
+incarnation changes, a hole still open in the old incarnation stays open: nothing after it is stored until the new
+lineage's first snapshot, so it keeps refusing every later time, and storing that snapshot closes it with the snapshot's
+time as its end (its positions stay those of its own incarnation; positions of the new incarnation are never compared
+with or written into it). A hole's end time only moves later: when the newest reading or the closing snapshot carries an
+earlier time than the hole already has (a clock that went backwards), the hole keeps the later one, and a reading whose
+anchor has no time (a cursor beyond the newest retained change) leaves the end unknown, which refuses every time after
+the hole's start until a snapshot closes it.
+
+### Hole records in the bucket
+
+What a backup cannot restore is recorded with the backup. Every state of every hole (recorded, extended, closed) is one
+object under the file's own directory, written once and never rewritten:
+
+```text
+<file>/holes/<incarnation>-<from position>-<to position>-<from unix ms>-<to unix ms or "unknown">-<open|closed>
+```
+
+The name carries the whole state, so a restore only lists the prefix; the body repeats it as JSON for people. The hole
+is durable in the node's account first. Before the bucket receives any later object of that file (a snapshot, a segment,
+a generation proof), the pass writes the hole's object and then notes it in the account; a store that is unreachable
+when the hole is recorded (which is when holes happen) fails that pass, and the object is written on the first pass the
+store answers, before anything else. An upload of a file whose holes are not all in the bucket is refused, so the
+bucket never holds a change after a hole without that hole's object. The states of one hole merge by taking the widest
+range: the earliest start, the latest end, open unless a closed state exists, and an unknown end refuses every later
+time. A listing that misses the newest state therefore shows an older, still-refusing state, never less.
+
+A restore reads the hole objects of the backup it restores from, on whatever node runs it, and joins them with the
+node's own account when the node has one: a node whose system database was lost or recovered from an older copy, or
+that never recorded the hole, still refuses a time inside it. When the hole objects cannot be listed, the restore is
+refused at admission with 409 `backup_history_incomplete` without `unavailableFrom` or `unavailableTo`: an unknown
+record is not a complete one, and a request after the store answers again can be admitted. A backup written by the previous
+build has no hole objects; for it the restore assumes only what the bucket proves itself (contiguous segment positions
+within a generation, a read mark or later object proving the time, and a generation that ends where the next one's
+snapshot begins), so history before the upgrade is never called complete beyond those checks, and a loss the previous
+build did not detect is not known.
+
+The hole total of each file is published from its account: `terrabase_backup_holes` is the sum over the files this node
+has loaded, so after a restart it equals the durable total again, and `GET /v1/backup` (internal listener, peer
+credential) shows each file's `holes` total and its `continuity`: the incarnation, the history start and oldest retained
+change, the stored cursor and its incarnation, whether the generation is being replaced, and the open and closed holes
+with their bounds. `terrabase_backup_holes_recorded_total` counts the account writes that recorded a hole on this process, and
+each one logs a warning with the range.
+
+### The cap
+
+The engine keeps every change after the durable anchor, so an unreachable bucket would grow the file without bound.
+Every pass, before the hole decision and also while the file backs off, the shipper measures the capture payload and row
+overhead the engine still holds after the backup's stored position. When it exceeds 256 MiB, or the shared disk admission refuses that many bytes with its
+protected headroom, the shipper discards: it moves the engine's durable anchor to the committed end, and the engine
+trims older rows as far as its other readers allow (a replica region that has not pulled them yet, a shape still reading
+them). The trim records where the history now starts, and the discard logs that start beside the oldest change still
+retained. While those readers hold the rows, the next pass is still over the cap and discards again, so the trim
+continues batch by batch. Once the trim passes the stored cursor, the next pass finds the anchor beyond it and records
+the hole, whose range ends at the recorded start. A later discard during the same outage finds the open hole and moves
+its end to the new start without counting, so an outage of any length is exactly one hole.
+
+### Lag and health
+
+Lag is observed apart from shipping, so a stuck or stopped shipper cannot hide it. An observer runs every 5 s over the
+files this node has open: it reads the engine's committed end (the newest COMMIT position) and the account's stored
+cursor. When the committed end is beyond the cursor the file has a backlog, aged with the monotonic clock from the
+moment this node first saw a committed position beyond the cursor; the age carries across passes and restarts only
+when the stored cursor reaches that position. A wall-clock step cannot shorten it. `terrabase_backup_lag_seconds` is
+the largest age over the files this node ships, `lagSeconds` in `GET /v1/backup` is each file's, and
+`backlogCommittedAt` reports the commit time of the oldest unstored transaction for information only.
+
+`/backupz` answers 200 only when all of these hold, and 503 otherwise:
+
+- discovery has listed the files this node is responsible for, from the catalog and the local files, before any of
+  them recovers (the system database always counts, so the set is never empty while the node has a catalog);
+- every file in that set whose lease this node holds or has not checked yet has finished recovery (account loaded,
+  intent resolved), has a stored generation and a first upload, and has less than 60 s of lag;
+- the lag observer has run within the last 15 s.
+
+A file that failed to open or to recover keeps the probe at 503. `/readyz` does not depend on backups: a backup problem
+must be loud and must stop a rollout, but must not stop customers' queries.
 
 Each object is sealed before upload (`Features/Backup/BackupObject.cs`, format 1): chunks of up to 1 MiB, LZ4-compressed
 when smaller, AES-256-GCM. Each object's AES key is HKDF-SHA256 of its database's data key, a random salt and the object's
@@ -327,19 +489,211 @@ key objects are ignored during selection; a future-dated key can still decrypt h
 Changing `backup-key-rotation-days` requires a rolling
 restart; use `1` for the next daily rotation when shortening the schedule.
 
-The master key does not rotate yet. Changing `TERRABASE_MASTER_KEY` makes retained backups unreadable, because
-their wrapped data keys no longer unwrap. There is no key versioning yet. Do not delete wrapped keys while their
-backups are still retained; only a database's deletion destroys its keys.
+Configure a versioned keyring with `TERRABASE_MASTER_KEYS_FILE`, a protected JSON file with
+`active` and `keys` properties. The keys object maps ids to base64-encoded 32-byte keys.
+Ids contain 1–63 ASCII letters, digits, underscores or hyphens; at most 32 keys are accepted.
+The active id must exist. Supply either this file or `TERRABASE_MASTER_KEY_FILE`, never both.
+The single-key configuration assigns the id `k0`. When adopting a keyring, `k0` must contain
+exactly the existing master key. Key ids are permanent: never reuse an id for different key material.
 
-This rotation preserves the existing backup bytes, bucket layout and database files. Live database files, WAL files, local
-managed snapshots and restore scratch files still require encryption of the node's storage; TS-702's disk-encryption
-and in-place migration work follows separately.
+While `k0` is active, new wrappers and database/replica sidecars retain their existing unprefixed
+body and version 1 header. Inventory does not rewrite wrappers already using the active key.
+Upgrading with the existing key changes no key files, custody objects or stored credentials,
+including during a rolling release. Rolling back before the first rotation remains supported.
+
+Selecting a different active id starts rotation. New wrappers then use
+`v2.<keyId>.<base64(nonce|ciphertext|tag)>`, with the version and id authenticated as AES-GCM
+associated data, and sidecars use version 2 headers. Unprefixed wrappers use only `k0`.
+Both sidecar versions remain readable. A wrapper selects exactly its named key; unprefixed
+wrappers select only `k0`. An incoming record, backup or snapshot naming an unconfigured id is
+refused and the message names that id. This does not recreate a database or generate a replacement key.
+
+### Local wrappers determine required keys
+
+Before readiness, every node inventories its own persisted wrappers. A zero means **no
+value stored on this node needs the key**. Incomplete inventory is -1 (unknown),
+including `unattributed` when an id cannot be recovered. Unknown means **do not retire**.
+
+| Persisted location | Local inventory |
+| --- | --- |
+| Catalog and storage-intent journal `.db.key` files | Read and authenticate the bounded sidecar. |
+| Tenant and replica `.db.key` files | Read and authenticate the bounded sidecar; tenant rows contain no platform sealed credentials. |
+| Detached `.promote.db.key` and `.promote.db.importing` intents | Count both source and destination wrappers. |
+| Creating, rewriting, migration, key-writing and orphan sidecars | Count readable wrappers; an unauthentic wrapper makes its id unknown; an unidentified wrapper makes every id unknown. |
+| Current project backup destinations and `backup_destination_history/*` in `_tb_records` | Read sealed credential wrappers from a read transaction, without a reference cache. |
+| Both `before` and `after` images for `_tb_records` in each record store's retained change-capture table | Decode the complete row image and count credential wrappers, including deleted and superseded values. Undecodable images make all ids unknown. The catalog and intent journal are both scanned. |
+| Orphan keys retained as `.<id>.<nonce>.retained-key`, including interrupted rewrap files | Count and authenticate their wrappers, refuse startup when their key id is unconfigured, and rewrap them without deleting the retained file. Database and replica cleanup retains key files. |
+| Completed detached imports moved under `.replicas/<organization>/<project>/.retained/<nonce>` before opening a new live replica | Preserve the source, key and publication intent; inventory and rewrap both intent wrappers and the source key. Nonempty archived payloads make counts unknown. Archived imports are not replayed as active recovery intents; permanent erasure removes their data and retains their keys. |
+| Incomplete replica caches retained as `.db.retained.*` with adjacent key and sidecar files | Authenticate and rewrap their key records; nonempty cache payloads make counts unknown. Cache rebuild preserves these files before creating its new key. |
+| Local backup snapshots, frame buffers and sealed upload buffers in `.backup`; import/restore staging in `.import`; exports in `.exports`; native copies in `.tmp/native` and inspection copies in `.tmp/inspection` | Any nonempty payload makes all counts unknown. A native temporary database is excluded only when its physical header proves a single empty schema page with no free pages and its log has no frames (at most the 32-byte header). These copies can embed historical credentials or wrappers; their removal, completion or separate inspection is required before retirement. |
+| Replication/handoff catalog data | Received credentials persist as the above catalog records and retained images. Outbound catalog snapshots are memory-only; there is no separate persisted catalog outbox. |
+| Superseded local databases retained during planned regional handoff in `.handoff` | Sidecar wrappers are counted; any nonempty payload makes counts unknown. Planned handoff closes the old store, releases the creation gate while its native handles drain, then durably moves its files here without overwriting them before importing the certified replica. The closed store stays registered and lifecycle operations stay fenced during drainage. Detached recovery never performs this supersession. Permanent database erasure removes matching retained copies only after validating the catalog's erasure record. |
+| Local holds and home-push queues | Carry tenant SQL transactions, not platform credential records; their enclosing database wrappers are counted. The intent journal stores storage-operation identities, not another credential payload format. |
+| Object-store custody, backups, WAL archives and archived snapshots | Outside this node's inventory. Their wrappers are checked when accessed. Keep every required old key for as long as a backup or archived snapshot may be restored. |
+
+Disabling backups does not release old-key references in unshipped images retained above a
+durable backup floor. Those references remain until the engine actually removes the images
+after acknowledgement or its documented retention handling.
+
+The file walk is proportional to directory entries and wrapper bytes (at most 16 KiB per
+sidecar). The record walk is proportional to live credential bytes plus retained record-image
+bytes, including noncredential images that must be decoded to classify them. It does not
+scan tenant rows. Startup performs a complete walk before readiness. Scrapes run the same
+walk on one worker with a two-second deadline; a timeout returns unknown for that scrape,
+cancels the worker and admits no concurrent recount. Inventories with at least 4,096
+wrappers, records or images, and timed-out inventories, wait five seconds before another
+recount. Every scrape during that interval or an unfinished recount reports unknown.
+No earlier reference number is reused. Retained-file and byte gauges are produced by the
+same bounded walk; they do not start additional synchronous filesystem scans. Scrape response caching is disabled.
+
+A local three-run journey measured 10,000 wrapper files plus 10,000 retained images
+on a busy machine, one process at a time at low priority. These are observations, not
+latency guarantees. Each complete scrape counted 20,004 references; each immediate
+repeat returned unknown during the five-second recount interval.
+
+| Run | Startup (ms) | Complete scrape (ms) | Immediate unknown scrape (ms) |
+| --- | ---: | ---: | ---: |
+| 1 | 3760.84 | 1594.76 | 19.64 |
+| 2 | 3963.89 | 1794.53 | 23.56 |
+| 3 | 3715.78 | 1613.06 | 20.98 |
+
+An access failure while inventorying an installed primary sidecar makes reference counts
+unknown; the engine still applies its normal admission and pending-proof rules. Repaired
+primary material must authenticate before its inventory refusal clears. Refusals for other
+retained artifacts remain recorded independently.
+
+An authoritative wrapper or a readable live or retained credential naming an unconfigured
+id stops startup before readiness and names the missing id. Retained images participate
+because backup replay can need their values after live credentials have been rewrapped.
+Malformed credential records, including missing/null credentials, null/nonstring wrapped
+keys, empty or malformed envelopes, bad base64 and unknown versions, never stop inventory.
+They stay exactly as stored, increment `terrabase.keys.malformed`, produce one bounded
+content-free warning per process, and make the affected id unknown (all ids when unknown).
+The write door validates these shapes and authenticates wrappers before its first mutation;
+an invalid regional import rolls back as a whole.
+
+Configured material that cannot authenticate the catalog's own wrapper stops the node.
+Other authoritative wrappers refuse only their database; other databases continue serving.
+Authority is determined by the exact base-name grammar: `_system.db.key`, `_intents.db.key`
+or `<ULID>.db.key`. Parent directory names containing `.creating`
+have no effect. Creating and artifact names, detached sidecars and key-writing temporaries
+gain no authority merely by ending in `.db.key`. Unreadable tenant import intents refuse only their
+database and make counts unknown. Directory enumeration failures also make all ids unknown.
+
+The mutation paths are current destination save/delete, history capture, credential rewrap,
+project-prefix removal, regional import/handoff/replication and physical catalog restore.
+Their live values and retained images are read from storage; no mutation-maintained count
+can omit a committed import. A stopped node must be inventoried before removing its keys.
+
+Master keys must be generated by a cryptographically secure random generator, for example
+`openssl rand -base64 32`, and stored in a protected secret file. Configuration rejects material
+that is not exactly 32 bytes or duplicates another configured id's material. The previous build
+also required exactly 32 decoded bytes, so wrong-length material could not have encrypted an
+installation through that configuration path. These checks do not verify randomness.
+A repeated-byte active key is refused when no local wrapper references it, covering empty nodes
+and newly added active ids. Existing referenced keys, including installations with unknown counts, remain readable: startup warns once naming
+the id, and `terrabase.keys.weak_in_use{key_id}` is 1 while referenced (or -1 when unknown).
+Rotate away from such an id with the normal procedure below; never replace its material in place. Never reuse an id for different material.
+A fleet using a weak key must rotate to a strong key **before a new or replacement node joins**: an empty node refuses the weak active key.
+A single configured key must have id `k0` and retains the existing wrapper bytes.
+
+### Rotation order
+
+A build must read a format before any build writes it:
+
+1. Run this build on every node with `k0` active.
+2. Add the new id and material to every node's configuration, retaining `k0` as active.
+3. Make the new id active on every node.
+4. Watch each node's per-id local gauge fall as wrappers are rewrapped.
+5. Require a complete zero sample for the old id on every node; unknown never qualifies.
+6. Retain the old key for as long as any backup or archived object-store snapshot needing it
+   may be restored. Node-local zero does not establish that those archives are readable without it.
+7. Remove the old key only after both the local inventory and archive-retention requirements hold. The single-key byte-compatibility rule
+   still applies: a sole configured id must be `k0`, so retiring `k0` requires a multi-key configuration.
+
+Configuration is immutable until restart. This build reads wrappers under any configured id
+and writes non-`k0` wrappers only when the operator makes such an id active. Rolling back to
+the previous build is supported only while `k0` is the only key ever used. Nodes should use the
+same active id to avoid repeatedly rewrapping shared objects to different keys.
+
+With multiple configured keys, maintenance runs after the catalog opens and hourly thereafter.
+It rewraps local key files and detached intent wrappers on every node, conditionally replaces
+shared custody objects using their ETags, and updates current and historical credential wrappers
+inside durable catalog transactions on the catalog writer. The role is captured once per pass.
+`terrabase.keys.wrapped{key_id}` and `terrabase.keys.last_complete` describe that maintenance
+pass; they are not the local retirement gauge. Single-key maintenance is skipped, while the
+startup inventory and local gauge still run.
+
+Each new wrapper is unwrapped and compared with the original plaintext in constant time before
+publication. Atomic wrapper replacement writes a fresh temporary, flushes it, renames over the
+old wrapper and syncs the directory. Interrupted writing temporaries are retained and inventoried.
+List leftovers with `find <data-directory> -type f` and inspect the `.key.tmp`,
+`.key.rewrapping*`, `.creating*` and `.promote.db*` entries. Keep the required keys configured.
+An operator should preserve a copy, establish which file and key are authoritative and recover any
+needed data before separately reviewing reclamation. Do not remove an artifact merely to clear
+a gauge; unknown artifacts must be resolved before retirement. A later atomic replacement owns
+only its own writing temporary; detached recovery does not clean up older artifacts.
+
+### Detached recovery retains files
+
+Promotion records a versioned intent with database id, incarnation, commit position and wrapped
+source key. Before copying, an atomic intent update records the destination key. The new copy
+keeps the source incarnation. Recovery verifies the destination opens under its authenticated
+key, passes an integrity check, and matches the intent's database name, incarnation and minimum
+commit position. These are identity and integrity checks, not content-equivalence claims.
+A runtime import inspects the completed, unpublished temporary database while holding the
+storage creation gate, before renaming it to the destination. It records durable publication
+before releasing that gate. Finalizing this verified import authenticates its wrapper without
+copying its pages again; backup discovery and foreground writers can then open it safely.
+A home move finalizes before publishing placement. Detached import delays its own writable
+initialization as well. Startup recovery performs full inspection of active detached intents before writers open,
+including destinations with durable publication evidence. A truly damaged destination is
+still refused.
+Inspection reserves `8 × copy bytes + 64 MiB` through the node disk budget, preserving its
+foreground headroom; insufficient capacity refuses only that database with the required and
+available bytes, retains every source file, and continues recovery. Copies live only under
+`<data-directory>/.tmp/inspection/<generated-id>`. Startup removes abandoned inspection
+copies only in that dedicated directory (the existing native temporary cleanup still owns
+its own `.tmp/native` area; siblings of both directories are preserved). Fixed path components and link rejection prevent escaping this area.
+Inspection copies the database and its adjacent sidecars into this private scratch directory, opens
+only that copy, then removes only the scratch directory, on both success and failure. The vendored
+driver's managed read-only mode passes native open flags 0; it is not a physical preservation
+guarantee. Inspection therefore never opens the retained original with that driver.
+
+If the destination was published and passes those checks, it serves. The detached database,
+all sidecars and key files remain on disk. Its intent records that publication completed and the
+source is retained. If the destination fails any check, that database is refused and both copies
+remain. Unexpected or malformed states also refuse the database and retain every file.
+
+If the destination was not published, recovery moves the detached database and sidecars back
+without overwriting anything, verifies the restored database opens under its key, and records
+the restoration in the retained intent. Before opening a new live replica, completed published
+or restored intents and their remaining detached files move into a unique `.retained` directory.
+Those archived copies and keys remain inventoried and rewrappable without replaying completed
+recovery against a later replica. Cancelled copies and their temporary files are retained. A normal open or a second import may
+be refused while retained state conflicts with it; recovery never resolves that conflict by deletion.
+Runtime and startup recovery use the same refusal log and
+`terrabase.storage.detached_recovery_failures` counter; runtime recovery still throws.
+
+`terrabase.storage.retained_files` and `terrabase.storage.retained_bytes` gauge retained
+detached files, import intents, abandoned copy files and key files awaiting a separate reclaim
+step. Reclamation is a different change with its own review. This change provides no reclamation
+hook or switch. Customer-requested erasure with a matching durable deletion record still removes
+that database's files.
+
+Preservation here covers detached recovery and its inspection, promotion rollback, pre-import
+handoff, the file audit and general stop-following. It is not a repository-wide deletion guarantee.
+Existing replica/home/settle/demote/pending cleanup paths can still call database deletion when
+catalog ownership or registration disappears, including removing a published destination;
+the existing cancelled-creation cleanup can remove a `.creating*` copy. Those older paths are a
+known limit owned by a separate change and are unchanged here.
 
 ## Bucket layout (version 1)
 
 ```text
 v1/<organization>/<project>/<database>/snapshots/<unix ms>-<generation>-<log position>
 v1/<organization>/<project>/<database>/wal/<generation>/<first log position>-<unix ms>
+v1/<organization>/<project>/<database>/nodes/<node>/holes/<incarnation>-<from>-<to>-<from ms>-<to ms>-<open|closed>
 v1/_system/…                                  the same for _system.db
 v1/keys/<organization>/<project>/<database>/<data key id> wrapped data keys (v1/keys/_system/… for _system.db)
 ```
@@ -456,9 +810,14 @@ time by itself.
 - A missing or overlapping segment (a lost upload, a bucket-side deletion, two segments with the same start where the
   first holds log; a segment holding no log ends where it starts, so the next may share its start). Times up to the
   last segment before it can still restore.
-- Nothing after the replayed log proves T: an unshipped or missing final segment, a generation that ended (a hole, a
-  dropped backlog, a shipper move or restart; the next generation's snapshot time restores), or a quiet period not yet
-  closed by a later write or snapshot.
+- Nothing after the replayed log proves T: an unshipped or missing final segment, a generation that ended (a hole or a
+  new generation; the next generation's snapshot time restores), or a quiet period not yet closed by a later write or
+  snapshot.
+- T inside a recorded hole of the file (any hole object in the bucket, any of the last 32 in the node's account, or
+  before the account's unavailable-before time): after its last proven time and before the snapshot that
+  followed the hole, or, while the hole is still open, any time after its last proven time (the range then ends at the
+  current history start, and the message says no recovery point after it is stored yet). The 409 `backup_history_incomplete` names that interval in its message and in `unavailableFrom` and
+  `unavailableTo`; it is not retryable. A restore request is refused at admission, before any work starts.
 - A snapshot or segment that disappears between listing and download (retention racing the restore). Admitting a
   point-in-time restore writes a generation lease (source database + the plan's generation, renewed every 5 minutes
   while the restore runs, deleted when it settles); continuous-backup retention skips that generation's snapshot and
@@ -482,6 +841,7 @@ Guaranteed to restore exactly (`201`), given contiguous segments and timed trans
   when a transaction committed at or after T (or a read mark at or after T) is shipped later in the same generation.
   A quiesced cut is this case: writes stop, T is the next whole second, and a later write is the witness.
 - **The latest durable point**: the second at or before the newest read mark's time, with no later write needed.
+  The closing idle mark advances this past the last acknowledged write once both its changes and witness are stored.
 - **A quiet time closed by a snapshot**: a time up to the generation's next snapshot when no segment follows the
   replayed log before it.
 
@@ -493,9 +853,10 @@ Limits:
   acknowledgement, cannot be detected. A step back between two transactions read after T is refused.
 - Only the transactions downloaded after T are checked for times going back; earlier segments are trusted by their read
   times.
-- A read writes a mark only when it appended changes and reached the newest commit: a read that stops at its byte
-  budget, or an idle database, writes none (an idle database ships nothing). A commit made between a read's start
-  and its query is not covered by that mark; no T at or before the mark needs it.
+- A read writes a mark when it reached the newest commit and either appended changes or owes the closing witness
+  described above. A read that stops at its byte budget writes none. After the closing witness is stored, an idle
+  database ships nothing. A commit made between a read's start and its query is not covered by that mark; no T at or
+  before the mark needs it.
 - A log written before timed commits and read marks restores only at snapshot times and at times its generation's next
   snapshot closes.
 - A read mark rests on the engine showing a commit that returned on the writer's connection to the tap's next autocommit read
@@ -602,14 +963,16 @@ At least once a day, when it stores a snapshot, the shipper checks it: it rebuil
 generation's previous snapshot, or the new one at generation start, rolled forward through the segments up to the new
 snapshot's exact log position), then compares a SHA-256 of the schema and every row of every table with the local copy
 the snapshot was made from, which is the live file at that position. A drill exercises download, decryption, contiguity,
-roll-forward and `integrity_check`. Every start snapshots every file, so every start also drills each file.
+roll-forward and `integrity_check`. A drill never spans a hole and needs no hole check: a hole always ends the
+generation, and a drill rebuilds only within one generation, from an earlier snapshot of it to a later one, so the log it
+replays is the contiguous log of that generation, and a gap in it fails the drill.
 
 The checksum of the local copy is taken before the snapshot is uploaded, so the copy is deleted with the pass and no
 copy waits for a drill. The drill itself then runs beside shipping: the file's segments keep shipping while it
 downloads and rebuilds. A node runs one platform drill and up to two customer drills at a time, each rebuilding one
 file in scratch, so a stalled customer bucket never holds a platform drill; the others wait their turn. Removal, a new
 destination and shutdown cancel a drill; a cancelled drill records no result. When a generation ends while its drill
-or snapshot upload runs (a hole, a drop, a new shipper), the next generation's snapshot is drilled.
+or snapshot upload runs (a hole or a new generation), the next generation's snapshot is drilled.
 
 A failed drill is logged as an error and counted in `terrabase_backup_drills_total{result="failed"}`.
 
@@ -623,28 +986,32 @@ until R10a.
 
 ## Verify a rollout
 
-`/backupz` answers 200 once backup has found the node's files and every file the
-node ships has reached the bucket with less than a minute of lag, and 503 otherwise.
+`/backupz` answers as [Lag and health](#lag-and-health) defines; `/readyz` does not depend on it.
 A `/backupz` 503 must stop rollout advancement. Verify that the current runtime
 enforces this gate; the requirement is not evidence of an implemented OCI rollout gate.
-A Tigris outage appears on `/backupz` and in backup metrics.
+A Tigris outage appears on `/backupz` and in backup metrics. A node that starts during the outage is not ready: its
+catalog stays closed until the backup store answers the restore anchor's read (see [Catalog restore gate](restore-drill.md)),
+so `/readyz` answers 503 and catalog-backed requests answer 503 until then.
 
 After a rollout, also check:
 
 1. Metrics: `terrabase_backup_lag_seconds` stays under 2 s under writes,
-   `terrabase_backup_last_success_seconds` advances, and failure, hole and abandoned
-   counters do not rise. Lag approximates the recovery point only while holes and drops stay zero.
+   `terrabase_backup_last_success_seconds` advances, the failure counter does not rise and `terrabase_backup_holes`
+   does not change. Lag approximates the recovery point only while the hole total stays the same.
 2. Restore: `POST …/point-in-time/restore` of a scratch database to a second between two writes; check that the first
    write is in the new database and the second is not; delete the restored database.
 
 ## Operations
 
 - `GET /v1/backup` on the loopback admin listener lists each shipped file: generation, log bytes read, last shipped time, lag,
-  pending bytes (read and not yet stored, sealed or not) and the kind of the last error.
-- Metrics, over the files this member ships: `terrabase_backup_lag_seconds` (oldest data not yet in the bucket, not a
-  loss bound), `terrabase_backup_last_success_seconds` (Unix time of the least recently shipped file) and
+  the commit time of the oldest unstored transaction, pending bytes (read and not yet stored, sealed or not), the kind of
+  the last error, and its hole count and last hole.
+- Metrics, over the files this member ships: `terrabase_backup_lag_seconds` (monotonic age of the oldest committed change
+  not yet in the bucket, not a loss bound), `terrabase_backup_last_success_seconds` (Unix time of the least recently shipped file) and
   `terrabase_backup_files`. Also `terrabase_backup_uploaded_bytes_total{kind}`, `terrabase_backup_failures_total`,
-  `terrabase_backup_holes_total`, `terrabase_backup_abandoned_total{reason}` (unstored log dropped),
+  `terrabase_backup_holes` (durable hole total of the loaded accounts), `terrabase_backup_holes_recorded_total`,
+  `terrabase_backup_generation_restarts_total{reason}` (lineage, key_lost, log_unplaceable),
+  `terrabase_cdc_unshipped_discarded_total` (change logs discarded unstored past the cap while no tap was open),
   `terrabase_backup_snapshots_deferred_total{reason}` (passes that put off a due daily snapshot),
   `terrabase_backup_generations_total` (a rising count means snapshots too often), `terrabase_backup_drills_total{result}`
   and `terrabase_backup_stored_bytes` (bucket bytes of the files this member ships).

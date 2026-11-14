@@ -18,7 +18,6 @@ import time
 import urllib.parse
 import urllib.request
 
-
 CREDS = json.load(sys.stdin)
 PROJECT = CREDS["project"]
 TOKEN = ""
@@ -40,7 +39,7 @@ def token():
     with LOCK:
         if time.monotonic() - TOKEN_AT < 40 and TOKEN:
             return TOKEN
-        basic = base64.b64encode((CREDS["apiKey"][:26] + ":" + CREDS["apiKey"]).encode()).decode()
+        basic = base64.b64encode((CREDS["apiKey"].removeprefix("sk_")[:26] + ":" + CREDS["apiKey"]).encode()).decode()
         form = urllib.parse.urlencode({"grant_type": "client_credentials", "project": PROJECT}).encode()
         request = urllib.request.Request(
             "https://auth.terrascale.tech/terrascale/oauth/token", form,
@@ -240,7 +239,7 @@ def main():
                 if not sent.wait(10):
                     raise RuntimeError("home insert did not dispatch")
                 time.sleep(0.01)
-                status, body, headers = sql(database, f"INSERT INTO items (id,v) VALUES ('{row}','sjc')", {"TerraScale-Durability": "home"})
+                status, body, _ = sql(database, f"INSERT INTO items (id,v) VALUES ('{row}','sjc')", {"TerraScale-Durability": "home"})
                 home_status, home_body, _ = home.result(timeout=30)
                 evidence = future.result(timeout=75)
                 evidence.update(attempt=attempt, local_status=status,

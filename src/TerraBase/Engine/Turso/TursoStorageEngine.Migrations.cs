@@ -71,7 +71,7 @@ internal sealed partial class TursoStorageEngine
             }
             SyncDirectory(_dataDirectory);
             File.Move(staged, path, overwrite: true);
-            File.Delete(staged + DatabaseKeys.Suffix);
+            WrappedKeyFile.Retain(staged + DatabaseKeys.Suffix);
             SyncDirectory(_dataDirectory);
         }
     }

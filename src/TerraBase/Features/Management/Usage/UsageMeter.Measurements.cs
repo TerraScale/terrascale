@@ -30,7 +30,7 @@ internal sealed partial class UsageMeter
         }
     }
 
-    public void RecordRequest(TenantContext database, string method, int status, TimeSpan elapsed, long received, long sent)
+    public void RecordRequest(TenantContext database, string method, int status, TimeSpan elapsed, long received, long sent, string? region = null)
     {
         var kind = method switch
         {
@@ -43,9 +43,12 @@ internal sealed partial class UsageMeter
             "OPTIONS" => "options",
             _ => "other",
         };
-        BufferRequest(database, Dimension("requests", kind), status >= 400 ? 1 : 0, LatencyIndex(elapsed),
-            Dimension("client_bytes", "received"), received, Dimension("client_bytes", "sent"), sent);
+        BufferRequest(database, RequestDimension("requests", kind), status >= 400 ? 1 : 0, LatencyIndex(elapsed),
+            RequestDimension("client_bytes", "received"), received, RequestDimension("client_bytes", "sent"), sent);
         stats.Request(database, elapsed, status >= 400);
+
+        UsageDimension? RequestDimension(string meter, string name) =>
+            region is null ? Dimension(meter, name) : ValidRegion(region) ? new UsageDimension(meter, region, name) : null;
     }
 
     public void RecordStatement(TenantContext database, string protocol, bool failed, TimeSpan elapsed)
@@ -68,11 +71,11 @@ internal sealed partial class UsageMeter
         return index;
     }
 
-    public void RecordClientBytes(TenantContext database, long received, long sent, DateTimeOffset? transferredAt = null)
+    public void RecordClientBytes(TenantContext database, long received, long sent, DateTimeOffset? transferredAt = null, string? region = null)
     {
         Record(database, transferredAt,
-            new(new("client_bytes", options.Region, "received"), received),
-            new(new("client_bytes", options.Region, "sent"), sent));
+            new(new("client_bytes", region ?? options.Region, "received"), received),
+            new(new("client_bytes", region ?? options.Region, "sent"), sent));
     }
 
     public IDisposable TrackActive(Action report)

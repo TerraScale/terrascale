@@ -5,8 +5,9 @@ import { confirmWithPassword } from '../support/hosted';
 import { auth, dash } from '../support/stack';
 import { shell } from '../support/shell';
 import { saveSecret, journey } from '../support/state';
+import { keyId } from '../support/api-key';
 
-const apiKeyFormat = /^[0-9A-HJKMNP-TV-Z]{26}_[0-9a-hjkmnp-tv-z]{52}$/;
+const apiKeyFormat = /^(?:sk_)?[0-9A-HJKMNP-TV-Z]{26}_[0-9a-hjkmnp-tv-z]{52}$/;
 const tokenFormat = /^tspat_[A-Za-z0-9_-]{43}$/;
 const unique = (base: string) => `${base}-${journey().runId}${Date.now().toString(36)}`;
 
@@ -21,6 +22,9 @@ async function runSql(page: Page, sql: string): Promise<void> {
   await page.locator('form[action^="/api/v1/dashboard/data/sql"]').getByRole('button', { name: 'Run query', exact: true }).click();
   await page.waitForLoadState('load');
 }
+
+test.describe('SQL workspace draft', () => {
+  test.describe.configure({ mode: 'default' });
 
 test('SQL editor creates a table, inserts and selects; a saved query reopens; the Tables tab lists the rows', async ({ page, audit }) => {
   const current = journey();
@@ -62,6 +66,56 @@ test('SQL editor creates a table, inserts and selects; a saved query reopens; th
   await audit.check('table rows');
 });
 
+test('the new table form creates a table and opens the statement in the editor', async ({ page, audit }) => {
+  const current = journey();
+  const table = unique('formed').replaceAll('-', '_');
+  await page.goto(`/databases/${current.databaseId}/sql`);
+  await shell(page, current);
+  await page.getByRole('button', { name: 'New table', exact: true }).click();
+  const dialog = page.locator('#create-table');
+  await expect(dialog).toBeVisible();
+  await dialog.locator('#create-table-name').fill(table);
+  await dialog.getByRole('button', { name: 'Add column', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Add column', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Add column', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Remove column', exact: true }).last().click();
+  const names = dialog.locator('[name="columnName"]');
+  await expect(names).toHaveCount(3);
+  await names.nth(1).fill('name');
+  await names.nth(2).fill('score');
+  await dialog.locator('[name="columnType"]').nth(1).selectOption('TEXT');
+  await dialog.locator('[name="columnType"]').nth(2).selectOption('REAL');
+  await dialog.locator('[name="columnNotNull"]').nth(1).check();
+  const preview = dialog.locator('#create-table-sql');
+  await expect(preview).toHaveValue(new RegExp(`CREATE TABLE "${table}"`));
+  await expect(preview).toHaveValue(/"id" INTEGER PRIMARY KEY/);
+  await expect(preview).toHaveValue(/"name" TEXT NOT NULL/);
+  await expect(preview).toHaveValue(/"score" REAL/);
+  await dialog.getByRole('button', { name: 'Open in SQL editor', exact: true }).click();
+  await page.waitForLoadState('load');
+  await expect(page.locator('#sql')).toHaveValue(new RegExp(`CREATE TABLE "${table}"`));
+  await expect(page.locator('#sql')).toHaveValue(/"name" TEXT NOT NULL/);
+  await page.getByRole('button', { name: 'New table', exact: true }).click();
+  const again = page.locator('#create-table');
+  await again.locator('#create-table-name').fill(table);
+  await again.getByRole('button', { name: 'Add column', exact: true }).click();
+  await again.locator('[name="columnName"]').nth(1).fill('name');
+  await again.locator('[name="columnType"]').nth(1).selectOption('TEXT');
+  await again.getByRole('button', { name: 'Create table', exact: true }).click();
+  await page.waitForLoadState('load');
+  await expect(page.getByRole('status').filter({ hasText: `Created table ${table}` })).toBeVisible();
+  await expect(page.locator('#sql-tables')).toContainText(table);
+  await audit.check('table created from the form');
+  await page.getByRole('button', { name: 'New table', exact: true }).click();
+  const duplicate = page.locator('#create-table');
+  audit.expectStatus(/\/api\/v1\/dashboard\/data\/sql\/tables(?:\?|$)/, 400);
+  await duplicate.locator('#create-table-name').fill(table);
+  await duplicate.getByRole('button', { name: 'Create table', exact: true }).click();
+  await expect(duplicate.locator('[role="alert"]')).toBeVisible();
+  await expect(duplicate.locator('[role="alert"]')).toContainText(/\w/);
+});
+});
+
 test('the SQL editor suggests CREATE TABLE while typing create', async ({ page }) => {
   const current = journey();
   await page.goto(`/databases/${current.databaseId}/sql`);
@@ -69,6 +123,9 @@ test('the SQL editor suggests CREATE TABLE while typing create', async ({ page }
   const editor = page.locator('#sql-editor ts-code-editor');
   await expect(editor).toHaveAttribute('data-ready', '');
   await editor.locator('.monaco-editor').click();
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.keyboard.press('Delete');
+  await expect(page.locator('#sql')).toHaveValue('');
   await page.keyboard.type('create');
   const createTable = page.locator('.suggest-widget .monaco-list-row').filter({
     has: page.locator('.monaco-highlighted-label', { hasText: /^CREATE TABLE$/ }),
@@ -94,7 +151,7 @@ test('an API key is shown once and rotates twice during grace without another cl
   await page.locator('#key-secret').getByRole('link', { name: 'Done', exact: true }).click();
   const secrets = [key];
   for (let generation = 1; generation <= 2; generation += 1) {
-    const target = generation === 1 ? '/api-keys' : `/api-keys/${key.slice(0, 26)}`;
+    const target = generation === 1 ? '/api-keys' : `/api-keys/${keyId(key)}`;
     await page.goto(target);
     expect((await page.content()).includes(secrets.at(-1)!), 'the previous reveal is gone').toBe(false);
     const rotating = generation === 1 ? page.locator('main tr').filter({ hasText: name }) : page.locator('main');
@@ -103,7 +160,7 @@ test('an API key is shown once and rotates twice during grace without another cl
     const warning = dialog.getByText(/The previous secret still works until .*Rotating now ends it immediately\./);
     if (generation === 1) await expect(warning).toHaveCount(0);
     else await expect(warning).toBeVisible();
-    await expect(dialog.locator('[name=dialog]')).toHaveValue(`rotate-${key.slice(0, 26)}`);
+    await expect(dialog.locator('[name=dialog]')).toHaveValue(`rotate-${keyId(key)}`);
     if (generation === 2) await expect(dialog.locator('[name=view]')).toHaveValue('details');
     await dialog.locator('[name=previousSecretTtl]').selectOption('3600');
     await dialog.getByRole('button', { name: 'Rotate key', exact: true }).click();
@@ -127,7 +184,7 @@ test('an API key is shown once and rotates twice during grace without another cl
     saveSecret(`rotated-api-key-${generation}`, rotated);
     expect(apiKeyFormat.test(rotated), 'rotation reveals a canonical API key').toBe(true);
     expect(rotated === secrets.at(-1), 'rotation changes the secret').toBe(false);
-    expect(rotated.slice(0, 26), 'rotation preserves the key id').toBe(key.slice(0, 26));
+    expect(keyId(rotated), 'rotation preserves the key id').toBe(keyId(key));
     secrets.push(rotated);
     await page.locator('#key-secret').getByRole('link', { name: 'Done', exact: true }).click();
     await expect(page).toHaveURL((url) => url.pathname === target);
@@ -137,7 +194,7 @@ test('an API key is shown once and rotates twice during grace without another cl
     const exchange = await page.request.post(`${auth}/terrascale/oauth/token`, {
       form: {
         grant_type: 'client_credentials',
-        client_id: credential.slice(0, 26),
+        client_id: keyId(credential),
         client_secret: credential,
         project: current.projectId,
         scope: 'sql:read',
@@ -149,7 +206,7 @@ test('an API key is shown once and rotates twice during grace without another cl
 
   const replay = await page.request.get(`${dash}/auth/step-up/callback`);
   expect(replay.status(), 'a consumed callback fails closed').toBe(403);
-  const queryCallback = await page.request.get(`${dash}/auth/step-up/callback?keyId=${key.slice(0, 26)}`);
+  const queryCallback = await page.request.get(`${dash}/auth/step-up/callback?keyId=${keyId(key)}`);
   expect(queryCallback.status(), 'a callback with a query string is refused').toBe(403);
   await audit.check('API key rotated twice');
 

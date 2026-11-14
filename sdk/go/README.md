@@ -349,9 +349,11 @@ answering node) and `Regions`.
 `CreateDatabaseIn(ctx, org, project, name, "gru")` (or `Database.CreateIn`)
 creates a database in that region; an empty region uses the called region.
 Deleting a database leaves its branches independent.
-A region that does not serve the database answers 421 `ErrWrongRegion`, and the
-`*tb.APIError` carries `HomeRegion` and `Regions`. The client never retries
-it elsewhere: send the request to a region in `Regions`. Customer
+Source-only, unreleased server behavior: a request reaching a region without a copy is
+served through one proxy hop by a region that holds the database. A region pin selects
+only the entry region and has no effect on the serving region for these calls; the proxy
+removes it. An unreachable destination or stale forwarded placement returns `503 unavailable`.
+See [release scope and proxy behavior](../region-proxy.md). Customer
 placement/residency does not enable or disable serving regions.
 
 ### Analytics (TS-762)
@@ -674,9 +676,9 @@ consumer floor. See [release toolchain checks](contracts/release-toolchain.md)
 for advisory scanning, artifact qualification and consumer compilation.
 
 PostgreSQL passwords and API key token sources use
-`<26-character canonical ULID>_<52 lowercase Crockford base32 characters>`:
-the ULID alone is the OAuth client ID. Credential prefixes identify secret
-formats and are never part of an entity ID.
+`<26-character canonical ULID>_<52 lowercase Crockford base32 characters>`
+(a key may start with `sk_`): the ULID alone is the OAuth client ID.
+Credential prefixes identify secret formats and are never part of an entity ID.
 
 ### Permanent API key refusals
 
@@ -714,7 +716,8 @@ and from a rename. Response `regions` are sorted without ordering meaning; integ
 with membership or the writer and stays unchanged for an identical set. Transitional response fields are ignored.
 Region status exposes every selected region in `regions`, with nullable `role`, `revision`, `lastPulledAt`,
 `lagMs` and `lastVerified` (Python uses snake_case; .NET PascalCase).
-A removed regional endpoint returns `421 wrong_region`; use the global API or a current selected region.
+A removed regional endpoint proxies to a region that holds the database in the unreleased server contract;
+see [source-only proxy behavior](../region-proxy.md). Use the global API origin.
 
 Dropping the region ordering writes can return `503 replica_not_ready` after adding requested regions.
 Additions remain selected. Repeat the same request after replication (about 30 seconds for a new region).

@@ -1,4 +1,13 @@
-import base64,json,pathlib,urllib.request,urllib.parse,urllib.error,time,os,sys
+import base64
+import json
+import os
+import pathlib
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
 tag=os.environ['F9F5_PROOF_TAG']
 root=pathlib.Path.home()/'.local/state/ts-throwaway-account'
 state=json.loads((root/(tag+'.json')).read_text())
@@ -6,7 +15,7 @@ key=(root/(tag+'.key')).read_text().strip()
 def refresh_bearer():
  global bearer
  form=urllib.parse.urlencode({'grant_type':'client_credentials','project':state['projectId']}).encode()
- headers={'Authorization':'Basic '+base64.b64encode((key[:26]+':'+key).encode()).decode(),'Content-Type':'application/x-www-form-urlencoded'}
+ headers={'Authorization':'Basic '+base64.b64encode((key.removeprefix('sk_')[:26]+':'+key).encode()).decode(),'Content-Type':'application/x-www-form-urlencoded'}
  with urllib.request.urlopen(urllib.request.Request('https://auth.terrascale.tech/terrascale/oauth/token',form,headers),timeout=20) as response: bearer=json.load(response)['access_token']
  target=root/(tag+'.token');target.touch(mode=0o600,exist_ok=True);target.chmod(0o600);target.write_text(bearer)
 refresh_bearer()
@@ -31,4 +40,4 @@ if __name__=='__main__':
  (root/(tag+'.proof.json')).write_text(json.dumps(public))
  p=path+'/f9f5/sql/execute'
  status,body,_,elapsed=call('gru',p,'POST',{'statements':[{'sql':'CREATE TABLE items(id INTEGER PRIMARY KEY, value TEXT)'},{'sql':"INSERT INTO items VALUES (1,'initial')"}]})
- print(json.dumps({'create_database':201,'create_table':status,'home_region':body['homeRegion'] if 'homeRegion' in body else 'gru','ms':elapsed,'database':public['database']}),flush=True)
+ print(json.dumps({'create_database':201,'create_table':status,'home_region':body.get('homeRegion', 'gru'),'ms':elapsed,'database':public['database']}),flush=True)

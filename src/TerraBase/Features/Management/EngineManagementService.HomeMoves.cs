@@ -105,8 +105,10 @@ internal sealed partial class EngineManagementService : IHomeMoveCatalog
                 return record;
             }
 
-            IReadOnlyList<string> replicas = [.. record.Replicas.Where(region => region != marker.Target).Append(options.Region).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
-            var placed = record with { HomeRegion = marker.Target, ReplicaRegions = replicas, PlacementVersion = marker.Version };
+            IReadOnlyList<string> replicas = marker.RequestedRegions is { } selected
+                ? [.. selected.Where(region => region != marker.Target).Order(StringComparer.Ordinal)]
+                : [.. record.Replicas.Where(region => region != marker.Target).Append(options.Region).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
+            var placed = record with { HomeRegion = marker.Target, ReplicaRegions = replicas, AllRegions = marker.RequestedRegions is null && record.AllRegions, PlacementVersion = marker.Version };
             await CatalogTables.PutDatabaseAsync(transaction, placed, cancellationToken).ConfigureAwait(false);
             _ = await transaction.DeleteAsync(EngineManagedBackupService.BackedUpDatabases, marker.DatabaseId, cancellationToken).ConfigureAwait(false);
             return placed;

@@ -7,7 +7,7 @@ internal static class ErrorResponse
     public static IResult From(Failure error, int? op = null) => error switch
     {
         NotFound e => new Response(StatusCodes.Status404NotFound, e.Code, e.Message, op),
-        Conflict e => new Response(StatusCodes.Status409Conflict, e.Code, e.Message, op),
+        Conflict e => new Response(StatusCodes.Status409Conflict, e.Code, e.Message, op, gap: e.Gap),
         Validation e => new Response(StatusCodes.Status400BadRequest, e.Code, e.Message, op, e.Details),
         PreconditionFailed e => new Response(StatusCodes.Status412PreconditionFailed, e.Code, e.Message, op),
         Unauthorized e => new Response(StatusCodes.Status401Unauthorized, e.Code, e.Message, op),
@@ -23,7 +23,7 @@ internal static class ErrorResponse
 
     private sealed class Response(
         int status, string code, string? message, int? op, IReadOnlyList<ValidationDetail>? details = null, bool retryAfter = false, string? region = null,
-        string? machine = null) : IResult
+        string? machine = null, HistoryGap? gap = null) : IResult
     {
         public Task ExecuteAsync(HttpContext httpContext)
         {
@@ -33,7 +33,7 @@ internal static class ErrorResponse
                 httpContext.Response.Headers.RetryAfter = "1";
             }
 
-            return BadRequests.WriteAsync(httpContext, status, code, message, op, details, region, machine);
+            return BadRequests.WriteAsync(httpContext, status, code, message, op, details, region, machine, gap: gap);
         }
     }
 }

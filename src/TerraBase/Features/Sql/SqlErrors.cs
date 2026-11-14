@@ -23,6 +23,9 @@ internal static partial class SqlErrors
     public const string TooLarge = "too_large";
     public const string QueryCanceled = "query_canceled";
     public const string WriteOutcomeUnknown = "write_outcome_unknown";
+    public static SqlError OutcomeUnknown(string home) => new(WriteOutcomeUnknown,
+        $"the commit was sent to the database's home region {home} and its answer was lost, so it may have committed; the session is closed; reconcile by reading back what it would have written before writing again");
+    public static readonly SqlError TransactionExpired = new(QueryCanceled, "the transaction expired: it was open for more than 5 seconds and was rolled back");
     public const string TransactionRolledBack = "transaction_rolled_back";
     public const string TransactionAborted = "transaction_aborted";
     public const string ReadOnlyTransaction = "read_only_transaction";
@@ -190,9 +193,7 @@ internal static partial class SqlErrors
 
     public static SqlError Busy(string message) => new(SerializationConflict, message);
 
-    public static SqlError Moved(Engine.DatabaseMovedException moved) => moved.Home is { } home
-        ? new(WrongRegion, moved.Message, home)
-        : Busy(moved.Message);
+    public static SqlError Moved(Engine.DatabaseMovedException moved) => new(WrongRegion, moved.Message);
 
     public static SqlError TooBig(string message) => new(TooLarge, message);
 

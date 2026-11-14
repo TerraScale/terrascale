@@ -319,16 +319,14 @@ Both clients resolve their endpoint per request through `ITerraBaseEndpointResol
 and cancellation token, and every returned origin is validated before credentials
 are sent.
 
-Regions follow TerraBase's regional contract (monorepo `docs/terrabase/region-identity.md`). Without `Region`, a request
-goes to `BaseAddress` (for example `https://api.terrascale.tech`) and
-carries no routing header; a `TerraBaseSqlClient` with an `ApiKey` and no `BaseAddress`, `EndpointResolver` or
-`AuthAddress` sends it to `https://api.terrascale.tech`. With `Region = "gru"` (a lowercase region id), every request is sent to
-`https://api.terrascale.tech` (unless `BaseAddress`/`EndpointResolver` is set) and pinned with
-`X-TerraScale-Region-Pin: gru`, so no other region serves it. A region that does not serve the request answers `421`,
-surfaced as `TerraBaseWrongRegionException`: `Region` is the region that answered, `HomeRegion` and `Regions` (from
-`X-TerraBase-Database-Home`/`-Regions`) say where to send it. Nothing is retried or redirected automatically: a write is
-sent once. Every `TerraBaseException` carries
-the answering region (`X-TerraBase-Region`) when TerraBase named it.
+Regions follow TerraBase's regional contract (monorepo `docs/terrabase/region-identity.md`). Use the global API
+origin, `https://api.terrascale.tech`, or configure `BaseAddress`/`EndpointResolver` for another deployment.
+`Region` selects the entry region with `X-TerraScale-Region-Pin`. In the source-only, unreleased server proxy
+contract, a database call reaching a region without a copy is served through one proxy hop by a region that holds
+the database. `Region` has no effect on the serving region of these calls: the proxy removes the pin.
+An unreachable destination or stale forwarded placement returns `503 unavailable`; an uncertain write returns
+`503 write_outcome_unknown`. Every `TerraBaseException` carries the answering region (`X-TerraBase-Region`)
+when TerraBase named it. See [release scope and proxy behavior](../region-proxy.md).
 
 No TerraBase runs in this repository (user rule, 2026-10-11: no repository other
 than the monorepo depends on TerraBase).
@@ -400,7 +398,8 @@ and from a rename. Response `regions` are sorted without ordering meaning; integ
 with membership or the writer and stays unchanged for an identical set. Transitional response fields are ignored.
 Region status exposes every selected region in `regions`, with nullable `role`, `revision`, `lastPulledAt`,
 `lagMs` and `lastVerified` (Python uses snake_case; .NET PascalCase).
-A removed regional endpoint returns `421 wrong_region`; use the global API or a current selected region.
+A removed regional endpoint proxies to a region that holds the database in the unreleased server contract;
+see [source-only proxy behavior](../region-proxy.md). Use the global API origin.
 
 Dropping the region ordering writes can return `503 replica_not_ready` after adding requested regions.
 Additions remain selected. Repeat the same request after replication (about 30 seconds for a new region).

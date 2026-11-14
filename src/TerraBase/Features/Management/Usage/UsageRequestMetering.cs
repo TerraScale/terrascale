@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http.Features;
 using TerraBase.Features.Management.Logs;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
+using TerraBase.Features.Regions;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management.Usage;
@@ -30,6 +31,14 @@ public static class UsageRequestMetering
                 return;
             }
 
+            if (Listeners.IsForwarded(context) && context.Request.Headers[HomeForwarding.AccountingHeader] is ["source"])
+            {
+                context.Response.OnStarting(() =>
+                {
+                    context.Response.Headers[HomeForwarding.AccountingHeader] = "source";
+                    return Task.CompletedTask;
+                });
+            }
             var input = context.Request.Body;
             var output = context.Features.GetRequiredFeature<IHttpResponseBodyFeature>();
             using var transfer = new Transfer(context, meter, time, logs);
@@ -74,6 +83,7 @@ public static class UsageRequestMetering
         private readonly Lock _gate = new();
         private TenantContext? _database;
         private bool _resolved;
+        private bool _complete;
         private long _received;
         private long _sent;
         private DateTimeOffset _transferredAt;
@@ -94,11 +104,13 @@ public static class UsageRequestMetering
         {
             lock (_gate)
             {
+                _complete = true;
                 Resolve();
                 ReportLocked();
-                if (_database is { } database)
+                if (OwnsRequest
+                    && !_context.WebSockets.IsWebSocketRequest && _database is { } database)
                 {
-                    _meter.RecordRequest(database, _context.Request.Method, status, elapsed, 0, 0);
+                    _meter.RecordRequest(database, _context.Request.Method, status, elapsed, 0, 0, Region);
                     if (_context.GetEndpoint() is RouteEndpoint { RoutePattern.RawText: { } route })
                     {
                         var (statements, errors) = operations.Statements(database);
@@ -144,12 +156,18 @@ public static class UsageRequestMetering
 
         private void ReportLocked()
         {
-            if (_received + _sent > 0 && _database is { } database)
+            if (OwnsRequest && (_complete || _context.Features.Get<HomeForwarding.ForwardedAccounting>() is null)
+                && !_context.WebSockets.IsWebSocketRequest && _received + _sent > 0 && _database is { } database)
             {
-                _meter.RecordClientBytes(database, _received, _sent, _transferredAt);
+                _meter.RecordClientBytes(database, _received, _sent, _transferredAt, Region);
                 (_received, _sent) = (0, 0);
             }
         }
+
+        private bool OwnsRequest => _context.Features.Get<HomeForwarding.ProxiedRequest>() is null
+            && !(Listeners.IsForwarded(_context) && _context.Request.Headers[HomeForwarding.AccountingHeader] is ["source"]);
+
+        private string? Region => _context.Features.Get<HomeForwarding.ForwardedAccounting>()?.CompletedRegion;
 
         private void Resolve()
         {

@@ -214,7 +214,7 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
         var state = 0;
         var tenant = QosContext.Current;
         var context = CaptureContext();
-        var weight = tenant is null ? 16 : QosPolicy.For(tenant.Plan).Weight;
+        var weight = tenant is null ? 16 : QosPolicy.For(tenant).Weight;
         var lane = new KeyValuePair<string, object?>("lane", tenant?.Plan == PlanTier.Hobby ? "hobby" : StorageWork.IsBulk ? "bulk" : "other");
         var queuedAt = Stopwatch.GetTimestamp();
         var node = new LinkedListNode<WorkItem>(new WorkItem(tenant?.OrganizationId, 0, tenant?.Plan == PlanTier.Hobby, StorageWork.IsBulk, Run));

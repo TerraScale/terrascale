@@ -205,7 +205,7 @@ project. It is not a bearer token: code exchanges it at the token endpoint
 - **Format.** `<ULID>_<52 chars>`, 79 characters. The first 26 characters
   are the canonical uppercase ULID client id; the secret uses lowercase Crockford
   base32 (`0-9a-z` without `i`, `l`, `o`, `u`) and holds 260 random bits.
-  The client secret is the **whole** key string.
+  The client secret is the **whole** key string. A key may start with `sk_`.
 - **Shown once.** Creation and rotation answer the key string once (`key`).
   ts-auth stores only its SHA-256 and compares in constant time.
 - **Scope.** A project key reaches only its project, and only one database if it

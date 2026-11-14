@@ -142,7 +142,12 @@ public sealed class ScopedKeyEndpoint(ApiKeys keys, PlatformDirectory directory,
         }
 
         var colon = decoded.IndexOf(':', StringComparison.Ordinal);
-        return colon > 0 && decoded[(colon + 1)..] is { Length: 79 } secret && secret[..26] == decoded[..colon] ? secret : null;
+        if (colon <= 0 || ApiKeys.Parse(decoded[(colon + 1)..]) is not { } parsed || parsed.Id != decoded[..colon])
+        {
+            return null;
+        }
+
+        return decoded[(colon + 1)..];
     }
 
     private async Task<ScopedKeyRequest?> BodyAsync(CancellationToken cancellationToken)

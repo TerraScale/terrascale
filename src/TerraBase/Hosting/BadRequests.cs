@@ -2,7 +2,6 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraBase.Engine;
 using TerraBase.Errors;
-using TerraBase.Features.Regions;
 using ZLogger;
 
 namespace TerraBase.Hosting;
@@ -17,7 +16,9 @@ public sealed record ErrorDetail(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Machine = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Url = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? RequestId = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? DocsUrl = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? DocsUrl = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? UnavailableFrom = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? UnavailableTo = null);
 public static class BadRequests
 {
     internal const string UnknownRoute = "unknown_route";
@@ -61,15 +62,6 @@ public static class BadRequests
                 Replace(context.Response);
                 context.Response.Headers.RetryAfter = "30";
                 await WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "disk_capacity", error.Message, op: null).ConfigureAwait(false);
-            }
-            catch (DatabaseMovedException error) when (!context.Response.HasStarted && error.Home is not null)
-            {
-                Replace(context.Response);
-                context.Response.Headers["X-TerraBase-Database-Home"] = error.Home;
-                Listeners.ReplayIn(context, error.Home);
-                var url = HomeForwarding.RetryUrl(context, error.Home);
-                context.Response.Headers.Location = url;
-                await WriteAsync(context, StatusCodes.Status421MisdirectedRequest, "wrong_region", error.Message, op: null, url: url).ConfigureAwait(false);
             }
             catch (DatabaseMovedException error) when (!context.Response.HasStarted)
             {
@@ -115,13 +107,13 @@ public static class BadRequests
 
     internal static Task WriteAsync(
         HttpContext context, int status, string code, string? message, int? op, IReadOnlyList<ValidationDetail>? details = null, string? region = null, string? machine = null,
-        string? url = null)
+        string? url = null, HistoryGap? gap = null)
     {
         context.Response.StatusCode = status;
         context.Response.Headers.CacheControl = "no-store";
         context.Response.ContentType = "application/json";
         var requestId = context.TraceIdentifier;
         return JsonSerializer.SerializeAsync(
-            context.Response.Body, new ErrorBody(new ErrorDetail(code, message, op, details, region, machine, url, requestId, ErrorDocs.Url(code))), TerraBaseJsonContext.Default.ErrorBody, context.RequestAborted);
+            context.Response.Body, new ErrorBody(new ErrorDetail(code, message, op, details, region, machine, url, requestId, ErrorDocs.Url(code), gap?.From, gap?.To)), TerraBaseJsonContext.Default.ErrorBody, context.RequestAborted);
     }
 }

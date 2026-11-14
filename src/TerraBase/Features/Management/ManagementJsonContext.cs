@@ -63,6 +63,7 @@ namespace TerraBase.Features.Management;
 [JsonSerializable(typeof(ProjectUsage))]
 [JsonSerializable(typeof(AllowanceUsagePage))]
 [JsonSerializable(typeof(NodeUsageMonths))]
+[JsonSerializable(typeof(UsageCounts))]
 [JsonSerializable(typeof(ProjectAnalytics))]
 [JsonSerializable(typeof(OrphanDatabaseFile))]
 [JsonSerializable(typeof(SweepEntry))]

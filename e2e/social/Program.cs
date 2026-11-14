@@ -18,8 +18,14 @@ namespace Journey.Social;
 
 internal static class Program
 {
-    private static async Task Main()
+    private static async Task Main(string[] args)
     {
+        if (args is ["platform-sessions"])
+        {
+            await PlatformSessions.RunAsync();
+            return;
+        }
+
         var options = new AuthOptions
         {
             Listen = new IPEndPoint(IPAddress.Loopback, 8090),

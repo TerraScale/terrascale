@@ -221,25 +221,7 @@ internal sealed partial class EngineManagementService
             }
         }
 
-        var reserved = await engine.RecordDatabaseDeleteIntentAsync(database, token => WriteAsync<bool>(async transaction =>
-        {
-            var id = OrphanId(database);
-            if (!catalogGate.Value.IsOpen || await OwnedFileAsync(transaction, database, token).ConfigureAwait(false)
-                || await GetAsync(transaction, OrphanFiles, id, ManagementJsonContext.Default.OrphanDatabaseFile, token).ConfigureAwait(false) != record)
-            {
-                return false;
-            }
-            _ = await CatalogTables.PutPendingCleanupAsync(transaction, database, token).ConfigureAwait(false);
-            await transaction.DeleteAsync(OrphanFiles, id, token).ConfigureAwait(false);
-            return true;
-        }, static _ => false, token), cancellationToken).ConfigureAwait(false);
-        if (!reserved)
-        {
-            return false;
-        }
-        checkpoint("audit.delete", database);
-        _ = await FinishDatabaseCleanupAsync(database, cancellationToken, abandonedCreation: true).ConfigureAwait(false);
-        return !await ReadAsync<bool>(transaction => OwnedFileAsync(transaction, database, cancellationToken), static _ => true, cancellationToken).ConfigureAwait(false);
+        return false;
     }
 
     private async ValueTask<bool> RemovedHomeFileAsync(IStorageTransaction transaction, TenantContext database, CancellationToken token) =>

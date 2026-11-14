@@ -6,8 +6,11 @@
 ## Connecting
 
 `GET wss://api.<domain>/v1/projects/{project}/databases/{database}/sql/ws`. Offer the subprotocol `terrascale.sql.v1`
-and the server selects it. A request without an upgrade answers 400 `websocket_required`; a database homed elsewhere
-answers 421 like every other data route.
+and the server selects it. A request without an upgrade answers 400 `websocket_required`.
+An SDK needs no knowledge of the database's region. A region that does not hold the database validates the
+credential locally and proxies the session to a region that holds it; the destination authenticates again.
+The proxy adds one inter-region round trip (about 170 ms between the current regions) and two request admissions.
+Only the destination meters requests, operation units and bytes.
 
 The credential is the same bearer API key or project token as `sql/execute`, with `sql:read` (writes need
 `sql:write`). It never goes in the URL: the server reads no query parameter for it. Send it one of two ways:
@@ -15,7 +18,7 @@ The credential is the same bearer API key or project token as `sql/execute`, wit
 | Client | How | Refusal |
 |---|---|---|
 | Servers, CLIs, native SDKs | `Authorization: Bearer <key>` on the upgrade request | 401 `invalid_key` or 403 `forbidden_scope` before the upgrade |
-| Browsers (they cannot set WebSocket headers) | Upgrade without `Authorization`, then send `{"id":1,"type":"auth","token":"<key>"}` as the first frame within 5 seconds. The server answers `{"id":1,"type":"result","results":[],"transaction":false}` | an `unauthorized`, `forbidden_scope`, `wrong_region` or `unavailable` error frame, then close 1008. No auth frame within 5 seconds, or any other first frame, also closes with 1008 |
+| Browsers (they cannot set WebSocket headers) | Upgrade without `Authorization`, then send `{"id":1,"type":"auth","token":"<key>"}` as the first frame within 5 seconds. The server answers `{"id":1,"type":"result","results":[],"transaction":false}` | an `unauthorized`, `forbidden_scope` or `unavailable` error frame, then close 1008. No auth frame within 5 seconds, or any other first frame, also closes with 1008 |
 
 Platform services such as ts-auth reach their databases on the internal listener with the peer credential
 (`X-TerraBase-Peer-Credential`) instead of a bearer key, as on `sql/execute`. That listener speaks only HTTP/2, so
@@ -27,8 +30,9 @@ socket to the writer, which runs the session ([regional writer](../regional-roll
 
 The auth frame holds at most 16 KiB, and nothing else is read before it. A frame-authenticated socket gets the same
 checks as a header: the project token's key admission and revocation watch, IP allowlists, project and database
-restrictions, scopes and the database's placement (a database served elsewhere answers `wrong_region`, 421/08004,
-naming its home region). A second `auth` frame answers `invalid_request`.
+restrictions and scopes. No destination is discovered and no downstream connection is opened until these checks
+succeed. The receiving region replays the auth frame so the destination independently authenticates it.
+A second `auth` frame answers `invalid_request`.
 
 Either way, the credential is checked again before every frame. A revoked key, a lost scope or a deleted database
 answers an `unauthorized` error frame and closes the socket with 1008; a revoked project token ends it as soon as
@@ -41,7 +45,7 @@ Frames are JSON text of at most 1 MiB. The server answers each frame in order, o
 | Client frame | Meaning |
 |---|---|
 | `{"id":1,"type":"execute","statements":[{"sql":"…","args":[…],"named":{…}}]}` | Run 1 to 256 statements, with arguments as on `sql/execute`. Outside a transaction they run as one transaction, all or nothing. Inside one they run in it. |
-| `{"id":2,"type":"begin"}` | Open a transaction (at most 5 seconds). |
+| `{"id":2,"type":"begin"}` | Open a transaction. Five-second idle and total limits apply at the next message wait; a message in progress uses its progress budget, and an accepted statement or commit finishes under its execution budget. |
 | `{"id":3,"type":"commit"}` | Commit it. After a failed statement, commit rolls back and answers `transaction_rolled_back`. |
 | `{"id":4,"type":"rollback"}` | Roll it back. |
 
@@ -73,13 +77,29 @@ After a failed statement inside a transaction, every `execute` answers `transact
 | The region's writer starts handing off to another node | close 1012 after the answer to the frame in flight; frames that arrive later do not run. Reconnect. A client still receiving that answer when the old writer stops sees 1006 instead, and the frame's outcome is unknown |
 | An upgrade while that handoff holds the region's ingress, or to a node that was drained for a handoff (the old writer after the hold, or a follower drained for retirement) until that node stops | 503 with `Retry-After: 1` |
 
-The server pings every 20 seconds and drops a peer that does not answer within 20 seconds. After a close for a client
-fault (1003, 1008, 1009, 1011) it drops a peer that does not answer the close within 2 seconds. After a 1001 or 1012 it
-still sends every answer queued before the close and runs no frame that arrives later. A client that keeps sending after the 1012 instead of answering it gets no answer to those frames and stays connected until the node stops; close the socket when you read a 1012. It waits for a peer that sends nothing until the ping
-timeout drops it, 40 to 50 seconds after the peer's last frame. Every frame counts as one request in usage and
-request logs, with its received and sent bytes.
+The server sends a keep-alive pong every 20 seconds without requiring an acknowledgement. An answer may take
+as long as its transport keeps making progress: TCP acknowledged bytes renew a 30-second no-progress allowance,
+including while the same write remains blocked. A queued keep-alive cannot cut off a progressing answer.
+An authenticated socket with no message in flight and no open transaction closes after 30 minutes without
+a protocol message; keep-alive traffic does not renew that input deadline. Bearer-token expiry and revocation
+still close the session.
 
-A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+After a close for a client fault (1002, 1003, 1007, 1008, 1009, 1011) it drops a peer that does not answer the close
+within 2 seconds. After a 1001 or 1012 it still sends every answer queued before the close and runs no frame that
+arrives later. A peer that does not answer the close remains until the node stops or its input or credential
+deadline expires. Close the socket when you read a 1012. Every frame counts as one request in usage and request
+logs, with its received and sent bytes.
+
+A push stream that returns NATS error 10074 is not retried, because it requests more regional copies than the cluster provides.
+
+A database writer move closes a pinned session with 1012 and rolls back its open transaction. If the proxy leg
+drops while a statement or commit is in flight, its outcome is unknown; `write_outcome_unknown` is returned when
+the client connection still permits an error frame. A close without that frame also leaves the in-flight outcome
+unknown. The proxy does not replay it. Reconnect and inspect committed state before sending a new write.
+
+Relayed answers use the same progress rule as input. Once an answer starts arriving, its deadline is its start plus 30 seconds plus the bytes received divided by 16 KiB/s. Before the first answer byte, the entry waits at most ten minutes, then closes without cancelling accepted execution or commit at the home. A close drain shares the two-second closing budget from the start of closing. Transaction age limits govern waiting for input; there is no hard wall-clock lifetime for a transaction. There is no end-to-end guarantee while old and new builds serve together.
+
+A session closes after a `write_outcome_unknown` answer (SQLSTATE 08007, HTTP 503). WebSocket uses close reason `write_outcome_unknown`; PostgreSQL sends a fatal error stating that the session is closed. The outcome is unknown, not rolled back or retryable. Reconcile by reading back the expected data from a new session before writing again.
 
 An SDK reports `transaction_rolled_back` only after receiving that answer from the server, or after losing an
 open transaction for which no committing request was sent. If COMMIT or a request that can commit (including an

@@ -104,7 +104,7 @@ public sealed record TerraBaseOptions
     public FileStorageSettings? FileStorage { get; init; }
 
     internal ShapeStorageSettings? ShapeStorage { get; init; }
-    public byte[]? DatabaseMasterKey { get; init; }
+    public KeyringSettings? DatabaseKeyring { get; init; }
 
     public Uri? NatsUrl { get; init; }
 
@@ -205,7 +205,7 @@ public sealed record TerraBaseOptions
         var options = FromValues(values, outsideDevelopment);
         if (options.Backup is null && outsideDevelopment)
         {
-            throw new TerraBaseConfigurationException($"backup requires {string.Join(", ", BackupSettings.TigrisVariables.Select(variable => variable.Variable))} (attach the Tigris bucket) and TERRABASE_MASTER_KEY outside Development");
+            throw new TerraBaseConfigurationException($"backup requires {string.Join(", ", BackupSettings.TigrisVariables.Select(variable => variable.Variable))} (attach the Tigris bucket) and TERRABASE_MASTER_KEY or TERRABASE_MASTER_KEYS_FILE outside Development");
         }
 
         return options;
@@ -269,7 +269,7 @@ public sealed record TerraBaseOptions
             Backup = BackupSettings.Parse(values),
             FileStorage = FileStorageSettings.Parse(values),
             ShapeStorage = ShapeStorageSettings.Parse(values),
-            DatabaseMasterKey = values.TryGetValue("master-key", out var masterKey) ? BackupSettings.ParseMasterKey(masterKey) : null,
+            DatabaseKeyring = KeyringSettings.Parse(values),
             NatsUrl = NatsAddress(),
             NatsToken = values.TryGetValue("nats-token", out var natsToken) ? ParseNatsToken(natsToken) : null,
             AtlasUrl = ParseAtlasUrl(values, out var atlasKeyFile, out var atlasKey),

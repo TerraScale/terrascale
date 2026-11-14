@@ -1,4 +1,5 @@
 import { columns, rows, rowHeight, land, regions as pins } from './region-map-data.js';
+import { pingRegions } from './region-ping.js';
 
 const still = matchMedia('(prefers-reduced-motion: reduce)');
 const scheme = matchMedia('(prefers-color-scheme: dark)');
@@ -459,6 +460,7 @@ const mount = root => {
   }
 
   sync(null);
+  pingRegions(root, signal);
   const resized = new ResizeObserver(layout);
   resized.observe(surface);
   resized.observe(stage);

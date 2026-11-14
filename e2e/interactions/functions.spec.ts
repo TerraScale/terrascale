@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test';
 import { test, expect } from '../support/audit';
 import { deployFunction, functionAccess, functionSource, functionTool, functionUrl } from '../support/functions';
 import { deletionHandoff } from '../support/mcp';
@@ -21,7 +22,7 @@ test('functions list, detail, invocation logs and deletion work through the page
   const row = page.locator('#functions tbody tr').filter({ hasText: name });
   await expect(row).toHaveCount(1);
   await row.getByRole('link', { name: 'Details', exact: true }).click();
-  await expect(page.locator('#function-source')).toHaveText(functionSource);
+  await expect(page.locator('#function-source')).toHaveValue(functionSource);
   await expect(page.locator('#function-invoke')).toContainText(functionUrl(name));
   await expect(page.locator('#function-logs tbody tr')).toHaveCount(1);
   await expect(page.locator('#function-logs')).toContainText('functions journey');
@@ -83,4 +84,69 @@ test('failed function deletion preserves the selection and confirmation dialog w
   await expect(page.getByRole('heading', { name: 'Functions', exact: true })).toBeVisible();
   await audit.check('the functions page remains usable after a stale delete');
   console.log('Functions delete failure: already-deleted function returns HTML 404 with modal alert; Cancel returns to the usable page.');
+});
+
+async function setSource(page: Page, source: string): Promise<void> {
+  await page.locator('#function-editor').evaluate((editor: HTMLTextAreaElement, text: string) => {
+    editor.value = text;
+    editor.dispatchEvent(new Event('input', { bubbles: true }));
+  }, source);
+  await expect(page.locator('#function-editor')).toHaveValue(source);
+}
+
+test('create, deploy, test run, edit and redeploy a function from the editor', async ({ page }) => {
+  const current = journey();
+  const name = unique('editor');
+  const created = 'async function handler(event) { console.log("editor journey"); return { echo: event.body }; }';
+  const edited = 'async function handler(event) { console.log("editor revised"); return { edited: true }; }';
+  await page.goto(`/databases/${current.databaseId}/functions?edit=new`);
+  await expect(page.locator('#function-editor')).toHaveValue(/async function handler\(event\)/);
+  await expect(page.locator('#function-editor')).toHaveValue(/sql\.query\("SELECT 1 AS ok"\)/);
+  await page.locator('#function-name').fill(name);
+  await setSource(page, 'function (');
+  await page.getByRole('button', { name: 'Deploy function', exact: true }).click();
+  await expect(page.locator('#function-deploy-error')).toContainText('JavaScript');
+  await expect(page.locator('#function-editor')).toHaveValue('function (');
+  await setSource(page, created);
+  await page.getByRole('button', { name: 'Deploy function', exact: true }).click();
+  await page.waitForURL((url) => url.searchParams.get('function') === name && url.searchParams.get('deployed') === '1');
+  await expect(page.locator('#function-notice')).toHaveText('Function deployed.');
+  await expect(page.locator('#function-source')).toHaveValue(created);
+  await expect(page.getByText('HTTPS calls', { exact: true }).first()).toBeVisible();
+  await page.locator('#function-event').fill('{"hello":"world"}');
+  await page.getByRole('button', { name: 'Test run', exact: true }).click();
+  await expect(page.locator('#function-result')).toContainText('world');
+  await expect(page.locator('#function-logs')).toContainText('editor journey');
+  await page.locator('#function-event').fill('{');
+  await page.getByRole('button', { name: 'Test run', exact: true }).click();
+  await expect(page.locator('#function-event-error')).toHaveText('Event must be JSON.');
+  await expect(page.locator('#function-event')).toHaveValue('{');
+  await page.getByRole('link', { name: 'Edit', exact: true }).click();
+  await expect(page.locator('#function-name')).toHaveValue(name);
+  await expect(page.locator('#function-name')).toHaveJSProperty('readOnly', true);
+  await page.locator('#function-cron').fill('*/5 * * * *');
+  await setSource(page, edited);
+  await page.getByRole('button', { name: 'Deploy function', exact: true }).click();
+  await page.waitForURL((url) => url.searchParams.get('function') === name && url.searchParams.get('deployed') === '1');
+  await expect(page.locator('#function-source')).toHaveValue(edited);
+  await expect(page.getByRole('definition').filter({ hasText: 'Cron */5 * * * * UTC' })).toBeVisible();
+  console.log('Functions editor: invalid JavaScript stays in the editor, deploy, test run, invalid JSON, edit and redeploy with cron.');
+});
+
+test('a handler status is the test-run result', async ({ page }) => {
+  const current = journey();
+  const name = unique('status');
+  const source = 'async function handler() { return { status: 404, body: { missing: true } }; }';
+  await page.goto(`/databases/${current.databaseId}/functions?edit=new`);
+  await page.locator('#function-name').fill(name);
+  await setSource(page, source);
+  await page.getByRole('button', { name: 'Deploy function', exact: true }).click();
+  await page.waitForURL((url) => url.searchParams.get('function') === name && url.searchParams.get('deployed') === '1');
+  await page.getByRole('button', { name: 'Test run', exact: true }).click();
+  const result = page.locator('#function-result');
+  await expect(result).toContainText('404');
+  await expect(result).toContainText('application/json');
+  await expect(result).toContainText(/\{\s*"missing"\s*:\s*true\s*\}/);
+  await expect(page.locator('#function-event-error')).toHaveCount(0);
+  console.log('Functions test run: a handler 404 and its JSON body are the result.');
 });

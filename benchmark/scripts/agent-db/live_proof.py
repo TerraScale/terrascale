@@ -3,7 +3,7 @@ import base64
 import json
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from create_latency import API, call, token
 
@@ -15,9 +15,9 @@ def sql(access, project, database, *statements):
 
 
 def mint(key, body):
-    import urllib.request
     import urllib.error
-    basic = base64.b64encode(f"{key[:26]}:{key}".encode()).decode()
+    import urllib.request
+    basic = base64.b64encode(f"{key.removeprefix('sk_')[:26]}:{key}".encode()).decode()
     request = urllib.request.Request(MINT, data=json.dumps(body).encode(), method="POST",
                                      headers={"Authorization": "Basic " + basic, "Content-Type": "application/json"})
     try:
@@ -38,10 +38,11 @@ def main():
     parser.add_argument("key_file")
     parser.add_argument("project")
     args = parser.parse_args()
-    key = open(args.key_file).read().strip()
+    with open(args.key_file) as key_file:
+        key = key_file.read().strip()
     project = args.project
     access = token(key, project)
-    stamp = datetime.now(timezone.utc).strftime("%H%M%S")
+    stamp = datetime.now(UTC).strftime("%H%M%S")
 
     status, source = call("POST", f"{API}/v1/projects/{project}/databases", access, {"name": f"src-{stamp}"})
     check("create source", status == 201, str(status))
@@ -64,7 +65,7 @@ def main():
         time.sleep(5)
     check("restore window", status == 200, json.dumps(window))
     time.sleep(1.5)
-    at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     time.sleep(1.5)
     sql(access, project, source["id"], "INSERT INTO runs (name) VALUES ('later')")
     pitr = None
@@ -86,7 +87,7 @@ def main():
 
     status, ttl = call("POST", f"{API}/v1/projects/{project}/databases", access, {"name": f"ttl-{stamp}", "ttlSeconds": 60})
     check("create with ttl", status == 201 and ttl.get("expiresAt"), f"{status} expiresAt={ttl.get('expiresAt')}")
-    expires = datetime.fromisoformat(ttl["expiresAt"].replace("Z", "+00:00"))
+    expires = datetime.fromisoformat(ttl["expiresAt"])
 
     access = token(key, project)
     status, minted = mint(key, {"project": project, "database": fork["id"], "access": "read", "ttl_seconds": 600})
@@ -105,12 +106,12 @@ def main():
     check("clear ttl", status == 200 and cleared.get("expiresAt") is None, str(status))
 
     while True:
-        if (datetime.now(timezone.utc) - expires).total_seconds() > 120:
+        if (datetime.now(UTC) - expires).total_seconds() > 120:
             check("ttl database deleted after expiresAt", False, "still present 120 s after expiresAt")
         access = token(key, project)
         status, _ = call("GET", f"{API}/v1/projects/{project}/databases/{ttl['id']}", access)
         if status == 404:
-            late = (datetime.now(timezone.utc) - expires).total_seconds()
+            late = (datetime.now(UTC) - expires).total_seconds()
             check("ttl database deleted after expiresAt", late >= 0, f"{late:.1f} s after expiresAt")
             break
         time.sleep(1)

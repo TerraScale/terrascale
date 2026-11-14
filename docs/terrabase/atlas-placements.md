@@ -1,6 +1,6 @@
 # Atlas placements
 
-TerraBase tells [Atlas](../../region-identity.md) (the Cloudflare Worker that routes SDK
+TerraBase tells [Atlas](region-identity.md) (the Cloudflare Worker that routes SDK
 clients) which region homes each database. TerraBase is the source of truth; Atlas only
 keeps what it is told.
 
@@ -59,3 +59,11 @@ feature.
 - `terrabase.atlas.placement_publishes` (counter, by `result`: updated, stale,
   retryable, refused, queue_failed).
 - `terrabase.atlas.placement_pending` (gauge): rows waiting in the outbox.
+
+## Routing safety
+
+The published region is a database holder, not a project default. Region-set placement
+keeps the requested set, replica membership and placement version when moving its
+writer. Atlas is a routing hint: TerraBase still checks the database placement on
+each request and refuses a region that no longer holds it, including requests with a
+stale Atlas pin. All regions use the same placement checks.

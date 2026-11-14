@@ -19,10 +19,10 @@ Needs the .NET SDK of `global.json`, Node 24 with npm, Go (`sdk/go/.go-version`)
 (`e2e/sdk/rust/rust-toolchain.toml`), Python 3.12, git, make, curl, openssl, tar, sha256sum, jq, `certutil` (Ubuntu
 `libnss3-tools`; NixOS `nix shell nixpkgs#nss.tools`), `psql` of PostgreSQL 16 or later for `sslrootcert=system`
 (NixOS `nix shell nixpkgs#postgresql`), iproute2 `ip`, procps `pgrep`, util-linux `unshare`, `nsenter`
-and `mount`, a CA bundle at `/etc/ssl/certs/ca-certificates.crt`, and unprivileged user namespaces; Ubuntu 23.10 and
-later restrict those through AppArmor until `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`, the one
-command CI runs with sudo. The `ubuntu-24.04` runner image has all of them; CI installs only the pinned versions of
-the .NET SDK, Node and Go through setup actions and of Rust through rustup. `local.sh start` creates user, network,
+and `mount`, `strace` for the placement commit-I/O fault (NixOS `nix shell nixpkgs#strace`), a CA bundle at
+`/etc/ssl/certs/ca-certificates.crt`, and unprivileged user namespaces; Ubuntu 23.10 and later restrict those through
+AppArmor until `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`. CI installs `strace`, applies that
+sysctl and installs the pinned versions of the .NET SDK, Node and Go through setup actions and of Rust through rustup. `local.sh start` creates user, network,
 mount and PID namespaces. The network has only loopback: the production names resolve to the local edge and every
 other name or address fails to connect, so nothing reaches production. Everything the suite starts runs inside
 through `local.sh exec`. `local.sh stop` asks the namespace's first process to stop the stack in order and exit, kills
@@ -65,7 +65,7 @@ email unverified. Project-tenant sign-ups have their own tenant-scoped budgets; 
 | `journey/invitation.spec.ts` | 1 | 20/hour |
 | `journey/finish.spec.ts` | 1 | 20/hour |
 | `hosted/signup-address-limit.spec.ts` | 20 admitted, attempt 21 refused | 20/hour |
-| Each other spec's own address | 0 | 20/hour |
+| `placement/session-limits.spec.ts` | 3 | 20/hour |\n| Each other spec's own address | 0 | 20/hour |
 
 Teardown prints `signup address <address> <spec>: <stored count>/20 per hour`, reading the limiter's persisted
 counts with the same keyed subject derivation. Ordinary addresses spend at most 6 of 20 slots. Each invocation
@@ -92,6 +92,8 @@ cd e2e
 bash env/local.sh exec npx playwright test --project placement
 bash env/local.sh stop
 ```
+
+The R3 proxy scenario also needs `iptables` on PATH; its packet-drop rule lives only in the throwaway network namespace and is removed in cleanup. The placement project runs one worker because its shared Free-plan account can hold only one database.
 
 The namespace remembers the mode chosen by `start`; later `exec` and `stop` need no switch. Without it, the
 Development cell, service startup and default test list stay the same. The placement project is selected explicitly;
@@ -134,13 +136,15 @@ and deletes the account. Its third test signs up nobody: it sends a closure, the
 `X-TerraBase-Closure-Scope: region` and the check of the dashboard's platform project to fra's internal listener, for
 both versions, and each answers 409 `platform_project_protected`.
 
-`placement/regions.spec.ts` R16 removes gru from a database's regions and reads gru's data directory
+`placement/regions.spec.ts` R16 removes gru from a database's regions, verifies requests through gru are proxied, and reads gru's data directory
 (`$E2E_STATE/terrabase`, through `stateDir`) to see that no file named after the database is left there, then that
-the files are back once gru is added again. R17 removes a follower, verifies its routing record learns a rename, and adds it again with current data. R18 deletes a database at its home while its follower is removed, then checks the removed follower forgets it. R19 starts a real, unprimed node in the home region with NATS disconnected and verifies direct placement requests return 503 not_writer for both live and absent ids, while the writer returns 200 and 404 respectively.
+the files are back once gru is added again. R3 also opens SQL sockets with header credentials, checks 1012 and PostgreSQL FATAL 57P01 on a writer move, refuses forwarded REST and socket upgrades with 503 instead of a second hop, and drops destination SYN packets to prove the five-second REST connect bound. R17 removes a follower, verifies its routing record learns a rename, and adds it again with current data. R18 deletes a database at its home while its follower is removed, then checks the removed follower forgets it. R19 starts a real, unprimed node in the home region with NATS disconnected and verifies direct placement requests return 503 not_writer for both live and absent ids, while the writer returns 200 and 404 respectively.
 
 Other existing projects can run in two-region mode by starting this same stack first and selecting their project
 normally. The placement pair shares one machine and third-party stand-ins, has no network delay and uses
 catalog-sweep replication without NATS; it does not model geographic latency or regional host failure.
+
+The CI session-limits shard selects only `placement/session-limits.spec.ts` with one worker and two cells. It covers input and answer progress, session admission, platform EF traffic, unknown outcomes and native commit completion. Its peer-stream faults retain a live HTTP/2 connection while withholding an answer body.
 
 ## Multi-region fault lane
 
@@ -162,11 +166,21 @@ row/byte-limit rejection. Only the journey copy sends receipts; the product
 importer and handoff refusal path are unchanged in the driver. It adds no runtime
 product setting.
 
-Alongside the journey shards, the separately selected `engine crash recovery` job runs `env/engine-crash.py` against the shared PR service artifact
-and a separate build of the PR base revision. It checks rollback startup on each crash directory, stale rewrite
+The retained-receiver case uses isolated real driver nodes. Its source seeds a retained
+catalog record without enabling a production deletion feature. Repeated missing-registration
+sweeps must preserve the receiver's original row; restoring the source registration and
+writing another row must resume normal replication. The receiver build can be replaced
+with a previous-head driver through `E2E_RETAINED_RECEIVER_BUILD` for regression proof.
+
+Alongside the journey shards, the separately selected `engine crash recovery (<shard>)` jobs run `env/engine-crash.py` against the shared PR service artifact
+and one shared artifact built from the PR base revision. They check rollback startup on each crash directory, stale rewrite
 intents at both rename boundaries, idle retained-history draining, missing root stores and three large-file
-recovery samples. It requires 24 GB of disk headroom below 80% use and removes its data and baseline source.
-Local runs pass the rollback DLL as the script's only argument, with DOTNET_ROOT and DOTNET_PROCESSOR_COUNT=4.
+recovery samples. Each shard requires 24 GB of disk headroom below 80% use and removes its data; the baseline job removes its source checkout after packaging.
+Local runs pass the rollback DLL, with DOTNET_ROOT and DOTNET_PROCESSOR_COUNT=4. An optional second argument is
+a comma-separated case list; omitting it runs every case. `python3 e2e/env/engine-crash-shards.py` checks that every
+registered case appears exactly once in `engine-crash-shards.json` and emits the CI matrix. Each case prints its
+elapsed time; the dependent nine-snapshot recovery sequence stays together in the recovery shard and runs first
+when selected with other cases.
 
 The extra nodes are `journey-3 gru 127.0.0.3` and `journey-4 fra 127.0.0.4`, with client/metrics/PostgreSQL ports
 8280/9291/6632 and 8380/9391/6732. Their independent data directories are `terrabase-gru-2` and `terrabase-fra-2`
@@ -486,15 +500,31 @@ With the two-region stack running, `bash env/local.sh exec npx playwright test p
 runs group B and both placement operations in each SDK. `E2E_REGIONS=2` makes only the `placement.*` needs markers
 runnable in the runners and in `support/sdk.ts`; the backup requirement stays separate.
 Each runner creates with gru/fra, adds fra to gru, repeats the identical fra-only request for at most 90 seconds,
-reads status, proves the retained data and the removed endpoint's 421, and deletes its database through fra.
+reads status, proves the retained data through the removed endpoint's proxy, and deletes its database through fra.
 The two-region group B books an upper bound of 110 requests to cover the bounded repeat loop; the metrics check
-still refuses tenant_busy and verifies that every operation ran. The local edge does not implement production's
-421 replay, so the runners explicitly use fra after verifying wrong_region.
+still refuses tenant_busy and verifies that every operation ran. The removed endpoint proxies the status and data requests to fra without a client redirect.
+
+The multi-region PR lane also runs the R3 placement scenario against its four-node stack: header-authenticated
+sockets, writer-move closure, second-hop refusals, unknown writers, bounded connection failure and a new session
+on a rejoined copy.
 
 ## Social provider stand-in
 
 The OAuth2 provider at identity.journey.terrascale.tech is served by env/oauth2.mjs behind the same edge. It validates redirect, state, one-use authorization code and PKCE, and supplies verified or unverified email claims through userinfo. Only inside the isolated namespace, 93.184.215.14/32 is assigned to loopback and this hostname resolves to it; every other hostname keeps its existing mapping. This exercises the production public-address SSRF checks without permitting loopback providers or any external route. The browser journey proves email ownership before creating or linking a user, replay refusal, and subsequent subject-based sign-in.
 
+## Keyring recovery lane
+
+The keyring job in the existing journey workflow reuses the TerraBase service artifact and its lifecycle
+driver from the service build. TerraBase changes, the keyring lane's own inputs and changes
+to the journey workflow select it; main runs select it too. It builds a pinned single-key baseline and runs
+`bash e2e/keyring/proof.sh` in an isolated network namespace. The proof selects the keyring
+interaction and promotion specs itself, including process kills before publication and after durable
+publication, reconstructed states at every intermediate detach and publication rename, conflicting
+replicas and destinations, corrupt destinations with valid keys, mid-copy cancellation and put-back,
+local key-removal refusal after restoration, key material changes, record-store
+refusal, reverse credential compatibility and row reads from every persisted database.
+Intermediate states are reconstructed from real detached/published files after a process kill;
+the journey does not claim to inject power failure at every individual system call. The extra lane runs alongside the normal shards.
 ## SQL session lost replies
 
 The SQL sessions case of `journey/finish.spec.ts` runs each SDK's public session through a loopback network proxy

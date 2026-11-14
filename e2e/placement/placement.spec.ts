@@ -48,13 +48,13 @@ test('create with a replica, observe its pull, move home and remove the old home
     await sql(cells, replica, created.id, 'INSERT INTO placement_rows VALUES (3)');
     expect((await sql(cells, replica, created.id, 'SELECT value FROM placement_rows ORDER BY value')).results[0].rows).toEqual([[1], [2], [3]]);
     await expect.poll(async () => {
-      const response = await cells.post(`${home}${database(created.id)}/sql/execute`, {
+      const proxied = await cells.post(`${home}${database(created.id)}/sql/execute`, {
         data: { statements: [{ sql: 'SELECT value FROM placement_rows ORDER BY value' }] },
       });
-      expect([200, 421]).toContain(response.status());
-      return { status: response.status(), home: response.headers()['x-terrabase-database-home'] };
-    }, { message: 'the removed region redirects reads to the sole serving region', timeout: 45_000, intervals: [250, 500, 1000] })
-      .toEqual({ status: 421, home: 'fra' });
+      const body = await json<{ results: { rows: number[][] }[] }>(proxied);
+      return { region: proxied.headers()['x-terrabase-region'], rows: body.results[0].rows };
+    }, { message: 'the removed home learns placement and serves the current rows through fra', timeout: 45_000, intervals: [250, 500, 1000] })
+      .toEqual({ region: 'fra', rows: [[1], [2], [3]] });
   } finally {
     await removeDatabase(cells, created.id);
   }

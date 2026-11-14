@@ -5,7 +5,6 @@ using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using TerraBase.Configuration;
-using TerraBase.Engine.Turso;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management;
@@ -99,6 +98,7 @@ internal sealed class HomeMoves(
     private async Task<MoveHomeResult> MoveAsync(HomeMoveMarker marker, long started, CancellationToken cancellationToken)
     {
         var database = marker.Database;
+        fences.Moving(marker.DatabaseId);
         var peer = await PeerAsync(marker.Target, cancellationToken).ConfigureAwait(false);
         var caughtUpAnswer = peer is null ? null : await PostAsync(peer, marker, "catch-up", null, CancellationToken.None).ConfigureAwait(false);
         using (caughtUpAnswer)
@@ -127,9 +127,11 @@ internal sealed class HomeMoves(
 
             var record = await catalog.FindAsync(database, CancellationToken.None).ConfigureAwait(false) is TenantDatabaseRecord found ? found : null;
             var placement = record?.Placement;
-            IReadOnlyList<string> next = placement is null ? [options.Region]
+            IReadOnlyList<string> next = marker.RequestedRegions is { } selected
+                ? [.. selected.Where(region => region != marker.Target).Order(StringComparer.Ordinal)]
+                : placement is null ? [options.Region]
                 : [.. placement.Replicas.Where(region => region != marker.Target).Append(options.Region).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
-            var promotion = await PromoteAsync(peer, marker, new HomePromoteRequest(marker.MoveId, options.Region, marker.Version, next, placement?.AllRegions ?? false, record?.Name, record?.Identity))
+            var promotion = await PromoteAsync(peer, marker, new HomePromoteRequest(marker.MoveId, options.Region, marker.Version, next, marker.RequestedRegions is null && (placement?.AllRegions ?? false), record?.Name, record?.Identity))
                 .ConfigureAwait(false);
             promoted = promotion switch
             {
@@ -400,21 +402,18 @@ internal sealed class HomeMoves(
             }
 
             await imports.ImportDatabaseAsync(database, detached, CancellationToken.None).ConfigureAwait(false);
-            detached = null;
             if (!await leases.TakeAsync(database, fromRegion, placement.Version, failedHome, CancellationToken.None).ConfigureAwait(false))
             {
                 leaseGate.Unlease(database.DatabaseId!);
-                _ = await engine.DeleteDatabaseAsync(database, CancellationToken.None).ConfigureAwait(false);
                 return new Conflict("another region holds the database's home lease", "move_aborted");
             }
 
+            var completing = detached;
+            detached = null;
+            replicas.CompleteDetach(completing);
+
             if (await tenants.UpdatePlacementAsync(database, placement, CancellationToken.None, name, identity).ConfigureAwait(false) is not PlacementUpdate { Updated: true })
             {
-                if (!leases.Active)
-                {
-                    _ = await engine.DeleteDatabaseAsync(database, CancellationToken.None).ConfigureAwait(false);
-                }
-
                 logger.ZLogError($"A new home's catalog did not take its placement; it keeps the database file and its lease");
                 return new Unavailable("the catalog did not take the new placement");
             }
@@ -432,7 +431,7 @@ internal sealed class HomeMoves(
         {
             if (detached is not null)
             {
-                TursoReplicas.DeleteDetached(detached);
+                replicas.CompleteDetach(detached);
             }
         }
     }

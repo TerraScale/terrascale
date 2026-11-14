@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdirSync, readFileSync, writeFileSync, createWriteStream } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync, createWriteStream } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -15,7 +15,8 @@ class ReceiptNode {
 
   constructor(environment: NodeJS.ProcessEnv, directory: string, role: string) {
     const build = process.env.E2E_BUILD ?? join(stateDir, 'build');
-    this.process = spawn('dotnet', [join(build, 'receipt-import', 'terrabase.dll')], {
+    const executable = role === 'target' && environment.E2E_RETAINED_RECEIVER ? process.env.E2E_RETAINED_RECEIVER_BUILD : undefined;
+    this.process = spawn('dotnet', [executable ?? join(build, 'receipt-import', 'terrabase.dll')], {
       env: { ...environment, E2E_RECEIPT_ROLE: role }, stdio: ['pipe', 'pipe', 'pipe'],
     });
     const log = createWriteStream(join(directory, role + '.log'));
@@ -90,6 +91,7 @@ export async function receiptHandoff(scenario: string): Promise<void> {
       TERRABASE_FILES_S3_ENDPOINT: 'https://journey.r2.cloudflarestorage.com/',
       TERRABASE_FILES_S3_ACCESS_KEY_ID: access, TERRABASE_FILES_S3_SECRET_ACCESS_KEY: secret,
     });
+    if (scenario === 'retained') environment.E2E_RETAINED_RECEIVER = '1';
     const source = new ReceiptNode({ ...environment, TS_NODE: sourceName, TERRABASE_DATA_DIRECTORY: join(directory, 'source'),
       TERRABASE_PORT: '8480', TERRABASE_METRICS_PORT: '9491', TERRABASE_POSTGRES_PORT: '6832' }, directory, 'source');
     children.push(source);
@@ -107,16 +109,63 @@ export async function receiptHandoff(scenario: string): Promise<void> {
     children.push(target);
     await target.command('ping');
     await expect.poll(() => status(targetAddress)).toMatchObject({ writer: false, owner: sourceAddress.name, ready: true });
+    let retained: { organization: string; project: string; user: string } | undefined;
+    if (scenario === 'retained') {
+      const user = faultId();
+      const create = async (path: string, body: unknown) => {
+        const response = await nodeRequest(sourceAddress, path, 'POST', body, user);
+        expect(response.status, response.body).toBe(201);
+        return (JSON.parse(response.body) as { id: string }).id;
+      };
+      const organization = await create('/v1/management/organizations', { name: 'retained-receiver' });
+      const project = await create(`/v1/management/organizations/${organization}/projects`, { name: 'retained-receiver' });
+      retained = { organization, project, user };
+    }
     const primed = await nodeRequest(targetAddress, '/v1/rollout/prime?source=' + sourceName, 'POST');
     expect(primed.status, primed.body).toBe(204);
+    if (retained) {
+      const created = await nodeRequest(sourceAddress, `/v1/projects/${retained.project}/databases`, 'POST',
+        { name: 'retained-receiver', regions: ['fra'] }, retained.user);
+      expect(created.status, created.body).toBe(201);
+      const id = (JSON.parse(created.body) as { id: string }).id;
+      const scope = `${retained.organization} ${retained.project} ${id}`;
+      await source.command(`write ${scope} 73`);
+      await target.command(`check ${scope} 73`);
+      await source.command(`retain ${scope}`);
+      await target.command(`check ${scope} 73`);
+      await target.command(`check ${scope} 73`);
+      await source.command(`restore ${scope}`);
+      await source.command(`write ${scope} 74`);
+      await target.command(`check ${scope} 147`);
+      console.log('RETAINED_RECEIVER: missing registration preserves row 73 across repeated sweeps; restoration resumes replication with rows 73 and 74');
+      return;
+    }
     await target.command('stage identical');
     await source.command('stage ' + scenario);
     await target.command('capture');
+    const previousKeys = scenario === 'identical' ? [
+      ['00000000000000000000000003', '00000000000000000000000002'],
+      ['00000000000000000000000004', '00000000000000000000000005'],
+    ].map(([id, project]) => ({
+      id, bytes: readFileSync(join(directory, 'target/00000000000000000000000001', project, id + '.db.key')),
+    })) : [];
     const response = await nodeRequest(sourceAddress, '/v1/rollout/drain?target=' + targetName, 'POST');
     if (scenario === 'identical') {
       expect(response.status, response.body).toBe(204);
       await expect.poll(() => status(targetAddress)).toMatchObject({ writer: true, owner: targetAddress.name, ready: true });
       await target.command('receipts');
+      const retained = join(directory, 'target/.handoff');
+      const files = (path: string): string[] => readdirSync(path, { withFileTypes: true }).flatMap(entry =>
+        entry.isDirectory() ? files(join(path, entry.name)) : [join(path, entry.name)]);
+      const preserved = files(retained);
+      for (const previous of previousKeys) {
+        const key = preserved.find(path => path.endsWith('/' + previous.id + '.db.key'));
+        expect(key, 'the superseded local database retains its key sidecar').toBeTruthy();
+        expect(readFileSync(key!).equals(previous.bytes)).toBe(true);
+        expect(statSync(key!.slice(0, -4)).size).toBeGreaterThan(0);
+      }
+      const metrics = await (await fetch('http://127.0.0.6:9591/metrics')).text();
+      expect(metrics).toMatch(/terrabase_keys_local_wrapped[^\n]*key_id="k0"[^\n]*\} -1(?:\n|$)/);
     } else {
       expect(response.status, response.body).toBeGreaterThanOrEqual(400);
       await target.command('unchanged');

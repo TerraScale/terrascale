@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Regions;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 
@@ -34,6 +35,8 @@ internal static class DatabaseRegions
 
     internal sealed class ReplicaReads;
 
+    internal sealed class WriterReads;
+
     internal static bool SameSet(IReadOnlyList<string>? left, IReadOnlyList<string>? right) =>
         left is not null && right is not null && left.Order(StringComparer.Ordinal).SequenceEqual(right.Order(StringComparer.Ordinal), StringComparer.Ordinal);
 
@@ -64,8 +67,6 @@ internal static class DatabaseRegions
             ? new Validation($"{field} names {unknown}, a region TerraBase does not serve; choose from: {string.Join(", ", serving)}")
             : null;
 
-    internal static IResult WrongRegion(string home, IEnumerable<string> regions) => new Misdirected(home, string.Join(',', regions), homeOnly: false);
-
     internal static IResult HomeRegion(string home, IEnumerable<string> regions) => new Misdirected(home, string.Join(',', regions), homeOnly: true);
 
     internal static IResult RecoveryRegion(string region, ManagedDatabase database) =>
@@ -91,16 +92,17 @@ internal static class DatabaseRegions
         app.Use(async (context, next) =>
         {
             if (Listeners.ArrivedOn(context) == TerraBaseListener.Client
-                && context.GetEndpoint() is { } endpoint && endpoint.Metadata.GetMetadata<PlacementAware>() is null
+                && context.GetEndpoint() is { } endpoint
                 && context.Request.RouteValues.TryGetValue("project", out var projectValue) && projectValue is string project
                 && context.Request.RouteValues.TryGetValue("database", out var databaseValue) && databaseValue is string database)
             {
                 var region = context.RequestServices.GetRequiredService<TerraBaseOptions>().Region;
                 await (await RecordAsync(context, project, database).ConfigureAwait(false) switch
                 {
-                    ManagedDatabase record when !record.PlacedIn(region)
-                        && !((record.AllRegions || record.Replicas.Contains(region)) && endpoint.Metadata.GetMetadata<ReplicaReads>() is not null)
-                        => WrongRegion(record.Home(region), record.Regions(region)).ExecuteAsync(context),
+                    ManagedDatabase record when !record.Placement(region).PlacedIn(region)
+                        || !record.PlacedIn(region) && endpoint.Metadata.GetMetadata<PlacementAware>() is null
+                            && endpoint.Metadata.GetMetadata<ReplicaReads>() is null
+                        => ProxyAsync(context, record.Home(region)),
                     ManagedDatabase => next(context),
                     NotFound => next(context),
                     Unavailable error => ErrorResponse.From(error).ExecuteAsync(context),
@@ -111,6 +113,41 @@ internal static class DatabaseRegions
             await next(context).ConfigureAwait(false);
         });
         return app;
+    }
+
+    internal static async Task ProxyAsync(HttpContext context, string region, byte[]? body = null)
+    {
+        if (Listeners.IsForwarded(context))
+        {
+            context.Features.Set(new HomeForwarding.ProxiedRequest());
+            context.Response.Headers[HomeForwarding.PlacementMissHeader] = "1";
+            await HomeForwarding.UnavailableAsync(context, region).ConfigureAwait(false);
+            return;
+        }
+
+        if (!await ForwardingAuthorization.CheckAsync(context, context.RequestAborted).ConfigureAwait(false))
+        {
+            return;
+        }
+        var peers = context.RequestServices.GetRequiredService<IRegionPeers>();
+        var peer = (await peers.OtherRegionsAsync(context.RequestAborted).ConfigureAwait(false))
+            .FirstOrDefault(candidate => candidate.Region == region);
+        if (peer is null)
+        {
+            context.Response.Headers[HomeForwarding.PlacementMissHeader] = "1";
+            await HomeForwarding.UnavailableAsync(context, region).ConfigureAwait(false);
+            return;
+        }
+
+        var target = new HomeNode(peer.Region, peer.Address);
+        if (context.WebSockets.IsWebSocketRequest)
+        {
+            await context.RequestServices.GetRequiredService<HomeSocketRelay>()
+                .RunAsync(context, target, context.RequestAborted).ConfigureAwait(false);
+            return;
+        }
+
+        await HomeForwarding.ForwardAsync(context, target, body).ConfigureAwait(false);
     }
 
     internal static async ValueTask<FindDatabaseRecordResult> RecordAsync(HttpContext context, string project, string database)

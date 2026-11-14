@@ -68,7 +68,7 @@ internal sealed partial class TursoStorageTransaction(
     private QueryBudget StartQueryBudget(CancellationToken cancellationToken)
     {
         var budget = new QueryBudget(store.Time, store.QueryBudget,
-            !store.IsSystem && QosContext.Current is { } tenant ? QosPolicy.For(tenant.Plan) : null,
+            !store.IsSystem && QosContext.Current is { } tenant ? QosPolicy.For(tenant) : null,
             store.SchemaMemory is { } memory ? new QosContext.ResultMemory(memory) : null);
         session.Connection.SetFtsProgressHandler((work, bytes) =>
             cancellationToken.IsCancellationRequested || budget.Native(work, bytes));
