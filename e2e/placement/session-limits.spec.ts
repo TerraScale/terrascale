@@ -947,19 +947,19 @@ test('a WebSocket client reading an answer slowly keeps its session at the home 
   try {
     const token = await credential(request);
     await Promise.all([8080, 8180].map(async port => {
-      const proxy = await slowReader(port, 12_000);
+      const proxy = await slowReader(port, 24_000);
       const ws = await rawSqlSocket('http://127.0.0.1:' + proxy.port + database(created.id) + '/sql/ws', token);
       try {
         proxy.start();
         const began = performance.now();
         const response = once(ws.events, 'message');
-        ws.socket.write(frame(1, Buffer.from(JSON.stringify({ id: 1, type: 'execute', statements: [{ sql: 'SELECT hex(zeroblob(262144))' }] }))));
+        ws.socket.write(frame(1, Buffer.from(JSON.stringify({ id: 1, type: 'execute', statements: [{ sql: 'SELECT hex(zeroblob(655360))' }] }))));
         const result = await Promise.race([response.then(([answer]) => answer), ws.closing.then(close => { throw new Error('WebSocket ' + port + ' closed: ' + JSON.stringify(close)); })]);
         expect(result.type).toBe('result');
-        expect(result.results[0].rows[0][0]).toHaveLength(524288);
+        expect(result.results[0].rows[0][0]).toHaveLength(1_310_720);
         expect(/^0+$/.test(result.results[0].rows[0][0])).toBe(true);
         expect((await execute(ws, 'SELECT 7')).results[0].rows).toEqual([[7]]);
-        console.log('WebSocket ' + port + ': delivered 524288 bytes and reused session after ' + Math.round(performance.now() - began) + ' ms');
+        console.log('WebSocket ' + port + ': delivered 1310720 bytes and reused session after ' + Math.round(performance.now() - began) + ' ms');
       } finally {
         ws.socket.destroy();
         await proxy.stop();
