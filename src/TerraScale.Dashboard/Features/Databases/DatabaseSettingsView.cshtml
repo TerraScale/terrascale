@@ -1,4 +1,5 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Databases.DatabaseSettingsPage>
+@using TerraScale.Dashboard.Features.Databases
 @implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 @(await RenderPartialAsync<DatabaseSettingsSection, DatabaseSettingsPage>(Model))
 @functions { public ShellModel LayoutModel => Model.Shell; }

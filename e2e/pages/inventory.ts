@@ -101,8 +101,9 @@ const databaseTabs: [string, string, Identity][] = [
   ['logs', 'Logs', title('Request logs', 2)],
   ['backups', 'Backups', title('Restore to a point in time', 2)],
   ['branches', 'Forks', title('Forks', 2)],
-  ['settings', 'Settings', title('Settings', 2)],
-  ['danger', 'Danger zone', title('Danger zone', 2)],
+  ['settings', 'Settings', title('Settings')],
+  ['danger', 'Danger zone', title('Delete database', 2)],
+  ['point-in-time', 'Point-in-time recovery', title('Restore database at UTC time', 2)],
 ];
 
 const tabStates: Record<string, PagePattern['query']> = {

@@ -1,5 +1,7 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Databases.DatabaseSettingsPage>
+@using TerraScale.Dashboard.Features.Databases
 @using System.Globalization
+@using System.Text.Encodings.Web
 <main class="ts-page ts-db-detail" id="database-settings" data-database-id="@Model.Database.Id" data-title="@(Model.Shell.Title + " · TerraScale")" data-init="document.title = el.dataset.title">
 @(await RenderPartialAsync<TerraScale.Dashboard.Common.Databases.DatabaseFrame,DatabaseFrameModel>(new(Model.Database, "settings")))
 <header class="ts-page-header"><h1 class="ts-page-title">Settings</h1><div class="ts-page-actions"></div></header>
@@ -19,7 +21,7 @@
 </form>
 }else{<div class="ts-card-body"><dl class="ts-kv"><div><dt>Name</dt><dd>@Model.Database.Name</dd></div></dl></div>}
 </section>
-<section class="ts-card ts-card-boxed ts-card-flush" id="database-expiry" aria-labelledby="database-expiry-title" data-signals="@("{_expiry: '" + Model.ExpiryPreset + "', _ttlHours: '" + Model.TtlHours + "'}")">
+<section class="ts-card ts-card-boxed ts-card-flush" id="database-expiry" aria-labelledby="database-expiry-title" data-signals="@("{_expiry: '" + Model.ExpiryPreset + "', _ttlhours: '" + JavaScriptEncoder.Default.Encode(Model.TtlHours) + "'}")">
 <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="database-expiry-title">Database expiry</h2></div></header>
 @if(Model.CanManage){
 <form method="post" action="/v1/databases/ttl" class="ts-form" data-on:submit="evt.preventDefault(); @@post(el.action, {contentType: 'form'})">
@@ -28,9 +30,9 @@
 @if(Model.ExpiryError.Length > 0){<div class="ts-alert ts-alert-danger" role="alert" id="expiry-error"><p class="ts-alert-body">@Model.ExpiryError</p></div>}
 @if(Model.ExpirySaved){<div class="ts-alert ts-alert-success" id="expiry-saved" role="status"><p class="ts-alert-body">Database expiry saved.</p></div>}
 <fieldset class="ts-chips"><legend class="ts-label">Delete database after</legend>
-@foreach(var option in DatabaseSettingsPage.ExpiryOptions){<label class="ts-chip"><input type="radio" name="expiryPreset" value="@option.Hours" checked="@(Model.ExpiryPreset == option.Hours)" data-bind:_expiry data-on:change="$_ttlHours = el.value === 'custom' ? $_ttlHours : el.value" /><span>@option.Label</span></label>}
+@foreach(var option in DatabaseSettingsPage.ExpiryOptions){<label class="ts-chip"><input type="radio" name="expiryPreset" value="@option.Hours" checked="@(Model.ExpiryPreset == option.Hours)" data-bind:_expiry data-on:change="$_ttlhours = el.value === 'custom' ? $_ttlhours : el.value" /><span>@option.Label</span></label>}
 </fieldset>
-<div class="ts-field" data-show="$_expiry === 'custom'"><label class="ts-label" for="database-ttl">Hours</label><input class="ts-input" id="database-ttl" name="ttlHours" type="number" value="@Model.TtlHours" data-bind:_ttlHours min="@DatabaseTtl.MinimumHours" max="8760" step="any" data-attr:required="$_expiry === 'custom'" data-attr:disabled="$_expiry === ''" /></div>
+<div class="ts-field" data-show="$_expiry === 'custom'"><label class="ts-label" for="database-ttl">Hours</label><input class="ts-input" id="database-ttl" name="ttlHours" type="number" value="@Model.TtlHours" data-bind:_ttlhours min="@DatabaseTtl.MinimumHours" max="8760" step="any" data-attr:required="$_expiry === 'custom'" data-attr:disabled="$_expiry === ''" /></div>
 <dl class="ts-kv"><div><dt>Expires</dt><dd id="expiry-current">@if(Model.Database.ExpiresAt is { } expiry){<time datetime="@expiry.ToString("O",CultureInfo.InvariantCulture)">@expiry.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'",CultureInfo.InvariantCulture)</time>}else{<span>Never</span>}</dd></div></dl>
 </div><footer class="ts-card-foot"><button class="ts-btn ts-btn-primary" type="submit">Save expiry</button></footer></form>
 }else{<div class="ts-card-body"><dl class="ts-kv"><div><dt>Expires</dt><dd>@(Model.Database.ExpiresAt?.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'",CultureInfo.InvariantCulture) ?? "Never")</dd></div></dl></div>}
