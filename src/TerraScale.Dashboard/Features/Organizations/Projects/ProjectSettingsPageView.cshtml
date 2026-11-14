@@ -1,0 +1,22 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.ProjectSettingsPage>
+@using TerraScale.Dashboard.Features.Organizations
+@inject AssetUrls Assets
+<main id="project-settings-page" class="ts-page" aria-labelledby="project-settings-title">
+    <header class="ts-page-header"><div class="ts-page-heading"><h1 class="ts-page-title" id="project-settings-title">Project settings</h1><p class="ts-meta">@Model.Shell.Context.Project!.Name · your role: @Model.Shell.Context.Project.Role</p></div><div class="ts-page-actions"><a class="ts-link" href="@(WorkspaceUrl.For(Model.Shell.Context, "/project/members", replace: true))">Members</a>@if (Model.CanRename) { <a class="ts-link" href="@(WorkspaceUrl.For(Model.Shell.Context, "/project/invitations", replace: true))">Project invitations</a> }</div></header>
+    @if (Model.Renamed) { <p class="ts-alert ts-alert-success" role="status">Project renamed.</p> }
+    @if (Model.Error.Length > 0) { <p class="ts-alert ts-alert-danger" id="project-settings-error" role="alert">@Model.Error <a class="ts-link" href="@Model.Url">Reload project settings</a></p> }
+    <section class="ts-card ts-card-boxed" id="project-details" aria-labelledby="project-details-title" data-signals="{_renamingProject: false}" data-on:submit="!evt.defaultPrevented &amp;&amp; ($_renamingProject = true)" data-on:pageshow__window="$_renamingProject = false" data-on:keydown__window="evt.key === 'Escape' &amp;&amp; ($_renamingProject = false)">
+        <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="project-details-title">Selected project</h2></div></header>
+        <div class="ts-card-body"><dl class="ts-kv"><dt>Name</dt><dd>@Model.Shell.Context.Project!.Name</dd><dt>Project ID</dt><dd class="ts-mono">@Model.Shell.Context.Project.Id</dd><dt>Your effective project role</dt><dd>@Model.Shell.Context.Project.Role</dd><dt>Regions</dt><dd>@if (Model.Shell.Context.Project.Regions.Count == 0) { <span class="ts-meta">None</span> } else { foreach (var code in Model.Shell.Context.Project.Regions) { var label = code.ToLowerInvariant(); var country = Regions.Country(label); <span class="ts-db-region">@if (country.Length > 0) { <img class="ts-db-region-flag" src="@Assets.Url("flags/" + country + ".svg")" alt="" aria-hidden="true" /> }<span class="ts-mono">@label</span></span> } }</dd></dl>
+        @if (Model.CanRename)
+        {
+            <form class="ts-form" method="post" action="@(WorkspaceUrl.For(Model.Shell.Context, "/api/v1/dashboard/project/rename", replace: true))" data-submit-once data-on:submit="evt.preventDefault(); @@post(el.action, {contentType:'form'})" data-attr:aria-busy="$_renamingProject ? 'true' : 'false'">
+                <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
+                            <div class="ts-field"><label class="ts-label" for="project-name">Project name</label><input class="ts-input" id="project-name" name="name" value="@Model.Name" required aria-describedby="@(Model.Error.Length > 0 ? "project-settings-error" : null)" minlength="1" pattern="[\s\u0085]*(?=[^\p{Cc}]*[\p{L}\p{N}])[^\p{Cc}]+[\s\u0085]*" title="Use 1–128 characters including a letter or digit" /></div>
+                <div class="ts-card-foot"><button class="ts-btn ts-btn-primary" type="submit">Rename project</button></div>
+                <p role="status" aria-live="polite" data-text="$_renamingProject ? 'Renaming project…' : ''"></p>
+            </form>
+        }
+        </div>
+    </section>
+</main>

@@ -2,7 +2,9 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using TerraScale.Dashboard.Common.Accounts;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Organizations.Sso
@@ -229,11 +231,32 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
                     await sso.SaveAsync(context, OrganizationSsoService.Parse(form), http.RequestAborted);
                 }
 
+                if (http.Request.Headers["Datastar-Request"] == "true")
+                {
+                    context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, reload: true);
+                    await DatastarEvents.PatchElementsAsync(http, OrganizationPageView.Create(await OrganizationEndpoints.PageModelAsync(http, context, placement, tabOverride: "sso")));
+                    return Results.Empty;
+                }
                 return HttpRedirects.SeeOther("/organization?tab=sso");
             }
-            catch (AccountAccessException error) { return await OrganizationEndpoints.PageAsync(http, context, placement, error.Message, error.StatusCode, "sso"); }
+            catch (AccountAccessException error)
+            {
+                if (http.Request.Headers["Datastar-Request"] == "true")
+                {
+                    await OrganizationEndpoints.PatchAsync(http, context, placement, error.Message, "sso");
+                    return Results.Empty;
+                }
+                return await OrganizationEndpoints.PageAsync(http, context, placement, error.Message, error.StatusCode, "sso");
+            }
             catch (Exception error) when (error is HttpRequestException or JsonException or IOException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
-            { return await OrganizationEndpoints.PageAsync(http, context, placement, "Single sign-on is unavailable right now. Try again shortly.", 503, "sso"); }
+            {
+                if (http.Request.Headers["Datastar-Request"] == "true")
+                {
+                    await OrganizationEndpoints.PatchAsync(http, context, placement, "Single sign-on is unavailable right now. Try again shortly.", "sso");
+                    return Results.Empty;
+                }
+                return await OrganizationEndpoints.PageAsync(http, context, placement, "Single sign-on is unavailable right now. Try again shortly.", 503, "sso");
+            }
         }
 
     }

@@ -60,6 +60,7 @@ test('a new owner onboards on Free, upgrades to Pro through Stripe Checkout, and
   await page.locator('#organizationName').fill(organizationName);
   await page.locator('#rename-organization').getByRole('button', { name: 'Save name', exact: true }).click();
   await expect(kv(page, '#organization-details', 'Name')).toHaveText(organizationName);
+  await expect(page).toHaveURL(url => url.pathname === '/organization' && url.searchParams.get('tab') === null);
   const identity = { email, displayName, organizationId, organizationName, projectId, projectName };
   await shell(page, identity);
   await audit.check('paid owner organization renamed');

@@ -1,0 +1,5 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Profile.ProfilePage>
+@using TerraScale.Dashboard.Features.Profile
+@using TerraScale.Dashboard.Common.UI
+@(await RenderPartialAsync<TerraScale.Dashboard.Features.Profile.ProfilePageView, TerraScale.Dashboard.Features.Profile.ProfilePage>(Model))
+@(await RenderPartialAsync<TerraScale.Dashboard.Common.UI.Slices.ShellAccountTrigger, ShellModel>(Model.Shell))

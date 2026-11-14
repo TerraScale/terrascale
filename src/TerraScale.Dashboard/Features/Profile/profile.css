@@ -1,15 +1,18 @@
 /* Profile page: identity header, wrapping tabs and capability badges. */
 
 .ts-profile-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
   gap: var(--ts-s3);
   overflow-wrap: anywhere;
 }
 
-.ts-profile-head > div {
+.ts-profile-heading {
+  display: grid;
+  gap: var(--ts-s1);
   min-width: 0;
+}
+
+.ts-profile-head .ts-page-actions .ts-avatar {
+  flex: none;
 }
 
 .ts-profile-name {

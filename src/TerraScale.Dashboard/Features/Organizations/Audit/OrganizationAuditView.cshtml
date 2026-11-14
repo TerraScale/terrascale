@@ -15,24 +15,24 @@
 }
 </dl>
 <section class="ts-card ts-card-boxed ts-card-flush" id="recent-activity" aria-labelledby="recent-activity-title">
-    <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="recent-activity-title">Recent activity</h2></div></header>
-    <form method="get" action="/organization" class="ts-audit-filters" role="search" aria-label="Filter audit events">
-        <input type="hidden" name="tab" value="audit" />
-        <div class="ts-audit-search"><label class="ts-sr-only" for="audit-search">Search</label><input class="ts-input" id="audit-search" type="search" name="search" value="@Model.Filter.Search" placeholder="Search actor, action or target" maxlength="200" autocomplete="off" /></div>
-        <div><label class="ts-sr-only" for="audit-action">Action</label><select class="ts-select" id="audit-action" name="action">
-            <option value="all" selected="@(Model.Filter.Action == "all" ? "selected" : null)">All actions</option>
-            @foreach (var action in actions.OrderBy(action => action.Label, StringComparer.OrdinalIgnoreCase)) { <option value="@action.Value" selected="@(Model.Filter.Action == action.Value ? "selected" : null)">@action.Label</option> }
-        </select></div>
-        <div><label class="ts-sr-only" for="audit-severity">Severity</label><select class="ts-select" id="audit-severity" name="severity">
-            @foreach (var severity in new[] { ("all", "All severities"), ("info", "Info"), ("warn", "Warning"), ("critical", "Critical"), ("unknown", "Not reported") }) { <option value="@severity.Item1" selected="@(Model.Filter.Severity == severity.Item1 ? "selected" : null)">@severity.Item2</option> }
-        </select></div>
-        <div><label class="ts-sr-only" for="audit-range">Range</label><select class="ts-select" id="audit-range" name="range">
-            @foreach (var range in OrganizationFilters.Ranges.Where(range => range.Days <= Math.Max(7, Model.Access?.AuditRetentionDays ?? 90))) { <option value="@range.Id" selected="@(Model.Filter.Range == range.Id ? "selected" : null)">@range.Label</option> }
-        </select></div>
-        <button class="ts-btn ts-btn-secondary" type="submit">Apply</button>
-        @if (filtered && Model.AuditRows.Count > 0) { <a class="ts-btn ts-btn-ghost" href="/organization?tab=audit">Clear</a> }
+    <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="recent-activity-title">Recent activity</h2></div><div class="ts-card-actions ts-audit-actions">
+        <form method="get" action="/organization" class="ts-filters" role="search" aria-label="Filter audit events">
+            <input type="hidden" name="tab" value="audit" />
+            <label class="ts-sr-only" for="audit-search">Search</label><input class="ts-input" id="audit-search" type="search" name="search" value="@Model.Filter.Search" placeholder="Search actor, action or target" maxlength="200" autocomplete="off" />
+            <label class="ts-sr-only" for="audit-action">Action</label><select class="ts-select" id="audit-action" name="action" data-on:change="el.form.requestSubmit()">
+                <option value="all" selected="@(Model.Filter.Action == "all" ? "selected" : null)">All actions</option>
+                @foreach (var action in actions.OrderBy(action => action.Label, StringComparer.OrdinalIgnoreCase)) { <option value="@action.Value" selected="@(Model.Filter.Action == action.Value ? "selected" : null)">@action.Label</option> }
+            </select>
+            <label class="ts-sr-only" for="audit-severity">Severity</label><select class="ts-select" id="audit-severity" name="severity" data-on:change="el.form.requestSubmit()">
+                @foreach (var severity in new[] { ("all", "All severities"), ("info", "Info"), ("warn", "Warning"), ("critical", "Critical"), ("unknown", "Not reported") }) { <option value="@severity.Item1" selected="@(Model.Filter.Severity == severity.Item1 ? "selected" : null)">@severity.Item2</option> }
+            </select>
+            <label class="ts-sr-only" for="audit-range">Range</label><select class="ts-select" id="audit-range" name="range" data-on:change="el.form.requestSubmit()">
+                @foreach (var range in OrganizationFilters.Ranges.Where(range => range.Days <= Math.Max(7, Model.Access?.AuditRetentionDays ?? 90))) { <option value="@range.Id" selected="@(Model.Filter.Range == range.Id ? "selected" : null)">@range.Label</option> }
+            </select>
+            @if (filtered && Model.AuditRows.Count > 0) { <a class="ts-btn ts-btn-ghost ts-btn-sm" href="/organization?tab=audit">Clear</a> }
+        </form>
         <div class="ts-menu ts-menu-end ts-audit-export"><button type="button" popovertarget="audit-export-menu" class="ts-btn ts-btn-secondary" aria-label="Export audit events">@Icons.Render("Download", 16)<span>Export</span></button><div class="ts-menu-panel" id="audit-export-menu" popover="auto" role="group" aria-label="Export formats"><a class="ts-menu-item" href="@Model.Filter.AuditUrl(format: "csv")">@Icons.Render("FileText", 15)<span>Export CSV</span></a><a class="ts-menu-item" href="@Model.Filter.AuditUrl(format: "json")">@Icons.Render("FileJson", 15)<span>Export JSON</span></a><a class="ts-menu-item" href="@Model.Filter.AuditUrl(format: "ndjson")">@Icons.Render("FileJson", 15)<span>Export NDJSON</span></a></div></div>
-    </form>
+    </div></header>
     <div class="ts-card-body">
         @if (Model.AuditRows.Count > 0)
         {

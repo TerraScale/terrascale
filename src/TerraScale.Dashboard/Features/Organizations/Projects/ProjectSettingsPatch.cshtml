@@ -1,0 +1,5 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.ProjectSettingsPage>
+@using TerraScale.Dashboard.Features.Organizations
+@using TerraScale.Dashboard.Common.UI
+@(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.Projects.ProjectSettingsPageView, TerraScale.Dashboard.Features.Organizations.ProjectSettingsPage>(Model))
+@(await RenderPartialAsync<TerraScale.Dashboard.Common.UI.Slices.ShellContextTrigger, ShellModel>(Model.Shell))

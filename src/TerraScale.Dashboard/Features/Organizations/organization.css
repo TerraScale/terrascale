@@ -152,12 +152,7 @@ dialog.ts-org-wizard {
 
 /* Organization pages: identity header, KPI tiles, and two-column boxed cards. */
 .ts-org-page { gap: var(--ts-s5); }
-.ts-org-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--ts-s4);
-}
+.ts-org-header { gap: var(--ts-s4); }
 .ts-org-identity { display: flex; align-items: center; gap: var(--ts-s4); min-width: 0; }
 .ts-org-heading { min-width: 0; }
 .ts-org-mark {
@@ -174,7 +169,7 @@ dialog.ts-org-wizard {
   font-weight: 600;
 }
 .ts-org-title-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ts-s3); }
-.ts-org-title { font-size: var(--ts-fs-2xl); letter-spacing: -0.03em; }
+.ts-org-title-row .ts-page-title { font-size: var(--ts-fs-2xl); letter-spacing: -0.03em; }
 .ts-org-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ts-s2); margin-top: var(--ts-s2); color: var(--ts-ink-3); font-size: var(--ts-fs-sm); }
 .ts-org-id { display: inline-flex; align-items: center; gap: 2px; min-width: 0; }
 .ts-org-id code { overflow: hidden; color: var(--ts-ink-2); font-family: var(--ts-font-mono); text-overflow: ellipsis; }
@@ -220,7 +215,6 @@ dialog.ts-org-wizard {
   .ts-org-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 47.99rem) {
-  .ts-org-header { flex-wrap: wrap; }
   .ts-org-identity { align-items: flex-start; }
   .ts-org-mark { width: 40px; height: 40px; font-size: var(--ts-fs-md); }
   .ts-org-id code { max-width: 180px; }

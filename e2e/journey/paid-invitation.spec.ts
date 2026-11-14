@@ -128,6 +128,7 @@ test('the Pro owner invites a second user, who signs up through the emailed link
   await expect(remove).toBeVisible();
   await ownerAudit.check('remove the invited user dialog');
   await remove.getByRole('button', { name: 'Remove access', exact: true }).click();
+  await expect(ownerPage).toHaveURL(url => url.pathname === '/organization' && url.searchParams.get('tab') === 'members');
   await expect(rows).toHaveCount(1);
   await expect(rows).toContainText(owner.email);
   await ownerAudit.check('Pro members after the removal');

@@ -1,4 +1,6 @@
+using TerraScale.Dashboard.Common.Accounts;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Platform.Datastar;
 
 namespace TerraScale.Dashboard.Features.Organizations
 {
@@ -41,11 +43,32 @@ namespace TerraScale.Dashboard.Features.Organizations
             try
             {
                 await operations.UpdateProjectAsync(context, name, null, http.RequestAborted);
+                if (http.Request.Headers["Datastar-Request"] == "true")
+                {
+                    context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, reload: true);
+                    await DatastarEvents.PatchElementsAsync(http, Projects.ProjectSettingsPatch.Create(new(ShellModel.For(http, context, "Project settings"), name)));
+                    return Results.Empty;
+                }
                 return HttpRedirects.SeeOther(WorkspaceUrl.For(context, "/project?renamed=1", replace: true));
             }
-            catch (AccountAccessException error) { return Page(http, context, name, error.Message, error.StatusCode); }
+            catch (AccountAccessException error)
+            {
+                if (http.Request.Headers["Datastar-Request"] == "true")
+                {
+                    await DatastarEvents.PatchElementsAsync(http, Projects.ProjectSettingsPatch.Create(new(ShellModel.For(http, context, "Project settings"), name, error.Message)));
+                    return Results.Empty;
+                }
+                return Page(http, context, name, error.Message, error.StatusCode);
+            }
             catch (Exception error) when (error is IOException or HttpRequestException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
-            { return Page(http, context, name, "The rename could not be confirmed. Reload project settings to check its current name, then retry if needed.", 503); }
+            {
+                if (http.Request.Headers["Datastar-Request"] == "true")
+                {
+                    await DatastarEvents.PatchElementsAsync(http, Projects.ProjectSettingsPatch.Create(new(ShellModel.For(http, context, "Project settings"), name, "The rename could not be confirmed. Reload project settings to check its current name, then retry if needed.")));
+                    return Results.Empty;
+                }
+                return Page(http, context, name, "The rename could not be confirmed. Reload project settings to check its current name, then retry if needed.", 503);
+            }
         }
 
         private static RazorSlices.RazorSlice<ProjectSettingsPage> Page(HttpContext http, AccountContext context, string name, string error = "", int status = 200, bool renamed = false)

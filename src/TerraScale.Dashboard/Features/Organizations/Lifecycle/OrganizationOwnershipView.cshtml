@@ -21,7 +21,7 @@
         @if (org.Kind != "personal") { <p class="ts-meta">As the owner you can't leave this organization. Transfer ownership to another member first.</p> }
         @if (transfer is not null)
         {
-            <div class="ts-alert ts-alert-info" role="status"><p class="ts-alert-title">Ownership transfer pending</p><p class="ts-alert-body">Waiting for @(nominee?.Name ?? transfer.ToUserId) (@nominee?.Email) to accept. The request expires @expiry.</p><form method="post" action="/api/v1/dashboard/organization/members/ownership/cancel"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Cancel transfer</button></form></div>
+            <div class="ts-alert ts-alert-info" role="status"><p class="ts-alert-title">Ownership transfer pending</p><p class="ts-alert-body">Waiting for @(nominee?.Name ?? transfer.ToUserId) (@nominee?.Email) to accept. The request expires @expiry.</p><form method="post" action="/api/v1/dashboard/organization/members/ownership/cancel" data-on:submit="evt.preventDefault(); @@post(el.action, {contentType:'form'})"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Cancel transfer</button></form></div>
         }
         else if (members.Any(member => member.UserId != Model.Shell.Context.UserId && member.Role != "owner" && member.Status == "active"))
         {
