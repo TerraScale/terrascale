@@ -35,11 +35,11 @@ else
     {
         var current = Model.Shell.Context.Project;
         var plan = org.BillingStatus == "billing_required" ? null : TerraScale.Dashboard.Common.Accounts.PlanCatalog.For(org);
-        <dl class="ts-kpis" aria-label="Organization summary">
-            <div class="ts-kpi"><dt class="ts-kpi-label"><span class="ts-org-kpi-icon" aria-hidden="true">@Icons.Render("FolderKanban", 16)</span>Projects</dt><dd class="ts-kpi-value">@org.Projects.Count</dd></div>
-            <div class="ts-kpi"><dt class="ts-kpi-label"><span class="ts-org-kpi-icon" aria-hidden="true">@Icons.Render("Users", 16)</span>Members</dt><dd class="ts-kpi-value">@Model.MemberTotal</dd></div>
-            <div class="ts-kpi"><dt class="ts-kpi-label"><span class="ts-org-kpi-icon" aria-hidden="true">@Icons.Render("CreditCard", 16)</span>Plan</dt><dd class="ts-kpi-value">@(plan?.Name ?? (org.BillingStatus == "billing_required" ? "None" : "Not reported"))</dd></div>
-            <div class="ts-kpi"><dt class="ts-kpi-label"><span class="ts-org-kpi-icon" aria-hidden="true">@Icons.Render("Calendar", 16)</span>Created</dt><dd class="ts-kpi-value">@org.CreatedAt.ToString("MMM d, yyyy", System.Globalization.CultureInfo.InvariantCulture)</dd></div>
+        <dl class="ts-stats" aria-label="Organization summary">
+            <div class="ts-stat"><dt class="ts-stat-label"><span class="ts-org-kpi-icon" aria-hidden="true">@Icons.Render("FolderKanban", 16)</span>Projects</dt><dd class="ts-stat-value">@org.Projects.Count</dd></div>
+            <div class="ts-stat"><dt class="ts-stat-label"><span class="ts-org-kpi-icon" aria-hidden="true">@Icons.Render("Users", 16)</span>Members</dt><dd class="ts-stat-value">@Model.MemberTotal</dd></div>
+            <div class="ts-stat"><dt class="ts-stat-label"><span class="ts-org-kpi-icon" aria-hidden="true">@Icons.Render("CreditCard", 16)</span>Plan</dt><dd class="ts-stat-value">@(plan?.Name ?? (org.BillingStatus == "billing_required" ? "None" : "Not reported"))</dd></div>
+            <div class="ts-stat"><dt class="ts-stat-label"><span class="ts-org-kpi-icon" aria-hidden="true">@Icons.Render("Calendar", 16)</span>Created</dt><dd class="ts-stat-value">@org.CreatedAt.ToString("MMM d, yyyy", System.Globalization.CultureInfo.InvariantCulture)</dd></div>
         </dl>
         <div class="ts-org-grid"><div class="ts-org-col">
         <section class="ts-card ts-card-boxed ts-card-flush" aria-labelledby="overview-projects-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="overview-projects-title">Projects</h2></div>@if (Model.CanProvision) { <a class="ts-btn ts-btn-secondary ts-btn-sm" href="/organization?tab=projects">@Icons.Render("Plus", 14)<span>Create project</span></a> }</header><div class="ts-card-body">

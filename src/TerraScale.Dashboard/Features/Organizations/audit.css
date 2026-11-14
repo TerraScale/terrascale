@@ -99,8 +99,8 @@
   min-width: 0;
 }
 
-.ts-audit-action > .ts-dot[data-severity="warn"] { color: var(--ts-warning); }
-.ts-audit-action > .ts-dot[data-severity="critical"] { color: var(--ts-danger); }
+.ts-audit-action > .ts-dot[data-severity="warn"] { background: var(--ts-warning); }
+.ts-audit-action > .ts-dot[data-severity="critical"] { background: var(--ts-danger); }
 
 .ts-audit-event > tr:first-child > * {
   border-bottom: 0;

@@ -182,9 +182,9 @@ dialog.ts-org-wizard {
   display: inline-grid;
   flex: none;
   place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--ts-radius);
+  width: var(--ts-s5);
+  height: var(--ts-s5);
+  border-radius: var(--ts-radius-sm);
   background: var(--ts-surface-3);
   color: var(--ts-ink-2);
 }

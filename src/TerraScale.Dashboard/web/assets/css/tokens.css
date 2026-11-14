@@ -30,7 +30,6 @@
   --ts-link: #6b93ff;
   --ts-focus: var(--ts-link);
   --ts-ring: 2px solid var(--ts-focus);
-  --tone: var(--ts-link);
 
   --ts-success: #6bca92;
   --ts-warning: #ffa726;
