@@ -214,6 +214,7 @@ namespace TerraScale.Dashboard.Common.Accounts
             {
                 (lives, snapshot) = await SnapshotAsync(platform.ListOrganizationsAsync(session, cancellationToken));
             }
+            var records = await snapshot;
 
             async Task<(IReadOnlyList<TsAuthPlatformOrganization> Lives, Task<IReadOnlyDictionary<string, OrganizationRecord?>> Snapshot)> SnapshotAsync(
                 Task<IReadOnlyList<TsAuthPlatformOrganization>> organizations)
@@ -223,8 +224,12 @@ namespace TerraScale.Dashboard.Common.Accounts
             }
 
             await using var db = await storage.CreateDbContextAsync(cancellationToken);
-            var creating = await db.PendingOrganizationCheckouts.AsNoTracking().SingleOrDefaultAsync(
-                row => row.UserId == session.UserId && row.State == OrganizationCheckoutStates.Creating, cancellationToken);
+            PendingOrganizationCheckout? creating = null;
+            if (lives.Any(live => live.CreatedBy == session.UserId && !records.ContainsKey(live.Id)))
+            {
+                creating = await db.PendingOrganizationCheckouts.AsNoTracking().SingleOrDefaultAsync(
+                    row => row.UserId == session.UserId && row.State == OrganizationCheckoutStates.Creating, cancellationToken);
+            }
             var prefetched = new System.Collections.Concurrent.ConcurrentDictionary<string, OrganizationAccess>(StringComparer.Ordinal);
             async Task HydrateSelectedAsync(OrganizationRecord org)
             {
@@ -243,17 +248,19 @@ namespace TerraScale.Dashboard.Common.Accounts
                 }
 
                 var collaborator = live.Role is null;
-                var org = await OrganizationStateAsync(session, live, snapshot, creating, cancellationToken, create: !collaborator);
+                var org = await OrganizationStateAsync(session, live, records, creating, cancellationToken, create: !collaborator);
                 if (org is null)
                 {
                     return null;
                 }
                 var access = !collaborator && live.Id == accessFor ? FetchAccessAsync(session, live.Id, cancellationToken) : null;
-                var projects = live.Id == accessFor && early is not null ? early : platform.ListProjectsAsync(session, live.Id, cancellationToken);
+                Task<IReadOnlyList<TsAuthPlatformProject>>? projects = live.Id == accessFor
+                    ? early is not null ? early : platform.ListProjectsAsync(session, live.Id, cancellationToken)
+                    : projectId is not null || collaborator ? platform.ListProjectsAsync(session, live.Id, cancellationToken) : null;
                 // ts-auth refuses an organization that requires two-factor to a caller without it; the
                 // organization stays listed, keeps its stored projects and is blocked when selected.
                 IReadOnlyList<TsAuthPlatformProject>? listed = null;
-                try { listed = await projects; }
+                try { listed = projects is null ? null : await projects; }
                 catch (AccountAccessException error) when (error.Code == TsAuthGateway.MfaRequiredCode) { org.MfaRequired = true; }
                 Hydrate(org, live, listed, session);
                 if (collaborator)
@@ -348,10 +355,9 @@ namespace TerraScale.Dashboard.Common.Accounts
             return context with { Loaded = loadedAt };
         }
 
-        private async Task<OrganizationRecord?> OrganizationStateAsync(SessionRecord session, TsAuthPlatformOrganization live, Task<IReadOnlyDictionary<string, OrganizationRecord?>> snapshot,
+        private async Task<OrganizationRecord?> OrganizationStateAsync(SessionRecord session, TsAuthPlatformOrganization live, IReadOnlyDictionary<string, OrganizationRecord?> records,
             PendingOrganizationCheckout? creating, CancellationToken cancellationToken, bool create = true)
         {
-            var records = await snapshot;
             if (live.CreatedBy == session.UserId && creating is not null
                 && (creating.OrganizationId.Length > 0 ? creating.OrganizationId == live.Id : !records.ContainsKey(live.Id)))
             {
@@ -392,7 +398,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                 Member(org, session, live.Role);
             }
 
-            if (projects is null) { if (live.Role is null) { org.Projects = []; } return; }
+            if (projects is null) { return; }
             var saved = org.Projects;
             org.Projects = [];
             foreach (var remote in projects.Where(project => project.OrganizationId == live.Id && TerraScaleIds.IsValid(project.Id) && !org.DeletedProjectIds.Contains(project.Id) &&
