@@ -56,7 +56,9 @@ unapplied and another database applies (the origin node's build record is writte
 every purge); a previous-build origin, shown by a freshly recreated stream without the origin node's build record, removing a
 database's messages without a marker, after which the home holds the database with reason `origin_previous_build` and applies
 nothing past the removal until the origin node's build record appears; and 130 unknown databases with 32 messages each held on one origin while a
-healthy database of that origin still applies.
+healthy database of that origin still applies. One pushed update whose home apply steps an `engine_retry` statement is failed once
+by the engine-crash integrity proxy (native status 133, a storage failure): the home retries it with reason `engine`, records
+no revert, and the next attempt confirms the updated value.
 
 The run changes the real JetStream regional ownership record, including the matching predecessor/preparation
 metadata, and waits for the target node's retry event to establish that it became the writer. This isolates
@@ -65,6 +67,6 @@ third-party stand-in until the run releases it; the later transaction changes a 
 independently asserted. The script uses only the journey object-store hostname and its
 journey-shapes bucket alias. The stand-in maps that alias to the custody bucket used by the service.
 Parked-record replay, an unknown database that the catalog learns later, two nodes that both act as writer at
-the same moment, a stream restored under the same identity with a lower last sequence (`stream_behind`), a transient
-engine failure without a final code during an apply, a forwarded insert's read-your-writes wait right after a home
+the same moment, a stream restored under the same identity with a lower last sequence (`stream_behind`), a forwarded
+insert's read-your-writes wait right after a home
 move, and an upgrade from the previous build's consumer are not covered.

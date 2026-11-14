@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { Nats, putKey as putSealedKey, seal } from './push.mjs';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { appendFileSync, cpSync, openSync, closeSync, readFileSync, mkdirSync, writeFileSync, watch, rmSync } from 'node:fs';
+import { appendFileSync, cpSync, existsSync, openSync, closeSync, readFileSync, readdirSync, mkdirSync, writeFileSync, watch, rmSync } from 'node:fs';
 import { connect as http2 } from 'node:http2';
 import { createConnection, createServer } from 'node:net';
 import { setPriority } from 'node:os';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const journeyState = process.env.E2E_STATE;
 assert(journeyState, 'E2E_STATE names the isolated local journey namespace');
@@ -159,6 +160,11 @@ function cell(region, second = false) {
     AWS_ACCESS_KEY_ID: access, AWS_SECRET_ACCESS_KEY: secret,
     TERRABASE_SHAPES_ACCESS_KEY_ID: access, TERRABASE_SHAPES_SECRET_ACCESS_KEY: secret, TERRABASE_SHAPES_CDN_API_TOKEN: randomBytes(24).toString('hex'),
     TS_NATS_URL: gru && !second ? 'nats://127.0.0.1:4223' : 'nats://127.0.0.1:4222', TERRABASE_NATS_TOKEN: token,
+    ...(gru && !second ? {
+      ENGINE_INTEGRITY_PROXY: resolve(state, 'integrity.so'),
+      ENGINE_INTEGRITY_CONTROL: resolve(state, 'integrity-control'),
+      DOTNET_STARTUP_HOOKS: resolve(state, 'integrity-hook.dll'),
+    } : {}),
   });
 }
 async function trusted(port) {
@@ -172,7 +178,24 @@ async function trusted(port) {
 }
 let nats;
 const relay = new Relay();
+const repo = fileURLToPath(new URL('../..', import.meta.url));
+function compileIntegrity() {
+  const build = resolve(process.env.E2E_BUILD, 'terrabase');
+  execFileSync('cc', ['-shared', '-fPIC', resolve(repo, 'e2e/env/engine-crash-integrity.c'), '-o', resolve(state, 'integrity.so'),
+    '-Wl,--no-as-needed', resolve(build, 'libturso_sdk_kit.so'), '-Wl,-rpath,' + build, '-ldl', '-pthread'], { stdio: 'inherit' });
+  const references = new Map();
+  for (const pack of ['Microsoft.NETCore.App.Ref', 'Microsoft.AspNetCore.App.Ref']) {
+    const dir = resolve(process.env.DOTNET_ROOT, 'packs', pack, '11.0.0/ref/net11.0');
+    for (const file of readdirSync(dir)) if (file.endsWith('.dll')) references.set(file, resolve(dir, file));
+  }
+  for (const file of readdirSync(build)) if (file.endsWith('.dll') && !references.has(file)) references.set(file, resolve(build, file));
+  const rsp = resolve(state, 'integrity.rsp');
+  writeFileSync(rsp, ['-nologo', '-target:library', '-nullable:enable', '-langversion:preview', '-out:' + resolve(state, 'integrity-hook.dll'),
+    ...[...references.values()].map(file => '-r:' + file), resolve(repo, 'e2e/replication/integrity-hook.cs')].join('\n'));
+  execFileSync(resolve(process.env.DOTNET_ROOT, 'dotnet'), [resolve(process.env.DOTNET_ROOT, 'sdk/11.0.100/Roslyn/bincore/csc.dll'), '@' + rsp], { stdio: 'inherit' });
+}
 try {
+  compileIntegrity();
   writeFileSync(journeyState + '/r2', access + '\n' + secret + '\n', { mode: 0o600 });
   writeFileSync(state + '/peers', 'journey-1 gru 127.0.0.1\njourney-2 fra 127.0.0.2\njourney-3 gru 127.0.0.3\n');
   writeFileSync(state + '/nats.conf', JSON.stringify({ host: '127.0.0.1', port: 4222, authorization: { token }, jetstream: { store_dir: state + '/nats' } }), { mode: 0o600 });
@@ -333,6 +356,26 @@ try {
   const ageGauge = () => scrape(/^terrabase_push_held_age(_seconds)?[ {]/);
   const rows = async (db, statement) => (await sql(db, statement)).results[0].rows;
   const offset = () => readFileSync(gru.log, 'utf8').length;
+
+  const engineRetry = await create('engine-retry');
+  await sql(engineRetry, 'CREATE TABLE engine_retry (id INTEGER PRIMARY KEY, value INTEGER)');
+  await sql(engineRetry, 'INSERT INTO engine_retry VALUES (1, 0)');
+  await putSealedKey({ master, access, secret }, org.id + '/' + project.id + '/' + engineRetry.id, keyId, dataKey);
+  const retriesBefore = await scrape(/^terrabase_push_apply_retries_total\{.*reason="engine"/);
+  const revertsBefore = await scrape(/^terrabase_push_reverts_total/);
+  const engineMark = readFileSync(gru.log, 'utf8').length;
+  writeFileSync(resolve(state, 'integrity-control'), 'apply ' + engineRetry.id + '\n', { mode: 0o600 });
+  const engineTx = transaction([{ op: 'update', table: 'engine_retry', key: { id: 1 }, values: { value: 7 } }]);
+  const engineNotice = notice(engineRetry, engineTx);
+  await send(engineRetry, engineTx);
+  assert.equal((await engineNotice).state, 'confirmed');
+  assert.equal((await sql(engineRetry, 'SELECT value FROM engine_retry WHERE id = 1')).results[0].rows[0][0], 7);
+  const retriesAfter = await scrape(/^terrabase_push_apply_retries_total\{.*reason="engine"/);
+  assert(retriesAfter > retriesBefore, 'engine apply retries ' + retriesBefore + ' -> ' + retriesAfter);
+  assert.equal(await scrape(/^terrabase_push_reverts_total/), revertsBefore);
+  assert(readFileSync(gru.log, 'utf8').slice(engineMark).includes('injected apply storage failure'));
+  assert.equal(existsSync(resolve(state, 'integrity-control')), false);
+  console.log('one storage failure inside home apply: retried reason=engine (' + retriesBefore + ' -> ' + retriesAfter + '), no revert, next attempt confirmed value 7');
 
   const insert = transaction([{ op: 'insert', table: 'items', values: { id: 30, value: 1 } }]);
   const update = transaction([{ op: 'update', table: 'items', key: { id: 30 }, values: { value: 2 } }]);

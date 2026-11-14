@@ -12,6 +12,44 @@ struct config_prefix { uint64_t async_io; const char *path; };
 struct source { void *handle; char *path; struct source *next; };
 static struct source *sources;
 static pthread_mutex_t source_gate = PTHREAD_MUTEX_INITIALIZER;
+static void *apply_statement;
+static pthread_mutex_t apply_gate = PTHREAD_MUTEX_INITIALIZER;
+
+static int apply_armed(void *connection, const char *sql) {
+    const char *control = getenv("ENGINE_INTEGRITY_CONTROL");
+    if (!control || !sql || !strstr(sql, "engine_retry")) return 0;
+    FILE *file = fopen(control, "r");
+    if (!file) return 0;
+    char kind[16] = {0};
+    char target[128] = {0};
+    int parsed = fscanf(file, "%15s %127s", kind, target);
+    fclose(file);
+    if (parsed != 2 || strcmp(kind, "apply")) return 0;
+    int matches = 0;
+    pthread_mutex_lock(&source_gate);
+    for (struct source *source = sources; source; source = source->next)
+        if (source->handle == connection && strstr(source->path, target)) { matches = 1; break; }
+    pthread_mutex_unlock(&source_gate);
+    return matches;
+}
+
+static void remember_apply(void *connection, const char *sql, void *statement) {
+    if (!statement || !apply_armed(connection, sql)) return;
+    pthread_mutex_lock(&apply_gate);
+    apply_statement = statement;
+    pthread_mutex_unlock(&apply_gate);
+}
+
+static int take_apply(void *statement) {
+    pthread_mutex_lock(&apply_gate);
+    int hit = statement == apply_statement && apply_statement;
+    if (hit) apply_statement = NULL;
+    pthread_mutex_unlock(&apply_gate);
+    if (!hit) return 0;
+    const char *control = getenv("ENGINE_INTEGRITY_CONTROL");
+    if (control) remove(control);
+    return 1;
+}
 
 static void remember(void *handle, const char *path) {
     struct source *source = malloc(sizeof(*source));
@@ -102,6 +140,7 @@ unsigned turso_connection_prepare_single(void *connection, const char *sql, void
     if (injected) return injected;
     unsigned result = real(connection, sql, statement, error);
     integrity = strstr(sql, "integrity_check") ? *statement : NULL;
+    if (!result) remember_apply(connection, sql, *statement);
     return result;
 }
 
@@ -111,10 +150,16 @@ unsigned turso_connection_prepare_first(void *connection, const char *sql, void 
     if (injected) return injected;
     unsigned result = real(connection, sql, statement, tail, error);
     integrity = strstr(sql, "integrity_check") ? *statement : NULL;
+    if (!result) remember_apply(connection, sql, *statement);
     return result;
 }
 
 unsigned turso_statement_step(void *statement, void **error) {
+    if (take_apply(statement)) {
+        *error = NULL;
+        fprintf(stderr, "injected apply storage failure\n");
+        return 133;
+    }
     const char *control = getenv("ENGINE_INTEGRITY_CONTROL");
     if (statement == integrity && control) {
         FILE *file = fopen(control, "r");
