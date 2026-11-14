@@ -202,9 +202,34 @@ try {
   const first = await create('frontier');
   const other = await create('independent');
   const sql = (db, statement, expected = 200) => request(home, '/v1/projects/' + project.id + '/databases/' + db.id + '/sql/execute', { statements: [{ sql: statement }] }, undefined, 'POST', expected);
-  const certify = async (owner, node) => {
-    const ack = await nats.request('$KV.terrabase-region-owners.prepared.gru.' + node, { source: owner.node, target: node, epoch: owner.epoch, operation: null });
-    assert(!ack.error, JSON.stringify(ack));
+  const internal = { 'journey-1': home, 'journey-3': 'http://127.0.0.3:8081' };
+  const owned = async () => {
+    const stored = await nats.request('$JS.API.STREAM.MSG.GET.KV_terrabase-region-owners', { last_by_subj: '$KV.terrabase-region-owners.gru' });
+    return JSON.parse(Buffer.from(stored.message.data, 'base64'));
+  };
+  let lastSource = null;
+  const restarted = async node => {
+    const previous = node === 'journey-1' ? gru : b;
+    const from = readFileSync(previous.log, 'utf8').length;
+    await stop(previous);
+    const fresh = node === 'journey-1' ? gru = cell('gru') : b = cell('gru', true);
+    await logged(fresh, 'Platform databases are seeded', {}, from);
+    await trusted(node === 'journey-1' ? 9091 : 9291);
+  };
+  const handOff = async (node, seen = () => {}) => {
+    const owner = await owned();
+    assert.notEqual(owner.node, node);
+    if (lastSource) {
+      await restarted(lastSource);
+      await request(internal[lastSource], '/v1/rollout/prime?source=' + owner.node, undefined, undefined, 'POST', 204);
+    }
+    const epoch = owner.epoch + 1;
+    const observed = seen(epoch);
+    await request(internal[owner.node], '/v1/rollout/drain?target=' + node, undefined, undefined, 'POST', 204);
+    assert.deepEqual(await owned().then(changed => [changed.node, changed.epoch]), [node, epoch]);
+    await observed;
+    lastSource = owner.node;
+    return epoch;
   };
   for (const db of [first, other]) {
     await sql(db, 'CREATE TABLE items (id INTEGER PRIMARY KEY, value INTEGER)');
@@ -260,9 +285,10 @@ try {
   assert.equal(unknownOutcome, null);
   console.log('expired reverted result: its redelivery publishes no notice and the next message applies');
 
-  const b = cell('gru', true);
+  let b = cell('gru', true);
   await logged(b, 'Application started');
   await logged(b, 'This node holds a new home lease session');
+  await logged(b, 'Platform databases are seeded');
   const heldKey = id(Date.now() - 60_000);
   await putSealedKey({ master, access, secret }, org.id + '/' + project.id + '/' + first.id, heldKey, dataKey);
   writeFileSync(journeyState + '/r2-unavailable-keys', JSON.stringify({ ['v1/keys/' + org.id + '/' + project.id + '/' + first.id + '/' + heldKey]: 503 }), { mode: 0o600 });
@@ -286,17 +312,7 @@ try {
   const late = transaction([{ op: 'insert', table: 'items', values: { id: 2, value: 17 } }]);
   const lateNotice = notice(first, late);
   const lateSent = await held(first, send(first, late, heldKey));
-  const changeWriter = async node => {
-    const stored = await nats.request('$JS.API.STREAM.MSG.GET.KV_terrabase-region-owners', { last_by_subj: '$KV.terrabase-region-owners.gru' });
-    const owner = JSON.parse(Buffer.from(stored.message.data, 'base64'));
-    const changed = { ...owner, node, epoch: owner.epoch + 1, previous: owner.node, activated: true, transfer: null,
-      prepared: { source: owner.node, target: node, epoch: owner.epoch } };
-    const seen = progress(lateSent, 1, consumer => consumer === 'home-gru-epoch-' + changed.epoch);
-    await certify(owner, node);
-    const ack = await nats.request('$KV.terrabase-region-owners.gru', changed, { 'Nats-Expected-Last-Subject-Sequence': String(stored.message.seq) });
-    assert(!ack.error, JSON.stringify(ack));
-    await seen;
-  };
+  const changeWriter = node => handOff(node, epoch => progress(lateSent, 1, consumer => consumer === 'home-gru-epoch-' + epoch));
   await changeWriter('journey-3');
   await changeWriter('journey-1');
   const successor = transaction([effect(6)]);
@@ -306,7 +322,7 @@ try {
   assert.equal((await lateNotice).state, 'confirmed');
   assert.equal((await successorNotice).state, 'confirmed');
   assert.equal((await sql(first, 'SELECT value FROM items WHERE id = 2')).results[0].rows[0][0], 17);
-  console.log('writer flips twice through broker ownership records with a retrying head: both effects are present');
+  console.log('writer handed off twice through planned drains with a retrying head: both effects are present');
   const stream = await nats.request('$JS.API.STREAM.INFO.TERRABASE_PUSH_FRA');
   assert((await nats.request('$JS.API.STREAM.DELETE.TERRABASE_PUSH_FRA')).success);
   assert(!(await nats.request('$JS.API.STREAM.CREATE.TERRABASE_PUSH_FRA', stream.config)).error);
@@ -609,17 +625,6 @@ try {
     await renewed;
     await trusted(9091);
   };
-  const flip = async node => {
-    const stored = await nats.request('$JS.API.STREAM.MSG.GET.KV_terrabase-region-owners', { last_by_subj: '$KV.terrabase-region-owners.gru' });
-    const owner = JSON.parse(Buffer.from(stored.message.data, 'base64'));
-    const epoch = owner.epoch + 1;
-    const changed = { ...owner, node, epoch, previous: owner.node, activated: true, transfer: null,
-      prepared: { source: owner.node, target: node, epoch: owner.epoch } };
-    await certify(owner, node);
-    const ack = await nats.request('$KV.terrabase-region-owners.gru', changed, { 'Nats-Expected-Last-Subject-Sequence': String(stored.message.seq) });
-    assert(!ack.error, JSON.stringify(ack));
-    return epoch;
-  };
   const advisory = (kind, name) => nats.event('$JS.EVENT.ADVISORY.CONSUMER.' + kind + '.TERRABASE_PUSH_FRA.' + name, event => event.consumer?.startsWith('home-gru-epoch-'));
 
   const dropped = await database('dropped');
@@ -662,7 +667,7 @@ try {
   const removed = advisory('DELETED', previous);
   const stopped = logged(gru, 'ended its consumer run at writer epoch', {}, offset());
   const createdB = advisory('CREATED', '*');
-  const toB = await flip('journey-3');
+  const toB = await handOff('journey-3');
   await stopped;
   const appliesBefore = await scrape(/^terrabase_push_applies_total[ {]/);
   assert.equal((await createdB).consumer, 'home-gru-epoch-' + toB);
@@ -686,7 +691,7 @@ try {
     config: { name: newer, durable_name: newer, ack_policy: 'explicit', deliver_policy: 'all', filter_subject: 'terrabase.push.fra.>' } });
   assert(!fake.error, JSON.stringify(fake));
   const staleWaits = logged(gru, 'a consumer of a newer writer epoch', {}, offset());
-  const toA = await flip('journey-1');
+  const toA = await handOff('journey-1');
   await staleWaits;
   const pending = series(1);
   let early = false;
