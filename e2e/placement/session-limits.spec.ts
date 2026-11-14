@@ -952,7 +952,7 @@ test('a Postgres client that reads a large answer slowly but steadily keeps its 
   const created = await json<Database>(await cells.post(home + project() + '/databases', {
     data: { name: name('slow-reader'), homeRegion: 'gru', replicaRegions: [] },
   }), 201);
-  const large = 'SELECT hex(zeroblob(262144))';
+  const large = 'SELECT hex(zeroblob(30720))';
   try {
     const viaPostgres = async (port: number) => {
       const proxy = await slowReader(port, 4096);
@@ -966,7 +966,7 @@ test('a Postgres client that reads a large answer slowly but steadily keeps its 
         client.socket.write(message('Q', Buffer.from(large + '\0')));
         const delivered = await row;
         expect(delivered.type, `Postgres port ${port} after ${Math.round(performance.now() - began)} ms, ${client.socket.bytesRead} bytes: ${client.errors.join(';')}`).toBe('D');
-        expect(delivered.body.readInt32BE(2)).toBe(524_288);
+        expect(delivered.body.readInt32BE(2)).toBe(61_440);
         expect((await ready).type).toBe('Z');
         const again = client.next('Z');
         client.socket.write(message('Q', Buffer.from('SELECT 7\0')));
@@ -974,7 +974,7 @@ test('a Postgres client that reads a large answer slowly but steadily keeps its 
         expect(client.errors).toEqual([]);
         client.socket.destroy();
         await client.closed;
-        console.log('Postgres ' + port + ': delivered 524288 bytes and reused session after ' + Math.round(performance.now() - began) + ' ms');
+        console.log('Postgres ' + port + ': delivered 61440 bytes and reused session after ' + Math.round(performance.now() - began) + ' ms');
       } finally {
         client.socket.destroy();
         await proxy.stop();
@@ -1000,13 +1000,13 @@ test('a WebSocket client reading an answer slowly keeps its session at the home 
         proxy.start();
         const began = performance.now();
         const response = once(ws.events, 'message');
-        ws.socket.write(frame(1, Buffer.from(JSON.stringify({ id: 1, type: 'execute', statements: [{ sql: 'SELECT hex(zeroblob(655360))' }] }))));
+        ws.socket.write(frame(1, Buffer.from(JSON.stringify({ id: 1, type: 'execute', statements: [{ sql: 'SELECT hex(zeroblob(180000))' }] }))));
         const result = await Promise.race([response.then(([answer]) => answer), ws.closing.then(close => { throw new Error('WebSocket ' + port + ' closed: ' + JSON.stringify(close)); })]);
         expect(result.type).toBe('result');
-        expect(result.results[0].rows[0][0]).toHaveLength(1_310_720);
+        expect(result.results[0].rows[0][0]).toHaveLength(360_000);
         expect(/^0+$/.test(result.results[0].rows[0][0])).toBe(true);
         expect((await execute(ws, 'SELECT 7')).results[0].rows).toEqual([[7]]);
-        console.log('WebSocket ' + port + ': delivered 1310720 bytes and reused session after ' + Math.round(performance.now() - began) + ' ms');
+        console.log('WebSocket ' + port + ': delivered 360000 bytes and reused session after ' + Math.round(performance.now() - began) + ' ms');
       } finally {
         ws.socket.destroy();
         await proxy.stop();

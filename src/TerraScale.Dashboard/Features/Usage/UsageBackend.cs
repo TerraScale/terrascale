@@ -20,7 +20,7 @@ namespace TerraScale.Dashboard.Features.Usage
             var month = new DateTimeOffset(utc.Year, utc.Month, 1, 0, 0, 0, TimeSpan.Zero);
             var (granularity, from) = UsageSelection.Buckets(selection.Range, now);
             var context = selection.Context;
-            using var concurrency = new SemaphoreSlim(4);
+            using var concurrency = new SemaphoreSlim(8);
             var monthly = context.Organization!.Projects.Values.Select(async project =>
             {
                 var acquired = false;
