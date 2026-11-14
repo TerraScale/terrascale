@@ -77,23 +77,12 @@
 
 /* Detail header: breadcrumb above the database identity. */
 .ts-db-head {
-  view-transition-name: ts-db-frame;
   display: grid;
   gap: var(--ts-s3);
 }
 
 .ts-db-tabs {
-  view-transition-name: ts-db-tabs;
   margin-top: calc(-1 * var(--ts-s4));
-}
-
-::view-transition-group(ts-db-frame),
-::view-transition-old(ts-db-frame),
-::view-transition-new(ts-db-frame),
-::view-transition-group(ts-db-tabs),
-::view-transition-old(ts-db-tabs),
-::view-transition-new(ts-db-tabs) {
-  animation: none;
 }
 
 .ts-db-tabs .ts-tab[data-kind="danger"] {
