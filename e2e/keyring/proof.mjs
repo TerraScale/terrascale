@@ -24,6 +24,9 @@ writeFileSync(join(profile, 'r2'), `${access}\n${secret}\n`, { mode: 0o600 });
 writeFileSync(join(profile, 'secrets'), `${master}\n${next}\n${peer}\n${access}\n${secret}\n`, { mode: 0o600 });
 const clean = Object.fromEntries(Object.entries(process.env).filter(([name]) =>
   !name.startsWith('TERRABASE_') && !name.startsWith('TS_') && !name.startsWith('AWS_') && name !== 'BUCKET_NAME'));
+const disabledBackups = { AWS_ENDPOINT_URL_S3: undefined, AWS_REGION: undefined, BUCKET_NAME: undefined,
+  AWS_ACCESS_KEY_ID: undefined, AWS_SECRET_ACCESS_KEY: undefined, TERRABASE_SHAPES_ACCESS_KEY_ID: undefined,
+  TERRABASE_SHAPES_SECRET_ACCESS_KEY: undefined, TERRABASE_SHAPES_CDN_API_TOKEN: undefined };
 const children = new Set();
 function startProcess(binary, args, name, environment) {
   const output = openSync(join(profile, `${name}.log`), 'w', 0o600);
@@ -109,7 +112,7 @@ function node(binary, active, extra = {}, arguments_ = []) {
   });
 }
 async function records(operation, active, output = join(profile, operation + '.json')) {
-  const child = node(process.env.E2E_KEYRING_DRIVER, active, {}, [operation, output]);
+  const child = node(process.env.E2E_KEYRING_DRIVER, active, disabledBackups, [operation, output]);
   const [code] = await once(child, 'exit');
   children.delete(child);
   assert.equal(code, 0, operation + ' driver completed');
@@ -245,14 +248,11 @@ try {
   assert.notEqual(stalled, 0, 'stalled backup retained an old-key dependency');
   console.log('retained images: upload outage old_key=' + stalled + ' (opaque staging is unknown)');
   await stop(child);
-  const disabledBackups = { AWS_ENDPOINT_URL_S3: undefined, AWS_REGION: undefined, BUCKET_NAME: undefined,
-    AWS_ACCESS_KEY_ID: undefined, AWS_SECRET_ACCESS_KEY: undefined, TERRABASE_SHAPES_ACCESS_KEY_ID: undefined,
-    TERRABASE_SHAPES_SECRET_ACCESS_KEY: undefined, TERRABASE_SHAPES_CDN_API_TOKEN: undefined };
   child = node(candidate, 'k1', disabledBackups);
   await ready(child);
   await internal(peer, 'http://127.0.0.1:18381', 'PUT', '/v1/management/organizations/' + scope.organization + '/plan', { plan: 'team' });
   const retained = value(await metrics(), 'terrabase_keys_local_wrapped', 'key_id="k0"');
-  assert.equal(retained, 0, 'with no backup consumer the engine trims released old-key images');
+  assert.ok(retained > 0, 'disabled backups retain unshipped old-key images across a catalog write: old_key=' + retained);
   console.log('retained images: backups disabled old_key=' + retained);
   await stop(child);
   stalledUploads = false;

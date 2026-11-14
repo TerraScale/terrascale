@@ -526,6 +526,10 @@ including `unattributed` when an id cannot be recovered. Unknown means **do not 
 | Local holds and home-push queues | Carry tenant SQL transactions, not platform credential records; their enclosing database wrappers are counted. The intent journal stores storage-operation identities, not another credential payload format. |
 | Object-store custody, backups, WAL archives and archived snapshots | Outside this node's inventory. Their wrappers are checked when accessed. Keep every required old key for as long as a backup or archived snapshot may be restored. |
 
+Disabling backups does not release old-key references in unshipped images retained above a
+durable backup floor. Those references remain until the engine actually removes the images
+after acknowledgement or its documented retention handling.
+
 The file walk is proportional to directory entries and wrapper bytes (at most 16 KiB per
 sidecar). The record walk is proportional to live credential bytes plus retained record-image
 bytes, including noncredential images that must be decoded to classify them. It does not
