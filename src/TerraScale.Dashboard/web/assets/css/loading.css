@@ -43,8 +43,9 @@ body.ts-nav-pending::before {
   border-radius: var(--ts-radius-pill);
   background: var(--ts-link);
   pointer-events: none;
-  animation: ts-loading-in var(--ts-base) linear var(--ts-fast) backwards,
-    ts-progress-slide var(--ts-loop) ease-in-out var(--ts-fast) infinite backwards;
+  opacity: 0;
+  animation: ts-loading-in var(--ts-base) linear var(--ts-fast) 300ms backwards,
+    ts-progress-slide var(--ts-loop) ease-in-out var(--ts-fast) 300ms infinite backwards;
 }
 
 .ts-spinner,
@@ -172,6 +173,6 @@ body.ts-nav-pending .ts-measurement-loading {
   body.ts-nav-pending::before {
     width: 100%;
     border-radius: 0;
-    animation: ts-loading-in 0s linear var(--ts-fast) backwards;
+    animation: ts-loading-in 0s linear var(--ts-fast) 300ms backwards;
   }
 }

@@ -16,6 +16,24 @@
   src: url("/fonts/GeistMono-Variable.woff2") format("woff2");
 }
 
+@view-transition {
+  navigation: auto;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: var(--ts-fast);
+  animation-timing-function: var(--ts-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none;
+  }
+}
+
 *,
 *::before,
 *::after {

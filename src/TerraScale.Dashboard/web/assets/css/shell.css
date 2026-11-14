@@ -9,6 +9,7 @@
   --ts-nav-inset: var(--ts-s2);
   --ts-nav-row: var(--ts-control-h-sm);
   --ts-nav-icon: var(--ts-s4);
+  view-transition-name: ts-sidebar;
   position: sticky;
   top: 0;
   display: flex;
@@ -567,4 +568,10 @@
   html:has(.ts-shell.nav-open) .ts-mobile-context {
     display: none;
   }
+}
+
+::view-transition-group(ts-sidebar),
+::view-transition-old(ts-sidebar),
+::view-transition-new(ts-sidebar) {
+  animation: none;
 }
