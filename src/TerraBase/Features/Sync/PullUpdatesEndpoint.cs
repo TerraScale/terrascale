@@ -70,11 +70,15 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
             return ErrorResponse.From(new Validation(refusal, "unsupported_pull"));
         }
 
+        if (leaseGate.Fenced(HttpContext.RouteValue("database")))
+        {
+            return ErrorResponse.From(new Unavailable(DatabaseFencedException.Refusal));
+        }
+
         return await tenants.FindDatabaseAsync(HttpContext.RouteValue("organization"), HttpContext.RouteValue("project"), HttpContext.RouteValue("database"), cancellationToken).ConfigureAwait(false) switch
         {
             NotFound error => await PullRetainedAsync(request.ClientRevision, error, cancellationToken).ConfigureAwait(false),
             Unavailable error => ErrorResponse.From(error),
-            TenantContext database when leaseGate.Fenced(database.DatabaseId!) => ErrorResponse.From(new Unavailable(DatabaseFencedException.Refusal)),
             TenantContext database => await PullAsync(database, request.ClientRevision, cancellationToken).ConfigureAwait(false),
         };
     }

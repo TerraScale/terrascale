@@ -47,11 +47,15 @@ internal sealed class ReplicaChecksumEndpoint(ITenantDirectory tenants, IDatabas
             cursor = new ChecksumCursor(table, after);
         }
 
+        if (leaseGate.Fenced(HttpContext.RouteValue("database")))
+        {
+            return ErrorResponse.From(new Unavailable(DatabaseFencedException.Refusal));
+        }
+
         return await tenants.FindDatabaseAsync(HttpContext.RouteValue("organization"), HttpContext.RouteValue("project"), HttpContext.RouteValue("database"), cancellationToken).ConfigureAwait(false) switch
         {
             NotFound error => ErrorResponse.From(error),
             Unavailable error => ErrorResponse.From(error),
-            TenantContext database when leaseGate.Fenced(database.DatabaseId!) => ErrorResponse.From(new Unavailable(DatabaseFencedException.Refusal)),
             TenantContext database => await RoundAsync(database, revision, cursor, cancellationToken).ConfigureAwait(false),
         };
     }

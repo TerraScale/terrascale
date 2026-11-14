@@ -14,7 +14,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.HomeApply;
 
-internal sealed class ApplyEndpoint(HomePush.HomePush pushes, ITenantDirectory tenants, IReplicaCatalog catalog, IMemoryBudget memory, TerraBaseOptions options)
+internal sealed class ApplyEndpoint(HomePush.HomePush pushes, ITenantDirectory tenants, IMemoryBudget memory, TerraBaseOptions options)
     : EndpointWithoutRequest<IResult>
 {
     internal const long MaxBodyBytes = 8 * 1024 * 1024;
@@ -78,20 +78,15 @@ internal sealed class ApplyEndpoint(HomePush.HomePush pushes, ITenantDirectory t
             position = parsed;
         }
 
-        var found = await tenants.FindDatabaseAsync(HttpContext.RouteValue("organization"), HttpContext.RouteValue("project"), HttpContext.RouteValue("database"), cancellationToken).ConfigureAwait(false);
-        if (found is not TenantContext database)
+        var found = await tenants.ResolveProjectDatabaseAsync(HttpContext.RouteValue("project"), HttpContext.RouteValue("database"), cancellationToken).ConfigureAwait(false);
+        if (found is not ResolvedProjectDatabase { Database: var database, Placement: var placement } || database.OrganizationId != HttpContext.RouteValue("organization"))
         {
             return found is Unavailable unavailable ? ErrorResponse.From(unavailable) : ErrorResponse.From(new NotFound("the database does not exist"));
         }
 
-        switch (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false))
+        if (placement.Home != options.Region || !(placement.AllRegions || placement.Replicas.Contains(transaction!.Region!)))
         {
-            case Unavailable error:
-                return ErrorResponse.From(error);
-            case TenantDatabaseRecord { Placement: var placement } when placement.Home == options.Region && (placement.AllRegions || placement.Replicas.Contains(transaction!.Region!)):
-                break;
-            default:
-                return ErrorResponse.From(new NotFound("the database is not homed here with a replica in that region"));
+            return ErrorResponse.From(new NotFound("the database is not homed here with a replica in that region"));
         }
 
         HttpContext.Response.Headers.CacheControl = "no-store";

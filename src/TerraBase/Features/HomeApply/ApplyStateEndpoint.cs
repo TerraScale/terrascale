@@ -36,9 +36,10 @@ internal sealed class ApplyStateEndpoint(IHomeApply apply, ITenantDirectory tena
         HttpContext.Response.Headers.CacheControl = "no-store";
         try
         {
-            return await tenants.FindDatabaseAsync(HttpContext.RouteValue("organization"), HttpContext.RouteValue("project"), HttpContext.RouteValue("database"), cancellationToken).ConfigureAwait(false) switch
+            return await tenants.ResolveProjectDatabaseAsync(HttpContext.RouteValue("project"), HttpContext.RouteValue("database"), cancellationToken).ConfigureAwait(false) switch
             {
-                TenantContext database when await apply.StateAsync(database, id, cancellationToken).ConfigureAwait(false) is { } state =>
+                ResolvedProjectDatabase { Database: var database } when database.OrganizationId == HttpContext.RouteValue("organization")
+                    && await apply.StateAsync(database, id, cancellationToken).ConfigureAwait(false) is { } state =>
                     TypedResults.Json(state, HomeApplyJsonContext.Default.HomeApplyResult),
                 Unavailable error => ErrorResponse.From(error),
                 _ => ErrorResponse.From(new NotFound("the database does not exist")),
