@@ -153,6 +153,13 @@ export async function counted(node: Node, name: string, labels: Record<string, s
     .reduce((sum, line) => sum + Number(line.slice(line.lastIndexOf(' ') + 1)), 0);
 }
 
+export async function writerIs(region: string, name: string): Promise<void> {
+  await expect.poll(async () => {
+    const statuses = await Promise.all(nodes.filter(member => member.region === region).map(member => nodeStatus(member)));
+    return statuses.filter(status => status.writer).map(status => status.node);
+  }, { message: `${name} is the only ${region} writer`, timeout: 60_000 }).toEqual([name]);
+}
+
 export function logged(node: Node, ...fragments: string[]): number {
   return readFileSync(join(stateDir, 'logs', `${node.service}.log`), 'utf8').split('\n').filter(line => fragments.every(fragment => line.includes(fragment))).length;
 }

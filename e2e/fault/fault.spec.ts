@@ -8,7 +8,7 @@ import { test, database, json, name, project, removeDatabase, sql, type Cells } 
 import { dash, e2eRoot, stateDir } from '../support/stack';
 import { journey, ownerSession, saveSecret } from '../support/state';
 import { receiptHandoff } from './receipt-handoff';
-import { backupPuts, backupStore, cleanUp, continuity, counted, crashWrite, endpoint, faultId, fileHash, holdsFile, holeRecords, keptCopies, keptHash, Kv, Ledger, logged, metric, node, nodeHoles, nodes, nodeRequest, nodeStatus, plantHole, probe, promoting, regions, restartAfterKill, scrape, signIn, exchangedToken, systemContinuity, tokenReady, topology, writerToken, type HomeLease, type Row } from './support';
+import { backupPuts, backupStore, cleanUp, continuity, counted, crashWrite, endpoint, faultId, fileHash, holdsFile, holeRecords, keptCopies, keptHash, Kv, Ledger, logged, metric, node, nodeHoles, nodes, nodeRequest, nodeStatus, plantHole, probe, promoting, regions, restartAfterKill, scrape, signIn, exchangedToken, systemContinuity, tokenReady, topology, writerIs, writerToken, type HomeLease, type Node, type Row } from './support';
 
 test.beforeEach(async () => {
   expect(process.env.E2E_TARGET ?? 'local').toBe('local');
@@ -431,12 +431,6 @@ test('a regional writer role moves only with the target certificate, and a datab
     const now = new Map(((await nodeStatus(gru)).kept ?? []).map(copy => [copy.id, copy]));
     for (const [id, hash] of hashes) expect(keptHash(gru, now.get(id)!), `kept copy ${id} on journey-1 is byte-identical`).toBe(hash);
   };
-  const writerIs = async (name: string) => {
-    await expect.poll(async () => {
-      const statuses = await Promise.all([gru, partner].map(writer => nodeStatus(writer)));
-      return statuses.filter(status => status.writer).map(status => status.node);
-    }, { message: `${name} is the only gru writer`, timeout: 60_000 }).toEqual([name]);
-  };
   let failure: unknown;
   try {
     const owner = await kv.get<Record<string, unknown> & { node: string; epoch: number }>(owners, 'gru');
@@ -451,14 +445,14 @@ test('a regional writer role moves only with the target certificate, and a datab
     expect((await nodeStatus(partner)).writer).toBe(false);
     const rewritten = await kv.get<{ node: string }>(owners, 'gru');
     await kv.remove(owners, 'gru', rewritten!.seq);
-    await writerIs('journey-1');
+    await writerIs('gru', 'journey-1');
     await expect.poll(async () => (await kv.get<{ node: string; epoch: number }>(owners, 'gru'))?.value, { message: 'journey-1 writes a new owner record at epoch 1' })
       .toMatchObject({ node: 'journey-1', epoch: 1 });
     console.log('rewritten owner record refused; a deleted key brought journey-1 back as writer at epoch 1 with current primary files');
 
     const drained = await nodeRequest(gru, '/v1/rollout/drain?target=journey-3', 'POST');
     expect(drained.status, drained.body).toBe(204);
-    await writerIs('journey-3');
+    await writerIs('gru', 'journey-3');
     await expect.poll(async () => (await homeLease(kv, ledger.id)).value, { message: 'the new writer\'s lease carries the adopted position' })
       .toMatchObject({ node: 'journey-3', adopted: adopted.adopted });
     await ledger.write(cells, 'gru', [[800, 'written-on-journey-3']]);
@@ -473,7 +467,7 @@ test('a regional writer role moves only with the target certificate, and a datab
       .toBeGreaterThan(stale);
     const recreated = await kv.get<Record<string, unknown> & { node: string; epoch: number }>(owners, 'gru');
     expect(recreated?.value.node).toBe('journey-1');
-    await writerIs('journey-1');
+    await writerIs('gru', 'journey-1');
     const fenced = (await nodeStatus(gru)).fenced ?? [];
     expect(fenced.filter(entry => entry.databaseId === ledger.id), 'journey-1 names the database whose replica it cannot prove its primary file covers')
       .toEqual([expect.objectContaining({ reason: expect.stringMatching(/^(replica_newer|position_unknown)$/), epoch: recreated!.value.epoch })]);
@@ -491,14 +485,14 @@ test('a regional writer role moves only with the target certificate, and a datab
     expect(primed, 'journey-3 cannot read its replica of the fenced ledger from journey-1 and answers unavailable when its drain budget runs out')
       .toMatchObject({ status: 503, body: expect.stringContaining('"unavailable"') });
     await kv.put(owners, 'gru', { ...recreated!.value, node: 'journey-3', epoch: 1, previous: null, activated: false, transfer: null }, recreated!.seq);
-    await writerIs('journey-3');
+    await writerIs('gru', 'journey-3');
     expect((await nodeStatus(partner)).fenced ?? [], 'journey-3 holds the lease with a primary file that covers its adopted position, so its unreadable replica fences nothing').toEqual([]);
     expect((await nodeStatus(gru)).fenced ?? [], 'the fences clear once the owner record names another node').toEqual([]);
     expect(await counted(gru, 'terrabase_regional_fenced')).toBe(0);
     await ledger.compare(cells, [[800, 'written-on-journey-3']]);
     const back = await nodeRequest(partner, '/v1/rollout/drain?target=journey-1', 'POST');
     expect(back.status, back.body).toBe(204);
-    await writerIs('journey-1');
+    await writerIs('gru', 'journey-1');
     await ledger.write(cells, 'gru', [[801, 'after-proofs']]);
     await ledger.compare(cells);
     await expect.poll(async () => (await homeLease(kv, ledger.id)).value, { message: 'the lease carries the adopted position back to journey-1' })
@@ -529,6 +523,38 @@ test('a regional writer role moves only with the target certificate, and a datab
   } finally {
     await cleanUp(failure, async () => {
       kv.close();
+    });
+  }
+});
+
+test('a deletion whose holder hands the writer role over before the new writer has its erasure proof still completes erasure', async ({ cells }) => {
+  test.setTimeout(300_000);
+  const gru = node('journey-1');
+  const partner = node('journey-3');
+  const [ledger] = await createLedgers(cells, 1, 'holder-handoff');
+  await removeDatabase(cells, ledger.id);
+  const passed = (target: Node) => logged(target, 'Backup erasure of database', `"Database":"${ledger.id}"`, 'is verified')
+    + logged(target, 'Backup erasure of database', `"Database":"${ledger.id}"`, '"Reason":"verification_pending"');
+  let failure: unknown;
+  try {
+    const drained = await nodeRequest(gru, '/v1/rollout/drain?target=journey-3', 'POST');
+    expect(drained.status, drained.body).toBe(204);
+    await writerIs('gru', 'journey-3');
+    await expect.poll(() => passed(partner), {
+      message: 'the new writer gets the erasure proof of journey-1, the holder that deleted the database, and its backup erasure goes past the active copies', timeout: 180_000,
+    }).toBeGreaterThan(0);
+    expect(logged(partner, 'Backup erasure of database', `"Database":"${ledger.id}"`, '"Reason":"active_copies_pending"', '"Holders":"journey-1"'),
+      'once the proof arrives no pass waits on the holder again').toBeLessThanOrEqual(1);
+    await expect.poll(() => logged(gru, 'Erasure receipt of database', `"Database":"${ledger.id}"`, 'recorded by regional writer', '"Writer":"journey-3"'),
+      { message: 'journey-1 hands its proof to the new writer once' }).toBe(1);
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    await cleanUp(failure, async () => {
+      const back = await nodeRequest(partner, '/v1/rollout/drain?target=journey-1', 'POST');
+      expect(back.status, back.body).toBe(204);
+      await writerIs('gru', 'journey-1');
     });
   }
 });
