@@ -372,7 +372,7 @@ formatting omits credentials.
 
 Project and API-key IP allowlists use typed CIDR records and setters; see [CIDR contracts and examples](contracts/auth/cidrs.md).
 Account MFA status and organization MFA policies use typed records and operations; see [MFA policy contracts and examples](contracts/auth/mfa-policy.md).
-Organization SSO connections (get, put, verify, delete) use typed records whose OIDC client secret is sent once and never echoed; see [SSO contract fixture](contracts/auth/fixtures/sso.json).
+Organization SSO connections (get, put, verify, delete) use typed records whose OIDC client secret is sent once and never echoed.
 End-user lifecycle webhook deliveries are verified by `TerraScaleWebhooks.VerifyWebhook` (Standard Webhooks `v1` HMAC-SHA256, 5-minute timestamp tolerance); it returns the parsed event or throws `TerraScaleWebhookException`.
 
 ## Verification and package distribution

@@ -83,7 +83,7 @@
       "result": "passed; zero warnings and errors"
     }
   ],
-  "prior_correctness_evidence": "2026-10-23-second-region-tests.json; 44 cases at f9590ee3, not rerun for timing extension",
+  "prior_correctness_evidence": "44 cases at f9590ee3, not rerun for timing extension",
   "limits": [
     "Shared-host loopback evidence; no production or WAN target claim",
     "Callback timestamps after native COMMIT returns; no calibrated hook scheduling error or physical power-loss experiment",

@@ -1,6 +1,6 @@
 {
   "producer": "e0084c19d56e2c4db01890252170b8af588a8b47",
-  "source": "sdk/dotnet/contracts/auth/fixtures/project-tenant.json (export_users), values verbatim",
+  "source": "src/TerraScale.Authentication/Features/ProjectTenants (export_users)",
   "export_users": {
     "method": "GET",
     "path": "/v1/{project}/users/export?limit=2&after=opaque%2B%2Fcursor%3D",
