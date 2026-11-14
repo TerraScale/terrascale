@@ -31,6 +31,7 @@
 @import "../../../Features/Organizations/audit.css" layer(features);
 @import "../../../Features/Usage/usage.css" layer(features);
 @import "../../../Features/Notifications/notifications.css" layer(features);
+@import "../../../Features/Backups/backups.css" layer(features);
 @import "../../../Features/Organizations/organization.css" layer(features);
 @import "../../../Features/Profile/profile.css" layer(features);
 @import "../../../Features/Admin/admin.css" layer(features);

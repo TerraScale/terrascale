@@ -208,6 +208,7 @@ async function build() {
       'auth-directory-export': resolve(source, 'auth-directory-export.js'),
       'file-storage': resolve(source, 'file-storage.js'),
       'create-table': resolve(source, 'create-table.js'),
+      'backup-timeline': resolve(source, 'backup-timeline.js'),
       'region-map': resolve(source, 'region-map.js'),
     },
     entryNames: '[name]',

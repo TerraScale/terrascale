@@ -1,0 +1,101 @@
+.ts-backups-pitr .ts-card-body {
+  gap: var(--ts-s4);
+}
+
+.ts-backups-window {
+  display: grid;
+  gap: var(--ts-s1);
+}
+
+.ts-backups-track {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 36px;
+  margin: var(--ts-s2) 0 var(--ts-s1);
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: crosshair;
+}
+
+.ts-backups-bar {
+  position: absolute;
+  top: 16px;
+  left: 0;
+  right: 0;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--ts-surface-3);
+}
+
+.ts-backups-tick {
+  position: absolute;
+  top: 8px;
+  width: 2px;
+  height: 20px;
+  border-radius: 1px;
+  background: var(--ts-accent);
+  opacity: 0.9;
+  left: var(--at);
+  transform: translateX(-1px);
+}
+
+.ts-backups-tick-full {
+  top: 6px;
+  height: 24px;
+  background: var(--ts-ink-2);
+}
+
+.ts-backups-cursor {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 36px;
+  border-radius: 1px;
+  background: var(--ts-warning);
+  left: var(--at);
+  transform: translateX(-1px);
+}
+
+.ts-backups-cursor::after {
+  content: "";
+  position: absolute;
+  top: -4px;
+  left: -4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--ts-warning);
+}
+
+.ts-backups-axis {
+  display: flex;
+  justify-content: space-between;
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-backups-plan {
+  display: grid;
+  gap: var(--ts-s3);
+  padding-top: var(--ts-s3);
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-backups-plan > .ts-stack-md {
+  display: grid;
+  gap: var(--ts-s3);
+}
+
+.ts-backups-store {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s3);
+}
+
+@container page (width < 960px) {
+  .ts-backups-pitr .ts-filters {
+    grid-template-columns: 1fr;
+  }
+}
