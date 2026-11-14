@@ -19,7 +19,9 @@ TerraBase never reads ts-auth storage. It asks ts-auth through its public API:
   and nothing is cached (`no-store`).
 
 Access tokens that ts-auth issues for a key carry `key_id` (equal to `sub`) and `key_gen` (the first 16 hex digits of the
-SHA-256 of the key string they came from). ts-auth caps their expiry at the key's own `expires_at`.
+SHA-256 of the key string they came from). When the key has an `expires_at`, the token also carries `key_exp` (Unix seconds).
+ts-auth caps their expiry at the key's own `expires_at`. A client-credentials exchange for a key that is already past
+`expires_at` answers 401 `key_expired`.
 
 ## How TerraBase checks (`IKeyAuthority`, every region)
 

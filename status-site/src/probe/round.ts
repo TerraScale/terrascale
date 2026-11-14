@@ -8,7 +8,7 @@ import { newId } from "../ids";
 import { judgeReplication } from "../domain/replication";
 
 import { sqlTime } from "../db/reads";
-import { judge, needsBody, parseSpec, type CheckSpec } from "../domain/assertions";
+import { answersRegion, judge, needsBody, parseSpec, type CheckSpec } from "../domain/assertions";
 import { adopt, step, type Action, type Observation, type Tracker } from "../domain/auto-incident";
 import { consensus, settle, type VantageResult } from "../domain/consensus";
 import { aggregate, isMonitorFault, SLOW_MS, type IncidentImpact, type TimelineState } from "../domain/status";
@@ -61,13 +61,24 @@ export interface Sample {
 const keyOf = (endpoint: Pick<RoundEndpoint, "url" | "headers">): string => `${endpoint.url}\n${endpoint.headers}`;
 
 const REPLICATION_URL = "https://api.terrascale.tech/health/replication";
+const DASHBOARD_READY = "https://dash.terrascale.tech/health/ready";
 
 /** The first-party replication report describes peers, not regional origins. */
 export function judgeEndpoint(endpoint: RoundEndpoint, observation: Parameters<typeof judge>[1]) {
   const result = judge(endpoint.spec, observation);
-  if (endpoint.url !== REPLICATION_URL || result.outcome !== "ok") return result;
-  const replication = judgeReplication(observation, endpoint.regionCode);
-  return { ...replication, values: { ...result.values, ...replication.values } };
+  if (endpoint.url === REPLICATION_URL && result.outcome === "ok") {
+    const replication = judgeReplication(observation, endpoint.regionCode);
+    return { ...replication, values: { ...result.values, ...replication.values } };
+  }
+  if (
+    endpoint.url === DASHBOARD_READY &&
+    endpoint.regionCode &&
+    result.outcome !== "ok" &&
+    answersRegion(observation.body, endpoint.regionCode) === false
+  ) {
+    return { outcome: "unknown", error: "Measured another region", values: {} };
+  }
+  return result;
 }
 
 /** Targets to probe: endpoints sharing a URL and headers are probed once,

@@ -48,6 +48,8 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
     /// <summary>Which of the key's strings the token was issued for (<see cref="ApiKeys.Generation"/>), so a rotation retires it.</summary>
     public const string KeyGenerationClaim = "key_gen";
 
+    public const string KeyExpiryClaim = "key_exp";
+
     /// <summary>
     /// The lifetime of organization and project tokens. TerraBase validates them offline; an API key's token is also checked
     /// against the key's live status within seconds (docs/terrabase/key-revocation.md), others only expire.
@@ -115,16 +117,20 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
         // Never past the key's own expiry; key_id and key_gen let TerraBase ask GET /v1/terrascale/api-keys/self whether the
         // key, and the key string the token came from, still act (docs/terrabase/key-revocation.md).
         var now = clock.GetUtcNow();
-        var lifetime = key.ExpiresAt is { } end && end - now < Lifetime ? end - now : Lifetime;
-        if (lifetime <= TimeSpan.Zero)
+        if (key.ExpiresAt is { } expired && expired <= now)
         {
-            return OidcResults.Forbid(Errors.InvalidClient, InvalidApiKeyNotice);
+            return Results.Json(new OAuthErrorBody("key_expired", "The API key has expired."), statusCode: StatusCodes.Status401Unauthorized);
         }
 
+        var lifetime = key.ExpiresAt is { } end && end - now < Lifetime ? end - now : Lifetime;
         var identity = Identity(key.Id, key.OrganizationId, project, requested.IsEmpty ? allowed : requested, lifetime)
             .SetClaim(KeyIdClaim, key.Id)
             .SetClaim(KeyGenerationClaim, ApiKeys.Generation(secret))
             .SetExpirationDate(now + lifetime);
+        if (key.ExpiresAt is { } keyExpiry)
+        {
+            identity.SetClaim(KeyExpiryClaim, keyExpiry.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture));
+        }
         if (key.Database is { } database)
         {
             identity.SetClaim(DatabaseClaim, database);

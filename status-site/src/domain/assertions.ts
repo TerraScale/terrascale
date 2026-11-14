@@ -135,10 +135,21 @@ export const needsBody = (spec: CheckSpec): boolean =>
 const describe = (assertion: Assertion): string =>
   `${assertion.path} ${assertion.op}${assertion.op === "exists" ? "" : ` ${JSON.stringify(assertion.value)}`}`;
 
+export function answersRegion(body: string | undefined, region: string): boolean | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(body ?? "");
+  } catch {
+    return null;
+  }
+  const named = typeof value === "object" && value !== null ? (value as { region?: unknown }).region : undefined;
+  return typeof named === "string" ? named === region.toLowerCase() : null;
+}
+
 /** Judges one vantage's observation of an endpoint. */
 export function judge(spec: CheckSpec, observation: Observation): Judgement {
   const fail = (error: string): Judgement => ({ outcome: spec.indirect ? "unknown" : "fail", error, values: {} });
-  if (observation.status === null) return fail(observation.error ?? "Unreachable");
+  if (observation.status === null) return { outcome: "unknown", error: observation.error ?? "Unreachable", values: {} };
   if (observation.status === spec.blockedStatus) {
     return { outcome: "unknown", error: `Probe blocked (HTTP ${observation.status})`, values: {} };
   }

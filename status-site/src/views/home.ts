@@ -8,6 +8,8 @@ import { byHour, RANGES } from "../domain/range";
 import { vantageLabel, type Coverage, type VantageCoverage, type VantageState } from "../domain/coverage";
 import {
   aggregate,
+  CANARY_CREDENTIAL_EXPIRED,
+  CANARY_CREDENTIAL_INVALID,
   CANARY_QUOTA_EXHAUSTED,
   EMAIL_INBOX_UNAVAILABLE,
   COMING_SOON,
@@ -63,6 +65,8 @@ const REGION_ORDER: Record<string, number> = { gru: 0, fra: 1, sjc: 2 };
 
 /** What brings each monitor fault's checks back. */
 const MONITOR_REMEDY: Record<string, string> = {
+  [CANARY_CREDENTIAL_EXPIRED]: "Replace the canary credential. Checks stay unknown until a new one is installed.",
+  [CANARY_CREDENTIAL_INVALID]: "Replace the canary credential. Checks stay unknown until a new one is installed.",
   [CANARY_QUOTA_EXHAUSTED]: "The monitoring account has used its monthly operation allowance.",
   [EMAIL_INBOX_UNAVAILABLE]: "The disposable inbox the delivery probe reads is unavailable.",
 };
@@ -122,7 +126,7 @@ function component(entry: ComponentOverview, view: Overview) {
   <div class="st-service-state">
     ${sparkline(entry.latency)}
     <span class="ts-meta ts-num" title="Uptime over the last ${range}">${formatUptime(entry.uptime)}</span>
-    ${statusBadge(entry.status, entry.note ?? undefined)}
+    ${statusBadge(entry.status, entry.note ?? (entry.status === "none" ? "Unknown" : undefined))}
   </div>
   ${bars(entry.bars, { label: summary })}
 </li>`;
@@ -137,7 +141,9 @@ function group(entry: GroupOverview, view: Overview) {
 
 /** A region's state label: coming soon without clusters, else its note or state. */
 export const regionLabel = (entry: RegionOverview): string =>
-  entry.clusters.length === 0 ? COMING_SOON : (entry.note ?? STATE_LABELS[entry.status]);
+  entry.clusters.length === 0
+    ? COMING_SOON
+    : (entry.note ?? (entry.status === "none" ? "Unknown" : STATE_LABELS[entry.status]));
 
 /** A region's bars: each bucket in its clusters' combined state, carrying
     their summed counts. */
@@ -420,6 +426,17 @@ export function homePage(view: Overview): Page {
     (note) => html`<article class="ts-alert" data-state="degraded" role="status">
     <h2 class="ts-alert-title">${note}</h2>
     <p class="ts-alert-body">Monitoring checks could not run for ${[...new Set(view.monitoring.issues.filter((issue) => issue.note === note).map((issue) => names.get(issue.componentId) ?? issue.componentId))].join(", ")}. Their health is unmeasured; passing HTTP health checks do not verify these operations. ${MONITOR_REMEDY[note] ?? ""}</p>
+  </article>`,
+  )}
+
+  ${view.credentials.map(
+    (credential) => html`<article class="ts-alert" data-state="degraded" role="status">
+    <h2 class="ts-alert-title">Canary credential expiring for ${names.get(credential.componentId) ?? credential.componentId}</h2>
+    <p class="ts-alert-body">The credential ${
+      Date.parse(credential.expiresAt) <= view.generatedAt
+        ? "has expired"
+        : html`expires ${time(credential.expiresAt, "datetime")}`
+    }. Replace it before these checks become unknown.</p>
   </article>`,
   )}
 

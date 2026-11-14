@@ -370,7 +370,7 @@ public static partial class OpenApiSetup
             Type = SecuritySchemeType.Http,
             Scheme = "bearer",
             BearerFormat = "JWT",
-            Description = "An access token the token endpoint issued for an API key (client credentials), carrying key_id and key_gen.",
+            Description = "An access token the token endpoint issued for an API key (client credentials), carrying key_id, key_gen and, when the key expires, key_exp.",
         },
         [SecuritySchemes.PlatformUser] = () => new()
         {

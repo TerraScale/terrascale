@@ -11,6 +11,7 @@ import {
   CanaryMonitorError,
   canaryJson,
   CANARY_TABLE,
+  credentialExpiry,
   isCanaryConfig,
   isRegionCode,
   forgetToken,
@@ -142,6 +143,7 @@ export async function runTerraBase(
   };
   const init = (extra: RequestInit = {}): RequestInit => ({ ...extra, headers: { ...headers, ...extra.headers } });
   const terrabase = timed(fetcher);
+  let credentialExpiresAt: string | null = null;
   // Every request answers 200 unless it says otherwise.
   const call = (path: string, extra?: RequestInit, statuses: readonly number[] = [200]) =>
     canaryJson(config.origin + path, init(extra), terrabase.fetch, statuses);
@@ -158,7 +160,9 @@ export async function runTerraBase(
         break;
       }
       case SQL_PROBE: {
-        headers.authorization = `Bearer ${await readToken(config as CanaryConfig, fetcher, SQL_SCOPES)}`;
+        const token = await readToken(config as CanaryConfig, fetcher, SQL_SCOPES);
+        credentialExpiresAt = credentialExpiry(token);
+        headers.authorization = `Bearer ${token}`;
         // Fresh per region and round, so concurrent probes never collide.
         const id = newId();
         const table = CANARY_TABLE;
@@ -190,10 +194,15 @@ export async function runTerraBase(
         break;
       }
     }
-    return { ok: true, latencyMs: terrabase.slowest(), error: null };
+    return { ok: true, latencyMs: terrabase.slowest(), error: null, credentialExpiresAt };
   } catch (error) {
     if (!(error instanceof CanaryError)) throw error;
     if (probe === SQL_PROBE) forgetToken(config as CanaryConfig, fetcher);
-    return { ok: error instanceof CanaryMonitorError ? null : false, latencyMs: null, error: error.message };
+    return {
+      ok: error instanceof CanaryMonitorError ? null : false,
+      latencyMs: null,
+      error: error.message,
+      credentialExpiresAt,
+    };
   }
 }

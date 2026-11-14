@@ -103,7 +103,7 @@ const CERTIFICATES = `SELECT host, ${iso("not_after")} AS notAfter, issuer, ${is
 
 // Joined from the endpoints so every lookup is a primary key seek.
 const LATEST = `SELECT s.endpoint_id AS endpointId, ${iso("s.at")} AS at, s.state, s.ok, s.total,
-    s.latency_ms AS latencyMs, s.results
+    s.latency_ms AS latencyMs, s.results, s."values" AS sampleValues
   FROM endpoints e JOIN probe_samples s ON s.endpoint_id = e.id
     AND s.at = (SELECT max(at) FROM probe_samples WHERE endpoint_id = e.id)`;
 
@@ -153,6 +153,18 @@ function parseResults(text: string): VantageSample[] {
   }
 }
 
+function parseValues(text: string | null): Record<string, unknown> | null {
+  if (!text) return null;
+  try {
+    const value: unknown = JSON.parse(text);
+    return typeof value === "object" && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 /** SQLite datetime text for a moment, matching the stored format. */
 export function sqlTime(at: number): string {
   return new Date(at).toISOString().slice(0, 19).replace("T", " ");
@@ -194,9 +206,15 @@ export async function loadSnapshot(env: Env, window: SnapshotWindow): Promise<Sn
     incidents: incidents(current),
     regions: (regions?.results ?? []) as Region[],
     endpoints: (endpoints?.results ?? []) as Endpoint[],
-    latest: ((latest?.results ?? []) as (Omit<LatestSample, "results"> & { results: string })[]).map((sample) => ({
+    latest: (
+      (latest?.results ?? []) as (Omit<LatestSample, "results" | "values"> & {
+        results: string;
+        sampleValues: string | null;
+      })[]
+    ).map(({ sampleValues, ...sample }) => ({
       ...sample,
       results: parseResults(sample.results),
+      values: parseValues(sampleValues),
     })),
     vantages: (vantages?.results ?? []) as VantageSeen[],
     certificates: (certificates?.results ?? []) as Certificate[],
