@@ -92,6 +92,7 @@ public static class Telemetry
                         or "terrabase.backup.failures" or "terrabase.backup.holes" or "terrabase.backup.holes_recorded" or "terrabase.backup.generations"
                         or "terrabase.backup.stored" or "terrabase.backup.files" or "terrabase.backup.lag"
                         or "terrabase.backup.last_success" or "terrabase.backup.bucket_snapshot"
+                        or "terrabase.backup.recovery_point_age" or "terrabase.backup.drill_last_success" or "terrabase.backup.drill_failed_files"
                         or "terrabase.shape.reads" or "terrabase.shape.requests.waiting" or "terrabase.shape.flights.active"
                         or "terrabase.shape.flights.started" or "terrabase.shape.seals" or "terrabase.shape.seals.duration" or "terrabase.shape.sealed_bytes"
                         or "terrabase.shape.mirror.lag" or "terrabase.shape.redirects" or "terrabase.cdc.retained.rows"

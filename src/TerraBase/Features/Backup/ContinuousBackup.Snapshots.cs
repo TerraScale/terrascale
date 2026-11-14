@@ -73,7 +73,7 @@ internal sealed partial class ContinuousBackup
             var cursor = ((ICdcBackupRetention)file.Tap).Cursor;
             var at = captured.At;
             var key = BackupLayout.Snapshot(file.Prefix, at, generation, 0);
-            var live = !_stopped && at - file.DrilledAt >= DrillInterval
+            var live = !_stopped && DrillDue(file, at)
                 ? await _engine.ChecksumAsync(snapshot, cancellationToken).ConfigureAwait(false)
                 : null;
             await StoreGenerationProofAsync(file, generation, key, captured, cancellationToken).ConfigureAwait(false);
@@ -140,7 +140,7 @@ internal sealed partial class ContinuousBackup
             }
             var generation = file.Generation!.Value;
             var key = new SnapshotKey(BackupLayout.Snapshot(file.Prefix, at, generation, file.Position), at, generation, file.Position);
-            var drill = at - file.DrilledAt >= DrillInterval;
+            var drill = DrillDue(file, at);
             if (drill)
             {
                 file.DrilledAt = at;

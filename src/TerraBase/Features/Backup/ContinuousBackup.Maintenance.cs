@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json;
 using TerraBase.Errors;
 using TerraBase.Features.Backup;
@@ -10,7 +11,9 @@ using ZLogger;
 
 namespace TerraBase.Features.Backup;
 
-public sealed record BackupDrill(DateTimeOffset At, bool Passed, double RestoreSeconds, string? Error);
+public sealed record BackupDrill(
+    DateTimeOffset At, bool Passed, double RestoreSeconds, string? Error, string Region, string Member, string Destination,
+    DateTimeOffset RecoveryPointAt, string Generation, long TargetPosition, long? ReachedPosition, string ExpectedDigest, string? RestoredDigest);
 
 public sealed record BackupStatusRecord(
     string File, string Member, string? Generation, DateTimeOffset? LastShippedAt, double LagSeconds, long? SizeBytes, DateTimeOffset? SizedAt,
@@ -19,7 +22,6 @@ public sealed record BackupStatusRecord(
 internal sealed partial class ContinuousBackup
 {
     private static readonly TimeSpan RetentionInterval = TimeSpan.FromHours(1);
-    private static readonly TimeSpan DrillInterval = TimeSpan.FromDays(1);
     private static readonly TimeSpan SizeInterval = TimeSpan.FromDays(1);
     private static readonly TimeSpan BucketSnapshotInterval = TimeSpan.FromDays(1);
     private static readonly TimeSpan BucketSnapshotRetention = TimeSpan.FromDays(14);
@@ -372,6 +374,8 @@ internal sealed partial class ContinuousBackup
     {
         var started = _time.GetTimestamp();
         string? error = null;
+        long? reached = null;
+        string? digest = null;
         try
         {
             var source = stored;
@@ -387,6 +391,7 @@ internal sealed partial class ContinuousBackup
                 .ConfigureAwait(false);
             try
             {
+                reached = restored.Position;
                 if (restored.Position != stored.Position)
                 {
                     error = "the backup ends before the snapshot it is checked against";
@@ -394,6 +399,7 @@ internal sealed partial class ContinuousBackup
                 else
                 {
                     var rebuilt = await _engine.ChecksumAsync(restored.Path, cancellationToken).ConfigureAwait(false);
+                    digest = Convert.ToHexString(rebuilt);
                     if (!live.SequenceEqual(rebuilt))
                     {
                         error = "the restored database differs from the live one";
@@ -410,36 +416,61 @@ internal sealed partial class ContinuousBackup
             error = failure.Message;
         }
 
-        var drill = new BackupDrill(_time.GetUtcNow(), error is null, _time.GetElapsedTime(started).TotalSeconds, error);
-        file.LastDrill = drill;
+        var drill = new BackupDrill(_time.GetUtcNow(), error is null, _time.GetElapsedTime(started).TotalSeconds, error,
+            _region, _node, file.Target.Revision, stored.At, stored.Generation.ToString(), stored.Position, reached, Convert.ToHexString(live), digest);
+        try
+        {
+            await RecordAsync(file, cancellationToken, drill).ConfigureAwait(false);
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            file.LastDrill = drill with { Passed = false, Error = "the restore drill result could not be committed" };
+            _drills.Add(1, new KeyValuePair<string, object?>("result", "failed"));
+            _logger.ZLogError($"The restore drill record of {file.Prefix:@File} could not be committed");
+            throw;
+        }
         _drills.Add(1, new KeyValuePair<string, object?>("result", drill.Passed ? "passed" : "failed"));
         if (!drill.Passed)
         {
             _logger.ZLogError($"The restore drill of {file.Prefix:@File} failed: {error!:@Reason}");
         }
-
-        await RecordAsync(file, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task RecordAsync(ShippedFile file, CancellationToken cancellationToken)
+    private async Task RecordAsync(ShippedFile file, CancellationToken cancellationToken, BackupDrill? drill = null)
     {
-        var record = new BackupStatusRecord(file.Prefix, _node, file.Generation?.ToString(), file.LastShipped, Lag(file),
-            file.SizeBytes, file.SizedAt == DateTimeOffset.MinValue ? null : file.SizedAt, file.RetentionDays, file.LastDrill, _time.GetUtcNow());
-        var (kind, id) = RecordKey(file.Database);
+        await file.RecordGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            var record = new BackupStatusRecord(file.Prefix, _node, file.Generation?.ToString(), file.LastShipped, Lag(file),
+                file.SizeBytes, file.SizedAt == DateTimeOffset.MinValue ? null : file.SizedAt, file.RetentionDays, drill ?? file.LastDrill, _time.GetUtcNow());
+            var (kind, id) = RecordKey(file.Database);
             var store = await _storage.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
             var transaction = await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
             await using (transaction.ConfigureAwait(false))
             {
                 await transaction.PutAsync(kind, id, JsonSerializer.SerializeToUtf8Bytes(record, BackupJsonContext.Default.BackupStatusRecord), cancellationToken)
                     .ConfigureAwait(false);
+                if (drill is not null)
+                {
+                    var history = file.Database is null ? "backup_drills" : $"databases/{file.Database.DatabaseId}/backup_drills";
+                    var date = drill.At.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                    await transaction.PutAsync(history, $"{_region}/{_node}/{drill.Destination}/{date}",
+                        JsonSerializer.SerializeToUtf8Bytes(drill, BackupJsonContext.Default.BackupDrill), cancellationToken).ConfigureAwait(false);
+                }
                 await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                if (drill is not null)
+                {
+                    file.LastDrill = drill;
+                }
             }
         }
-        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception error) when (drill is null && !cancellationToken.IsCancellationRequested)
         {
             _logger.ZLogWarning(error, $"The backup record of {file.Prefix:@File} could not be written; the next pass retries");
+        }
+        finally
+        {
+            file.RecordGate.Release();
         }
     }
 }

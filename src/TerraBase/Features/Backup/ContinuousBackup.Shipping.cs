@@ -72,6 +72,8 @@ internal sealed partial class ContinuousBackup
                 file.Target.Dispose();
                 file.Target = target;
                 (file.LastShipped, file.LastSnapshot, file.RetainedAt, file.DrilledAt, file.SizeBytes, file.SizedAt) = (null, default, default, default, null, default);
+                file.RecoveryPoint = null;
+                file.LastDrill = null;
                 (file.SnapshotFailures, file.SnapshotRetryAt, file.SnapshotError) = (0, DateTimeOffset.MinValue, null);
             }
 
@@ -144,7 +146,7 @@ internal sealed partial class ContinuousBackup
                     _logger.ZLogWarning(error, $"Retention of {file.Prefix:@File} failed; it retries next hour");
                 }
             }
-            if (now - file.LastSnapshot >= SnapshotInterval && now >= file.SnapshotRetryAt && !_stopped)
+            if (now.UtcDateTime.Date > file.LastSnapshot.UtcDateTime.Date && now >= file.SnapshotRetryAt && !_stopped)
             {
                 if (file.Behind)
                 {
@@ -367,7 +369,7 @@ internal sealed partial class ContinuousBackup
 
         file.Clear();
     }
-    private static void Prove(ShippedFile file, DateTimeOffset at)
+    private void Prove(ShippedFile file, DateTimeOffset at)
     {
         at = DateTimeOffset.FromUnixTimeMilliseconds(at.ToUnixTimeMilliseconds());
         if (!file.Target.IncludesPlatform)
@@ -377,6 +379,7 @@ internal sealed partial class ContinuousBackup
         else if (file.PlatformProgress is not { } progress || progress.Generation != file.Generation || progress.At < at)
         {
             file.PlatformProgress = new(file.Generation!.Value, at);
+            ObserveRecoveryPoint(file, at);
         }
     }
 

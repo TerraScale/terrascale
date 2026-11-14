@@ -58,6 +58,35 @@ test('a writer killed during a write restarts without losing acknowledged rows i
   }
 });
 
+test('each regional writer records a restore drill with matching row content and exact recovery position', async () => {
+  type Drill = {
+    at: string; passed: boolean; region: string; member: string; destination: string; recoveryPointAt: string;
+    generation: string; targetPosition: number; reachedPosition: number; expectedDigest: string; restoredDigest: string;
+  };
+  for (const writer of await topology()) {
+    let drill: Drill | undefined;
+    await expect.poll(async () => {
+      const response = await nodeRequest(writer, '/v1/backup');
+      expect(response.status, response.body).toBe(200);
+      const files = (JSON.parse(response.body) as { files: { file: string; lastDrill: Drill | null }[] }).files;
+      drill = files.find(file => file.file === `v1/_system/nodes/${writer.name}`)?.lastDrill ?? undefined;
+      return drill?.passed;
+    }, { message: `the ${writer.region} writer restores its catalog from its own production-format backup namespace` }).toBe(true);
+    expect(drill).toMatchObject({ region: writer.region, member: writer.name, passed: true });
+    expect(drill!.destination).toBe('platform');
+    expect(drill!.generation).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+    expect(drill!.reachedPosition).toBe(drill!.targetPosition);
+    expect(drill!.expectedDigest).toMatch(/^[0-9A-F]{64}$/);
+    expect(drill!.restoredDigest).toBe(drill!.expectedDigest);
+    expect(Date.parse(drill!.recoveryPointAt)).toBeLessThanOrEqual(Date.parse(drill!.at));
+    await expect.poll(() => metric(writer, 'terrabase_backup_drill_last_success_seconds'),
+      { message: 'every platform file has a recorded successful latest drill' }).toBeGreaterThan(0);
+    expect(await metric(writer, 'terrabase_backup_drill_failed_files')).toBe(0);
+    expect(Number.isFinite(await metric(writer, 'terrabase_backup_recovery_point_age_seconds'))).toBe(true);
+    console.log(`restore drill ${writer.region}/${writer.name}: ${drill!.at}, recovery ${drill!.recoveryPointAt}, position ${drill!.reachedPosition}, SHA256 ${drill!.restoredDigest}`);
+  }
+});
+
 test('restore a backup into another database and compare its rows with the snapshot ledger in every region', async ({ cells }) => {
   const created = await json<{ id: string }>(await cells.post(`${endpoint('gru')}${project()}/databases`, {
     data: { name: name('backup-ledger'), regions: [...regions] },
@@ -193,9 +222,12 @@ test('history lost while the backup store is unreachable is one hole each time, 
     expect(shipped).toMatchObject({ replacing: false, storedIncarnation: shipped.incarnation, holes: [] });
 
     const firstMark = (await backupPuts(shipped.file)).length;
+    const recoveryAge = await metric(writer, 'terrabase_backup_recovery_point_age_seconds');
     await backupStore('down');
     outage = true;
     const inside = await churn(75);
+    expect(await metric(writer, 'terrabase_backup_recovery_point_age_seconds'),
+      'the recovery-point age keeps rising while the backup bucket is unreachable').toBeGreaterThan(recoveryAge);
     console.log('backup holes: first discard completed');
     const duringSent = Date.now();
     await ledger.write(cells, 'gru', [[2, 'during-outage']]);

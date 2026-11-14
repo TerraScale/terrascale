@@ -7,6 +7,7 @@ namespace TerraBase.Features.Backup;
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, MaxDepth = RequestJson.StoredMaxDepth + 8)]
 [JsonSerializable(typeof(BackupStatus))]
 [JsonSerializable(typeof(BackupStatusRecord))]
+[JsonSerializable(typeof(BackupDrill))]
 [JsonSerializable(typeof(BackupAccount))]
 [JsonSerializable(typeof(BackupHole))]
 [JsonSerializable(typeof(PointInTimePlan))]
