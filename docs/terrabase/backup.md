@@ -182,7 +182,11 @@ transaction. The backup's tap reads that table:
    transaction whose times are missing or go back is logged with a plain commit. When a read appended changes up to the
    newest COMMIT row that existed when it started (not a read stopped at 32 MiB), a read mark follows them with that
    start time: every transaction committed before it is in the log before the mark. Both records are additive: the
-   object format, the bucket layout and older logs (plain commits only) stay readable.
+   object format, the bucket layout and older logs (plain commits only) stay readable. After a read appends changes,
+   the first caught-up read starting in a later whole second appends one more read mark, even without another change.
+   That witness closes the last transaction's second so every acknowledged write can be restored without a later write.
+   Reopening or rewinding the tap also schedules one witness after the current second. Once caught up and witnessed,
+   an idle tap appends nothing until another change arrives.
 2. Reading advances a cursor without acknowledging it. Only a stored snapshot or segment advances the stored cursor.
    Its generation, schema map, byte offset and capture position are saved immediately with each upload in the node's
    durable backup accounting record in the system database. An intent containing the object key and sealed-content hash
@@ -645,6 +649,7 @@ Guaranteed to restore exactly (`201`), given contiguous segments and timed trans
   when a transaction committed at or after T (or a read mark at or after T) is shipped later in the same generation.
   A quiesced cut is this case: writes stop, T is the next whole second, and a later write is the witness.
 - **The latest durable point**: the second at or before the newest read mark's time, with no later write needed.
+  The closing idle mark advances this past the last acknowledged write once both its changes and witness are stored.
 - **A quiet time closed by a snapshot**: a time up to the generation's next snapshot when no segment follows the
   replayed log before it.
 
@@ -656,9 +661,10 @@ Limits:
   acknowledgement, cannot be detected. A step back between two transactions read after T is refused.
 - Only the transactions downloaded after T are checked for times going back; earlier segments are trusted by their read
   times.
-- A read writes a mark only when it appended changes and reached the newest commit: a read that stops at its byte
-  budget, or an idle database, writes none (an idle database ships nothing). A commit made between a read's start
-  and its query is not covered by that mark; no T at or before the mark needs it.
+- A read writes a mark when it reached the newest commit and either appended changes or owes the closing witness
+  described above. A read that stops at its byte budget writes none. After the closing witness is stored, an idle
+  database ships nothing. A commit made between a read's start and its query is not covered by that mark; no T at or
+  before the mark needs it.
 - A log written before timed commits and read marks restores only at snapshot times and at times its generation's next
   snapshot closes.
 - A read mark rests on the engine showing a commit that returned on the writer's connection to the tap's next autocommit read

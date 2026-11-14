@@ -31,6 +31,8 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
     private long _durableAnchor;
     private long _storedAnchor;
 
+    private long? _witnessAfter;
+
     private readonly Lazy<CancellationTokenSource> _refused;
 
     public CancellationToken Refused => _refused.Value.Token;
@@ -90,6 +92,7 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
         _refused = new(() => store.ReadCancellation(CancellationToken.None));
         _io = io;
         _time = time;
+        _witnessAfter = time.GetUtcNow().ToUnixTimeSeconds() + 1;
         _reader = reader;
         _lineage = lineage;
     }
@@ -346,8 +349,10 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
             (after, spent) = (next, stop);
         }
 
+        var changed = bytes > 0;
+        var witnessAfter = changed ? started.ToUnixTimeSeconds() + 1 : _witnessAfter;
         DateTimeOffset? mark = null;
-        if (after == end && bytes > 0)
+        if (after == end && (changed || started.ToUnixTimeSeconds() >= witnessAfter))
         {
 
             ChangeLog.WriteReadMark(buffer, started);
@@ -355,9 +360,11 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
             await destination.WriteAsync(buffer.WrittenMemory, cancellationToken).ConfigureAwait(false);
             bytes += buffer.WrittenCount;
             mark = started;
+            witnessAfter = changed ? witnessAfter : null;
         }
 
         ThrowIfUnavailable();
+        _witnessAfter = witnessAfter;
         (_anchor, _schema) = (after, schema);
         return new(bytes, true, after < end, mark);
     }

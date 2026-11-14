@@ -95,6 +95,56 @@ test('restore a backup into another database and compare its rows with the snaps
   }
 });
 
+test('an idle backup reaches acknowledged writes without another write, including after a writer restart', async ({ cells }) => {
+  const writer = (await topology()).find(node => node.region === 'gru')!;
+  const created = await json<{ id: string }>(await cells.post(`${endpoint('gru')}${project()}/databases`, {
+    data: { name: name('idle-backup'), regions: ['gru'] },
+  }), 201);
+  const ledger = new Ledger(created.id);
+  const restored: string[] = [];
+  const latest = async () => {
+    const window = await cells.get(`${endpoint('gru')}${database(created.id)}/point-in-time`);
+    return window.status() === 200 ? Date.parse((await window.json() as { latest: string }).latest) : 0;
+  };
+  const recover = async (acked: number) => {
+    await expect.poll(latest, { message: 'the idle backup proves every acknowledged write without a later source write' }).toBeGreaterThanOrEqual(acked);
+    const at = await latest();
+    const plan = await json<{ window: { latest: string } }>(await cells.post(`${endpoint('gru')}${database(created.id)}/point-in-time/plan`, {
+      data: { pointInTime: new Date(at).toISOString() },
+    }));
+    expect(Date.parse(plan.window.latest), 'the stored objects also prove the acknowledged write').toBeGreaterThanOrEqual(acked);
+    const operation = await json<{ id: string }>(await cells.post(`${endpoint('gru')}${database(created.id)}/point-in-time/restore`, {
+      data: { pointInTime: new Date(at).toISOString(), name: name('idle-restored') },
+    }), 202);
+    let copy = '';
+    await expect.poll(async () => {
+      const state = await json<{ status: string; database: string; errorCode?: string }>(await cells.get(`${endpoint('gru')}${database(created.id)}/restores/${operation.id}`));
+      expect(state.status, state.errorCode).not.toBe('failed');
+      if (state.status === 'completed') copy = state.database;
+      return state.status;
+    }, { message: 'the idle backup restores its acknowledged rows' }).toBe('completed');
+    restored.push(copy);
+    expect(await ledger.read(cells, 'gru', copy)).toEqual(ledger.acknowledged);
+    console.log(`idle backup ${created.id}: acknowledged=${acked} proven=${at} restored=${JSON.stringify(ledger.acknowledged)}`);
+  };
+  try {
+    await sql(cells, endpoint('gru'), created.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
+    await expect.poll(latest, { message: 'the initial snapshot is stored before the isolated write' }).toBeGreaterThan(0);
+    await ledger.write(cells, 'gru', [[1, 'before-restart']]);
+    await recover(Date.now());
+    await ledger.write(cells, 'gru', [[2, 'restart-immediately']]);
+    const acked = Date.now();
+    const restart = restartAfterKill(writer, true);
+    await restart();
+    await expect.poll(() => probe(writer, '/readyz'), { message: 'the restarted writer is ready' }).toBe(200);
+    await tokenReady(writer, cells, database(created.id));
+    await recover(acked);
+  } finally {
+    for (const copy of restored) await removeDatabase(cells, copy);
+    await removeDatabase(cells, created.id);
+  }
+});
+
 test('history lost while the backup store is unreachable is one hole each time, also across a generation restart and a node restart, and restores refuse every hole', async ({ cells }) => {
   const writer = (await topology()).find(node => node.region === 'gru')!;
   const created = await json<{ id: string }>(await cells.post(`${endpoint('gru')}${project()}/databases`, {
