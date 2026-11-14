@@ -90,7 +90,6 @@ namespace TerraScale.Dashboard
             builder.Services.AddHostedService(services => services.GetRequiredService<DashboardStateInitializer>());
             builder.Services.AddSingleton<DependencyReadiness>();
             builder.Services.AddSingleton<DashboardSessions>();
-            builder.Services.AddHostedService<SessionRefresher>();
             builder.Services.AddAccountFeatures();
             builder.Services.AddAllowanceNotifications();
             builder.Services.AddSupport();
