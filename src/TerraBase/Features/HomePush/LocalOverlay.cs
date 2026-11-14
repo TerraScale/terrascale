@@ -12,7 +12,7 @@ internal sealed class LocalOverlay
 {
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), Pending> _databases = new();
 
-    public event Action<TenantContext, ulong>? Held;
+    public event Action<TenantContext, ulong, IReadOnlyDictionary<string, ulong>>? Held;
 
     public event Action<TenantContext, HomeApplyResult>? Reverted;
 
@@ -95,7 +95,7 @@ internal sealed class LocalOverlay
 
         if (through > 0 && pending.Snapshot().All(entry => entry.Sequence > through))
         {
-            Held?.Invoke(database, through);
+            Held?.Invoke(database, through, await FrontierAsync(writer, cancellationToken).ConfigureAwait(false));
         }
 
         return restored;
@@ -125,6 +125,27 @@ internal sealed class LocalOverlay
         }
 
         return held;
+    }
+
+    private static async ValueTask<Dictionary<string, ulong>> FrontierAsync(IReplicaWriter writer, CancellationToken cancellationToken)
+    {
+        var frontier = new Dictionary<string, ulong>(StringComparer.Ordinal);
+        var table = await writer.ExecuteAsync(ApplySql.Statement("SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = '_ts_frontier'"), cancellationToken)
+            .ConfigureAwait(false);
+        if (table.Rows is not [[long and > 0]])
+        {
+            return frontier;
+        }
+
+        foreach (var row in (await writer.ExecuteAsync(ApplySql.Statement("SELECT source, seq FROM _ts_frontier"), cancellationToken).ConfigureAwait(false)).Rows)
+        {
+            if (row is [string source, long seq and >= 0])
+            {
+                frontier[source] = (ulong)seq;
+            }
+        }
+
+        return frontier;
     }
 
     private static (string, string, string) Key(TenantContext database) => (database.OrganizationId, database.ProjectId!, database.DatabaseId!);

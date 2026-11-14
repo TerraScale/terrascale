@@ -1,9 +1,15 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using TerraBase.Features.Sync;
 using TerraBase.Features.Clock;
 
 namespace TerraBase.Features.HomeApply;
 
-internal sealed record RegionTransaction(string? Id, string? Region, HlcTimestamp? Hlc, IReadOnlyList<RegionChange>? Changes);
+internal sealed record RegionTransaction(string? Id, string? Region, HlcTimestamp? Hlc, IReadOnlyList<RegionChange>? Changes)
+{
+    [JsonIgnore]
+    internal StreamSequence? Position { get; init; }
+}
 
 internal sealed record RegionChange(string? Op, string? Table, IReadOnlyDictionary<string, JsonElement>? Key, IReadOnlyDictionary<string, JsonElement>? Values);
 

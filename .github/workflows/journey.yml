@@ -9,6 +9,9 @@ on:
       engine:
         type: boolean
         required: true
+      frontier:
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -300,6 +303,78 @@ jobs:
           path: |
             e2e/test-results
             e2e/.state/logs
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: ignore
+  frontier:
+    name: replication frontier
+    if: inputs.frontier
+    needs: services
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      E2E_REGIONS: 2
+      E2E_NODES_PER_REGION: 1
+      DOTNET_PROCESSOR_COUNT: 4
+      E2E_STATE: ${{ github.workspace }}/e2e/.state
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+      DOTNET_NOLOGO: 1
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Journey paths
+        run: |
+          {
+            echo "E2E_TOOLS=$HOME/.cache/terrascale-e2e"
+            echo "E2E_BUILD=$RUNNER_TEMP/services"
+          } >> "$GITHUB_ENV"
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '24.21.0'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: services-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/services
+      - name: Install the journey tools and the proof's broker
+        run: |
+          bash e2e/env/tools.sh
+          bash e2e/env/tools.sh nats-server
+      - id: namespace
+        name: Enter a network namespace with only loopback, the production names pinned and the run CA trusted
+        timeout-minutes: 2
+        run: |
+          bash e2e/env/pki.sh
+          sudo sysctl -q -w kernel.apparmor_restrict_unprivileged_userns=0
+          bash e2e/env/local.sh start
+      - name: Egress guard
+        timeout-minutes: 1
+        run: bash e2e/env/local.sh exec bash e2e/env/guard.sh
+      - name: Replication frontier proof
+        timeout-minutes: 20
+        run: |
+          started=$SECONDS
+          bash e2e/env/local.sh exec node e2e/replication/frontier.mjs
+          echo "the replication frontier proof took $((SECONDS - started)) s"
+      - name: Stop the namespace
+        if: always() && steps.namespace.outcome == 'success'
+        timeout-minutes: 1
+        run: bash e2e/env/local.sh stop
+      - id: scrub
+        name: Redact every generated secret from the files that upload
+        if: always()
+        run: python3 e2e/env/scrub.py "$E2E_STATE" "$E2E_STATE/logs"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: (failure() || cancelled()) && steps.scrub.outcome == 'success'
+        with:
+          name: replication-frontier-evidence
+          path: e2e/.state/replication-*/logs
           include-hidden-files: true
           retention-days: 7
           if-no-files-found: ignore

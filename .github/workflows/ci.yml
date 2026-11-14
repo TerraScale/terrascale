@@ -67,6 +67,7 @@ jobs:
       journey: ${{ steps.journey.outputs.journey }}
       keyring: ${{ steps.filter.outputs.keyring }}
       engine: ${{ steps.filter.outputs.engine }}
+      frontier: ${{ steps.filter.outputs.frontier }}
     steps:
       # Pull requests list files through the API; pushes diff the checkout against the push's `before` commit.
       - if: github.event_name == 'push'
@@ -183,7 +184,7 @@ jobs:
             auth-client:
               - *dotnet-sdk
               - src/TerraScale.Authentication*/**/!(AGENTS.md|CLAUDE.md)
-            terrabase:
+            terrabase: &terrabase
               - *shared
               - .github/actions/**
               - Dockerfile
@@ -195,6 +196,11 @@ jobs:
               - src/TerraBase*/**/!(AGENTS.md|CLAUDE.md)
               - src/TerraScale.TerraBase.*/**/!(AGENTS.md|CLAUDE.md)
               - landing-site/static/pricing.json
+            frontier:
+              - *terrabase
+              - e2e/replication/**
+              - e2e/env/**
+              - .github/workflows/journey.yml
             sdk-dotnet:
               - sdk/dotnet/**/!(AGENTS.md|CLAUDE.md)
               - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md|CLAUDE.md)
@@ -932,6 +938,7 @@ jobs:
     with:
       keyring: ${{ contains(fromJSON(needs.changes.outputs.dotnet), 'terrabase') || needs.changes.outputs.keyring == 'true' || github.event_name != 'pull_request' }}
       engine: ${{ needs.changes.outputs.engine == 'true' }}
+      frontier: ${{ github.event_name != 'pull_request' || needs.changes.outputs.frontier == 'true' }}
 
   all-green:
     name: all-green

@@ -18,6 +18,8 @@ public readonly union RegisteredDatabaseResult(bool, Unavailable);
 
 public readonly union ReplicatesDatabaseResult(bool, Unavailable);
 
+public readonly union DeletedDatabaseResult(bool, Unavailable);
+
 public sealed record DatabaseIdentity(DateTimeOffset CreatedAt, string? BranchedFrom = null, DateTimeOffset? ExpiresAt = null)
 {
     public static DatabaseIdentity? Reconcile(DatabaseIdentity? incoming, DatabaseIdentity? stored = null) =>
@@ -62,6 +64,8 @@ public interface ITenantDirectory
     ValueTask<RegisteredDatabaseResult> RegisteredAsync(TenantContext database, CancellationToken cancellationToken);
 
     ValueTask<ReplicatesDatabaseResult> ReplicatesAsync(TenantContext database, CancellationToken cancellationToken);
+
+    ValueTask<DeletedDatabaseResult> DeletedAsync(TenantContext database, CancellationToken cancellationToken);
 
     ValueTask<DatabaseRecordResult> DatabaseRecordAsync(TenantContext database, CancellationToken cancellationToken);
 
