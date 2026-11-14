@@ -140,15 +140,20 @@ async function killDuringBurst(ledgers: Ledger[], token: string): Promise<{ kill
   let next = 0;
   let acknowledged = 0;
   let killed: { killedAt: number; restart: () => Promise<void> } | undefined;
-  await Promise.all(Array.from({ length: 12 }, async () => {
-    while (next < ids.length) {
-      const id = ids[next++];
-      const ledger = ledgers[id % ledgers.length];
-      if (await ledger.direct(writer, token, [[id, `burst-${id}`]]) && ++acknowledged === 45 && !killed) {
-        killed = { killedAt: Date.now(), restart: restartAfterKill(writer) };
+  try {
+    await Promise.all(Array.from({ length: 12 }, async () => {
+      while (next < ids.length) {
+        const id = ids[next++];
+        const ledger = ledgers[id % ledgers.length];
+        if (await ledger.direct(writer, token, [[id, `burst-${id}`]]) && ++acknowledged === 45 && !killed) {
+          killed = { killedAt: Date.now(), restart: restartAfterKill(writer) };
+        }
       }
-    }
-  }));
+    }));
+  } catch (error) {
+    await killed?.restart();
+    throw error;
+  }
   expect(killed, 'the writer was killed during the burst').toBeDefined();
   return killed!;
 }

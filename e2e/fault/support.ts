@@ -176,6 +176,7 @@ export async function signIn(): Promise<string> {
 }
 
 export async function exchangedToken(request: APIRequestContext, signedIn: string): Promise<string> {
+  await expect.poll(async () => (await request.get(`${auth}/readyz`)).status(), { message: 'ts-auth reaches its TerraBase writer before a token exchange' }).toBe(200);
   const current = journey();
   const grant = await json<{ access_token: string }>(await request.post(`${auth}/terrascale/oauth/token`, {
     form: { grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange', client_id: '00000000000000000000000007', subject_token: signedIn,
