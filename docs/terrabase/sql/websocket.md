@@ -77,11 +77,18 @@ After a failed statement inside a transaction, every `execute` answers `transact
 | The region's writer starts handing off to another node | close 1012 after the answer to the frame in flight; frames that arrive later do not run. Reconnect. A client still receiving that answer when the old writer stops sees 1006 instead, and the frame's outcome is unknown |
 | An upgrade while that handoff holds the region's ingress, or to a node that was drained for a handoff (the old writer after the hold, or a follower drained for retirement) until that node stops | 503 with `Retry-After: 1` |
 
-The server pings every 20 seconds and drops a peer that does not answer within 20 seconds. After a close for a client
-fault (1002, 1003, 1007, 1008, 1009, 1011) it drops a peer that does not answer the close within 2 seconds. After a 1001 or 1012 it
-still sends every answer queued before the close and runs no frame that arrives later. A client that keeps sending after the 1012 instead of answering it gets no answer to those frames and stays connected until the node stops; close the socket when you read a 1012. It waits for a peer that sends nothing until the ping
-timeout drops it, 40 to 50 seconds after the peer's last frame. Every frame counts as one request in usage and
-request logs, with its received and sent bytes.
+The server sends a keep-alive pong every 20 seconds without requiring an acknowledgement. An answer may take
+as long as its transport keeps making progress: TCP acknowledged bytes renew a 30-second no-progress allowance,
+including while the same write remains blocked. A queued keep-alive cannot cut off a progressing answer.
+An authenticated socket with no message in flight and no open transaction closes after 30 minutes without
+a protocol message; keep-alive traffic does not renew that input deadline. Bearer-token expiry and revocation
+still close the session.
+
+After a close for a client fault (1002, 1003, 1007, 1008, 1009, 1011) it drops a peer that does not answer the close
+within 2 seconds. After a 1001 or 1012 it still sends every answer queued before the close and runs no frame that
+arrives later. A peer that does not answer the close remains until the node stops or its input or credential
+deadline expires. Close the socket when you read a 1012. Every frame counts as one request in usage and request
+logs, with its received and sent bytes.
 
 A push stream that returns NATS error 10074 is not retried, because it requests more regional copies than the cluster provides.
 

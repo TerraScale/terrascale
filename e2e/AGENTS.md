@@ -65,7 +65,7 @@ email unverified. Project-tenant sign-ups have their own tenant-scoped budgets; 
 | `journey/invitation.spec.ts` | 1 | 20/hour |
 | `journey/finish.spec.ts` | 1 | 20/hour |
 | `hosted/signup-address-limit.spec.ts` | 20 admitted, attempt 21 refused | 20/hour |
-| Each other spec's own address | 0 | 20/hour |
+| `placement/session-limits.spec.ts` | 3 | 20/hour |\n| Each other spec's own address | 0 | 20/hour |
 
 Teardown prints `signup address <address> <spec>: <stored count>/20 per hour`, reading the limiter's persisted
 counts with the same keyed subject derivation. Ordinary addresses spend at most 6 of 20 slots. Each invocation

@@ -868,37 +868,84 @@ test('a pipelined extended-protocol batch of any size runs the same through the 
   }
 });
 
-test('a WebSocket relay answers 300 pipelined calls in order like the home', async ({ cells, request }) => {
-  const created = await json<Database>(await cells.post(home + project() + '/databases', {
-    data: { name: name('ws-pipelined'), homeRegion: 'gru', replicaRegions: [] },
-  }), 201);
-  try {
-    const token = await credential(request);
-    for (const port of [8080, 8180]) {
-      const ws = await rawSqlSocket('http://127.0.0.1:' + port + database(created.id) + '/sql/ws', token);
-      const answers: { id: number; type: string; error?: { code: string } }[] = [];
-      const last = new Promise<void>(resolve => ws.events.on('message', (answer: { id: number; type: string; error?: { code: string } }) => {
-        answers.push(answer);
-        if (answer.id === 300) resolve();
-      }));
-      ws.socket.write(Buffer.concat(Array.from({ length: 300 }, (_, index) =>
-        frame(1, Buffer.from(JSON.stringify({ id: index + 1, type: 'execute', statements: [{ sql: 'SELECT ' + (index + 1) }] }))))));
-      expect(await Promise.race([last.then(() => 'answered'), ws.closing.then(close => JSON.stringify(close))]), 'port ' + port).toBe('answered');
-      expect(answers.map(answer => answer.id)).toEqual(Array.from({ length: 300 }, (_, index) => index + 1));
-      expect(answers.filter(answer => answer.type !== 'result' && answer.error?.code !== 'tenant_busy'), 'port ' + port).toEqual([]);
-      let call = 300;
-      await expect.poll(async () => {
-        const reply = once(ws.events, 'message');
-        ws.socket.write(frame(1, Buffer.from(JSON.stringify({ id: ++call, type: 'execute', statements: [{ sql: 'SELECT 1' }] }))));
-        return ((await reply)[0] as { type: string }).type;
-      }, { message: 'the session stays open and serves once the organization budget refills' }).toBe('result');
-      ws.socket.destroy();
-      await ws.closed;
+const burstTest = test.extend<{ burst: { cells: Awaited<ReturnType<typeof authenticatedCells>>; projectId: string; token: string } }>({
+  burst: async ({ browser, playwright, request }, use, info) => {
+    const context = await auditedContext(browser, {});
+    const page = await context.newPage();
+    const audit = new Audit(page, info);
+    const label = name('pipeline-owner');
+    const email = await newAddress(label);
+    const password = name('pipeline-password') + name('secret');
+    saveSecret('pipeline-owner-password', password);
+    try {
+      await signUp(page, audit, email, password, label);
+      await verify(page, email);
+      await onboard(page, audit, label, label, label);
+      const projectId = new URL(page.url()).searchParams.get('projectId');
+      expect(projectId).toBeTruthy();
+      const apiKey = await createApiKey(page, audit, label, label);
+      const grant = await request.post('https://auth.terrascale.tech/terrascale/oauth/token', {
+        form: { grant_type: 'client_credentials', client_id: apiKey.slice(0, 26), client_secret: apiKey,
+          project: projectId!, scope: 'sql:read sql:write' },
+      });
+      expect(grant.status()).toBe(200);
+      const token = (await grant.json()).access_token as string;
+      saveSecret('pipeline-owner-token', token);
+      const cells = await authenticatedCells(playwright.request, request, apiKey, projectId!);
+      try {
+        await use({ cells, projectId: projectId!, token });
+      } finally {
+        await cells.dispose();
+      }
+      await page.goto('/profile?tab=danger');
+      await page.locator('main').getByRole('button', { name: 'Delete account', exact: true }).click();
+      const dialog = page.locator('#delete-account');
+      await expect(dialog).toBeVisible();
+      await dialog.locator('#delete-account-email').fill(email);
+      await dialog.getByRole('button', { name: 'Delete account', exact: true }).click();
+      await confirmWithPassword(page, audit, password, 'pipeline owner delete account');
+      await page.waitForURL(url => url.pathname === '/account-deleted');
+      await expect(page.getByRole('heading', { level: 1 })).toHaveText('Account deleted');
+    } finally {
+      await saveCookies(context);
+      await context.close();
     }
-  } finally {
-    await removeDatabase(cells, created.id);
-  }
+  },
 });
+
+for (const port of [8080, 8180]) {
+  burstTest('a WebSocket on port ' + port + ' answers 300 pipelined calls in order with its own organization budget', async ({ burst }) => {
+    const created = await json<Database>(await burst.cells.post(home + project(burst.projectId) + '/databases', {
+      data: { name: name('ws-pipelined'), homeRegion: 'gru', replicaRegions: [] },
+    }), 201);
+    try {
+      const ws = await rawSqlSocket('http://127.0.0.1:' + port + database(created.id, burst.projectId) + '/sql/ws', burst.token);
+      try {
+        const answers: { id: number; type: string; error?: { code: string } }[] = [];
+        const last = new Promise<void>(resolve => ws.events.on('message', (answer: { id: number; type: string; error?: { code: string } }) => {
+          answers.push(answer);
+          if (answer.id === 300) resolve();
+        }));
+        ws.socket.write(Buffer.concat(Array.from({ length: 300 }, (_, index) =>
+          frame(1, Buffer.from(JSON.stringify({ id: index + 1, type: 'execute', statements: [{ sql: 'SELECT ' + (index + 1) }] }))))));
+        expect(await Promise.race([last.then(() => 'answered'), ws.closing.then(close => JSON.stringify(close))]), 'port ' + port).toBe('answered');
+        expect(answers.map(answer => answer.id)).toEqual(Array.from({ length: 300 }, (_, index) => index + 1));
+        expect(answers.filter(answer => answer.type !== 'result' && answer.error?.code !== 'tenant_busy'), 'port ' + port).toEqual([]);
+        let call = 300;
+        await expect.poll(async () => {
+          const reply = once(ws.events, 'message');
+          ws.socket.write(frame(1, Buffer.from(JSON.stringify({ id: ++call, type: 'execute', statements: [{ sql: 'SELECT 1' }] }))));
+          return ((await reply)[0] as { type: string }).type;
+        }, { message: 'the session stays open and serves once the organization budget refills' }).toBe('result');
+      } finally {
+        ws.socket.destroy();
+        await ws.closed;
+      }
+    } finally {
+      await removeDatabase(burst.cells, created.id, burst.projectId);
+    }
+  });
+}
 
 test('a Postgres client that reads a large answer slowly but steadily keeps its session at the home and through the relay', async ({ cells }) => {
   test.setTimeout(150_000);
