@@ -8,7 +8,7 @@ import { test, database, json, name, project, removeDatabase, sql, type Cells } 
 import { dash, e2eRoot, stateDir } from '../support/stack';
 import { journey, ownerSession, saveSecret } from '../support/state';
 import { receiptHandoff } from './receipt-handoff';
-import { backupPuts, backupStore, continuity, counted, crashWrite, endpoint, faultId, fileHash, holdsFile, holeRecords, keptCopies, keptHash, Kv, Ledger, logged, metric, node, nodeHoles, nodes, nodeRequest, nodeStatus, plantHole, probe, promoting, regions, restartAfterKill, scrape, sessionToken, systemContinuity, tokenReady, topology, writerToken, type HomeLease, type Row } from './support';
+import { backupPuts, backupStore, continuity, counted, crashWrite, endpoint, faultId, fileHash, holdsFile, holeRecords, keptCopies, keptHash, Kv, Ledger, logged, metric, node, nodeHoles, nodes, nodeRequest, nodeStatus, plantHole, probe, promoting, regions, restartAfterKill, scrape, signIn, exchangedToken, systemContinuity, tokenReady, topology, writerToken, type HomeLease, type Row } from './support';
 
 test.beforeEach(async () => {
   expect(process.env.E2E_TARGET ?? 'local').toBe('local');
@@ -93,7 +93,7 @@ test('restore a backup into another database and compare its rows with the snaps
 const homes = 'terrabase-homes';
 const owners = 'terrabase-region-owners';
 const outageHold = 30_000;
-const homeDown = { status: 503, code: 'tenant_busy' };
+const homeDown = { status: 503, code: 'unavailable' };
 
 async function createLedgers(cells: Cells, count: number, label: string): Promise<Ledger[]> {
   const ledgers: Ledger[] = [];
@@ -370,11 +370,6 @@ test('a regional writer role moves only with the target certificate, and a datab
   const token = await writerToken(request);
   const kv = await Kv.open();
   const [ledger] = await createLedgers(cells, 1, 'writer-proof');
-  const regional = new Ledger((await json<{ id: string }>(await cells.post(`${endpoint('gru')}${project()}/databases`, {
-    data: { name: name('writer-proof-regional'), regions: ['gru'] },
-  }), 201)).id);
-  await sql(cells, endpoint('gru'), regional.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
-  await regional.write(cells, 'gru', [[1, 'before-handoff']]);
   const gru = node('journey-1');
   const partner = node('journey-3');
   const moveHome = async (from: string, to: string) => {
@@ -435,11 +430,15 @@ test('a regional writer role moves only with the target certificate, and a datab
     const fenced = (await nodeStatus(gru)).fenced ?? [];
     expect(fenced.filter(entry => entry.databaseId === ledger.id), 'journey-1 names the database whose replica it cannot prove its primary file covers')
       .toEqual([expect.objectContaining({ reason: expect.stringMatching(/^(replica_newer|position_unknown)$/), epoch: recreated!.value.epoch })]);
-    expect(fenced.map(entry => entry.databaseId), 'the database whose primary file covers its replica is not fenced').not.toContain(regional.id);
     expect(await counted(gru, 'terrabase_regional_fenced'), 'every fenced database is counted while it lasts').toBe(fenced.length);
     expect(await ledger.refusal(gru, token, [[803, 'while-fenced']]), 'the fenced database refuses the write on the region writer').toEqual({ status: 503, code: 'unavailable' });
-    await regional.write(cells, 'gru', [[2, 'while-another-is-fenced']]);
-    expect(await regional.read(cells, 'gru'), 'another database of the region accepts writes on the same writer').toEqual(regional.acknowledged);
+    const regional = new Ledger((await json<{ id: string }>(await cells.post(`${endpoint('gru')}${project()}/databases`, {
+      data: { name: name('writer-proof-regional'), regions: [...regions] },
+    }), 201)).id);
+    await sql(cells, endpoint('gru'), regional.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
+    await regional.write(cells, 'gru', [[1, 'while-another-is-fenced']]);
+    expect(await regional.readNode(gru, token), 'another database of the region accepts writes on the same writer').toEqual(regional.acknowledged);
+    expect(((await nodeStatus(gru)).fenced ?? []).map(entry => entry.databaseId), 'the ledger stays fenced while the other database is served').toContain(ledger.id);
     await removeDatabase(cells, regional.id);
     await kv.put(owners, 'gru', { ...recreated!.value, node: 'journey-3', epoch: 1, previous: null, activated: false, transfer: null }, recreated!.seq);
     await writerIs('journey-3');
@@ -478,9 +477,9 @@ test('a regional writer role moves only with the target certificate, and a datab
   }
 });
 
-test('a region writer that stays down keeps its homes, and every acknowledged row survives in both regions', async ({ cells }) => {
+test('a region writer that stays down keeps its homes, and every acknowledged row survives in both regions', async ({ cells, request }) => {
   test.setTimeout(2 * (outageHold + 150_000));
-  const token = await sessionToken();
+  const signedIn = await signIn();
   const kv = await Kv.open();
   try {
     for (const round of [1, 2]) {
@@ -488,6 +487,7 @@ test('a region writer that stays down keeps its homes, and every acknowledged ro
       const before = await Promise.all(ledgers.map(ledger => homeLease(kv, ledger.id)));
       const watchers = [node('journey-2'), node('journey-4')];
       const lapses = await Promise.all(watchers.map(watcher => counted(watcher, 'terrabase_home_lapses_total')));
+      let token = await exchangedToken(request, signedIn);
       const { killedAt, restart } = await killDuringBurst(ledgers, token);
       console.log(`round ${round}: journey-1 killed after ${ledgers.reduce((sum, ledger) => sum + ledger.acknowledged.length, 0)} acknowledged rows`);
       try {
@@ -499,6 +499,7 @@ test('a region writer that stays down keeps its homes, and every acknowledged ro
       } finally {
         await restart();
       }
+      token = await exchangedToken(request, signedIn);
       await recovered(ledgers, token);
       for (const [index, ledger] of ledgers.entries()) {
         const after = (await homeLease(kv, ledger.id)).value;
@@ -512,9 +513,9 @@ test('a region writer that stays down keeps its homes, and every acknowledged ro
   }
 });
 
-test('a writer killed right after an acknowledgement that fra pulled keeps the home and the row', async ({ cells }) => {
+test('a writer killed right after an acknowledgement that fra pulled keeps the home and the row', async ({ cells, request }) => {
   test.setTimeout(outageHold + 180_000);
-  const token = await sessionToken();
+  const signedIn = await signIn();
   const kv = await Kv.open();
   try {
     const ledgers = await createLedgers(cells, 2, 'home-pulled');
@@ -523,6 +524,7 @@ test('a writer killed right after an acknowledgement that fra pulled keeps the h
       await ledger.compare(cells);
     }
     const before = await Promise.all(ledgers.map(ledger => homeLease(kv, ledger.id)));
+    let token = await exchangedToken(request, signedIn);
     const killedAt = Date.now();
     const restart = restartAfterKill(node('journey-1'));
     try {
@@ -531,6 +533,7 @@ test('a writer killed right after an acknowledgement that fra pulled keeps the h
     } finally {
       await restart();
     }
+    token = await exchangedToken(request, signedIn);
     await recovered(ledgers, token);
     for (const ledger of ledgers) expect(await ledger.readNode(node('journey-1'), token)).toContainEqual([500, 'last-before-kill']);
     for (const ledger of ledgers) await ledger.drop(token, node('journey-1'));

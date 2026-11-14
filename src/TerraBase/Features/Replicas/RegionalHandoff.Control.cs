@@ -372,11 +372,17 @@ internal sealed partial class RegionalHandoff
         var leases = services.GetRequiredService<HomeLeases>();
         IReadOnlyList<DatabaseFence> fenced = [.. _fenced.Values];
         _ = await CatchUpAsync([.. fenced.Select(fence => fence.Database).Where(database => replicas.Holding(database) is PositionUnknown)], token).ConfigureAwait(false);
+        var catalog = services.GetRequiredService<IReplicaCatalog>();
         foreach (var fence in fenced)
         {
             if (Compared(fence.Database) && await RefusalAsync(fence.Database, token).ConfigureAwait(false) is { } refusal)
             {
                 Fence(fence.Database, refusal, owner.Epoch);
+            }
+            else if (Compared(fence.Database) && replicas.Holding(fence.Database) is NoReplica
+                && await catalog.FindAsync(fence.Database, token).ConfigureAwait(false) is TenantDatabaseRecord { Placement.Home: var home } && home == options.Region)
+            {
+                continue;
             }
             else if (await leases.TakeRegionalAsync(fence.Database, owner.Previous ?? options.MachineId, token).ConfigureAwait(false))
             {

@@ -15,7 +15,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Sync;
 
 internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRevisions revisions, IReplicaPeers peers,
-    IStorageEngine engine, TerraBaseOptions options, InternalCredential credential, RegionalOwners owners) : EndpointWithoutRequest<IResult>, IRevisionPullSink
+    IStorageEngine engine, TerraBaseOptions options, InternalCredential credential, RegionalOwners owners, HomeLeaseGate leaseGate) : EndpointWithoutRequest<IResult>, IRevisionPullSink
 {
     private const string MediaType = PullAnswer.MediaType;
     private const int MaxBodyBytes = 64 * 1024;
@@ -74,6 +74,7 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
         {
             NotFound error => await PullRetainedAsync(request.ClientRevision, error, cancellationToken).ConfigureAwait(false),
             Unavailable error => ErrorResponse.From(error),
+            TenantContext database when leaseGate.Fenced(database.DatabaseId!) => ErrorResponse.From(new Unavailable(DatabaseFencedException.Refusal)),
             TenantContext database => await PullAsync(database, request.ClientRevision, cancellationToken).ConfigureAwait(false),
         };
     }

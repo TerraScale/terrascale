@@ -22,6 +22,8 @@ internal sealed class HomeLeaseGate(TimeProvider time)
 
     public void Unfence(string database) => _fenced.TryRemove(database, out _);
 
+    public bool Fenced(string database) => _fenced.ContainsKey(database);
+
     public void Renewed(long until) => Volatile.Write(ref _until, until);
 
     public bool Holds(string database) =>
@@ -30,7 +32,7 @@ internal sealed class HomeLeaseGate(TimeProvider time)
 
     public void ThrowIfUnleased(string database)
     {
-        if (_fenced.ContainsKey(database))
+        if (Fenced(database))
         {
             throw new DatabaseFencedException();
         }

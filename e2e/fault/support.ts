@@ -159,13 +159,24 @@ export async function writerToken(request: APIRequestContext): Promise<string> {
   return grant.access_token;
 }
 
-export async function sessionToken(): Promise<string> {
+export async function signIn(): Promise<string> {
   const context = await addressedRequest.newContext({ storageState: ownerSession() });
   try {
-    return await signInToken(context, 'fault-session');
+    return await signInToken(context, 'fault-sign-in');
   } finally {
     await context.dispose();
   }
+}
+
+export async function exchangedToken(request: APIRequestContext, signedIn: string): Promise<string> {
+  const current = journey();
+  const grant = await json<{ access_token: string }>(await request.post(`${auth}/terrascale/oauth/token`, {
+    form: { grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange', client_id: '00000000000000000000000007', subject_token: signedIn,
+      subject_token_type: 'urn:ietf:params:oauth:token-type:access_token', organization: current.organizationId, project: current.projectId,
+      scope: 'sql:read sql:write databases:read databases:write' },
+  }));
+  saveSecret('fault-exchanged-token', grant.access_token);
+  return grant.access_token;
 }
 
 export class Kv {
