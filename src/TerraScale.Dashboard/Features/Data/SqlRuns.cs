@@ -5,17 +5,14 @@ using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Data
 {
-    // The outcome of the latest console run. Rows keep at most ResultBytes; ReturnedRows counts what TerraBase returned.
     public sealed record SqlRunReceipt(string Id, DatabaseSqlResult? Result, int ReturnedRows, string Error, int Status, DateTimeOffset CreatedAt);
 
-    // A run answers 303 to a GET of its stored receipt, so refresh and back never resend a statement. One receipt per user
-    // and database lives in the user's SQL workspace (erased with it); a newer run replaces it and it expires after an hour.
     public sealed class SqlRuns(IDbContextFactory<DashboardDbContext> storage, TimeProvider time)
     {
         public const int ResultBytes = 512 * 1024;
         private static readonly TimeSpan Lifetime = TimeSpan.FromHours(1);
 
-        public async Task<string> SaveAsync(AccountContext context, string databaseId, string sql, IReadOnlyList<string> history,
+        public async Task<SqlRunReceipt> SaveAsync(AccountContext context, string databaseId, string sql, IReadOnlyList<string> history,
             DatabaseSqlResult? result, string error, int status, CancellationToken cancellationToken)
         {
             var scope = DatabaseService.Scope(context);
@@ -72,7 +69,7 @@ namespace TerraScale.Dashboard.Features.Data
                 try
                 {
                     await db.SaveChangesAsync(cancellationToken);
-                    return receipt.Id;
+                    return receipt;
                 }
                 catch (DbUpdateException) when (attempt < 3)
                 {
@@ -80,7 +77,6 @@ namespace TerraScale.Dashboard.Features.Data
             }
         }
 
-        // Null when the receipt expired, was replaced by a newer run or belongs to another user, project or database.
         public async Task<SqlWorkspaceRecord?> ReadAsync(AccountContext context, string databaseId, string receiptId, CancellationToken cancellationToken)
         {
             var record = await ReadWorkspaceAsync(context, databaseId, cancellationToken);

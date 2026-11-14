@@ -1,0 +1,4 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Data.DataPage>
+@using TerraScale.Dashboard.Features.Data
+@(await RenderPartialAsync<SqlOutputView,DataPage>(Model))
+@(await RenderPartialAsync<SqlHistoryView,DataPage>(Model))

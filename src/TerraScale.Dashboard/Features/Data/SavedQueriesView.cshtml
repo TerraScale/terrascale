@@ -1,0 +1,25 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Data.DataPage>
+@using TerraScale.Dashboard.Features.Data
+<section class="ts-card ts-card-boxed ts-card-flush" id="saved-queries" aria-labelledby="saved-queries-title">
+<header class="ts-card-head ts-card-head-title-actions"><div class="ts-card-heading"><h2 class="ts-card-title" id="saved-queries-title">Saved queries</h2></div>
+@if(Model.Context.CanWriteProjectData){<div class="ts-card-actions"><button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" command="show-modal" commandfor="save-query">@Icons.Render("Save",16)<span>Save query</span></button></div>}
+</header>
+<div class="ts-card-body">
+@if(Model.SavedQueries is not { Count: > 0 }){
+<div class="ts-empty" role="status"><p class="ts-empty-title">No saved queries yet.</p>
+@if(Model.Context.CanWriteProjectData){<button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" command="show-modal" commandfor="save-query">Save query</button>}
+</div>
+}else{
+<ul class="ts-rows">
+@foreach(var query in Model.SavedQueries){
+<li><a class="ts-data-query" href="@(DatabaseService.Path(Model.Database.Id,"sql")+"?savedQueryId="+Uri.EscapeDataString(query.Id))"><span class="ts-rows-title">@query.Name</span><code class="ts-rows-meta">@query.Sql</code></a>
+@if(Model.Context.CanWriteProjectData){<div class="ts-rows-actions"><button class="ts-btn ts-btn-danger ts-btn-sm" type="button" command="show-modal" commandfor="@("delete-query-"+query.Id)" aria-label="@("Delete "+query.Name)">@Icons.Render("Trash2",15)<span>Delete</span></button></div>}
+</li>}
+</ul>}
+</div>
+@if(Model.Context.CanWriteProjectData){
+@(await RenderPartialAsync<SaveQueryDialog,DataPage>(Model))
+@foreach(var query in Model.SavedQueries ?? []){
+@(await RenderPartialAsync<QueryDeleteDialog,QueryDeleteModel>(new(Model,query)))
+}}
+</section>
