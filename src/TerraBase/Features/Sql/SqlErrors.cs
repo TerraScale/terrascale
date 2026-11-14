@@ -192,6 +192,8 @@ internal static partial class SqlErrors
 
     public static SqlError Moved(Engine.DatabaseMovedException moved) => new(WrongRegion, moved.Message);
 
+    public static SqlError Fenced(DatabaseFencedException fenced) => new(Unavailable, fenced.Message);
+
     public static SqlError TooBig(string message) => new(TooLarge, message);
 
     public static SqlError Quota(string message) => new(QuotaExceeded, message);

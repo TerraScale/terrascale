@@ -8,7 +8,7 @@ import { test, database, json, name, project, removeDatabase, sql, type Cells } 
 import { dash, e2eRoot, stateDir } from '../support/stack';
 import { journey, ownerSession, saveSecret } from '../support/state';
 import { receiptHandoff } from './receipt-handoff';
-import { backupPuts, backupStore, continuity, counted, crashWrite, endpoint, faultId, fileHash, holdsFile, holeRecords, keptCopies, keptHash, Kv, Ledger, logged, metric, node, nodeHoles, nodes, nodeRequest, nodeStatus, plantHole, probe, promoting, regions, restartAfterKill, scrape, systemContinuity, tokenReady, topology, writerToken, type HomeLease, type Row } from './support';
+import { backupPuts, backupStore, continuity, counted, crashWrite, endpoint, faultId, fileHash, holdsFile, holeRecords, keptCopies, keptHash, Kv, Ledger, logged, metric, node, nodeHoles, nodes, nodeRequest, nodeStatus, plantHole, probe, promoting, regions, restartAfterKill, scrape, sessionToken, systemContinuity, tokenReady, topology, writerToken, type HomeLease, type Row } from './support';
 
 test.beforeEach(async () => {
   expect(process.env.E2E_TARGET ?? 'local').toBe('local');
@@ -352,15 +352,29 @@ test('a lease that names a node that cannot serve leaves the database unserved, 
       expect(fileHash(gru, before.value)).toBe(hash);
       expect(logged(gru, 'keeps its file in place and fenced', `"Database":"${ledger.id}"`), 'one log line per lease').toBe(1);
     });
+
+    await test.step('deleting the unserved database through the API leaves nothing unserved behind', async () => {
+      await removeDatabase(cells, ledger.id);
+      for (const watcher of nodes) {
+        await expect.poll(async () => (await nodeStatus(watcher)).unserved?.filter(entry => entry.databaseId === ledger.id) ?? [], { message: `${watcher.name} no longer lists the database` })
+          .toEqual([]);
+      }
+    });
   } finally {
     kv.close();
   }
 });
 
-test('a regional writer role moves only with the target certificate and current primary files', async ({ cells }) => {
+test('a regional writer role moves only with the target certificate, and a database whose primary file is stale stays fenced while the region serves the others', async ({ cells, request }) => {
   test.setTimeout(480_000);
+  const token = await writerToken(request);
   const kv = await Kv.open();
   const [ledger] = await createLedgers(cells, 1, 'writer-proof');
+  const regional = new Ledger((await json<{ id: string }>(await cells.post(`${endpoint('gru')}${project()}/databases`, {
+    data: { name: name('writer-proof-regional'), regions: ['gru'] },
+  }), 201)).id);
+  await sql(cells, endpoint('gru'), regional.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
+  await regional.write(cells, 'gru', [[1, 'before-handoff']]);
   const gru = node('journey-1');
   const partner = node('journey-3');
   const moveHome = async (from: string, to: string) => {
@@ -410,22 +424,27 @@ test('a regional writer role moves only with the target certificate and current 
     const lease = (await homeLease(kv, ledger.id)).value;
     await expect.poll(async () => (await nodeRequest(gru, `/v1/sync/organizations/${lease.organizationId}/projects/${lease.projectId}/databases/${ledger.id}/held`)).status,
       { message: 'journey-1 holds a replica newer than its stale primary file' }).toBe(200);
-    const stale = await counted(gru, 'terrabase_home_refusals_total', { scope: 'writer' });
+    const stale = await counted(gru, 'terrabase_home_refusals_total', { scope: 'database' });
     const current = await kv.get<{ node: string }>(owners, 'gru');
     await kv.remove(owners, 'gru', current!.seq);
-    await expect.poll(() => counted(gru, 'terrabase_home_refusals_total', { scope: 'writer' }), { message: 'journey-1 refuses to become writer over stale primary files' })
+    await expect.poll(() => counted(gru, 'terrabase_home_refusals_total', { scope: 'database' }), { message: 'journey-1 fences the database whose primary file is stale' })
       .toBeGreaterThan(stale);
     const recreated = await kv.get<Record<string, unknown> & { node: string; epoch: number }>(owners, 'gru');
     expect(recreated?.value.node).toBe('journey-1');
-    const blocked = await nodeStatus(gru);
-    expect(blocked.writer).toBe(false);
-    expect(blocked.writerRefused, 'journey-1 names the database whose replica it cannot prove its primary file covers')
-      .toMatchObject({ reason: expect.stringMatching(/^(replica_newer|position_unknown)$/), databaseId: expect.any(String), epoch: recreated!.value.epoch });
-    expect(await counted(gru, 'terrabase_regional_writer_refused'), 'the refusal stays visible while it lasts').toBe(1);
+    await writerIs('journey-1');
+    const fenced = (await nodeStatus(gru)).fenced ?? [];
+    expect(fenced.filter(entry => entry.databaseId === ledger.id), 'journey-1 names the database whose replica it cannot prove its primary file covers')
+      .toEqual([expect.objectContaining({ reason: expect.stringMatching(/^(replica_newer|position_unknown)$/), epoch: recreated!.value.epoch })]);
+    expect(fenced.map(entry => entry.databaseId), 'the database whose primary file covers its replica is not fenced').not.toContain(regional.id);
+    expect(await counted(gru, 'terrabase_regional_fenced'), 'every fenced database is counted while it lasts').toBe(fenced.length);
+    expect(await ledger.refusal(gru, token, [[803, 'while-fenced']]), 'the fenced database refuses the write on the region writer').toEqual({ status: 503, code: 'unavailable' });
+    await regional.write(cells, 'gru', [[2, 'while-another-is-fenced']]);
+    expect(await regional.read(cells, 'gru'), 'another database of the region accepts writes on the same writer').toEqual(regional.acknowledged);
+    await removeDatabase(cells, regional.id);
     await kv.put(owners, 'gru', { ...recreated!.value, node: 'journey-3', epoch: 1, previous: null, activated: false, transfer: null }, recreated!.seq);
     await writerIs('journey-3');
-    expect((await nodeStatus(gru)).writerRefused, 'the refusal clears once the owner record names another node').toBeNull();
-    expect(await counted(gru, 'terrabase_regional_writer_refused')).toBe(0);
+    expect((await nodeStatus(gru)).fenced ?? [], 'the fences clear once the owner record names another node').toEqual([]);
+    expect(await counted(gru, 'terrabase_regional_fenced')).toBe(0);
     await ledger.compare(cells, [[800, 'written-on-journey-3']]);
     const back = await nodeRequest(partner, '/v1/rollout/drain?target=journey-1', 'POST');
     expect(back.status, back.body).toBe(204);
@@ -459,9 +478,9 @@ test('a regional writer role moves only with the target certificate and current 
   }
 });
 
-test('a region writer that stays down keeps its homes, and every acknowledged row survives in both regions', async ({ cells, request }) => {
+test('a region writer that stays down keeps its homes, and every acknowledged row survives in both regions', async ({ cells }) => {
   test.setTimeout(2 * (outageHold + 150_000));
-  const token = await writerToken(request);
+  const token = await sessionToken();
   const kv = await Kv.open();
   try {
     for (const round of [1, 2]) {
@@ -493,9 +512,9 @@ test('a region writer that stays down keeps its homes, and every acknowledged ro
   }
 });
 
-test('a writer killed right after an acknowledgement that fra pulled keeps the home and the row', async ({ cells, request }) => {
+test('a writer killed right after an acknowledgement that fra pulled keeps the home and the row', async ({ cells }) => {
   test.setTimeout(outageHold + 180_000);
-  const token = await writerToken(request);
+  const token = await sessionToken();
   const kv = await Kv.open();
   try {
     const ledgers = await createLedgers(cells, 2, 'home-pulled');

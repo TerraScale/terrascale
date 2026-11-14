@@ -1,4 +1,5 @@
 using NATS.Client.KeyValueStore;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 using TerraBase.Engine;
@@ -30,16 +31,15 @@ internal sealed partial class RegionalHandoff
     private PendingStep? _lastRetiringStep;
     private TenantContext? _checkedAfter;
     private bool _checked;
-    private long _refusedEpoch;
-    private long _recheckAt;
-    private ActivationRefusal? _writerRefusal;
-    private sealed record ActivationRefusal(HomeRefusal Kind, WriterRefusal Status);
+    private readonly ConcurrentDictionary<string, DatabaseFence> _fenced = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _walkFenced = new(StringComparer.Ordinal);
+    private sealed record DatabaseFence(TenantContext Database, FencedDatabase Status);
+    private sealed record LocalDataRefusal(HomeRefusal Kind, string Detail);
     private long _unprovenEpoch;
     private bool _pageCaughtUp;
     private RegionalOwner? _startupOwner;
     private bool _protocolPublished;
     private static readonly TimeSpan DrainBudget = TimeSpan.FromSeconds(30);
-    private static readonly TimeSpan RecheckEvery = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan CatchUpBudget = TimeSpan.FromSeconds(1);
     private const int CatchUpParallelism = 16;
     private static readonly TimeSpan ActivationBudget = TimeSpan.FromSeconds(10);
@@ -102,6 +102,7 @@ internal sealed partial class RegionalHandoff
             owners.Resume();
             ResumePromoted();
             owners.Renew(until);
+            await RecheckFencedAsync(owner, attempt.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!token.IsCancellationRequested)
         {
@@ -317,15 +318,7 @@ internal sealed partial class RegionalHandoff
 
     private async Task<bool> LocalDataCurrentAsync(RegionalOwner owner, IReplicaCatalog catalog, CancellationToken token)
     {
-        if (_refusedEpoch == owner.Epoch && gate.Time.GetTimestamp() < _recheckAt)
-        {
-            return false;
-        }
-
         var replicas = services.GetRequiredService<IDatabaseReplicas>();
-        var revisions = services.GetRequiredService<IDatabaseRevisions>();
-        var replication = services.GetRequiredService<RegionReplication>();
-        var leases = services.GetRequiredService<HomeLeases>();
         do
         {
             if (await catalog.ListHomedAsync(options.Region, _checkedAfter, token).ConfigureAwait(false) is not TenantDatabasePage page)
@@ -335,16 +328,23 @@ internal sealed partial class RegionalHandoff
             if (!_pageCaughtUp)
             {
                 _pageCaughtUp = true;
-                await CatchUpAsync([.. page.Databases.Where(database => Compared(database) && replicas.Holding(database) is not HeldAt)])
-                    .ConfigureAwait(false);
+                IReadOnlyList<TenantContext> unheld = [.. page.Databases.Where(database => Compared(database) && replicas.Holding(database) is not HeldAt)];
+                if (await CatchUpAsync(unheld, token).ConfigureAwait(false) is > 0 and var late)
+                {
+                    logger.ZLogWarning($"The activation check could not catch up {late:@Late} of {unheld.Count:@Databases} local replicas within {CatchUpBudget.TotalSeconds:@Seconds} s; a database whose replica position stays unknown stays fenced until a later attempt reads it");
+                }
             }
 
             foreach (var database in page.Databases)
             {
-                if (Compared(database) && await RefusalAsync(database).ConfigureAwait(false) is { } refusal)
+                if (Compared(database) && await RefusalAsync(database, token).ConfigureAwait(false) is { } refusal)
                 {
-                    Refuse(refusal);
-                    return false;
+                    Fence(database, refusal, owner.Epoch);
+                    _walkFenced.Add(database.DatabaseId!);
+                }
+                else
+                {
+                    Unfence(database.DatabaseId!);
                 }
                 _checkedAfter = database;
             }
@@ -352,78 +352,119 @@ internal sealed partial class RegionalHandoff
             _pageCaughtUp = false;
         }
         while (_checkedAfter is not null);
+        foreach (var id in _fenced.Keys.Where(id => !_walkFenced.Contains(id)))
+        {
+            Unfence(id);
+        }
+        _walkFenced.Clear();
         _checked = true;
-        _writerRefusal = null;
         return true;
+    }
 
-        bool Compared(TenantContext database) => !PlatformDatabases.IsPlatformDatabase(database.DatabaseId)
-            && (leases.Find(database.DatabaseId!) is not { } lease || lease.Home == options.Region);
+    private async Task RecheckFencedAsync(RegionalOwner owner, CancellationToken token)
+    {
+        if (_fenced.IsEmpty)
+        {
+            return;
+        }
 
-        async Task<ActivationRefusal?> RefusalAsync(TenantContext database) => replicas.Holding(database) switch
+        var replicas = services.GetRequiredService<IDatabaseReplicas>();
+        var leases = services.GetRequiredService<HomeLeases>();
+        IReadOnlyList<DatabaseFence> fenced = [.. _fenced.Values];
+        _ = await CatchUpAsync([.. fenced.Select(fence => fence.Database).Where(database => replicas.Holding(database) is PositionUnknown)], token).ConfigureAwait(false);
+        foreach (var fence in fenced)
+        {
+            if (Compared(fence.Database) && await RefusalAsync(fence.Database, token).ConfigureAwait(false) is { } refusal)
+            {
+                Fence(fence.Database, refusal, owner.Epoch);
+            }
+            else if (await leases.TakeRegionalAsync(fence.Database, owner.Previous ?? options.MachineId, token).ConfigureAwait(false))
+            {
+                Unfence(fence.Database.DatabaseId!);
+            }
+        }
+    }
+
+    private bool Compared(TenantContext database) => !PlatformDatabases.IsPlatformDatabase(database.DatabaseId)
+        && (services.GetRequiredService<HomeLeases>().Find(database.DatabaseId!) is not { } lease || lease.Home == options.Region);
+
+    private async Task<LocalDataRefusal?> RefusalAsync(TenantContext database, CancellationToken token) =>
+        services.GetRequiredService<IDatabaseReplicas>().Holding(database) switch
         {
             NoReplica => null,
-            PositionUnknown => Refusal(HomeRefusal.PositionUnknown, database,
-                "has a local replica whose position cannot be read, so nothing proves its primary file covers it"),
-            HeldAt(var replica) => await revisions.CurrentRevisionAsync(database, token).ConfigureAwait(false) switch
+            PositionUnknown => new(HomeRefusal.PositionUnknown, "has a local replica whose position cannot be read, so nothing proves its primary file covers it"),
+            HeldAt(var replica) => await services.GetRequiredService<IDatabaseRevisions>().CurrentRevisionAsync(database, token).ConfigureAwait(false) switch
             {
-                null => Refusal(HomeRefusal.PrimaryMissing, database, $"has a local replica at {replica} and no primary file"),
+                null => new(HomeRefusal.PrimaryMissing, $"has a local replica at {replica} and no primary file"),
                 { } primary when primary.Incarnation != replica.Incarnation || DatabaseRevision.Compare(replica, primary) > 0 =>
-                    Refusal(HomeRefusal.ReplicaNewer, database, $"has a local replica at {replica} that its primary file does not cover, at {primary}"),
+                    new(HomeRefusal.ReplicaNewer, $"has a local replica at {replica} that its primary file does not cover, at {primary}"),
                 _ => null,
             },
         };
 
-        ActivationRefusal Refusal(HomeRefusal refusal, TenantContext database, string detail) =>
-            new(refusal, new WriterRefusal(HomeLeases.Reason(refusal), database.DatabaseId!, owner.Epoch, $"database {database.DatabaseId} {detail}"));
-
-        async Task CatchUpAsync(IReadOnlyList<TenantContext> unheld)
+    private async Task<int> CatchUpAsync(IReadOnlyList<TenantContext> unheld, CancellationToken token)
+    {
+        if (unheld.Count == 0)
         {
-            if (unheld.Count == 0)
-            {
-                return;
-            }
-
-            using var budget = CancellationTokenSource.CreateLinkedTokenSource(token);
-            budget.CancelAfter(CatchUpBudget);
-            var late = 0;
-            await Parallel.ForEachAsync(unheld, new ParallelOptions { MaxDegreeOfParallelism = CatchUpParallelism, CancellationToken = token }, async (database, cancellation) =>
-            {
-                try
-                {
-                    _ = await replication.CatchUpAsync(database, budget.Token).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (!token.IsCancellationRequested)
-                {
-                    _ = Interlocked.Increment(ref late);
-                }
-            }).ConfigureAwait(false);
-            if (late > 0 && _writerRefusal is null)
-            {
-                logger.ZLogWarning($"The activation check could not catch up {late:@Late} of {unheld.Count:@Databases} local replicas within {CatchUpBudget.TotalSeconds:@Seconds} s; a replica whose position stays unknown blocks the writer role until a later attempt reads it");
-            }
+            return 0;
         }
 
-        void Refuse(ActivationRefusal refusal)
+        var replication = services.GetRequiredService<RegionReplication>();
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(token);
+        budget.CancelAfter(CatchUpBudget);
+        var late = 0;
+        await Parallel.ForEachAsync(unheld, new ParallelOptions { MaxDegreeOfParallelism = CatchUpParallelism, CancellationToken = token }, async (database, cancellation) =>
         {
-            _pageCaughtUp = false;
-            var unknown = refusal.Kind == HomeRefusal.PositionUnknown;
-            if (!unknown)
+            try
             {
-                _refusedEpoch = owner.Epoch;
-                _recheckAt = gate.Time.GetTimestamp() + (long)(RecheckEvery.TotalSeconds * gate.Time.TimestampFrequency);
-                _checkedAfter = null;
+                _ = await replication.CatchUpAsync(database, budget.Token).ConfigureAwait(false);
             }
-            if (_writerRefusal == refusal)
+            catch (OperationCanceledException) when (!token.IsCancellationRequested)
             {
-                return;
+                _ = Interlocked.Increment(ref late);
             }
-
-            _writerRefusal = refusal;
-            leases.Refused(refusal.Kind, "writer");
-            logger.ZLogWarning($"Regional writer refused at epoch {owner.Epoch:@Epoch}: {refusal.Status.Detail:@Detail}; this node stays a non-writer and checks again {(unknown ? "on its next activation attempt" : $"in {RecheckEvery.TotalSeconds} s"):@Recheck}");
-        }
+        }).ConfigureAwait(false);
+        return late;
     }
 
+    private void Fence(TenantContext database, LocalDataRefusal refusal, long epoch)
+    {
+        var id = database.DatabaseId!;
+        var status = new FencedDatabase(id, HomeLeases.Reason(refusal.Kind), epoch, $"database {id} {refusal.Detail}");
+        var known = _fenced.TryGetValue(id, out var existing) && existing.Status.Reason == status.Reason && existing.Status.Epoch == epoch;
+        gate.Fence(id);
+        _fenced[id] = new DatabaseFence(database, status);
+        if (known)
+        {
+            return;
+        }
+
+        services.GetRequiredService<HomeLeases>().Refused(refusal.Kind, "database");
+        logger.ZLogWarning($"Database fenced at regional writer epoch {epoch:@Epoch}: {status.Detail:@Detail}; it refuses writes while every other database of the region is served, and is checked again on each writer renewal");
+    }
+
+    private void Unfence(string database)
+    {
+        if (!_fenced.TryRemove(database, out var fence))
+        {
+            return;
+        }
+
+        gate.Unfence(database);
+        logger.ZLogInformation($"Database fence lifted: database {database:@Database} was fenced at epoch {fence.Status.Epoch:@Epoch} for {fence.Status.Reason:@Reason} and its local data now holds every write its replica saw");
+    }
+
+    private void ClearFences()
+    {
+        foreach (var database in _fenced.Keys)
+        {
+            if (_fenced.TryRemove(database, out _))
+            {
+                gate.Unfence(database);
+            }
+        }
+        _walkFenced.Clear();
+    }
     private async Task<DrainReservation> BeginDrainAsync(INatsKVStore kv, string target, DrainProgress progress, CancellationToken token)
     {
         var entry = await ReadAsync(kv, options.Region, token).ConfigureAwait(false);

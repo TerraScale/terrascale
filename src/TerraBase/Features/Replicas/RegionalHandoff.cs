@@ -21,10 +21,10 @@ internal sealed record RegionalPosition(string Organization, string Project, str
 internal sealed record RegionalPrepare(string Source, IReadOnlyList<RegionalPosition> Positions, long Epoch, RegionalCatalogSnapshot? Catalog = null, string? Operation = null, RetainedManifest? Retained = null);
 internal sealed record UnservedDatabase(string DatabaseId, string Region, string Node, long Epoch, string Cause);
 
-internal sealed record WriterRefusal(string Reason, string DatabaseId, long Epoch, string Detail);
+internal sealed record FencedDatabase(string DatabaseId, string Reason, long Epoch, string Detail);
 
 internal sealed record RegionalStatus(string Node, string? Owner, long Epoch, bool Writer, bool Ready, string Session = "",
-    IReadOnlyList<UnservedDatabase>? Unserved = null, IReadOnlyList<KeptCopy>? Kept = null, WriterRefusal? WriterRefused = null);
+    IReadOnlyList<UnservedDatabase>? Unserved = null, IReadOnlyList<KeptCopy>? Kept = null, IReadOnlyList<FencedDatabase>? Fenced = null);
 internal sealed record RegionalDrain(string Target);
 
 internal readonly union RegionalDrainResult(Done, Unavailable);
@@ -52,19 +52,19 @@ internal sealed partial class RegionalHandoff(
         owners.Find(region ?? options.Region)?.Epoch ?? 0, (region is null || region == options.Region) && owners.Writer,
         await services.GetRequiredService<Health.INodeReadiness>().IsReadyAsync(cancellationToken).ConfigureAwait(false), _session,
         services.GetRequiredService<HomeLeases>().Unserved, services.GetRequiredService<KeptCopies>().List(),
-        region is null || region == options.Region ? WriterRefused : null);
+        region is null || region == options.Region ? Fenced : []);
 
-    private IEnumerable<Measurement<int>> WriterRefusedMeasurements() =>
-        WriterRefused is { } refused ? [new Measurement<int>(1, new KeyValuePair<string, object?>("reason", refused.Reason))] : [];
+    private IReadOnlyList<FencedDatabase> Fenced =>
+        [.. _fenced.Values.Select(fenced => fenced.Status).OrderBy(fenced => fenced.DatabaseId, StringComparer.Ordinal)];
 
-    private WriterRefusal? WriterRefused => _writerRefusal?.Status is { } refused && !owners.Writer
-        && owners.Find(options.Region) is { } owner && owner.Node == options.MachineId && owner.Epoch == refused.Epoch ? refused : null;
+    private IEnumerable<Measurement<int>> FencedMeasurements() => _fenced.Values.GroupBy(fenced => fenced.Status.Reason, StringComparer.Ordinal)
+        .Select(reason => new Measurement<int>(reason.Count(), new KeyValuePair<string, object?>("reason", reason.Key)));
 
     public override Task StartAsync(CancellationToken cancellationToken)
     {
         gate.RegionalWriter = () => owners.Writer;
-        _ = meters.Create(Telemetry.MeterName).CreateObservableGauge("terrabase.regional.writer_refused", WriterRefusedMeasurements, "{refusal}",
-            "1 while the owner record names this node as its region's writer and the activation check refuses it, by reason; the rollout status names the database.");
+        _ = meters.Create(Telemetry.MeterName).CreateObservableGauge("terrabase.regional.fenced", FencedMeasurements, "{database}",
+            "Databases homed in this node's region that refuse writes because the writer's activation check cannot prove their local data holds every acknowledged write, by reason; the rollout status names them.");
         return base.StartAsync(cancellationToken);
     }
 
@@ -162,6 +162,7 @@ internal sealed partial class RegionalHandoff(
             _checkedAfter = null;
             _checked = false;
             _pageCaughtUp = false;
+            _walkFenced.Clear();
         }
         if (!_checked && !await LocalDataCurrentAsync(owner, catalog, cancellationToken).ConfigureAwait(false))
         {
@@ -175,7 +176,7 @@ internal sealed partial class RegionalHandoff(
             }
             foreach (var database in page.Databases)
             {
-                if (!await leases.TakeRegionalAsync(database, source, cancellationToken).ConfigureAwait(false))
+                if (!_fenced.ContainsKey(database.DatabaseId!) && !await leases.TakeRegionalAsync(database, source, cancellationToken).ConfigureAwait(false))
                 {
                     return false;
                 }
@@ -245,6 +246,7 @@ internal sealed partial class RegionalHandoff(
         else
         {
             _prepared.Clear();
+            ClearFences();
             ResumePromoted();
         }
     }

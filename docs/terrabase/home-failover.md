@@ -170,20 +170,23 @@ rewriting the key to such a record names that node as writer, subject to the act
 rewrite of the owner record is refused: the named node logs `Regional writer refused` and stays a non-writer
 (`terrabase.home.refusals{scope="writer",reason="unproven"}`).
 
-On every activation, including a first writer at epoch 1, a node refuses to become writer while any database homed in
-the region, and whose home lease (when there is one) names this region, has a local replica newer than its primary file,
-or a replica and no primary file (`reason="replica_newer"`, `reason="primary_missing"`). A database whose lease names
-another region is not served by this region's writer, so it does not block the role. Before comparing, it catches up the
-replicas whose position it cannot read through their followers, together and once per page of homed databases, within
-1 s, so the check ends inside one 2 s activation attempt. A replica whose position still cannot be read (its last pull
-failed, or it is reopening or was reopened from a file it pulled before and has not pulled since) proves nothing; a
-replica still being created holds no data and is not compared, so the node refuses
-(`reason="position_unknown"`); no earlier position is remembered as proof. A refusal is logged and counted once per
-database and cause. After `position_unknown` the next activation attempt (about every 250 ms) catches that page up again
-and resumes at the same database; after the other reasons the check runs again from the start every 15 s. Either way the
-node becomes writer as soon as the cause clears. While the owner record names the node and the check refuses it,
-`/v1/rollout/status` shows `writerRefused` `{reason, databaseId, epoch, detail}` and `terrabase.regional.writer_refused`
-is 1, so a replica that stays unreadable keeps the region without a writer visibly, never silently. A missing owner key with existing data is therefore not a new region. A genuinely new region
+On every activation, including a first writer at epoch 1, the node checks each database homed in the region whose home
+lease (when there is one) names this region. A database whose local replica is newer than its primary file, or that has a
+replica and no primary file (`reason="replica_newer"`, `reason="primary_missing"`), is fenced: the node still becomes the
+region's writer and serves every other database, but it does not take that database's home lease and answers each write
+to it with 503 `unavailable`. Reads follow the usual rules. A database whose lease names another region is not served by
+this region's writer, so it is not checked. Before comparing, the node catches up the replicas whose position it cannot
+read through their followers, together and once per page of homed databases, within 1 s, so the check ends inside one
+2 s activation attempt. A replica whose position still cannot be read (its last pull failed, or it is reopening or was
+reopened from a file it pulled before and has not pulled since) proves nothing; a replica still being created holds no
+data and is not compared, so that database is fenced too (`reason="position_unknown"`); no earlier position is
+remembered as proof. A fence is logged and counted once per database, cause and epoch
+(`terrabase.home.refusals{scope="database"}`). Every writer renewal (about every 250 ms) checks each fenced database
+again, catching up the replicas whose position it cannot read first; once its primary file covers its replica, the node
+takes its home lease and lifts the fence, so a transient read failure clears by itself. `/v1/rollout/status` lists the
+fenced databases in `fenced` `[{databaseId, reason, epoch, detail}]` and `terrabase.regional.fenced{reason}` counts
+them, so a database that stays fenced is visible, never silent. The fences clear when the owner record names another
+node; the next activation on this node checks every database again. A missing owner key with existing data is therefore not a new region. A genuinely new region
 has no homed databases, so its first node in name order becomes writer at epoch 1; a restarted writer whose primary files
 are current passes the same check.
 
@@ -230,10 +233,10 @@ and fenced. The claimant serves the database when it is its region's writer; oth
 
 - `terrabase.home.lapses`: home leases whose node lapsed while this node watched; the home stayed where it was.
 - `terrabase.home.refusals{scope, reason}`: home moves and lease writes (`scope="home"`) and regional writer changes
-  (`scope="writer"`) this node refused, by reason (`not_writer`, `lease_changed`, `placement_refused`, `prepare_failed`,
+  (`scope="writer"`) and databases the regional writer fenced (`scope="database"`) this node refused, by reason (`not_writer`, `lease_changed`, `placement_refused`, `prepare_failed`,
   `drain_failed`, `unproven`, `replica_newer`, `primary_missing`, `position_unknown`).
-- `terrabase.regional.writer_refused{reason}`: 1 while the owner record names this node as writer and the activation check
-  refuses it; `/v1/rollout/status` `writerRefused` names the database.
+- `terrabase.regional.fenced{reason}`: databases of this node's region that refuse writes because the writer's activation
+  check cannot prove their primary file covers their replica; `/v1/rollout/status` `fenced` names them.
 - `terrabase.home.unserved{region}`: databases whose lease names a node that cannot serve them, by the lease's region.
 - `terrabase.home.kept.files`, `terrabase.home.kept.bytes`: the kept copies on this node.
 - `terrabase.home.demotions`: database files this node deleted after the new home proved it holds their content.

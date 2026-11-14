@@ -654,7 +654,7 @@ internal class HomePush(
             {
                 applied = await apply.ApplyAsync(database, transaction, cancellationToken).ConfigureAwait(false);
             }
-            catch (Exception error) when (error is StorageBusyException or IOException or TimeoutException)
+            catch (Exception error) when (error is StorageBusyException or DatabaseFencedException or IOException or TimeoutException)
             {
                 applied = null;
                 reason = error.GetType().Name;
