@@ -123,6 +123,8 @@ internal sealed partial class EngineManagementService
 
         await engine.CompleteDatabaseIntentAsync(storage, CancellationToken.None).ConfigureAwait(false);
         checkpoint("create.registered", storage);
+        admission?.Dispose();
+        await atlas.QueueAsync(database.ProjectId, database.Name, database.Home(options.Region), CancellationToken.None).ConfigureAwait(false);
         return new AddedDatabase(database, storage);
     }
 
