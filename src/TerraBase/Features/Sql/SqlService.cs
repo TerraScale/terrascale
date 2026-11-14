@@ -969,6 +969,11 @@ internal sealed class SqlSession(
             lease?.Dispose();
             return (null, SqlErrors.Moved(moved));
         }
+        catch (DatabaseFencedException fenced)
+        {
+            lease?.Dispose();
+            return (null, SqlErrors.Fenced(fenced));
+        }
         catch (StorageBusyException)
         {
             lease?.Dispose();
@@ -1060,6 +1065,11 @@ internal sealed class SqlSession(
             lease?.Dispose();
             return (null, null, SqlErrors.Moved(moved));
         }
+        catch (DatabaseFencedException fenced)
+        {
+            lease?.Dispose();
+            return (null, null, SqlErrors.Fenced(fenced));
+        }
         catch (StorageBusyException)
         {
             lease?.Dispose();
@@ -1119,6 +1129,7 @@ internal sealed class SqlSession(
         StorageCopyFaultedException => new SqlError(SqlErrors.CopyFaulted, "copy_faulted: Storage requires recovery."),
         StorageProofPendingException => new SqlError(SqlErrors.RecoveryPending, "recovery_pending: Storage recovery proof is pending; retry."),
         StorageBusyException => SqlErrors.Busy("the database is busy; retry"),
+        DatabaseFencedException fenced => SqlErrors.Fenced(fenced),
         DatabaseMovedException moved => SqlErrors.Moved(moved),
         QueryCapacityException => SqlErrors.Interrupt,
         _ => null,

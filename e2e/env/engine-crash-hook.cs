@@ -451,7 +451,7 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
         var opens = Stopwatch.GetElapsedTime(started).TotalMilliseconds / 1000;
         started = Stopwatch.GetTimestamp();
         var ledger = engine.GetType().GetProperty("Ledger", Hidden)!.GetValue(engine)!;
-        var refused = ledger.GetType().GetMethod("RefusedAsync")!.CreateDelegate<Func<TenantContext, Ulid, CancellationToken, ValueTask<bool>>>(ledger);
+        var refused = ledger.GetType().GetMethod("RefusedAsync", Hidden)!.CreateDelegate<Func<TenantContext, Ulid, CancellationToken, ValueTask<bool>>>(ledger);
         for (var index = 0; index < 1000; index++)
         {
             if (await refused(tenant, store.Incarnation, cancellationToken))
@@ -729,7 +729,7 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
                     {
                         var store = (await engine.OpenDatabaseAsync(tenant, cancellationToken))!;
                         var ledger = Ledger(engine);
-                        var refused = await ledger.GetType().GetMethod("RefusedAsync")!
+                        var refused = await ledger.GetType().GetMethod("RefusedAsync", Hidden)!
                             .CreateDelegate<Func<TenantContext, Ulid, CancellationToken, ValueTask<bool>>>(ledger)(tenant, store.Incarnation, cancellationToken);
                         await writer.WriteLineAsync((refused ? "1" : "0").AsMemory(), cancellationToken);
                         continue;

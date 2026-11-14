@@ -663,7 +663,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                         {
                             TursoReplicas.DeleteDetached(Path.Combine(Path.GetDirectoryName(path)!, key.Database + ".promote.db"));
                             TursoReplicas.DeleteDetached(Path.Combine(_dataDirectory, TursoReplicas.DirectoryName, key.Organization, key.Project, key.Database + ".promote.db"));
-                            var handoff = Path.Combine(_dataDirectory, ".handoff");
+                            var handoff = Path.Combine(_dataDirectory, PreservedFiles.Directory);
                             DatabaseKeys.RejectLink(handoff);
                             if (Directory.Exists(handoff))
                             {

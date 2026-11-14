@@ -69,6 +69,12 @@ public static class BadRequests
                 context.Response.Headers.RetryAfter = "1";
                 await WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "move_unresolved", error.Message, op: null).ConfigureAwait(false);
             }
+            catch (DatabaseFencedException error) when (!context.Response.HasStarted)
+            {
+                Replace(context.Response);
+                context.Response.Headers.RetryAfter = "1";
+                await WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "unavailable", error.Message, op: null).ConfigureAwait(false);
+            }
             catch (StorageBusyException error) when (!context.Response.HasStarted)
             {
                 Replace(context.Response);

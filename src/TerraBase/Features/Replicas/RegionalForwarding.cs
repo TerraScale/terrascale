@@ -62,7 +62,7 @@ internal static class RegionalForwarding
             .FirstOrDefault(node => node.Region == options.Region && node.Name != options.MachineId);
         if (owner is null)
         {
-            context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+            await HomeForwarding.UnavailableAsync(context, options.Region).ConfigureAwait(false);
             return;
         }
 

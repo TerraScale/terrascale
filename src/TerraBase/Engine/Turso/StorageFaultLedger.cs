@@ -9,7 +9,7 @@ using ZLogger;
 
 namespace TerraBase.Engine.Turso;
 
-internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logger) : IStorageCopyFaults, IDisposable
+internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logger) : IDisposable
 {
     internal const string Recording = "storage.fault.recording";
     internal const string Recorded = "storage.fault.recorded";
@@ -145,7 +145,7 @@ internal sealed class StorageFaultLedger(TursoStorageEngine engine, ILogger logg
     : store.FaultRow is { } row ? $"this database is faulted: {row.Reason}"
     : null;
 
-    public async ValueTask<bool> RefusedAsync(TenantContext database, Ulid incarnation, CancellationToken cancellationToken)
+    internal async ValueTask<bool> RefusedAsync(TenantContext database, Ulid incarnation, CancellationToken cancellationToken)
     {
         if (database == SystemDatabase.Identity)
         {

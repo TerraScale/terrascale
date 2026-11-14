@@ -15,7 +15,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Sync;
 
 internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRevisions revisions, IReplicaPeers peers,
-    IStorageEngine engine, TerraBaseOptions options, InternalCredential credential) : EndpointWithoutRequest<IResult>, IRevisionPullSink
+    IStorageEngine engine, TerraBaseOptions options, InternalCredential credential, RegionalOwners owners, HomeLeaseGate leaseGate) : EndpointWithoutRequest<IResult>, IRevisionPullSink
 {
     private const string MediaType = PullAnswer.MediaType;
     private const int MaxBodyBytes = 64 * 1024;
@@ -68,6 +68,11 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
         if (PullAnswer.Refusal(request) is { } refusal)
         {
             return ErrorResponse.From(new Validation(refusal, "unsupported_pull"));
+        }
+
+        if (leaseGate.Fenced(HttpContext.RouteValue("database")))
+        {
+            return ErrorResponse.From(new Unavailable(DatabaseFencedException.Refusal));
         }
 
         return await tenants.FindDatabaseAsync(HttpContext.RouteValue("organization"), HttpContext.RouteValue("project"), HttpContext.RouteValue("database"), cancellationToken).ConfigureAwait(false) switch
@@ -136,8 +141,11 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
         if (peer is not null && await tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false)
             is TenantDatabaseRecord { Placement: var placement } && (placement.AllRegions || placement.Replicas.Contains(peer.Region)))
         {
-            IReadOnlyList<string> regions = placement.AllRegions ? [.. meshPeers.Select(candidate => candidate.Region).Distinct()] : placement.Replicas;
-            await revisions.RetainReplicaCdcAsync(database, placement with { Replicas = regions }, peer.Region, clientRevision, cancellationToken).ConfigureAwait(false);
+            if (!owners.HandingOff)
+            {
+                IReadOnlyList<string> regions = placement.AllRegions ? [.. meshPeers.Select(candidate => candidate.Region).Distinct()] : placement.Replicas;
+                await revisions.RetainReplicaCdcAsync(database, placement with { Replicas = regions }, peer.Region, clientRevision, cancellationToken).ConfigureAwait(false);
+            }
         }
         else
         {

@@ -92,6 +92,7 @@ export async function receiptHandoff(scenario: string): Promise<void> {
       TERRABASE_FILES_S3_ACCESS_KEY_ID: access, TERRABASE_FILES_S3_SECRET_ACCESS_KEY: secret,
     });
     if (scenario === 'retained') environment.E2E_RETAINED_RECEIVER = '1';
+    if (scenario === 'early') environment.E2E_RECEIPT_DATABASE = suffix.toUpperCase();
     const source = new ReceiptNode({ ...environment, TS_NODE: sourceName, TERRABASE_DATA_DIRECTORY: join(directory, 'source'),
       TERRABASE_PORT: '8480', TERRABASE_METRICS_PORT: '9491', TERRABASE_POSTGRES_PORT: '6832' }, directory, 'source');
     children.push(source);
@@ -123,6 +124,22 @@ export async function receiptHandoff(scenario: string): Promise<void> {
     }
     const primed = await nodeRequest(targetAddress, '/v1/rollout/prime?source=' + sourceName, 'POST');
     expect(primed.status, primed.body).toBe(204);
+    if (scenario === 'early') {
+      const id = suffix.toUpperCase();
+      await source.command('early-live');
+      await target.command('early-holder ' + targetName);
+      const delivery = () => readFileSync(join(directory, 'target.log'), 'utf8').split('\n').filter(line =>
+        line.includes(id) && (line.includes('waits for the regional writer') || line.includes('refused the erasure receipt')));
+      await expect.poll(delivery, { message: 'the real maintenance sender reaches the writer before its purge record exists' }).not.toEqual([]);
+      await source.command('early-absent');
+      await source.command('early-authority ' + targetName);
+      await expect.poll(() => readFileSync(join(directory, 'target.log'), 'utf8').split('\n').filter(line =>
+        line.includes(id) && line.includes('recorded by regional writer')),
+      { message: 'the same writer receives the early receipt on a normal maintenance pass after its purge record arrives' }).toHaveLength(1);
+      await source.command('early-erasure');
+      console.log('EARLY_RECEIPT: writer without authority retains live row 73 and no receipt; the same writer later records the receipt and completes backup erasure');
+      return;
+    }
     if (retained) {
       const created = await nodeRequest(sourceAddress, `/v1/projects/${retained.project}/databases`, 'POST',
         { name: 'retained-receiver', regions: ['fra'] }, retained.user);

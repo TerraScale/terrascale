@@ -30,7 +30,7 @@ internal sealed partial class RegionReplication
 
         if (owners.Writer)
         {
-            foreach (var (key, follower) in _followers.Where(entry => entry.Value.Home.Region == options.Region).ToArray())
+            foreach (var (key, follower) in _followers.Where(entry => entry.Value.Home.Region == options.Region && !leaseGate.Fenced(entry.Key.Item3)).ToArray())
             {
                 await DeleteShreddedAsync(follower.Database, cancellationToken).ConfigureAwait(false);
             }

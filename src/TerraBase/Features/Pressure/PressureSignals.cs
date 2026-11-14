@@ -88,7 +88,7 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
             while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
             {
                 await Task.Yield();
-                Sample(await _readiness.IsReadyAsync(stoppingToken).ConfigureAwait(false));
+                Sample(await _readiness.UnreadyAsync(stoppingToken).ConfigureAwait(false) is null);
             }
         }, stoppingToken),
         Task.Run(async () =>

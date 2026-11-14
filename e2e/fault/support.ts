@@ -1,23 +1,36 @@
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { appendFileSync, closeSync, openSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { connect } from 'node:http2';
+import { createConnection } from 'node:net';
 import { join } from 'node:path';
-import { expect, request as apiRequest } from '@playwright/test';
+import { expect, test, request as apiRequest, type APIRequestContext } from '@playwright/test';
 import { database, json, sql, type Cells } from '../placement/support';
-import { r2StandIn, stateDir } from '../support/stack';
+import { keyId } from '../support/api-key';
+import { auth, r2StandIn, stateDir } from '../support/stack';
+import { journey, ownerSession, saveSecret } from '../support/state';
+import { signInToken } from '../support/auth-management';
+import { request as addressedRequest } from '../support/client-address';
 
 export const nodes = [
-  { name: 'journey-1', region: 'gru', address: '127.0.0.1', port: 8080, service: 'terrabase' },
-  { name: 'journey-2', region: 'fra', address: '127.0.0.2', port: 8180, service: 'terrabase-fra' },
-  { name: 'journey-3', region: 'gru', address: '127.0.0.3', port: 8280, service: 'terrabase-gru-2' },
-  { name: 'journey-4', region: 'fra', address: '127.0.0.4', port: 8380, service: 'terrabase-fra-2' },
+  { name: 'journey-1', region: 'gru', address: '127.0.0.1', port: 8080, metrics: 9091, service: 'terrabase' },
+  { name: 'journey-2', region: 'fra', address: '127.0.0.2', port: 8180, metrics: 9191, service: 'terrabase-fra' },
+  { name: 'journey-3', region: 'gru', address: '127.0.0.3', port: 8280, metrics: 9291, service: 'terrabase-gru-2' },
+  { name: 'journey-4', region: 'fra', address: '127.0.0.4', port: 8380, metrics: 9391, service: 'terrabase-fra-2' },
 ] as const;
-type Node = typeof nodes[number];
-type NodeStatus = { node: string; owner: string; epoch: number; writer: boolean; ready: boolean; session: string };
-type Row = [number, string];
+export type KeptCopy = { id: string; organizationId: string; projectId: string; databaseId: string; files: string[]; bytes: number };
+export type FencedDatabase = { databaseId: string; reason: string; epoch: number; detail: string };
+export type Unserved = { databaseId: string; region: string; node: string; epoch: number; cause: string };
+export type HomeLease = { organizationId: string; projectId: string; databaseId: string; home: string; node: string; epoch: number; session: string; adopted?: string | null };
+export const node = (name: string) => nodes.find(candidate => candidate.name === name)!;
+
+export type Node = typeof nodes[number];
+type NodeStatus = { node: string; owner: string; epoch: number; writer: boolean; ready: boolean; session: string; unserved?: Unserved[] | null; kept?: KeptCopy[] | null;
+  fenced?: FencedDatabase[] | null; unready?: string | null };
+export type Row = [number, string];
 export const regions = ['gru', 'fra'] as const;
 export const endpoint = (region: string) => `https://${region}.api.terrascale.tech`;
 
@@ -76,6 +89,13 @@ export async function backupPuts(file: string): Promise<string[]> {
   return (await response.json() as string[]).filter(key => key.startsWith(`${file}/`));
 }
 
+const handoffBudget = 30_000;
+const nodeRequestTimeout = 15_000;
+
+function nodeRequestTimeoutFor(path: string): number {
+  return /^\/v1\/rollout\/(drain|prime)\b/.test(path) ? handoffBudget + nodeRequestTimeout : nodeRequestTimeout;
+}
+
 export async function nodeRequest(node: { name: string; address: string }, path: string, method = 'GET', payload?: unknown, user?: string): Promise<{ status: number; body: string }> {
   const credential = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
   const session = connect(`http://${node.address}:8081`);
@@ -84,7 +104,7 @@ export async function nodeRequest(node: { name: string; address: string }, path:
     ...(payload === undefined ? {} : { 'content-type': 'application/json' }),
     ...(user ? { 'x-terrabase-user-id': user } : {}),
   });
-  stream.setTimeout(15_000, () => stream.destroy(new Error(`node request timed out for ${node.name}: ${method} ${path.split('?')[0]}`)));
+  stream.setTimeout(nodeRequestTimeoutFor(path), () => stream.destroy(new Error(`node request timed out for ${node.name}: ${method} ${path.split('?')[0]}`)));
   session.on('error', error => stream.destroy(error));
   try {
     const response = once(stream, 'response');
@@ -104,11 +124,176 @@ export async function nodeStatus(node: Node, region?: string): Promise<NodeStatu
   return JSON.parse(response.body) as NodeStatus;
 }
 
+export async function keptCopies(node: Node, id: string): Promise<KeptCopy[]> {
+  return ((await nodeStatus(node)).kept ?? []).filter(copy => copy.databaseId === id);
+}
+
+export function keptHash(node: Node, copy: KeptCopy): string {
+  const hash = createHash('sha256');
+  for (const file of copy.files) hash.update(readFileSync(join(stateDir, node.service, '.handoff', copy.id, copy.organizationId, copy.projectId, file)));
+  return hash.digest('hex');
+}
+
+export function fileHash(node: Node, lease: { organizationId: string; projectId: string; databaseId: string }): string {
+  return createHash('sha256').update(readFileSync(join(stateDir, node.service, lease.organizationId, lease.projectId, `${lease.databaseId}.db`))).digest('hex');
+}
+
+export function holdsFile(node: Node, lease: { organizationId: string; projectId: string; databaseId: string }): boolean {
+  return existsSync(join(stateDir, node.service, lease.organizationId, lease.projectId, `${lease.databaseId}.db`));
+}
+
+export function promoting(node: Node, id: string): boolean {
+  return existsSync(join(stateDir, node.service, '.fences', 'promoting', id));
+}
+
+export async function counted(node: Node, name: string, labels: Record<string, string> = {}): Promise<number> {
+  const text = await (await fetch(`http://127.0.0.1:${node.metrics}/metrics`)).text();
+  return text.split('\n').filter(line => line.startsWith(name + '{') || line.startsWith(name + ' '))
+    .filter(line => Object.entries(labels).every(([key, value]) => line.includes(`${key}="${value}"`)))
+    .reduce((sum, line) => sum + Number(line.slice(line.lastIndexOf(' ') + 1)), 0);
+}
+
+export async function writerIs(region: string, name: string): Promise<void> {
+  await expect.poll(async () => {
+    const statuses = await Promise.all(nodes.filter(member => member.region === region).map(member => nodeStatus(member)));
+    return statuses.filter(status => status.writer).map(status => status.node);
+  }, { message: `${name} is the only ${region} writer`, timeout: 60_000 }).toEqual([name]);
+}
+
+export function logged(node: Node, ...fragments: string[]): number {
+  return readFileSync(join(stateDir, 'logs', `${node.service}.log`), 'utf8').split('\n').filter(line => fragments.every(fragment => line.includes(fragment))).length;
+}
+
+export async function writerToken(request: APIRequestContext): Promise<string> {
+  const current = journey();
+  const grant = await (await request.post(`${auth}/terrascale/oauth/token`, {
+    form: { grant_type: 'client_credentials', client_id: keyId(current.apiKey), client_secret: current.apiKey, project: current.projectId, scope: 'sql:read sql:write databases:read databases:write' },
+  })).json() as { access_token: string };
+  saveSecret('fault-token', grant.access_token);
+  return grant.access_token;
+}
+
+const signInReuse = 120_000;
+let signedIn: { token: string; at: number } | undefined;
+
+export async function signIn(): Promise<string> {
+  if (signedIn && Date.now() - signedIn.at < signInReuse) return signedIn.token;
+  const at = Date.now();
+  const context = await addressedRequest.newContext({ storageState: ownerSession() });
+  try {
+    signedIn = { token: await signInToken(context, 'fault-sign-in'), at };
+    return signedIn.token;
+  } finally {
+    await context.dispose();
+  }
+}
+
+export async function exchangedToken(request: APIRequestContext, signedIn: string): Promise<string> {
+  await expect.poll(async () => (await request.get(`${auth}/readyz`)).status(), { message: 'ts-auth reaches its TerraBase writer before a token exchange' }).toBe(200);
+  const current = journey();
+  const grant = await json<{ access_token: string }>(await request.post(`${auth}/terrascale/oauth/token`, {
+    form: { grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange', client_id: '00000000000000000000000007', subject_token: signedIn,
+      subject_token_type: 'urn:ietf:params:oauth:token-type:access_token', organization: current.organizationId, project: current.projectId,
+      scope: 'sql:read sql:write databases:read databases:write' },
+  }));
+  saveSecret('fault-exchanged-token', grant.access_token);
+  return grant.access_token;
+}
+
+export class Kv {
+  private buffer = Buffer.alloc(0);
+  private readonly pending = new Map<string, (value: Record<string, unknown>) => void>();
+  private next = 1;
+  private readonly socket = createConnection({ port: 4222, host: '127.0.0.1' });
+
+  private constructor() {
+    this.socket.on('data', (chunk: Buffer) => {
+      this.buffer = Buffer.concat([this.buffer, chunk]);
+      for (;;) {
+        const end = this.buffer.indexOf('\r\n');
+        if (end < 0) return;
+        const parts = this.buffer.subarray(0, end).toString().split(' ');
+        if (parts[0] === 'MSG' || parts[0] === 'HMSG') {
+          const size = Number(parts.at(-1));
+          if (this.buffer.length < end + 2 + size + 2) return;
+          const headerSize = parts[0] === 'HMSG' ? Number(parts.at(-2)) : 0;
+          const data = this.buffer.subarray(end + 2 + headerSize, end + 2 + size).toString();
+          const handler = this.pending.get(parts[2]);
+          this.pending.delete(parts[2]);
+          handler?.(data.startsWith('{') ? JSON.parse(data) : { raw: data });
+          this.buffer = this.buffer.subarray(end + 2 + size + 2);
+        } else {
+          if (parts[0] === 'PING') this.socket.write('PONG\r\n');
+          this.buffer = this.buffer.subarray(end + 2);
+        }
+      }
+    });
+  }
+
+  static async open(): Promise<Kv> {
+    const kv = new Kv();
+    await once(kv.socket, 'connect');
+    kv.socket.write('CONNECT ' + JSON.stringify({ auth_token: readFileSync(join(stateDir, 'nats-token'), 'utf8').trim(), headers: true, verbose: false }) + '\r\n');
+    return kv;
+  }
+
+  private request(subject: string, payload: unknown, headers?: Record<string, string>): Promise<Record<string, unknown>> {
+    const sid = String(this.next++);
+    const inbox = `_INBOX.fault.${sid}`;
+    const data = Buffer.from(JSON.stringify(payload));
+    const answer = new Promise<Record<string, unknown>>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`NATS request ${subject} got no answer`)), 5000);
+      this.pending.set(sid, value => { clearTimeout(timer); resolve(value); });
+    });
+    const block = headers ? Buffer.from('NATS/1.0\r\n' + Object.entries(headers).map(([key, value]) => `${key}: ${value}\r\n`).join('') + '\r\n') : Buffer.alloc(0);
+    const publish = headers ? `HPUB ${subject} ${inbox} ${block.length} ${block.length + data.length}` : `PUB ${subject} ${inbox} ${data.length}`;
+    this.socket.write(Buffer.concat([Buffer.from(`SUB ${inbox} ${sid}\r\nUNSUB ${sid} 1\r\n${publish}\r\n`), block, data, Buffer.from('\r\n')]));
+    return answer;
+  }
+
+  async get<T>(bucket: string, key: string): Promise<{ seq: number; value: T } | null> {
+    const stored = await this.request(`$JS.API.STREAM.MSG.GET.KV_${bucket}`, { last_by_subj: `$KV.${bucket}.${key}` }) as { message?: { seq: number; data?: string; hdrs?: string } };
+    if (!stored.message?.data || Buffer.from(stored.message.hdrs ?? '', 'base64').toString().includes('KV-Operation')) return null;
+    return { seq: stored.message.seq, value: JSON.parse(Buffer.from(stored.message.data, 'base64').toString()) as T };
+  }
+
+  async put(bucket: string, key: string, value: unknown, after: number): Promise<void> {
+    const answer = await this.request(`$KV.${bucket}.${key}`, value, { 'Nats-Expected-Last-Subject-Sequence': String(after) });
+    expect(answer.error, JSON.stringify(answer)).toBeUndefined();
+  }
+
+  async publish(subject: string, payload: unknown, headers: Record<string, string>): Promise<Record<string, unknown>> {
+    return this.request(subject, payload, headers);
+  }
+
+  async remove(bucket: string, key: string, after: number): Promise<void> {
+    const answer = await this.request(`$KV.${bucket}.${key}`, {}, { 'KV-Operation': 'DEL', 'Nats-Expected-Last-Subject-Sequence': String(after) });
+    expect(answer.error, JSON.stringify(answer)).toBeUndefined();
+  }
+
+  close(): void {
+    this.socket.destroy();
+  }
+}
+
+export async function cleanUp(failure: unknown, cleanup: () => Promise<void>): Promise<void> {
+  try {
+    await cleanup();
+  } catch (error) {
+    if (failure === undefined) throw error;
+    await test.info().attach('cleanup error after the case failed', {
+      body: error instanceof Error ? error.stack ?? error.message : String(error),
+      contentType: 'text/plain',
+    });
+  }
+}
+
 export async function topology(): Promise<Node[]> {
   const writers: Node[] = [];
   for (const node of nodes) {
-    const status = await nodeStatus(node);
-    expect(status).toMatchObject({ node: node.name, ready: true });
+    let status = await nodeStatus(node);
+    await expect.poll(async () => (status = await nodeStatus(node)), { message: `${node.name} is ready before the case starts` })
+      .toMatchObject({ node: node.name, ready: true });
     expect(nodes.filter(peer => peer.region === node.region).map(peer => peer.name)).toContain(status.owner);
     if (status.writer) {
       expect(status.owner).toBe(node.name);
@@ -122,6 +307,8 @@ export async function topology(): Promise<Node[]> {
 export class Ledger {
   readonly acknowledged: Row[] = [];
   readonly submitted: Row[] = [];
+  readonly failed: Row[] = [];
+  readonly refused: Row[] = [];
   readonly path: string;
 
   constructor(readonly id: string) {
@@ -132,6 +319,72 @@ export class Ledger {
     appendFileSync(this.path, JSON.stringify({ event, region, rows }) + '\n', { mode: 0o600 });
     if (event === 'submitted') this.submitted.push(...rows);
     if (event === 'acknowledged') this.acknowledged.push(...rows);
+    if (event === 'failed') this.failed.push(...rows);
+    if (event === 'refused') this.refused.push(...rows);
+  }
+
+  async direct(node: Node, token: string, rows: Row[]): Promise<boolean> {
+    this.record('submitted', rows, node.region);
+    try {
+      const response = await fetch(`http://127.0.0.1:${node.port}${database(this.id)}/sql/execute`, {
+        method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ statements: [{ sql: this.statement(rows) }] }), signal: AbortSignal.timeout(15_000),
+      });
+      const result = await response.json() as { results?: { error?: unknown }[] };
+      if (response.status === 200 && response.headers.get('x-terrabase-region') === node.region && result.results?.length === 1 && !result.results[0].error) {
+        this.record('acknowledged', rows, node.region);
+        return true;
+      }
+      this.record(response.status === 200 ? 'failed' : 'refused', rows, node.region);
+      return false;
+    } catch {
+      this.record('failed', rows, node.region);
+      return false;
+    }
+  }
+
+  async refusal(node: Node, token: string, rows: Row[]): Promise<{ status: number; code?: string }> {
+    this.record('submitted', rows, node.region);
+    const response = await fetch(`http://127.0.0.1:${node.port}${database(this.id)}/sql/execute`, {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ statements: [{ sql: this.statement(rows) }] }), signal: AbortSignal.timeout(45_000),
+    });
+    const body = await response.json() as { error?: { code: string }; results?: { error?: { code: string } }[] };
+    const answer = { status: response.status, code: body.error?.code ?? body.results?.[0]?.error?.code };
+    this.record(response.status === 200 && !answer.code ? 'acknowledged' : 'refused', rows, node.region);
+    return answer;
+  }
+
+  async readNode(node: Node, token: string): Promise<Row[]> {
+    const response = await fetch(`http://127.0.0.1:${node.port}${database(this.id)}/sql/execute`, {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ statements: [{ sql: 'SELECT id, value FROM fault_rows ORDER BY id' }] }), signal: AbortSignal.timeout(15_000),
+    });
+    if (response.status === 404 || response.status === 421) return [];
+    const body = await response.json() as { results?: { rows: Row[] }[]; error?: { code: string } };
+    if (response.status === 400 && body.error?.code === 'undefined_table') return [];
+    expect(response.status, `${node.name} answers the read: ${JSON.stringify(body)}`).toBe(200);
+    if (response.headers.get('x-terrabase-region') !== node.region) return [];
+    return body.results![0].rows;
+  }
+
+  async converge(token: string, writers: Node[], retained: Row[] = []): Promise<void> {
+    await expect.poll(async () => {
+      const seen = await Promise.all(writers.map(writer => this.readNode(writer, token)));
+      for (const rows of seen) {
+        for (const row of retained) expect(rows, 'a previously observed acknowledged write is never lost').toContainEqual(row);
+        for (const row of rows) expect(this.submitted, 'no invented or changed write').toContainEqual(row);
+      }
+      return seen.every(rows => this.acknowledged.every(row => rows.some(actual => JSON.stringify(actual) === JSON.stringify(row))))
+        && seen.every(rows => JSON.stringify(rows) === JSON.stringify(seen[0]));
+    }, { message: 'every region writer serves the client write ledger', timeout: 60_000, intervals: [250, 500, 1000] }).toBe(true);
+    console.log(`ledger ${this.id}: ${this.acknowledged.length} acknowledged rows retained on ${writers.map(writer => writer.name).join(' and ')}`);
+  }
+
+  async drop(token: string, writer: Node): Promise<void> {
+    await expect.poll(async () => (await fetch(`http://127.0.0.1:${writer.port}${database(this.id)}`, {
+      method: 'DELETE', headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15_000),
+    })).status, { message: `database ${this.id} is deleted`, timeout: 60_000 }).toBe(204);
   }
 
   statement(rows: Row[]): string {
@@ -151,7 +404,7 @@ export class Ledger {
     if (response.status() === 404) return [];
     if (response.status() === 400) {
       const error = await response.json();
-      expect(error.error.code).toBe('sql_error');
+      expect(error.error.code).toBe('undefined_table');
       expect(error.error.message).toContain('no such table: fault_rows');
       return [];
     }
@@ -213,7 +466,7 @@ export function crashWrite(node: Node, ledger: Ledger, token: string) {
   return { sent, outcome: outcome.then(() => ({ error: undefined }), (error: Error) => ({ error })) };
 }
 
-export function restartAfterKill(node: Node, writer = true, access?: { token: string; path: string }, observe?: () => Promise<void>): () => Promise<void> {
+export function restartAfterKill(node: Node, writer = true, access?: { token: string; path: string }, observe?: () => Promise<void>, build?: string): () => Promise<void> {
   const pidFile = join(stateDir, 'pids', `${node.service}.pid`);
   const pid = Number(readFileSync(pidFile, 'utf8').trim());
   const environment = Object.fromEntries(readFileSync(`/proc/${pid}/environ`, 'utf8').split('\0').filter(Boolean).map(value => {
@@ -240,7 +493,8 @@ export function restartAfterKill(node: Node, writer = true, access?: { token: st
     const died = new Promise<never>((_, reject) => {
       exited = (code, signal) => reject(new Error(`the restarted ${node.name} exited (${code ?? signal}) before it opened its listeners`));
     });
-    const child = spawn(command[0], command.slice(1), { env: environment, stdio: ['ignore', output, output] });
+    const started = build === undefined ? command : [command[0], build];
+    const child = spawn(started[0], started.slice(1), { env: environment, stdio: ['ignore', output, output] });
     try {
       child.once('exit', exited);
       await once(child, 'spawn');
@@ -302,6 +556,24 @@ export async function tokenReady(node: Node, cells: Pick<Cells, 'get'>, path: st
     await response.dispose();
     return status;
   }, { message: `${node.name} must verify the existing token before authenticated recovery checks` }).toBe(200);
+}
+
+export function nodeBuild(node: Node): string {
+  const pid = Number(readFileSync(join(stateDir, 'pids', `${node.service}.pid`), 'utf8').trim());
+  const command = readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean);
+  expect(command.at(-1), `${node.name} runs a TerraBase build`).toMatch(/terrabase\.dll$/);
+  return command.at(-1)!;
+}
+
+export function ulidAt(at: number): string {
+  const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+  let value = BigInt(at) << 80n | BigInt(`0x${randomBytes(10).toString('hex')}`);
+  let text = '';
+  for (let index = 0; index < 26; index++) {
+    text = alphabet[Number(value & 31n)] + text;
+    value >>= 5n;
+  }
+  return text;
 }
 
 export function faultId(): string {

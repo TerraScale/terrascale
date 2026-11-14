@@ -1,15 +1,15 @@
 import { randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect } from '@playwright/test';
-import { test, database, json, name, project, removeDatabase, sql } from '../placement/support';
-import { auth, dash, e2eRoot, stateDir } from '../support/stack';
-import { keyId } from '../support/api-key';
+import { test, database, json, name, project, removeDatabase, sql, type Cells } from '../placement/support';
+import { dash, e2eRoot, stateDir } from '../support/stack';
 import { journey, ownerSession, saveSecret } from '../support/state';
+import { Nats, putKey, seal } from '../replication/push.mjs';
 import { receiptHandoff } from './receipt-handoff';
-import { backupPuts, backupStore, continuity, crashWrite, endpoint, faultId, holeRecords, Ledger, metric, nodeHoles, nodes, nodeRequest, nodeStatus, plantHole, probe, regions, restartAfterKill, systemContinuity, scrape, tokenReady, topology } from './support';
+import { backupPuts, backupStore, cleanUp, continuity, counted, crashWrite, endpoint, faultId, fileHash, holdsFile, holeRecords, keptCopies, keptHash, Kv, Ledger, logged, metric, node, nodeBuild, nodeHoles, nodes, nodeRequest, nodeStatus, plantHole, probe, promoting, regions, restartAfterKill, scrape, signIn, exchangedToken, systemContinuity, tokenReady, topology, ulidAt, writerIs, writerToken, type HomeLease, type Node, type Row } from './support';
 
 test.beforeEach(async () => {
   expect(process.env.E2E_TARGET ?? 'local').toBe('local');
@@ -23,6 +23,7 @@ test('a writer killed during a write restarts without losing acknowledged rows i
     data: { name: name('fault'), regions: [...regions] },
   }), 201);
   const ledger = new Ledger(created.id);
+  let failure: unknown;
   try {
     await sql(cells, endpoint('gru'), created.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
     await ledger.write(cells, 'gru', [[1, 'before-gru']]);
@@ -30,15 +31,11 @@ test('a writer killed during a write restarts without losing acknowledged rows i
     await ledger.write(cells, 'fra', [[2, 'before-fra']]);
     await ledger.compare(cells);
     const retained = [...ledger.acknowledged];
-    const current = journey();
-    const grant = await json<{ access_token: string }>(await request.post(`${auth}/terrascale/oauth/token`, {
-      form: { grant_type: 'client_credentials', client_id: keyId(current.apiKey), client_secret: current.apiKey, project: current.projectId, scope: 'sql:read sql:write databases:read databases:write' },
-    }));
-    saveSecret('fault-token', grant.access_token);
+    const token = await writerToken(request);
     const writer = (await topology()).find(node => node.region === 'gru')!;
-    const writing = crashWrite(writer, ledger, grant.access_token);
+    const writing = crashWrite(writer, ledger, token);
     await writing.sent;
-    const restart = restartAfterKill(writer, true, { token: grant.access_token, path: database(created.id) });
+    const restart = restartAfterKill(writer, true, { token, path: database(created.id) });
     try {
       const outcome = await writing.outcome;
       if (outcome.error) throw outcome.error;
@@ -53,8 +50,13 @@ test('a writer killed during a write restarts without losing acknowledged rows i
     await ledger.write(cells, 'gru', [[3, 'after-gru']]);
     await ledger.write(cells, 'fra', [[4, 'after-fra']]);
     await ledger.compare(cells);
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
-    await removeDatabase(cells, created.id);
+    await cleanUp(failure, async () => {
+      await removeDatabase(cells, created.id);
+    });
   }
 });
 
@@ -64,6 +66,7 @@ test('restore a backup into another database and compare its rows with the snaps
   }), 201);
   const ledger = new Ledger(created.id);
   let restored: string | undefined;
+  let failure: unknown;
   try {
     await sql(cells, endpoint('gru'), created.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
     await ledger.write(cells, 'gru', [[1, 'snapshot-gru']]);
@@ -89,9 +92,763 @@ test('restore a backup into another database and compare its rows with the snaps
     }
     await ledger.compare(cells);
     console.log(`backup ${backup.id}: restored snapshot ledger in both regions; later source write excluded`);
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
-    if (restored) await removeDatabase(cells, restored);
+    await cleanUp(failure, async () => {
+      if (restored) await removeDatabase(cells, restored);
+      await removeDatabase(cells, created.id);
+    });
+  }
+});
+
+const homes = 'terrabase-homes';
+const owners = 'terrabase-region-owners';
+const outageHold = 30_000;
+const homeDown = { status: 503, code: 'unavailable' };
+
+async function createLedgers(cells: Cells, count: number, label: string): Promise<Ledger[]> {
+  const ledgers: Ledger[] = [];
+  for (let index = 0; index < count; index++) {
+    const created = await json<{ id: string }>(await cells.post(`${endpoint('gru')}${project()}/databases`, {
+      data: { name: name(`${label}-${index}`), regions: [...regions] },
+    }), 201);
+    const ledger = new Ledger(created.id);
+    ledgers.push(ledger);
+    await sql(cells, endpoint('gru'), created.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
+    await ledger.write(cells, 'gru', Array.from({ length: 20 }, (_, row): Row => [row + 1, `base-${row + 1}`]));
+  }
+  for (const ledger of ledgers) await ledger.compare(cells);
+  return ledgers;
+}
+
+async function homeLease(kv: Kv, id: string) {
+  const stored = await kv.get<HomeLease>(homes, `home.${id}`);
+  expect(stored, `database ${id} has a home lease`).not.toBeNull();
+  return stored!;
+}
+
+async function holdOutage(kv: Kv, ledgers: Ledger[], killedAt: number, before: { value: HomeLease }[], token: string): Promise<void> {
+  await expect.poll(async () => {
+    for (const [index, ledger] of ledgers.entries()) {
+      const lease = (await homeLease(kv, ledger.id)).value;
+      expect(lease, 'nothing claims a lapsed home lease: node, epoch and session stay as they were').toEqual(before[index].value);
+    }
+    return Date.now() - killedAt >= outageHold;
+  }, { message: `the home stays on journey-1 for ${outageHold / 1000} s`, timeout: outageHold + 30_000, intervals: [1000] }).toBe(true);
+  for (const ledger of ledgers) {
+    const base = Array.from({ length: 20 }, (_, row): Row => [row + 1, `base-${row + 1}`]);
+    const rows = await ledger.readNode(node('journey-2'), token);
+    for (const row of base) expect(rows, 'fra keeps serving reads from its pulled replica during the outage').toContainEqual(row);
+    const id = 2000 + ledgers.indexOf(ledger);
+    expect(await ledger.refusal(node('journey-3'), token, [[id, `needs-home-${id}`]]), 'a write that needs the home fails while the home is down')
+      .toEqual(homeDown);
+  }
+}
+
+async function killDuringBurst(ledgers: Ledger[], token: string): Promise<{ killedAt: number; restart: () => Promise<void> }> {
+  const writer = node('journey-1');
+  const ids = Array.from({ length: 240 }, (_, index) => 1000 + index);
+  let next = 0;
+  let acknowledged = 0;
+  let killed: { killedAt: number; restart: () => Promise<void> } | undefined;
+  try {
+    await Promise.all(Array.from({ length: 12 }, async () => {
+      while (next < ids.length) {
+        const id = ids[next++];
+        const ledger = ledgers[id % ledgers.length];
+        if (await ledger.direct(writer, token, [[id, `burst-${id}`]]) && ++acknowledged === 45 && !killed) {
+          killed = { killedAt: Date.now(), restart: restartAfterKill(writer) };
+        }
+      }
+    }));
+  } catch (error) {
+    await cleanUp(error, async () => { await killed?.restart(); });
+    throw error;
+  }
+  expect(killed, 'the writer was killed during the burst').toBeDefined();
+  return killed!;
+}
+
+const writers = () => [node('journey-1'), node('journey-2')];
+
+async function recovered(ledgers: Ledger[], token: string): Promise<void> {
+  for (const ledger of ledgers) {
+    await ledger.converge(token, writers(), [...ledger.acknowledged]);
+    for (const writer of writers()) {
+      const rows = await ledger.readNode(writer, token);
+      for (const row of ledger.refused) expect(rows, 'a refused write was never applied').not.toContainEqual(row);
+    }
+  }
+}
+
+test('a planned move to a node that is not its region writer is refused and changes nothing', async ({ cells }) => {
+  const kv = await Kv.open();
+  let failure: unknown;
+  try {
+    const [ledger] = await createLedgers(cells, 1, 'home-move-refused');
+    const before = await homeLease(kv, ledger.id);
+    const refusals = await counted(node('journey-4'), 'terrabase_home_refusals_total', { reason: 'not_writer' });
+    const answer = await nodeRequest(node('journey-4'), `/v1/sync/organizations/${before.value.organizationId}/projects/${before.value.projectId}/databases/${ledger.id}/promote`, 'POST', {
+      moveId: `fault-${ledger.id}`, fromRegion: 'gru', version: before.value.epoch + 1, replicaRegions: ['gru'], allRegions: false,
+    });
+    expect(answer.status, answer.body).toBe(409);
+    expect(JSON.parse(answer.body).error.code).toBe('move_aborted');
+    await expect.poll(() => counted(node('journey-4'), 'terrabase_home_refusals_total', { reason: 'not_writer' }), { message: 'journey-4 counts the refusal' }).toBe(refusals + 1);
+    expect(await homeLease(kv, ledger.id)).toEqual(before);
+    await ledger.write(cells, 'gru', [[700, 'after-refused-move']]);
+    await ledger.write(cells, 'fra', [[701, 'after-refused-move-fra']]);
+    await ledger.compare(cells);
+    await removeDatabase(cells, ledger.id);
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    await cleanUp(failure, async () => {
+      kv.close();
+    });
+  }
+});
+
+test('a move that fails before its commit point rolls back: the target acknowledged nothing, both files stay, the old home serves and no push is lost', async ({ cells, request }) => {
+  test.setTimeout(240_000);
+  const token = await writerToken(request);
+  const kv = await Kv.open();
+  let failure: unknown;
+  try {
+    const [ledger] = await createLedgers(cells, 1, 'move-rollback');
+    await ledger.write(cells, 'fra', [[21, 'pushed-from-fra']]);
+    await ledger.compare(cells);
+    const before = await homeLease(kv, ledger.id);
+    const { organizationId, projectId } = before.value;
+    const gru = node('journey-1');
+    const target = node('journey-2');
+    const drainFailed = await counted(target, 'terrabase_home_refusals_total', { reason: 'drain_failed' });
+    const demotions = await counted(gru, 'terrabase_home_demotions_total');
+    const published = await kv.publish(`terrabase.push.fra.gru.${organizationId}.${projectId}.${ledger.id}`, { undecodable: true }, { 'Tb-Epoch': String(before.value.epoch) });
+    expect(published.error, JSON.stringify(published)).toBeUndefined();
+    const started = Date.now();
+    const move = cells.post(`${endpoint('gru')}${database(ledger.id)}/move-home`, { data: { homeRegion: 'fra' }, timeout: 120_000 });
+
+    await test.step('the lease keeps naming the old home, and the target stays fenced and acknowledges no write before its commit point', async () => {
+      await expect.poll(() => promoting(target, ledger.id), { message: 'the promotion fence is on disk', timeout: 60_000, intervals: [100] }).toBe(true);
+      expect((await homeLease(kv, ledger.id)).value, 'the target writes the lease only at its commit point').toMatchObject({ home: 'gru', node: 'journey-1', epoch: before.value.epoch });
+      await expect.poll(async () => (await (await fetch(`http://127.0.0.1:${target.port}${database(ledger.id)}`, { headers: { authorization: `Bearer ${token}` } })).json()).homeRegion,
+        { message: 'journey-2 recorded the new placement before its commit point', timeout: 30_000, intervals: [100] }).toBe('fra');
+      expect(await ledger.refusal(target, token, [[22, 'during-move']]), 'the target refuses a write before its commit point')
+        .toEqual({ status: 503, code: 'unavailable' });
+    });
+
+    await test.step('the drain fails, the move rolls back and the old home serves again', async () => {
+      const answer = await move;
+      expect(answer.status(), await answer.text()).toBe(503);
+      expect((await answer.json()).error.code).toBe('replica_not_ready');
+      expect(Date.now() - started, 'the move outlasted one lease scan of the old home').toBeGreaterThan(15_000);
+      await expect.poll(async () => (await homeLease(kv, ledger.id)).value, { message: 'the lease names journey-1 again at the next epoch', timeout: 60_000 })
+        .toMatchObject({ home: 'gru', node: 'journey-1', epoch: before.value.epoch + 2 });
+      expect((await homeLease(kv, ledger.id)).value.adopted ?? null).toBeNull();
+      expect(await counted(target, 'terrabase_home_refusals_total', { reason: 'drain_failed' })).toBe(drainFailed + 1);
+      expect(promoting(target, ledger.id), 'the promotion fence is lifted').toBe(false);
+      await ledger.write(cells, 'gru', [[23, 'after-rollback-gru']]);
+      await ledger.write(cells, 'fra', [[24, 'after-rollback-fra']]);
+      await ledger.compare(cells);
+      for (const writer of writers()) {
+        const rows = await ledger.readNode(writer, token);
+        expect(rows, 'the push from fra before the move is served').toContainEqual([21, 'pushed-from-fra']);
+        expect(rows, 'the write the fenced target refused was never applied').not.toContainEqual([22, 'during-move']);
+      }
+    });
+
+    await test.step('both files exist: the old home serves its file and the target keeps its imported copy in its inventory', async () => {
+      expect(holdsFile(gru, before.value), 'the old home keeps its database file').toBe(true);
+      expect(holdsFile(target, before.value), 'the target moved its imported copy out of the database path').toBe(false);
+      const copies = await keptCopies(target, ledger.id);
+      expect(copies).toEqual([expect.objectContaining({ organizationId, projectId, databaseId: ledger.id })]);
+      expect(copies[0].files).toContain(`${ledger.id}.db`);
+      expect(copies[0].bytes).toBeGreaterThan(0);
+      await expect.poll(() => logged(target, 'Preserved a database copy', `"Database":"${ledger.id}"`, '"Reason":"move_rolled_back"'), { message: 'the target logs why it preserved its copy' }).toBe(1);
+      await expect.poll(() => counted(target, 'terrabase_storage_retained_files'), { message: 'the retained inventory counts the preserved copy' })
+        .toBeGreaterThanOrEqual(copies[0].files.length);
+    });
+
+    await test.step('the old home judged nothing during its own move and deleted nothing', async () => {
+      expect(await counted(gru, 'terrabase_home_demotions_total')).toBe(demotions);
+      expect(await keptCopies(gru, ledger.id)).toEqual([]);
+    });
+    await removeDatabase(cells, ledger.id);
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    await cleanUp(failure, async () => {
+      kv.close();
+    });
+  }
+});
+
+test('a rollback keeps both copies in place until the lease names the old home again, then serves every acknowledged row', async ({ cells, request }) => {
+  test.setTimeout(300_000);
+  const token = await writerToken(request);
+  const kv = await Kv.open();
+  let failure: unknown;
+  try {
+    const [ledger] = await createLedgers(cells, 1, 'rollback-unproven');
+    await ledger.write(cells, 'fra', [[31, 'pushed-from-fra']]);
+    await ledger.compare(cells);
+    const before = await homeLease(kv, ledger.id);
+    const { organizationId, projectId } = before.value;
+    const gru = node('journey-1');
+    const target = node('journey-2');
+    const published = await kv.publish(`terrabase.push.fra.gru.${organizationId}.${projectId}.${ledger.id}`, { undecodable: true }, { 'Tb-Epoch': String(before.value.epoch) });
+    expect(published.error, JSON.stringify(published)).toBeUndefined();
+    const move = cells.post(`${endpoint('gru')}${database(ledger.id)}/move-home`, { data: { homeRegion: 'fra' }, timeout: 120_000 });
+
+    await test.step('while the target drains, the lease is rewritten to name a node that never held the database', async () => {
+      await expect.poll(() => promoting(target, ledger.id), { message: 'journey-2 starts its promotion', timeout: 60_000, intervals: [100] }).toBe(true);
+      const current = await homeLease(kv, ledger.id);
+      expect(current.value, 'the target writes the lease only at its commit point').toMatchObject({ home: 'gru', node: 'journey-1', epoch: before.value.epoch });
+      await kv.put(homes, `home.${ledger.id}`, { ...current.value, home: 'fra', node: 'journey-4', epoch: before.value.epoch + 1 }, current.seq);
+    });
+
+    await test.step('the move stays unresolved: neither node sets its copy aside', async () => {
+      const answer = await move;
+      expect(answer.status(), await answer.text()).toBe(503);
+      expect((await answer.json()).error.code).toBe('move_unresolved');
+      expect(holdsFile(gru, before.value), 'the old home keeps its file in place').toBe(true);
+      expect(holdsFile(target, before.value), 'the target keeps its imported copy in place').toBe(true);
+      expect(promoting(target, ledger.id), 'the target stays fenced').toBe(true);
+      expect(await keptCopies(gru, ledger.id)).toEqual([]);
+      expect(await keptCopies(target, ledger.id)).toEqual([]);
+      expect(logged(target, 'is not rolled back: the lease names', '"Node":"journey-4"'), 'the target says why it keeps its copy').toBeGreaterThanOrEqual(1);
+    });
+
+    await test.step('once the lease names the old home again, the rollback finishes and every acknowledged row is served', async () => {
+      const current = await homeLease(kv, ledger.id);
+      await kv.put(homes, `home.${ledger.id}`, { ...current.value, home: 'gru', node: 'journey-1', epoch: before.value.epoch + 2, session: '', adopted: null }, current.seq);
+      await expect.poll(() => keptCopies(target, ledger.id), { message: 'the target sets its imported copy aside only now', timeout: 60_000 })
+        .toEqual([expect.objectContaining({ databaseId: ledger.id })]);
+      await expect.poll(() => logged(target, 'Preserved a database copy', `"Database":"${ledger.id}"`, '"Reason":"move_rolled_back"'), { message: 'the target logs why it preserved its copy' }).toBe(1);
+      expect(promoting(target, ledger.id), 'the promotion fence is lifted').toBe(false);
+      expect(holdsFile(gru, before.value), 'the old home still holds its file').toBe(true);
+      expect(await keptCopies(gru, ledger.id)).toEqual([]);
+      await ledger.write(cells, 'gru', [[33, 'after-rollback-gru']]);
+      await ledger.write(cells, 'fra', [[34, 'after-rollback-fra']]);
+      await ledger.compare(cells);
+      for (const writer of writers()) expect(await ledger.readNode(writer, token), `${writer.name} serves the push from fra before the move`).toContainEqual([31, 'pushed-from-fra']);
+    });
+    await removeDatabase(cells, ledger.id);
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    await cleanUp(failure, async () => {
+      kv.close();
+    });
+  }
+});
+
+test('a home move never applies a push again that the durable stream frontier covers, also after its applied id left the 7-day retention', async ({ cells }) => {
+  test.setTimeout(180_000);
+  const created = await json<{ id: string }>(await cells.post(`${endpoint('gru')}${project()}/databases`, {
+    data: { name: name('frontier-replay'), regions: [...regions] },
+  }), 201);
+  await sql(cells, endpoint('gru'), created.id, 'CREATE TABLE items (id TEXT PRIMARY KEY, value TEXT NOT NULL)');
+  const read = async (region: string) => (await sql(cells, endpoint(region), created.id, 'SELECT id, value FROM items ORDER BY id')).results[0].rows;
+  const kv = await Kv.open();
+  const nats = new Nats(readFileSync(join(stateDir, 'nats-token'), 'utf8').trim());
+  let failure: unknown;
+  try {
+    await nats.connect();
+    const lease = (await homeLease(kv, created.id)).value;
+    const scope = `${lease.organizationId}/${lease.projectId}/${created.id}`;
+    const subject = scope.replaceAll('/', '.');
+    const secrets = readFileSync(join(stateDir, 'secrets'), 'utf8').trim().split('\n');
+    const keyId = ulidAt(Date.now());
+    const dataKey = randomBytes(32);
+    await putKey({ master: Buffer.from(secrets[1], 'base64'), access: secrets[12], secret: secrets[13] }, scope, keyId, dataKey);
+    const at = Date.now() - 8 * 86_400_000;
+    const pushed = {
+      id: ulidAt(at), region: 'fra', hlc: { physicalMilliseconds: at, logical: 0, nodeId: 'journey-2' },
+      changes: [{ op: 'insert', table: 'items', key: null, values: { id: 'old', value: 'removed-by-table-replacement' } }],
+    };
+
+    await test.step('the home applies an 8-day-old push once; its applied id leaves the retention at once, its stream position stays in the frontier', async () => {
+      const applied = nats.event(`terrabase.applied.fra.${subject}`, (value: { id?: string }) => value.id === pushed.id);
+      const sent = await nats.request(`terrabase.push.fra.gru.${subject}`, seal(pushed, scope, keyId, dataKey), { 'Tb-Epoch': String(lease.epoch) });
+      expect(sent.error, JSON.stringify(sent)).toBeUndefined();
+      expect(await applied).toMatchObject({ id: pushed.id, state: 'confirmed' });
+      await expect.poll(() => read('gru')).toEqual([['old', 'removed-by-table-replacement']]);
+    });
+
+    await test.step('an acknowledged table replacement removes the pushed row in both regions', async () => {
+      const replaced = await cells.post(`${endpoint('gru')}${database(created.id)}/sql/execute`, { data: { statements: [
+        { sql: 'DROP TABLE items' },
+        { sql: 'CREATE TABLE items (id TEXT PRIMARY KEY, value TEXT NOT NULL)' },
+        { sql: "INSERT INTO items VALUES ('new', 'acknowledged-replacement')" },
+      ] } });
+      expect(replaced.status(), await replaced.text()).toBe(200);
+      for (const region of regions) await expect.poll(() => read(region), { message: `${region} serves only the replacement` }).toEqual([['new', 'acknowledged-replacement']]);
+    });
+
+    await test.step('the new home leaves the old push to its sequencer, which skips it by the frontier: the removed row stays removed', async () => {
+      const moved = await json<{ homeRegion: string }>(await cells.post(`${endpoint('gru')}${database(created.id)}/move-home`, { data: { homeRegion: 'fra' }, timeout: 120_000 }));
+      expect(moved.homeRegion).toBe('fra');
+      for (const region of regions) expect(await read(region), `${region} serves the acknowledged replacement after the home move`).toEqual([['new', 'acknowledged-replacement']]);
+      expect(logged(node('journey-2'), 'is older than the applied-id retention', `"Database":"${created.id}"`), 'the promotion drain left the old push to the sequencer').toBe(1);
+      const after = await cells.post(`${endpoint('fra')}${database(created.id)}/sql/execute`, { data: { statements: [{ sql: "INSERT INTO items VALUES ('later', 'after-the-move')" }] } });
+      expect(after.status(), await after.text()).toBe(200);
+      for (const region of regions) {
+        await expect.poll(() => read(region), { message: `${region} serves the write after the move and never the removed row` })
+          .toEqual([['later', 'after-the-move'], ['new', 'acknowledged-replacement']]);
+      }
+    });
     await removeDatabase(cells, created.id);
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    await cleanUp(failure, async () => {
+      nats.close();
+      kv.close();
+    });
+  }
+});
+
+test('a source on the previous build keeps its file while a new target drains past the source\'s lease scan, and serves writes again after the rollback', async ({ cells, request }) => {
+  test.setTimeout(300_000);
+  const previous = process.env.E2E_PREVIOUS_TERRABASE;
+  expect(previous, 'E2E_PREVIOUS_TERRABASE names the base revision\'s TerraBase build').toMatch(/terrabase\.dll$/);
+  expect(existsSync(previous!), `${previous} exists`).toBe(true);
+  const gru = node('journey-1');
+  const target = node('journey-2');
+  const own = nodeBuild(gru);
+  await restartAfterKill(gru, true, undefined, undefined, previous)();
+  const token = await writerToken(request);
+  const kv = await Kv.open();
+  let failure: unknown;
+  try {
+    expect(nodeBuild(gru), 'journey-1 runs the previous build').toBe(previous);
+    const [ledger] = await createLedgers(cells, 1, 'mixed-rollback');
+    const before = await homeLease(kv, ledger.id);
+    const { organizationId, projectId } = before.value;
+    expect(holdsFile(gru, before.value)).toBe(true);
+    const demotions = await counted(gru, 'terrabase_home_demotions_total');
+    const published = await kv.publish(`terrabase.push.fra.gru.${organizationId}.${projectId}.${ledger.id}`, { undecodable: true }, { 'Tb-Epoch': String(before.value.epoch) });
+    expect(published.error, JSON.stringify(published)).toBeUndefined();
+    const started = Date.now();
+    const move = cells.post(`${endpoint('gru')}${database(ledger.id)}/move-home`, { data: { homeRegion: 'fra' }, timeout: 120_000 });
+
+    await test.step('while the new target is fenced, the lease names only the old source', async () => {
+      await expect.poll(() => promoting(target, ledger.id), { message: 'journey-2 starts its promotion', timeout: 60_000, intervals: [100] }).toBe(true);
+      expect((await homeLease(kv, ledger.id)).value, 'the target writes the lease only at its commit point').toMatchObject({ home: 'gru', node: 'journey-1', epoch: before.value.epoch });
+    });
+
+    await test.step('the drain outlasts the old source\'s lease scan and rolls back; the source kept its file and serves reads and writes', async () => {
+      const answer = await move;
+      expect(answer.status(), await answer.text()).toBe(503);
+      expect((await answer.json()).error.code).toBe('replica_not_ready');
+      expect(Date.now() - started, 'the move outlasted one lease scan of the old source').toBeGreaterThan(15_000);
+      expect(holdsFile(gru, before.value), 'the old source keeps its database file').toBe(true);
+      expect(await counted(gru, 'terrabase_home_demotions_total'), 'the old source never demoted itself').toBe(demotions);
+      await expect.poll(async () => (await homeLease(kv, ledger.id)).value, { message: 'the lease names journey-1 at the next epoch', timeout: 60_000 })
+        .toMatchObject({ home: 'gru', node: 'journey-1', epoch: before.value.epoch + 2 });
+      expect(promoting(target, ledger.id), 'the promotion fence is lifted').toBe(false);
+      await ledger.write(cells, 'gru', [[41, 'after-rollback-gru']]);
+      await ledger.write(cells, 'fra', [[42, 'after-rollback-fra']]);
+      await ledger.compare(cells);
+      expect(await ledger.readNode(gru, token), 'the old source serves every acknowledged row').toEqual(expect.arrayContaining(ledger.acknowledged));
+    });
+    await removeDatabase(cells, ledger.id);
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    await cleanUp(failure, async () => {
+      kv.close();
+      await restartAfterKill(gru, true, undefined, undefined, own)();
+      expect(nodeBuild(gru), 'journey-1 runs this build again').toBe(own);
+    });
+  }
+});
+
+test('a lease that names a node that cannot serve leaves the database unserved, and the old home keeps its file without serving it', async ({ cells, request }) => {
+  test.setTimeout(240_000);
+  const token = await writerToken(request);
+  const kv = await Kv.open();
+  let failure: unknown;
+  try {
+    const [ledger] = await createLedgers(cells, 1, 'home-unserved');
+    const before = await homeLease(kv, ledger.id);
+    const gru = node('journey-1');
+    const restart = restartAfterKill(gru, true, { token, path: `${project()}/databases` });
+    try {
+      await expect.poll(async () => await kv.get(homes, 'node.journey-1'), { message: 'journey-1 node lease expires', timeout: 30_000, intervals: [500] }).toBeNull();
+      await kv.put(homes, `home.${ledger.id}`, { ...before.value, home: 'fra', node: 'journey-4', epoch: before.value.epoch + 1 }, before.seq);
+      expect(holdsFile(gru, before.value)).toBe(true);
+    } finally {
+      await restart();
+    }
+
+    const hash = await test.step('the old home keeps its file in place, fenced, and serves nothing', async () => {
+      await expect.poll(() => logged(gru, 'keeps its file in place and fenced', `"Database":"${ledger.id}"`), { message: 'journey-1 keeps its file in place', timeout: 60_000 }).toBe(1);
+      expect(holdsFile(gru, before.value), 'the file stays in the database path').toBe(true);
+      expect(await keptCopies(gru, ledger.id), 'nothing is set aside while no copy is proven').toEqual([]);
+      return fileHash(gru, before.value);
+    });
+
+    await test.step('the database stays unserved, visibly', async () => {
+      const unserved = { databaseId: ledger.id, region: 'fra', node: 'journey-4', epoch: before.value.epoch + 1, cause: 'not_writer' };
+      for (const watcher of [node('journey-2'), node('journey-3')]) {
+        await expect.poll(async () => (await nodeStatus(watcher)).unserved?.filter(entry => entry.databaseId === ledger.id), { message: `${watcher.name} lists the unserved database`, timeout: 60_000 })
+          .toEqual([unserved]);
+        expect(await counted(watcher, 'terrabase_home_unserved', { region: 'fra' })).toBeGreaterThanOrEqual(1);
+        expect(logged(watcher, 'is unserved: its lease names', `"Database":"${ledger.id}"`, '"Node":"journey-4"'), 'one log line per change of state').toBe(1);
+      }
+      expect(await ledger.refusal(gru, token, [[600, 'while-unserved']]), 'the old home refuses the write').toEqual({ status: 503, code: 'unavailable' });
+      expect((await homeLease(kv, ledger.id)).value, 'nothing claims the lease, and the old home does not take it back').toMatchObject({ home: 'fra', node: 'journey-4', epoch: before.value.epoch + 1 });
+    });
+
+    await test.step('the file in place stays byte-identical', async () => {
+      await expect.poll(() => counted(gru, 'terrabase_home_unserved', { region: 'fra' }), { message: 'journey-1 scanned its leases again' }).toBeGreaterThanOrEqual(1);
+      expect(fileHash(gru, before.value)).toBe(hash);
+      expect(logged(gru, 'keeps its file in place and fenced', `"Database":"${ledger.id}"`), 'one log line per lease').toBe(1);
+    });
+
+    await test.step('deleting the unserved database through the API leaves nothing unserved behind', async () => {
+      await removeDatabase(cells, ledger.id);
+      for (const watcher of nodes) {
+        await expect.poll(async () => (await nodeStatus(watcher)).unserved?.filter(entry => entry.databaseId === ledger.id) ?? [], { message: `${watcher.name} no longer lists the database` })
+          .toEqual([]);
+      }
+    });
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    await cleanUp(failure, async () => {
+      kv.close();
+    });
+  }
+});
+
+test('a regional writer role moves only with the target certificate, and a database whose primary file is stale stays fenced while the region serves the others', async ({ cells, request }) => {
+  test.setTimeout(480_000);
+  const token = await writerToken(request);
+  const kv = await Kv.open();
+  const [ledger] = await createLedgers(cells, 1, 'writer-proof');
+  const gru = node('journey-1');
+  const partner = node('journey-3');
+  const moveHome = async (from: string, to: string) => {
+    const moved = await json<{ homeRegion: string }>(await cells.post(`${endpoint(from)}${database(ledger.id)}/move-home`, { data: { homeRegion: to }, timeout: 120_000 }));
+    expect(moved.homeRegion).toBe(to);
+    await ledger.compare(cells);
+  };
+  await moveHome('gru', 'fra');
+  await moveHome('fra', 'gru');
+  const adopted = (await homeLease(kv, ledger.id)).value;
+  expect(adopted, 'a planned move back to journey-1 records the position it adopted').toMatchObject({ home: 'gru', node: 'journey-1', adopted: expect.any(String) });
+  const keptBefore = (await nodeStatus(gru)).kept ?? [];
+  const hashes = new Map(keptBefore.map(copy => [copy.id, keptHash(gru, copy)]));
+  const keptUnchanged = async () => {
+    const now = new Map(((await nodeStatus(gru)).kept ?? []).map(copy => [copy.id, copy]));
+    for (const [id, hash] of hashes) expect(keptHash(gru, now.get(id)!), `kept copy ${id} on journey-1 is byte-identical`).toBe(hash);
+  };
+  let failure: unknown;
+  try {
+    const owner = await kv.get<Record<string, unknown> & { node: string; epoch: number }>(owners, 'gru');
+    expect(owner?.value.node).toBe('journey-1');
+    const refusals = await counted(partner, 'terrabase_home_refusals_total', { scope: 'writer' });
+    await kv.put(owners, 'gru', {
+      ...owner!.value, node: 'journey-3', epoch: owner!.value.epoch + 1, previous: 'journey-1', activated: true, transfer: null, version: 2,
+      prepared: { source: 'journey-1', target: 'journey-3', epoch: owner!.value.epoch, operation: null },
+    }, owner!.seq);
+    await expect.poll(() => counted(partner, 'terrabase_home_refusals_total', { scope: 'writer', reason: 'unproven' }), { message: 'journey-3 refuses the rewritten owner record' })
+      .toBeGreaterThan(refusals);
+    expect((await nodeStatus(partner)).writer).toBe(false);
+    const rewritten = await kv.get<{ node: string }>(owners, 'gru');
+    await kv.remove(owners, 'gru', rewritten!.seq);
+    await writerIs('gru', 'journey-1');
+    await expect.poll(async () => (await kv.get<{ node: string; epoch: number }>(owners, 'gru'))?.value, { message: 'journey-1 writes a new owner record at epoch 1' })
+      .toMatchObject({ node: 'journey-1', epoch: 1 });
+    console.log('rewritten owner record refused; a deleted key brought journey-1 back as writer at epoch 1 with current primary files');
+
+    const drained = await nodeRequest(gru, '/v1/rollout/drain?target=journey-3', 'POST');
+    expect(drained.status, drained.body).toBe(204);
+    await writerIs('gru', 'journey-3');
+    await expect.poll(async () => (await homeLease(kv, ledger.id)).value, { message: 'the new writer\'s lease carries the adopted position' })
+      .toMatchObject({ node: 'journey-3', adopted: adopted.adopted });
+    await ledger.write(cells, 'gru', [[800, 'written-on-journey-3']]);
+    await ledger.compare(cells);
+    const lease = (await homeLease(kv, ledger.id)).value;
+    await expect.poll(async () => (await nodeRequest(gru, `/v1/sync/organizations/${lease.organizationId}/projects/${lease.projectId}/databases/${ledger.id}/held`)).status,
+      { message: 'journey-1 holds a replica newer than its stale primary file' }).toBe(200);
+    const stale = await counted(gru, 'terrabase_home_refusals_total', { scope: 'database' });
+    const current = await kv.get<{ node: string }>(owners, 'gru');
+    await kv.remove(owners, 'gru', current!.seq);
+    await expect.poll(() => counted(gru, 'terrabase_home_refusals_total', { scope: 'database' }), { message: 'journey-1 fences the database whose primary file is stale' })
+      .toBeGreaterThan(stale);
+    const recreated = await kv.get<Record<string, unknown> & { node: string; epoch: number }>(owners, 'gru');
+    expect(recreated?.value.node).toBe('journey-1');
+    await writerIs('gru', 'journey-1');
+    const fenced = (await nodeStatus(gru)).fenced ?? [];
+    expect(fenced.filter(entry => entry.databaseId === ledger.id), 'journey-1 names the database whose replica it cannot prove its primary file covers')
+      .toEqual([expect.objectContaining({ reason: expect.stringMatching(/^(replica_newer|position_unknown)$/), epoch: recreated!.value.epoch })]);
+    expect(await counted(gru, 'terrabase_regional_fenced'), 'every fenced database is counted while it lasts').toBe(fenced.length);
+    expect(await ledger.refusal(gru, token, [[803, 'while-fenced']]), 'the fenced database refuses the write on the region writer').toEqual({ status: 503, code: 'unavailable' });
+    const regional = new Ledger((await json<{ id: string }>(await cells.post(`${endpoint('gru')}${project()}/databases`, {
+      data: { name: name('writer-proof-regional'), regions: [...regions] },
+    }), 201)).id);
+    await sql(cells, endpoint('gru'), regional.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
+    await regional.write(cells, 'gru', [[1, 'while-another-is-fenced']]);
+    expect(await regional.readNode(gru, token), 'another database of the region accepts writes on the same writer').toEqual(regional.acknowledged);
+    expect(((await nodeStatus(gru)).fenced ?? []).map(entry => entry.databaseId), 'the ledger stays fenced while the other database is served').toContain(ledger.id);
+    await removeDatabase(cells, regional.id);
+    const primed = await nodeRequest(partner, '/v1/rollout/prime?source=journey-1', 'POST');
+    expect(primed, 'journey-3 cannot read its replica of the fenced ledger from journey-1 and answers unavailable when its drain budget runs out')
+      .toMatchObject({ status: 503, body: expect.stringContaining('"unavailable"') });
+    await kv.put(owners, 'gru', { ...recreated!.value, node: 'journey-3', epoch: 1, previous: null, activated: false, transfer: null }, recreated!.seq);
+    await writerIs('gru', 'journey-3');
+    expect((await nodeStatus(partner)).fenced ?? [], 'journey-3 holds the lease with a primary file that covers its adopted position, so its unreadable replica fences nothing').toEqual([]);
+    expect((await nodeStatus(gru)).fenced ?? [], 'the fences clear once the owner record names another node').toEqual([]);
+    expect(await counted(gru, 'terrabase_regional_fenced')).toBe(0);
+    await ledger.compare(cells, [[800, 'written-on-journey-3']]);
+    const back = await nodeRequest(partner, '/v1/rollout/drain?target=journey-1', 'POST');
+    expect(back.status, back.body).toBe(204);
+    await writerIs('gru', 'journey-1');
+    await ledger.write(cells, 'gru', [[801, 'after-proofs']]);
+    await ledger.compare(cells);
+    await expect.poll(async () => (await homeLease(kv, ledger.id)).value, { message: 'the lease carries the adopted position back to journey-1' })
+      .toMatchObject({ node: 'journey-1', adopted: adopted.adopted });
+    const prepared = (await keptCopies(gru, ledger.id)).filter(copy => !hashes.has(copy.id));
+    expect(prepared, 'the drain back set journey-1\'s earlier primary file aside instead of deleting it').toHaveLength(1);
+    hashes.set(prepared[0].id, keptHash(gru, prepared[0]));
+    await keptUnchanged();
+    console.log(`journey-1 keeps ${hashes.size} copies through the handoff prepare`);
+
+    await moveHome('gru', 'fra');
+    await moveHome('fra', 'gru');
+    await keptUnchanged();
+    const moved = (await homeLease(kv, ledger.id)).value;
+    expect(moved).toMatchObject({ home: 'gru', node: 'journey-1', adopted: expect.any(String) });
+    const restart = restartAfterKill(gru);
+    await restart();
+    await expect.poll(async () => (await homeLease(kv, ledger.id)).value, { message: 'the restarted writer\'s activation takes the lease at the next epoch and keeps the adopted position', timeout: 60_000 })
+      .toMatchObject({ node: 'journey-1', home: 'gru', epoch: moved.epoch + 1, adopted: moved.adopted });
+    expect((await homeLease(kv, ledger.id)).value.session, 'journey-1 holds the lease under its new session').not.toBe(moved.session);
+    await keptUnchanged();
+    await ledger.write(cells, 'gru', [[802, 'after-restart']]);
+    await ledger.compare(cells);
+    await removeDatabase(cells, ledger.id);
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    await cleanUp(failure, async () => {
+      kv.close();
+    });
+  }
+});
+
+test('a writer that starts with a local replica it has not opened fences that database and serves no stale file until the replica is proven', async ({ cells, request }) => {
+  test.setTimeout(480_000);
+  const token = await writerToken(request);
+  const kv = await Kv.open();
+  const [ledger] = await createLedgers(cells, 1, 'cold-replica');
+  const gru = node('journey-1');
+  const partner = node('journey-3');
+  const moveHome = async (from: string, to: string) => {
+    const moved = await json<{ homeRegion: string }>(await cells.post(`${endpoint(from)}${database(ledger.id)}/move-home`, { data: { homeRegion: to }, timeout: 120_000 }));
+    expect(moved.homeRegion).toBe(to);
+    await ledger.compare(cells);
+  };
+  await moveHome('gru', 'fra');
+  await moveHome('fra', 'gru');
+  let failure: unknown;
+  try {
+    await restartAfterKill(partner, false)();
+    const primed = await nodeRequest(partner, '/v1/rollout/prime?source=journey-1', 'POST');
+    expect(primed.status, 'journey-3 catches up before it takes the writer role').toBe(204);
+    const drained = await nodeRequest(gru, '/v1/rollout/drain?target=journey-3', 'POST');
+    expect(drained.status, drained.body).toBe(204);
+    await writerIs('gru', 'journey-3');
+    await ledger.write(cells, 'gru', [[800, 'acknowledged-on-journey-3']]);
+    await ledger.compare(cells);
+    const lease = (await homeLease(kv, ledger.id)).value;
+    const route = `/v1/sync/organizations/${lease.organizationId}/projects/${lease.projectId}/databases/${ledger.id}`;
+    const current = JSON.parse((await nodeRequest(partner, `${route}/checksums?revision=ts1:00000000000000000000000000:1:0`)).body).revision as string;
+    const covers = (held: string) => {
+      const [, incarnation, generation, frame] = held.split(':');
+      const [, wanted, wantedGeneration, wantedFrame] = current.split(':');
+      return incarnation === wanted && (+generation > +wantedGeneration || +generation === +wantedGeneration && +frame >= +wantedFrame);
+    };
+    await expect.poll(async () => {
+      const held = await nodeRequest(gru, `${route}/held`);
+      return held.status === 200 && typeof JSON.parse(held.body).revision === 'string' && covers(JSON.parse(held.body).revision);
+    }, { message: 'journey-1\'s replica holds the row its primary file lacks' }).toBe(true);
+    const held = JSON.parse((await nodeRequest(gru, `${route}/held`)).body).revision as string;
+    const replicaFile = (holder: Node) => existsSync(join(stateDir, holder.service, '.replicas', lease.organizationId, lease.projectId, `${ledger.id}.db`));
+
+    const restartGru = restartAfterKill(gru, true);
+    expect(replicaFile(gru), 'journey-1 keeps its replica file on disk').toBe(true);
+    const owner = await kv.get<Record<string, unknown> & { node: string; epoch: number }>(owners, 'gru');
+    await kv.put(owners, 'gru', { ...owner!.value, node: 'journey-1', epoch: 1, previous: null, activated: false, transfer: null }, owner!.seq);
+    await expect.poll(async () => (await nodeStatus(partner)).writer, { message: 'journey-3 steps down for the owner record that names journey-1' }).toBe(false);
+    await restartGru();
+
+    await test.step('journey-1 starts as the gru writer: the database whose replica it has not opened is fenced and refuses writes and peers', async () => {
+      expect(((await nodeStatus(gru)).fenced ?? []).filter(entry => entry.databaseId === ledger.id), 'the unopened replica fences its database')
+        .toEqual([expect.objectContaining({ reason: 'position_unknown', epoch: 1 })]);
+      expect((await nodeRequest(gru, `${route}/checksums?revision=${encodeURIComponent(held)}`)).status, 'the stale primary file is not offered to peers').toBe(503);
+      expect(await ledger.refusal(gru, token, [[803, 'while-fenced']]), 'the fenced database refuses the write').toEqual(homeDown);
+    });
+
+    await test.step('writer renewals keep the fence without proof, and it clears once journey-3, which holds the row, is the writer', async () => {
+      const fencedAt = await counted(gru, 'terrabase_regional_fenced');
+      expect(fencedAt, 'the fenced database is counted').toBeGreaterThan(0);
+      expect(((await nodeStatus(gru)).fenced ?? []).map(entry => entry.databaseId)).toContain(ledger.id);
+      expect((await nodeRequest(gru, `${route}/checksums?revision=${encodeURIComponent(held)}`)).status).toBe(503);
+      const named = await kv.get<Record<string, unknown> & { node: string; epoch: number }>(owners, 'gru');
+      expect(named?.value.node).toBe('journey-1');
+      await kv.put(owners, 'gru', { ...named!.value, node: 'journey-3', epoch: 1, previous: null, activated: false, transfer: null }, named!.seq);
+      await writerIs('gru', 'journey-3');
+      await expect.poll(async () => (await nodeStatus(partner)).fenced ?? [], { message: 'journey-3 fences nothing' }).toEqual([]);
+      await expect.poll(async () => (await nodeStatus(gru)).fenced ?? [], { message: 'the fence clears once the owner record names another node' }).toEqual([]);
+      await ledger.compare(cells);
+      expect(await ledger.readNode(partner, token), 'the row acknowledged on journey-3 is served').toContainEqual([800, 'acknowledged-on-journey-3']);
+    });
+
+    const back = await nodeRequest(partner, '/v1/rollout/drain?target=journey-1', 'POST');
+    expect(back.status, back.body).toBe(204);
+    await writerIs('gru', 'journey-1');
+    await ledger.write(cells, 'gru', [[801, 'after-the-proof']]);
+    await ledger.compare(cells);
+    await removeDatabase(cells, ledger.id);
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    await cleanUp(failure, async () => {
+      kv.close();
+    });
+  }
+});
+
+test('a deletion whose holder hands the writer role over before the new writer has its erasure proof still completes erasure', async ({ cells }) => {
+  test.setTimeout(300_000);
+  const gru = node('journey-1');
+  const partner = node('journey-3');
+  await restartAfterKill(partner, false)();
+  const [ledger] = await createLedgers(cells, 1, 'holder-handoff');
+  await removeDatabase(cells, ledger.id);
+  const passed = (target: Node) => logged(target, 'Backup erasure of database', `"Database":"${ledger.id}"`, 'is verified')
+    + logged(target, 'Backup erasure of database', `"Database":"${ledger.id}"`, '"Reason":"verification_pending"');
+  let failure: unknown;
+  let handedOver = false;
+  try {
+    const primed = await nodeRequest(partner, '/v1/rollout/prime?source=journey-1', 'POST');
+    expect(primed.status, 'journey-3, restarted after it last gave up the writer role, catches up before it takes it again').toBe(204);
+    const drained = await nodeRequest(gru, '/v1/rollout/drain?target=journey-3', 'POST');
+    expect(drained.status, drained.body).toBe(204);
+    handedOver = true;
+    await writerIs('gru', 'journey-3');
+    await expect.poll(() => passed(partner), {
+      message: 'the new writer gets the erasure proof of journey-1, the holder that deleted the database, and its backup erasure goes past the active copies', timeout: 180_000,
+    }).toBeGreaterThan(0);
+    expect(logged(partner, 'Backup erasure of database', `"Database":"${ledger.id}"`, '"Reason":"active_copies_pending"', '"Holders":"journey-1"'),
+      'once the proof arrives no pass waits on the holder again').toBeLessThanOrEqual(1);
+    await expect.poll(() => logged(gru, 'Erasure receipt of database', `"Database":"${ledger.id}"`, 'recorded by regional writer', '"Writer":"journey-3"'),
+      { message: 'journey-1 hands its proof to the new writer once' }).toBe(1);
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    await cleanUp(failure, async () => {
+      if (!handedOver) return;
+      await restartAfterKill(gru, false)();
+      const caughtUp = await nodeRequest(gru, '/v1/rollout/prime?source=journey-3', 'POST');
+      expect(caughtUp.status, 'journey-1, restarted after it gave up the writer role, catches up before it takes it back').toBe(204);
+      const back = await nodeRequest(partner, '/v1/rollout/drain?target=journey-1', 'POST');
+      expect(back.status, back.body).toBe(204);
+      await writerIs('gru', 'journey-1');
+    });
+  }
+});
+
+test('a region writer that stays down keeps its homes, and every acknowledged row survives in both regions', async ({ cells, request }) => {
+  test.setTimeout(2 * (outageHold + 150_000));
+  const signedIn = await signIn();
+  const kv = await Kv.open();
+  let failure: unknown;
+  try {
+    for (const round of [1, 2]) {
+      const ledgers = await createLedgers(cells, 3, `home-outage-${round}`);
+      const before = await Promise.all(ledgers.map(ledger => homeLease(kv, ledger.id)));
+      const watchers = [node('journey-2'), node('journey-4')];
+      const lapses = await Promise.all(watchers.map(watcher => counted(watcher, 'terrabase_home_lapses_total')));
+      let token = await exchangedToken(request, signedIn);
+      const { killedAt, restart } = await killDuringBurst(ledgers, token);
+      console.log(`round ${round}: journey-1 killed after ${ledgers.reduce((sum, ledger) => sum + ledger.acknowledged.length, 0)} acknowledged rows`);
+      try {
+        await holdOutage(kv, ledgers, killedAt, before, token);
+        for (const [index, watcher] of watchers.entries()) {
+          expect(await counted(watcher, 'terrabase_home_lapses_total') - lapses[index], `${watcher.name} counted this round's lapses and moved nothing`)
+            .toBeGreaterThanOrEqual(ledgers.length);
+        }
+      } finally {
+        await restart();
+      }
+      token = await exchangedToken(request, signedIn);
+      await recovered(ledgers, token);
+      for (const [index, ledger] of ledgers.entries()) {
+        const after = (await homeLease(kv, ledger.id)).value;
+        expect(after, 'the returning writer resumes as home').toMatchObject({ home: 'gru', node: 'journey-1' });
+        expect(after.epoch, 'only its own activation raised the epoch').toBeLessThanOrEqual(before[index].value.epoch + 1);
+      }
+      for (const ledger of ledgers) await ledger.drop(token, node('journey-1'));
+    }
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    await cleanUp(failure, async () => {
+      kv.close();
+    });
+  }
+});
+
+test('a writer killed right after an acknowledgement that fra pulled keeps the home and the row', async ({ cells, request }) => {
+  test.setTimeout(outageHold + 180_000);
+  const signedIn = await signIn();
+  const kv = await Kv.open();
+  let failure: unknown;
+  try {
+    const ledgers = await createLedgers(cells, 2, 'home-pulled');
+    for (const ledger of ledgers) {
+      await ledger.write(cells, 'gru', [[500, 'last-before-kill']]);
+      await ledger.compare(cells);
+    }
+    const before = await Promise.all(ledgers.map(ledger => homeLease(kv, ledger.id)));
+    let token = await exchangedToken(request, signedIn);
+    const killedAt = Date.now();
+    const restart = restartAfterKill(node('journey-1'));
+    try {
+      await holdOutage(kv, ledgers, killedAt, before, token);
+      for (const ledger of ledgers) expect(await ledger.readNode(node('journey-2'), token), 'fra serves the pulled row while the home is down').toContainEqual([500, 'last-before-kill']);
+    } finally {
+      await restart();
+    }
+    token = await exchangedToken(request, signedIn);
+    await recovered(ledgers, token);
+    for (const ledger of ledgers) expect(await ledger.readNode(node('journey-1'), token)).toContainEqual([500, 'last-before-kill']);
+    for (const ledger of ledgers) await ledger.drop(token, node('journey-1'));
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    await cleanUp(failure, async () => {
+      kv.close();
+    });
   }
 });
 
@@ -127,6 +884,7 @@ test('an idle backup reaches acknowledged writes without another write, includin
     expect(await ledger.read(cells, 'gru', copy)).toEqual(ledger.acknowledged);
     console.log(`idle backup ${created.id}: acknowledged=${acked} proven=${at} restored=${JSON.stringify(ledger.acknowledged)}`);
   };
+  let failure: unknown;
   try {
     await sql(cells, endpoint('gru'), created.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
     await expect.poll(latest, { message: 'the initial snapshot is stored before the isolated write' }).toBeGreaterThan(0);
@@ -139,13 +897,19 @@ test('an idle backup reaches acknowledged writes without another write, includin
     await expect.poll(() => probe(writer, '/readyz'), { message: 'the restarted writer is ready' }).toBe(200);
     await tokenReady(writer, cells, database(created.id));
     await recover(acked);
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
-    for (const copy of restored) await removeDatabase(cells, copy);
-    await removeDatabase(cells, created.id);
+    await cleanUp(failure, async () => {
+      for (const copy of restored) await removeDatabase(cells, copy);
+      await removeDatabase(cells, created.id);
+    });
   }
 });
 
 test('history lost while the backup store is unreachable is one hole each time, also across a generation restart and a node restart, and restores refuse every hole', async ({ cells }) => {
+  test.setTimeout(180_000);
   const writer = (await topology()).find(node => node.region === 'gru')!;
   const created = await json<{ id: string }>(await cells.post(`${endpoint('gru')}${project()}/databases`, {
     data: { name: name('backup-hole'), regions: ['gru'] },
@@ -174,6 +938,7 @@ test('history lost while the backup store is unreachable is one hole each time, 
     expect(error.message).toContain('was lost before it was stored');
     return error;
   };
+  let failure: unknown;
   try {
     await sql(cells, endpoint('gru'), created.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
     await ledger.write(cells, 'gru', [[1, 'before-outage']]);
@@ -333,10 +1098,15 @@ test('history lost while the backup store is unreachable is one hole each time, 
     const [one, both] = [[[1, 'before-outage']], [[1, 'before-outage'], [2, 'during-outage']]];
     expect(to < duringSent ? [one] : to > duringAcked ? [both] : [one, both]).toContainEqual(atSnapshot);
     console.log(`restores of ${created.id}: ${JSON.stringify(before)} at ${new Date(second).toISOString()}, before the hole; ${JSON.stringify(atSnapshot)} at the replacement snapshot ${new Date(to).toISOString()}`);
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
-    if (outage) await backupStore('up');
-    for (const copy of restored) await removeDatabase(cells, copy);
-    await removeDatabase(cells, created.id);
+    await cleanUp(failure, async () => {
+      if (outage) await backupStore('up');
+      for (const copy of restored) await removeDatabase(cells, copy);
+      await removeDatabase(cells, created.id);
+    });
   }
 });
 
@@ -366,6 +1136,7 @@ test('restores read the holes recorded with the backup: one the restoring node h
     expect(error.code).toBe('backup_history_incomplete');
     return error;
   };
+  let failure: unknown;
   try {
     await sql(cells, endpoint('gru'), created.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
     await expect.poll(latest, { message: 'the backup stores its first snapshot before the writes' }).toBeGreaterThan(0);
@@ -429,10 +1200,15 @@ test('restores read the holes recorded with the backup: one the restoring node h
     expect(inconsistent.message, 'a hole record whose bounds contradict each other is unreadable, not an empty range').toContain('record of lost history could not be read');
     expect(inconsistent.unavailableFrom).toBeUndefined();
     console.log(`hole records of ${created.id}: refused ${new Date(target).toISOString()} (planted, unknown to the node; first of 33), ${new Date(after).toISOString()} (open, unknown end) and ${new Date(before).toISOString()} while unlisted`);
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
-    if (unlisted) await holeRecords('listed');
-    if (restored) await removeDatabase(cells, restored);
-    await removeDatabase(cells, created.id);
+    await cleanUp(failure, async () => {
+      if (unlisted) await holeRecords('listed');
+      if (restored) await removeDatabase(cells, restored);
+      await removeDatabase(cells, created.id);
+    });
   }
 });
 
@@ -456,6 +1232,10 @@ test('handoff receives receipts with their original bindings before exporting th
 
 test('same-region retained receiver preserves its copy and resumes after restoration', async () => {
   await receiptHandoff('retained');
+});
+
+test('a receipt reaching its writer before the purge record still completes backup erasure without deleting live data on absence', async () => {
+  await receiptHandoff('early');
 });
 
 for (const scenario of ['purge-holder', 'purge-authority', 'closure-holder', 'closure-authority', 'stale-closure', 'stale-refusal',
@@ -499,6 +1279,7 @@ test('another region outside admitted peers cannot interrupt local writer renewa
     return text.split('\n').filter(line => line.startsWith('terrabase_ownership_refresh_errors_total{') && line.includes('region="fra"'))
       .reduce((total, line) => total + Number(line.split(' ').at(-1)), 0);
   };
+  let failure: unknown;
   try {
     await sql(cells, endpoint('gru'), created.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
     await expect.poll(() => nodeStatus(local, 'fra')).toMatchObject({ owner: foreign.name });
@@ -539,67 +1320,72 @@ test('another region outside admitted peers cannot interrupt local writer renewa
     await expect.poll(() => nodeStatus(target)).toMatchObject({ owner: target.name, writer: true, ready: true });
     expect(await ledger.read(cells, 'gru')).toEqual(ledger.acknowledged);
     console.log(`foreign ownership restored: ${target.name} observed from ${local.name}; acknowledged rows retained`);
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
-    replacePeers(original);
-    await expect.poll(() => nodeStatus(foreign), { message: 'discover the committed foreign writer even when drain failed' })
-      .toMatchObject({ ready: true });
-    let observedOwner = '';
-    await expect.poll(async () => {
-      const status = await nodeStatus(foreign);
-      observedOwner = status.owner;
-      const owner = nodes.find(node => node.name === status.owner && node.region === foreign.region);
-      return owner ? nodeStatus(owner) : undefined;
-    }, { message: 'the actual foreign writer settles before restoration' }).toMatchObject({ writer: true, ready: true });
-    const actualWriter = nodes.find(node => node.name === observedOwner && node.region === foreign.region);
-    expect(actualWriter, 'the actual foreign writer is admitted').toBeDefined();
-    if (actualWriter!.name !== foreign.name) {
-      await restartAfterKill(foreign, false)();
-      const primed = await nodeRequest(foreign, `/v1/rollout/prime?source=${actualWriter!.name}`, 'POST');
-      expect(primed.status, primed.body).toBe(204);
-      const restored = await nodeRequest(actualWriter!, `/v1/rollout/drain?target=${foreign.name}`, 'POST');
-      expect(restored.status, restored.body).toBe(204);
-      await restartAfterKill(target, false)();
-      const caughtUp = await nodeRequest(target, `/v1/rollout/prime?source=${foreign.name}`, 'POST');
-      expect(caughtUp.status, caughtUp.body).toBe(204);
-      await restartAfterKill(target, false)();
-      const primedAgain = await nodeRequest(target, `/v1/rollout/prime?source=${foreign.name}`, 'POST');
-      expect(primedAgain.status, primedAgain.body).toBe(204);
-    }
-    await expect.poll(() => nodeStatus(local), { message: 'local authority is restored before cleanup' })
-      .toMatchObject({ writer: true, ready: true });
-    await removeDatabase(cells, created.id);
-    expect(readFileSync(peers, 'utf8')).toBe(original);
-    const restoredWriters = await topology();
-    expect(restoredWriters.map(node => node.name).sort()).toEqual(writers.map(node => node.name).sort());
-    for (const node of nodes) {
-      for (const writer of writers) {
-        expect(await nodeStatus(node, writer.region)).toMatchObject({ owner: writer.name, ready: true });
+    await cleanUp(failure, async () => {
+      replacePeers(original);
+      await expect.poll(() => nodeStatus(foreign), { message: 'discover the committed foreign writer even when drain failed' })
+        .toMatchObject({ ready: true });
+      let observedOwner = '';
+      await expect.poll(async () => {
+        const status = await nodeStatus(foreign);
+        observedOwner = status.owner;
+        const owner = nodes.find(node => node.name === status.owner && node.region === foreign.region);
+        return owner ? nodeStatus(owner) : undefined;
+      }, { message: 'the actual foreign writer settles before restoration' }).toMatchObject({ writer: true, ready: true });
+      const actualWriter = nodes.find(node => node.name === observedOwner && node.region === foreign.region);
+      expect(actualWriter, 'the actual foreign writer is admitted').toBeDefined();
+      if (actualWriter!.name !== foreign.name) {
+        await restartAfterKill(foreign, false)();
+        const primed = await nodeRequest(foreign, `/v1/rollout/prime?source=${actualWriter!.name}`, 'POST');
+        expect(primed.status, primed.body).toBe(204);
+        const restored = await nodeRequest(actualWriter!, `/v1/rollout/drain?target=${foreign.name}`, 'POST');
+        expect(restored.status, restored.body).toBe(204);
+        await restartAfterKill(target, false)();
+        const caughtUp = await nodeRequest(target, `/v1/rollout/prime?source=${foreign.name}`, 'POST');
+        expect(caughtUp.status, caughtUp.body).toBe(204);
+        await restartAfterKill(target, false)();
+        const primedAgain = await nodeRequest(target, `/v1/rollout/prime?source=${foreign.name}`, 'POST');
+        expect(primedAgain.status, primedAgain.body).toBe(204);
       }
-    }
-    for (const node of [foreign, target]) await tokenReady(node, cells, `${project()}/databases`);
-    const closure = { version: 2, closureId: faultId(), authorityOrganizationId: organization.id };
-    const closurePath = `/admin/projects/${projectRecord.id}/closure`;
-    const closing = await nodeRequest(local, closurePath, 'PUT', closure);
-    expect([200, 202]).toContain(closing.status);
-    const query = `?version=2&closureId=${closure.closureId}&authorityOrganizationId=${organization.id}`;
-    await expect.poll(async () => {
-      const response = await nodeRequest(foreign, closurePath + query);
-      expect([200, 202]).toContain(response.status);
-      return JSON.parse(response.body);
-    }, { message: 'closure completes after returning to the original receipt holder' })
-      .toMatchObject({ status: 'accepted', pendingHolders: 0, closureId: closure.closureId });
-    await manage(foreign, 'DELETE', projectPath, undefined, 204);
-    await manage(foreign, 'DELETE', organizationPath, undefined, 204);
-    for (const region of regions) expect((await cells.get(`${endpoint(region)}${project()}/databases`)).status()).toBe(200);
-    const owner = await playwright.request.newContext({ storageState: ownerSession() });
-    try {
-      const profile = await owner.get(`${dash}/profile`);
-      expect(new URL(profile.url()).pathname).toBe('/profile');
-      expect(profile.status()).toBe(200);
-      expect(await profile.text()).toContain(journey().email);
-    } finally {
-      await owner.dispose();
-    }
-    console.log('restored original writers, all four peer observations, and existing account credentials and session');
+      await expect.poll(() => nodeStatus(local), { message: 'local authority is restored before cleanup' })
+        .toMatchObject({ writer: true, ready: true });
+      await removeDatabase(cells, created.id);
+      expect(readFileSync(peers, 'utf8')).toBe(original);
+      const restoredWriters = await topology();
+      expect(restoredWriters.map(node => node.name).sort()).toEqual(writers.map(node => node.name).sort());
+      for (const node of nodes) {
+        for (const writer of writers) {
+          expect(await nodeStatus(node, writer.region)).toMatchObject({ owner: writer.name, ready: true });
+        }
+      }
+      for (const node of [foreign, target]) await tokenReady(node, cells, `${project()}/databases`);
+      const closure = { version: 2, closureId: faultId(), authorityOrganizationId: organization.id };
+      const closurePath = `/admin/projects/${projectRecord.id}/closure`;
+      const closing = await nodeRequest(local, closurePath, 'PUT', closure);
+      expect([200, 202]).toContain(closing.status);
+      const query = `?version=2&closureId=${closure.closureId}&authorityOrganizationId=${organization.id}`;
+      await expect.poll(async () => {
+        const response = await nodeRequest(foreign, closurePath + query);
+        expect([200, 202]).toContain(response.status);
+        return JSON.parse(response.body);
+      }, { message: 'closure completes after returning to the original receipt holder' })
+        .toMatchObject({ status: 'accepted', pendingHolders: 0, closureId: closure.closureId });
+      await manage(foreign, 'DELETE', projectPath, undefined, 204);
+      await manage(foreign, 'DELETE', organizationPath, undefined, 204);
+      for (const region of regions) expect((await cells.get(`${endpoint(region)}${project()}/databases`)).status()).toBe(200);
+      const owner = await playwright.request.newContext({ storageState: ownerSession() });
+      try {
+        const profile = await owner.get(`${dash}/profile`);
+        expect(new URL(profile.url()).pathname).toBe('/profile');
+        expect(profile.status()).toBe(200);
+        expect(await profile.text()).toContain(journey().email);
+      } finally {
+        await owner.dispose();
+      }
+      console.log('restored original writers, all four peer observations, and existing account credentials and session');
+    });
   }
 });

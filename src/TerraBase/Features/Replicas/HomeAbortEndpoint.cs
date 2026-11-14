@@ -19,9 +19,15 @@ internal sealed class HomeAbortEndpoint(HomeMoves moves) : Endpoint<HomeAbortReq
         Metadata(ListenerMetadata.Internal);
         Produces<HomePromoteAnswer>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
     }
 
     public override async ValueTask<IResult> HandleAsync(HomeAbortRequest request, CancellationToken cancellationToken) =>
         ReplicaRoutes.Database(HttpContext) is not { } database ? ErrorResponse.From(new NotFound("the database does not exist"))
-        : TypedResults.Json(await moves.AbortAsync(database, request, cancellationToken).ConfigureAwait(false), ReplicasJsonContext.Default.HomePromoteAnswer);
+        : await moves.AbortAsync(database, request, cancellationToken).ConfigureAwait(false) switch
+        {
+            HomePromoteAnswer answer => TypedResults.Json(answer, ReplicasJsonContext.Default.HomePromoteAnswer),
+            Conflict error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
+        };
 }

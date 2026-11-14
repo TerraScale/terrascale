@@ -3,8 +3,10 @@ using System.Diagnostics;
 using System.Buffers.Binary;
 using System.Diagnostics.Metrics;
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading.Channels;
+using Amazon.S3;
 using NativeCompressions;
 using NATS.Client.Core;
 using NATS.Client.JetStream;
@@ -48,6 +50,8 @@ internal interface ILocalTransaction : IAsyncDisposable
 internal sealed record LocalCommit(string? Id, HomeApplyResult? Home);
 
 internal sealed class LocalOutcomeUnknownException(string message, Exception inner) : Exception(message, inner);
+
+internal sealed record DrainedPush(string Region, HomeApplyResult Result, ulong Sequence);
 
 internal partial class HomePush(
     TerraBaseOptions options, IRegionPeers peers, IReplicaCatalog catalog, IDatabaseReplicas replicas, IHomeApply apply, IHlcClock clock,
@@ -278,6 +282,107 @@ internal partial class HomePush(
     }
 
     private static (string, string, string) Key(TenantContext database) => (database.OrganizationId, database.ProjectId!, database.DatabaseId!);
+
+    internal async Task<IReadOnlyList<DrainedPush>> DrainOriginsAsync(TenantContext database, long fence, CancellationToken cancellationToken)
+    {
+        if (_js is not { } js)
+        {
+            return [];
+        }
+
+        var scans = new List<(INatsJSConsumer Consumer, string Source)>();
+        foreach (var origin in (await peers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false)).Select(peer => peer.Region).Append(options.Region).Distinct(StringComparer.Ordinal))
+        {
+            var source = await SourceAsync(js, origin, cancellationToken).ConfigureAwait(false);
+            var consumer = await js.CreateOrderedConsumerAsync(PushNames.Stream(origin), new NatsJSOrderedConsumerOpts
+            {
+                FilterSubjects = [PushNames.DatabaseFilter(origin, database)],
+                DeliverPolicy = ConsumerConfigDeliverPolicy.All,
+            }, cancellationToken).ConfigureAwait(false);
+            if (source != await SourceAsync(js, origin, cancellationToken).ConfigureAwait(false))
+            {
+                throw new IOException("the push stream was recreated while the promotion drain opened it");
+            }
+
+            scans.Add((consumer, source));
+        }
+
+        List<DrainedPush> applied = [];
+        while (true)
+        {
+            var read = 0;
+            foreach (var scan in scans.ToList())
+            {
+                await foreach (var message in scan.Consumer.FetchNoWaitAsync<byte[]>(new NatsJSFetchOpts { MaxMsgs = 256 }, cancellationToken: cancellationToken).ConfigureAwait(false))
+                {
+                    read++;
+                    var sequence = message.Metadata?.Sequence.Stream ?? throw new IOException("a retained origin push has no stream sequence");
+                    if (Epoch(message.Headers) >= fence)
+                    {
+                        logger.ZLogInformation($"A push to {database.DatabaseId:@Database} from {message.Subject:@Subject} at stream sequence {sequence:@Sequence} names the new home's epoch; the new home's sequencer applies it and every later push of its origin in stream order");
+                        _ = scans.Remove(scan);
+                        break;
+                    }
+
+                    RegionTransaction? transaction;
+                    try
+                    {
+                        transaction = message.Data is { } data ? await DecodeAsync(database, data, cancellationToken).ConfigureAwait(false) : null;
+                    }
+                    catch (Exception error) when (error is AmazonS3Exception or HttpRequestException or CryptographicException)
+                    {
+                        logger.ZLogWarning($"A push to {database.DatabaseId:@Database} from {message.Subject:@Subject} at stream sequence {sequence:@Sequence} is held at promotion: {RetryKind(error):@Kind}; the new home's sequencer applies it and every later push of its origin in stream order");
+                        _ = scans.Remove(scan);
+                        break;
+                    }
+
+                    if (transaction is null)
+                    {
+                        throw new IOException("a retained origin push could not be decoded during promotion");
+                    }
+
+                    if (Ulid.TryParse(transaction.Id, out var created) && created.Time < time.GetUtcNow() - HomeApplier.KeptApplied + AppliedMargin)
+                    {
+                        logger.ZLogInformation($"A push to {database.DatabaseId:@Database} from {message.Subject:@Subject} at stream sequence {sequence:@Sequence} is older than the applied-id retention; the new home's sequencer decides it from its stream frontier, with every later push of its origin in stream order");
+                        _ = scans.Remove(scan);
+                        break;
+                    }
+
+                    var result = await apply.ApplyPromotingAsync(database, transaction, new StreamSequence(scan.Source, sequence), cancellationToken).ConfigureAwait(false)
+                        ?? throw new StorageBusyException();
+                    applied.Add(new DrainedPush(transaction.Region!, result, sequence));
+                }
+            }
+
+            if (read == 0)
+            {
+                break;
+            }
+        }
+
+        return applied;
+    }
+
+    internal async Task PublishDrainedAsync(TenantContext database, IReadOnlyList<DrainedPush> drained, CancellationToken cancellationToken)
+    {
+        if (_nats is not { } nats)
+        {
+            return;
+        }
+
+        foreach (var push in drained)
+        {
+            await nats.PublishAsync(PushNames.Applied(push.Region, database),
+                JsonSerializer.SerializeToUtf8Bytes(push.Result, HomeApplyJsonContext.Default.HomeApplyResult), cancellationToken: cancellationToken).ConfigureAwait(false);
+            _applies?.Add(1, new KeyValuePair<string, object?>("state", push.Result.State));
+            Progressed(push.Region, database, push.Sequence);
+        }
+    }
+
+    private static long Epoch(NatsHeaders? headers) =>
+        headers is not null && headers.TryGetValue("Tb-Epoch", out var value) && long.TryParse(value.ToString(), NumberStyles.None, CultureInfo.InvariantCulture, out var epoch)
+            ? epoch
+            : 0;
 
     private void Progressed(string origin, TenantContext? database, ulong sequence)
     {

@@ -70,7 +70,7 @@ public static class EngineExtensions
         services.AddSingleton<IWrappedKeyFiles>(provider => provider.GetRequiredService<TursoReplicas>());
         services.AddSingleton<IDatabaseRewind>(provider => provider.GetRequiredService<TursoStorageEngine>());
         services.AddSingleton(provider => provider.GetRequiredService<TursoStorageEngine>().Fences);
-        services.AddSingleton<IStorageCopyFaults>(provider => provider.GetRequiredService<TursoStorageEngine>().Ledger);
+        services.AddSingleton<IStorageCopyFaults>(provider => provider.GetRequiredService<TursoStorageEngine>());
         services.AddSingleton<IShapeStorage>(provider => new TursoShapeStorage(provider.GetRequiredService<TursoStorageEngine>()));
         services.AddSingleton<IShapeSnapshotTransactions>(provider => new TursoShapeSnapshotTransactions(provider.GetRequiredService<TursoStorageEngine>()));
         return services.AddSingleton<IStorageEngine>(provider => provider.GetRequiredService<TursoStorageEngine>());

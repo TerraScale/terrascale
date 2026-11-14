@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Globalization;
+using System.Text;
 using TerraBase.Primitives;
 
 namespace TerraBase.Engine;
@@ -9,8 +11,12 @@ internal sealed class DatabaseMovedException(string? home)
     public string? Home { get; } = home;
 }
 
+internal sealed record PromotionSource(string Region, string Node, long Version);
+
 internal sealed class DatabaseFences
 {
+    private const string PromotingDirectory = "promoting";
+
     private static readonly TimeSpan MaxPause = TimeSpan.FromSeconds(30);
 
     private readonly ConcurrentDictionary<string, Fence> _fences = new(StringComparer.Ordinal);
@@ -32,6 +38,20 @@ internal sealed class DatabaseFences
                 }
             }
         }
+
+        var promoting = Path.Combine(directory, PromotingDirectory);
+        if (Directory.Exists(promoting))
+        {
+            foreach (var file in Directory.EnumerateFiles(promoting))
+            {
+                var name = Path.GetFileName(file);
+                if (EntityIds.IsValid(name) && File.ReadAllLines(file) is [var region, var node, var version]
+                    && long.TryParse(version, NumberStyles.None, CultureInfo.InvariantCulture, out var epoch))
+                {
+                    _fences[name] = new Fence(Paused: false, Home: null, new PromotionSource(region, node, epoch));
+                }
+            }
+        }
     }
 
     public IReadOnlyList<string> Held => [.. Directory.Exists(_directory)
@@ -48,6 +68,24 @@ internal sealed class DatabaseFences
 
         Set(database, new Fence(Paused: true, Home: null));
     }
+
+    public void Promote(string database, PromotionSource source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        var path = PromotionPathOf(database);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var temporary = path + ".tmp";
+        using (var file = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            file.Write(Encoding.UTF8.GetBytes(string.Create(CultureInfo.InvariantCulture, $"{source.Region}\n{source.Node}\n{source.Version}\n")));
+            file.Flush(flushToDisk: true);
+        }
+
+        File.Move(temporary, path, overwrite: true);
+        Set(database, new Fence(Paused: false, Home: null, source));
+    }
+
+    public PromotionSource? Promoting(string database) => _fences.TryGetValue(database, out var fence) ? fence.Promotion : null;
 
     public void Unresolved(string database) => Set(database, new Fence(Paused: false, Home: null));
 
@@ -74,17 +112,27 @@ internal sealed class DatabaseFences
     public void Lift(string database)
     {
         Release(database);
+        if (Directory.Exists(Path.Combine(_directory, PromotingDirectory)))
+        {
+            File.Delete(PromotionPathOf(database));
+        }
+
         if (_fences.TryRemove(database, out var fence))
         {
             fence.Changed.TrySetResult();
         }
     }
 
-    public async ValueTask WaitAsync(string database, CancellationToken cancellationToken)
+    public async ValueTask WaitAsync(string database, bool promotion, CancellationToken cancellationToken)
     {
         var waited = TimeSpan.Zero;
         while (_fences.TryGetValue(database, out var fence))
         {
+            if (promotion && fence.Promotion is not null)
+            {
+                return;
+            }
+
             if (!fence.Paused || waited >= MaxPause)
             {
                 throw new DatabaseMovedException(fence.Home);
@@ -108,9 +156,9 @@ internal sealed class DatabaseFences
 
     public string? MovedTo(string database) => _fences.TryGetValue(database, out var fence) ? fence.Home : null;
 
-    public void ThrowIfFenced(string database)
+    public void ThrowIfFenced(string database, bool promotion = false)
     {
-        if (_fences.TryGetValue(database, out var fence))
+        if (_fences.TryGetValue(database, out var fence) && !(promotion && fence.Promotion is not null))
         {
             throw new DatabaseMovedException(fence.Home);
         }
@@ -125,6 +173,10 @@ internal sealed class DatabaseFences
 
     private string PathOf(string database) => EntityIds.IsValid(database)
         ? Path.Combine(_directory, database)
+        : throw new ArgumentException("a fence names a database ULID", nameof(database));
+
+    private string PromotionPathOf(string database) => EntityIds.IsValid(database)
+        ? Path.Combine(_directory, PromotingDirectory, database)
         : throw new ArgumentException("a fence names a database ULID", nameof(database));
 
     private sealed class MoveWatch : IDisposable
@@ -166,7 +218,7 @@ internal sealed class DatabaseFences
         }
     }
 
-    private sealed record Fence(bool Paused, string? Home)
+    private sealed record Fence(bool Paused, string? Home, PromotionSource? Promotion = null)
     {
         public TaskCompletionSource Changed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }

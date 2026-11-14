@@ -9,7 +9,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Replicas;
 
-internal sealed class ReplicaChecksumEndpoint(ITenantDirectory tenants, IDatabaseRevisions revisions) : EndpointWithoutRequest<IResult>
+internal sealed class ReplicaChecksumEndpoint(ITenantDirectory tenants, IDatabaseRevisions revisions, HomeLeaseGate leaseGate) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
     {
@@ -45,6 +45,11 @@ internal sealed class ReplicaChecksumEndpoint(ITenantDirectory tenants, IDatabas
             }
 
             cursor = new ChecksumCursor(table, after);
+        }
+
+        if (leaseGate.Fenced(HttpContext.RouteValue("database")))
+        {
+            return ErrorResponse.From(new Unavailable(DatabaseFencedException.Refusal));
         }
 
         return await tenants.FindDatabaseAsync(HttpContext.RouteValue("organization"), HttpContext.RouteValue("project"), HttpContext.RouteValue("database"), cancellationToken).ConfigureAwait(false) switch

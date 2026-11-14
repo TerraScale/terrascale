@@ -1,10 +1,12 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Management;
 using TerraBase.Features.Platform;
+using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -23,6 +25,11 @@ internal sealed partial class EngineManagementService
     private long _purgePassOldestTicks;
     private readonly Counter<long> _purgeErrors = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.purge.errors");
     private readonly ConcurrentDictionary<(string Database, DateTimeOffset RequestedAt), byte> _skippedPurges = new();
+    private readonly ConcurrentDictionary<(string Database, DateTimeOffset RequestedAt), string> _deliveredReceipts = new();
+    private readonly ConcurrentDictionary<(string Database, DateTimeOffset RequestedAt), string> _refusedReceipts = new();
+    private readonly ConcurrentDictionary<(string Database, DateTimeOffset RequestedAt), string> _receiptWaits = new();
+    private long _receiptsUndelivered;
+    private long _receiptsPassUndelivered;
 
     private void RegisterPurgeMetrics()
     {
@@ -33,6 +40,8 @@ internal sealed partial class EngineManagementService
             var ticks = Interlocked.Read(ref _purgeOldestTicks);
             return ticks == 0 ? 0 : Math.Max(0, (time.GetUtcNow() - new DateTimeOffset(ticks, TimeSpan.Zero)).TotalSeconds);
         }, unit: "s");
+        _recoveryMeter.CreateObservableGauge("terrabase.purge.receipts_undelivered", () => Interlocked.Read(ref _receiptsUndelivered),
+            description: "Erasure receipts this node recorded for its own erased copies while it is not its region's writer, that no regional writer has recorded yet.");
     }
 
     private async ValueTask RecordDatabasePurgeAsync(IStorageTransaction transaction, TenantContext storage, ManagedDatabase database, CancellationToken cancellationToken)
@@ -155,6 +164,11 @@ internal sealed partial class EngineManagementService
                     }
                 }
 
+                if (!regionalOwners.Writer && record.ExpectedHolders.Contains(options.MachineId, StringComparer.Ordinal))
+                {
+                    await DeliverReceiptAsync(record, cancellationToken).ConfigureAwait(false);
+                }
+
                 var absent = await ReadAsync<bool>(transaction => DatabasePurge.AreActiveCopiesAbsentAsync(transaction, record, cancellationToken),
                     static _ => false, cancellationToken).ConfigureAwait(false);
                 if (!absent || record.BackupVerifiedAt is null)
@@ -182,11 +196,12 @@ internal sealed partial class EngineManagementService
             return;
         }
 
+        Interlocked.Exchange(ref _receiptsUndelivered, _receiptsPassUndelivered);
         Interlocked.Exchange(ref _purgePending, _purgePassPending);
         Interlocked.Exchange(ref _purgeOverdue, _purgePassOverdue);
         Interlocked.Exchange(ref _purgeOldestTicks, _purgePassOldestTicks);
         _purgeAfter = null;
-        _purgePassPending = _purgePassOverdue = _purgePassOldestTicks = 0;
+        _purgePassPending = _purgePassOverdue = _purgePassOldestTicks = _receiptsPassUndelivered = 0;
     }
 
     private static async ValueTask<bool> HasDeletionAuthorityAsync(IStorageTransaction transaction, TenantContext database, CancellationToken cancellationToken)
@@ -219,4 +234,137 @@ internal sealed partial class EngineManagementService
             new DatabasePurgeReceipt(database, options.MachineId, time.GetUtcNow(), Authority: purge.RequestedAt), ManagementJsonContext.Default.DatabasePurgeReceipt, cancellationToken).ConfigureAwait(false);
         return true;
     }
+
+    private async ValueTask DeliverReceiptAsync(DatabasePurgeRecord record, CancellationToken cancellationToken)
+    {
+        var id = record.Database.DatabaseId!;
+        var receipt = await ReadAsync<DatabasePurgeReceipt?>(async transaction =>
+            await GetAsync(transaction, DatabasePurge.Receipts(id), options.MachineId, ManagementJsonContext.Default.DatabasePurgeReceipt, cancellationToken).ConfigureAwait(false) is { } local
+            && local.Binds(record, options.MachineId) ? local : null,
+            static _ => null, cancellationToken).ConfigureAwait(false);
+        if (receipt is null)
+        {
+            return;
+        }
+
+        var key = (id, record.RequestedAt);
+        if (regionalOwners.Find(options.Region) is not { } owner || owner.Node == options.MachineId || options.PeersFile is null)
+        {
+            WaitForWriter(key, "none", "no_writer");
+            return;
+        }
+
+        var writer = $"{owner.Node}@{owner.Epoch}";
+        if (_deliveredReceipts.TryGetValue(key, out var delivered) && delivered == writer
+            || _refusedReceipts.TryGetValue(key, out var refused) && refused == writer)
+        {
+            return;
+        }
+
+        var address = (await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false))
+            .FirstOrDefault(node => node.Name == owner.Node && node.Region == options.Region)?.InternalListener(options.InternalPort);
+        if (address is null)
+        {
+            WaitForWriter(key, writer, "writer_unknown");
+            return;
+        }
+
+        switch (await remote.DeliverPurgeReceiptAsync(address, receipt, cancellationToken).ConfigureAwait(false))
+        {
+            case ReceiptDelivery.Recorded:
+                _deliveredReceipts[key] = writer;
+                _ = _receiptWaits.TryRemove(key, out _);
+                logger.ZLogInformation($"Erasure receipt of database {id:@Database} recorded by regional writer {owner.Node:@Writer} at epoch {owner.Epoch:@Epoch}");
+                break;
+            case ReceiptDelivery.Refused:
+                _refusedReceipts[key] = writer;
+                _ = _receiptWaits.TryRemove(key, out _);
+                logger.ZLogWarning($"Regional writer {owner.Node:@Writer} at epoch {owner.Epoch:@Epoch} refused the erasure receipt of database {id:@Database}: its purge record does not name this node for the same deletion; the receipt is offered again when the writer changes");
+                break;
+            case ReceiptDelivery.Unavailable:
+                WaitForWriter(key, writer, "writer_unavailable");
+                break;
+            default:
+                throw new UnreachableException();
+        }
+    }
+
+    private void WaitForWriter((string Database, DateTimeOffset RequestedAt) key, string writer, string cause)
+    {
+        _receiptsPassUndelivered++;
+        var state = $"{writer} {cause}";
+        if (!_receiptWaits.TryGetValue(key, out var logged) || logged != state)
+        {
+            _receiptWaits[key] = state;
+            logger.ZLogWarning($"Erasure receipt of database {key.Database:@Database} waits for the regional writer ({cause:@Cause}, writer {writer:@Writer}); every maintenance pass offers it again");
+        }
+    }
+
+    internal async ValueTask<PeerReceiptAnswer> RecordPeerReceiptAsync(DatabasePurgeReceipt receipt, CancellationToken cancellationToken)
+    {
+        if (!regionalOwners.Writer)
+        {
+            return PeerReceiptAnswer.NotWriter;
+        }
+
+        if (receipt.Database?.DatabaseId is not { } id || receipt.MachineId == options.MachineId)
+        {
+            return PeerReceiptAnswer.Unbound;
+        }
+
+        return await WriteAsync<PeerReceiptAnswer>(async transaction =>
+        {
+            var purge = await GetAsync(transaction, DatabasePurge.Kind, id, ManagementJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
+            if (purge is null)
+            {
+                return PeerReceiptAnswer.Unknown;
+            }
+
+            if (purge.FormatVersion != 1 || !purge.ExpectedHolders.Contains(receipt.MachineId, StringComparer.Ordinal) || !receipt.Binds(purge, receipt.MachineId))
+            {
+                return PeerReceiptAnswer.Unbound;
+            }
+
+            if (await GetAsync(transaction, DatabasePurge.Receipts(id), receipt.MachineId, ManagementJsonContext.Default.DatabasePurgeReceipt, cancellationToken).ConfigureAwait(false) is not { } stored
+                || !stored.Binds(purge, receipt.MachineId))
+            {
+                await PutAsync(transaction, DatabasePurge.Receipts(id), receipt.MachineId, receipt, ManagementJsonContext.Default.DatabasePurgeReceipt, cancellationToken).ConfigureAwait(false);
+                logger.ZLogInformation($"Recorded the erasure receipt of database {id:@Database} from holder {receipt.MachineId:@Holder}");
+            }
+
+            return PeerReceiptAnswer.Recorded;
+        }, static _ => PeerReceiptAnswer.NotWriter, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal ValueTask<PurgeReceiptStatus> PurgeReceiptStatusAsync(string id, CancellationToken cancellationToken) =>
+        ReadAsync<PurgeReceiptStatus>(async transaction =>
+        {
+            var purge = await GetAsync(transaction, DatabasePurge.Kind, id, ManagementJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
+            if (purge is not { FormatVersion: 1 })
+            {
+                return new(false, false);
+            }
+
+            if (regionalOwners.Writer)
+            {
+                return new(true, await DatabasePurge.AreActiveCopiesAbsentAsync(transaction, purge, cancellationToken).ConfigureAwait(false));
+            }
+
+            var owner = regionalOwners.Find(options.Region);
+            var key = (id, purge.RequestedAt);
+            var writer = owner is null ? null : $"{owner.Node}@{owner.Epoch}";
+            var settled = writer is not null && (_deliveredReceipts.TryGetValue(key, out var delivered) && delivered == writer
+                || _refusedReceipts.TryGetValue(key, out var refused) && refused == writer);
+            return new(true, !purge.ExpectedHolders.Contains(options.MachineId, StringComparer.Ordinal) || settled);
+        }, static _ => new(false, false), cancellationToken);
+}
+
+internal sealed record PurgeReceiptStatus(bool Known, bool Settled);
+
+internal enum PeerReceiptAnswer
+{
+    Recorded,
+    Unknown,
+    Unbound,
+    NotWriter,
 }

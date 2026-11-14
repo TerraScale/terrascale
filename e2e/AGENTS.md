@@ -153,6 +153,12 @@ The `multi-region faults` shard of `journey.yml` shares the normal service and S
 the fault specs. Local runs use the same variables and normal prepare/start/up/stop lifecycle, followed by
 `bash env/local.sh exec npx playwright test --project fault` from `e2e/`.
 
+One fault case runs gru's writer on the base revision's TerraBase while a move to a node of this build rolls back.
+`E2E_PREVIOUS_TERRABASE` names that build's `terrabase.dll`: CI unpacks the `engine-rollback-baseline` artifact
+(the PR's base commit) in the `multi-region home moves and receipt handoffs` shard. That shard runs the home-move
+cases with the receipt handoffs, so each fault shard's Journey step stays within its 15-minute limit; locally, build `origin/main` with `bash e2e/env/build.sh <main checkout> <dir> terrabase`
+and export `E2E_PREVIOUS_TERRABASE=<dir>/terrabase/terrabase.dll` before `local.sh exec`.
+
 The shard also builds a journey-only receipt driver from the same product sources.
 Its exporter copy includes receipt kinds only inside that driver; the shipped exporter
 is unchanged. The driver uses the real engine, catalog schema, serializers and importer
@@ -165,6 +171,14 @@ resumes management writes and reads after receipt or
 row/byte-limit rejection. Only the journey copy sends receipts; the product
 importer and handoff refusal path are unchanged in the driver. It adds no runtime
 product setting.
+
+The early-receipt case uses a unique database per invocation. It seeds an authorized
+holder before its regional writer has the purge record. It waits for the real maintenance sender's first delivery,
+checks that the writer retains live row 73 without storing unbound evidence,
+then installs the writer's authority. The same writer must record the receipt on
+a normal maintenance pass and complete backup erasure. R3 waits for the deleted
+restriction database's internal receipt status to settle on every node before
+measuring destination traffic; its zero-traffic assertions remain unchanged.
 
 The retained-receiver case uses isolated real driver nodes. Its source seeds a retained
 catalog record without enabling a production deletion feature. Repeated missing-registration

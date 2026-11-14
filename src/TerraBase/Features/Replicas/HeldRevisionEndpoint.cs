@@ -14,8 +14,8 @@ internal sealed class HeldRevisionEndpoint(TerraBaseOptions options, IDatabaseRe
         Get("/v1/sync/organizations/{organization}/projects/{project}/databases/{database}/held");
         Name("getReplicaHeldRevision");
         Summary("Reads the revision this node's replica of a database holds");
-        Description("Internal listener only, behind the peer credential; 404 on the public listener. The replicas of a database whose home lease "
-            + "expired compare these revisions, and the most caught-up one takes the lease. 404 when this node holds no pulled replica.");
+        Description("Internal listener only, behind the peer credential; 404 on the public listener. Shows which position this node's replica of a "
+            + "database holds, so an operator can compare replicas. 404 when this node holds no pulled replica.");
         Tags("Administration");
         AllowAnonymous();
         Metadata(ListenerMetadata.Internal);
