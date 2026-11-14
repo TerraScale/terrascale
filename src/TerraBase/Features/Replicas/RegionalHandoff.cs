@@ -24,7 +24,7 @@ internal sealed record UnservedDatabase(string DatabaseId, string Region, string
 internal sealed record FencedDatabase(string DatabaseId, string Reason, long Epoch, string Detail);
 
 internal sealed record RegionalStatus(string Node, string? Owner, long Epoch, bool Writer, bool Ready, string Session = "",
-    IReadOnlyList<UnservedDatabase>? Unserved = null, IReadOnlyList<KeptCopy>? Kept = null, IReadOnlyList<FencedDatabase>? Fenced = null);
+    IReadOnlyList<UnservedDatabase>? Unserved = null, IReadOnlyList<KeptCopy>? Kept = null, IReadOnlyList<FencedDatabase>? Fenced = null, string? Unready = null);
 internal sealed record RegionalDrain(string Target);
 
 internal readonly union RegionalDrainResult(Done, Unavailable);
@@ -48,11 +48,16 @@ internal sealed partial class RegionalHandoff(
     private RegionalWriterLease? _writerLease;
     private readonly string _session = Guid.NewGuid().ToString("N");
 
-    internal async Task<RegionalStatus> StatusAsync(string? region, CancellationToken cancellationToken) => new(options.MachineId, owners.Find(region ?? options.Region)?.Node,
-        owners.Find(region ?? options.Region)?.Epoch ?? 0, (region is null || region == options.Region) && owners.Writer,
-        await services.GetRequiredService<Health.INodeReadiness>().IsReadyAsync(cancellationToken).ConfigureAwait(false), _session,
-        services.GetRequiredService<HomeLeases>().Unserved, services.GetRequiredService<KeptCopies>().List(),
-        region is null || region == options.Region ? Fenced : []);
+    internal async Task<RegionalStatus> StatusAsync(string? region, CancellationToken cancellationToken)
+    {
+        var unready = await services.GetRequiredService<Health.INodeReadiness>().UnreadyAsync(cancellationToken).ConfigureAwait(false);
+        return new(options.MachineId, owners.Find(region ?? options.Region)?.Node,
+            owners.Find(region ?? options.Region)?.Epoch ?? 0, (region is null || region == options.Region) && owners.Writer,
+            unready is null, _session,
+            services.GetRequiredService<HomeLeases>().Unserved, services.GetRequiredService<KeptCopies>().List(),
+            region is null || region == options.Region ? Fenced : [],
+            unready is { } condition ? Health.ReadinessConditions.Label(condition) : null);
+    }
 
     private IReadOnlyList<FencedDatabase> Fenced =>
         [.. _fenced.Values.Select(fenced => fenced.Status).OrderBy(fenced => fenced.DatabaseId, StringComparer.Ordinal)];
@@ -275,7 +280,7 @@ internal sealed partial class RegionalHandoff(
         {
             await replication.SyncCatalogsAsync(bounded.Token).ConfigureAwait(false);
             await replication.PullAllAsync(bounded.Token).ConfigureAwait(false);
-            return await services.GetRequiredService<Health.INodeReadiness>().IsReadyAsync(bounded.Token).ConfigureAwait(false);
+            return await services.GetRequiredService<Health.INodeReadiness>().UnreadyAsync(bounded.Token).ConfigureAwait(false) is null;
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -456,7 +461,7 @@ internal sealed partial class RegionalHandoff(
             }
         }
 
-        return await services.GetRequiredService<Health.INodeReadiness>().IsReadyAsync(cancellationToken).ConfigureAwait(false);
+        return await services.GetRequiredService<Health.INodeReadiness>().UnreadyAsync(cancellationToken).ConfigureAwait(false) is null;
     }
 
     private enum DrainPhase

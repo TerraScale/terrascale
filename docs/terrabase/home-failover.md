@@ -187,12 +187,17 @@ read through their followers, together and once per page of homed databases, wit
 2 s activation attempt. A replica whose position still cannot be read (its last pull failed, or it is reopening or was
 reopened from a file it pulled before and has not pulled since) proves nothing; a replica still being created holds no
 data and is not compared, so that database is fenced too (`reason="position_unknown"`); no earlier position is
-remembered as proof. A fence is logged and counted once per database, cause and epoch
+remembered as proof. A check that fails to read a database's files (for example a database whose detached import
+recovery was refused) leaves that one database unproven and fenced the same way, with the error in `detail`; it never
+stops the activation or renewal of the region's other databases. A fence is logged and counted once per database, cause and epoch
 (`terrabase.home.refusals{scope="database"}`). Every writer renewal (about every 250 ms) checks each fenced database
 again, catching up the replicas whose position it cannot read first; once its primary file covers its replica, the node
 takes its home lease and lifts the fence, so a transient read failure clears by itself. `/v1/rollout/status` lists the
 fenced databases in `fenced` `[{databaseId, reason, epoch, detail}]` and `terrabase.regional.fenced{reason}` counts
-them, so a database that stays fenced is visible, never silent. The fences clear when the owner record names another
+them, so a database that stays fenced is visible, never silent. While the node is not ready, `/v1/rollout/status`
+names the condition that holds readiness in `unready` (`stopping`, `catalog_closed`, `platform_seed_pending`,
+`regional_writer_unknown`, `home_push_stopped`, `home_leases_pending` or `storage_unready`), and a node that stays
+not ready for 10 s logs that condition once per change. The fences clear when the owner record names another
 node; the next activation on this node checks every database again. A missing owner key with existing data is therefore not a new region. A genuinely new region
 has no homed databases, so its first node in name order becomes writer at epoch 1; a restarted writer whose primary files
 are current passes the same check.

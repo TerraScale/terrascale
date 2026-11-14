@@ -202,7 +202,7 @@ internal sealed partial class RegionalHandoff
     {
         if (node == options.MachineId)
         {
-            return await services.GetRequiredService<Health.INodeReadiness>().IsReadyAsync(token).ConfigureAwait(false);
+            return await services.GetRequiredService<Health.INodeReadiness>().UnreadyAsync(token).ConfigureAwait(false) is null;
         }
         using var attempt = CancellationTokenSource.CreateLinkedTokenSource(token);
         attempt.CancelAfter(AttemptBudget);
@@ -422,11 +422,30 @@ internal sealed partial class RegionalHandoff
             return false;
         }
 
-        return await services.GetRequiredService<IDatabaseRevisions>().CurrentRevisionAsync(database, token).ConfigureAwait(false) is { } primary
-            && primary.Incarnation == position.Incarnation && DatabaseRevision.Compare(primary, position) >= 0;
+        try
+        {
+            return await services.GetRequiredService<IDatabaseRevisions>().CurrentRevisionAsync(database, token).ConfigureAwait(false) is { } primary
+                && primary.Incarnation == position.Incarnation && DatabaseRevision.Compare(primary, position) >= 0;
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            return false;
+        }
     }
 
-    private async Task<LocalDataRefusal?> RefusalAsync(TenantContext database, CancellationToken token) =>
+    private async Task<LocalDataRefusal?> RefusalAsync(TenantContext database, CancellationToken token)
+    {
+        try
+        {
+            return await ReplicaRefusalAsync(database, token).ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            return new(HomeRefusal.PositionUnknown, $"could not be checked ({error.GetType().Name}: {error.Message}), so nothing proves its primary file covers its local replica");
+        }
+    }
+
+    private async Task<LocalDataRefusal?> ReplicaRefusalAsync(TenantContext database, CancellationToken token) =>
         services.GetRequiredService<IDatabaseReplicas>().Holding(database) switch
         {
             NoReplica => null,
