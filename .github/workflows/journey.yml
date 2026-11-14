@@ -296,7 +296,7 @@ jobs:
           read -ra projects <<< "$PROJECTS"
           bash env/local.sh exec npx playwright test "${projects[@]}"
       - name: Regional proxy
-        if: matrix.regions == 2
+        if: matrix.shard == 'multi-region faults'
         timeout-minutes: 4
         working-directory: e2e
         run: bash env/local.sh exec npx playwright test placement/regions.spec.ts --project placement --grep 'R3 replace'
