@@ -156,6 +156,12 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 51, Level = LogLevel.Warning, Message = "Skipped overage for month {Month:yyyy-MM}: {Reason}.")]
         internal static partial void UsageOverageMonthSkipped(this ILogger logger, DateTimeOffset month, string reason);
 
+        [LoggerMessage(EventId = 52, Level = LogLevel.Warning, Message = "Dashboard session {SessionId} could not be refreshed ({ErrorType}); the request path refreshes it inline.")]
+        internal static partial void ADashboardSessionCouldNotBeRefreshed(this ILogger logger, string sessionId, string errorType);
+
+        [LoggerMessage(EventId = 53, Level = LogLevel.Warning, Message = "Background session refresh is unavailable ({ErrorType}); retrying in 15 seconds.")]
+        internal static partial void SessionRefreshIsUnavailable(this ILogger logger, string errorType);
+
         [LoggerMessage(EventId = 100, Message = "Dropped a stored ts-auth grant from {Table}: {Reason}")]
         internal static partial void DroppedStoredGrant(this ILogger logger, LogLevel level, string table, string reason);
     }
