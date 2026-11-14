@@ -4,7 +4,7 @@ title: Schema migrations
 
 # Schema migrations
 
-`ts migrate` keeps the SQL tables of a database in step with migration files in your repository. Each file creates or drops tables and indexes, or changes rows. The CLI applies each file once, in order, and records it in the database. Requires ts CLI v0.0.4 or later.
+`ts migrate` keeps the tables of a database in step with migration files in your repository. Each file creates or drops tables and indexes, or changes rows. The CLI applies each file once, in order, and records it in the database. Requires ts CLI v0.0.4 or later.
 
 ## Commands
 

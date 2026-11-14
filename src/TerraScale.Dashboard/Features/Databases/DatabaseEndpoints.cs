@@ -223,7 +223,7 @@ namespace TerraScale.Dashboard.Features.Databases
             return result;
         }
 
-        internal static async Task<IResult> DetailPageAsync(HttpContext http, AccountContext context, string id, string tab, IDatabaseBackend backend, DatabaseService databases, string error = "", bool openDelete = false, int status = 200, string? branchName = null, string ttlHours = "", string pointInTime = "", DatabaseGrantForm? grantForm = null, DatabaseRegionsForm? regions = null)
+        internal static async Task<IResult> DetailPageAsync(HttpContext http, AccountContext context, string id, string tab, IDatabaseBackend backend, DatabaseService databases, string error = "", bool openDelete = false, int status = 200, string? branchName = null, string ttlHours = "", string pointInTime = "", DatabaseGrantForm? grantForm = null, DatabaseRegionsForm? regions = null, string formError = "", CreateTableDraft? tableDraft = null, bool openCreateTable = false, string createdTable = "")
         {
             DatabaseRecord database;
             try
@@ -329,7 +329,22 @@ namespace TerraScale.Dashboard.Features.Databases
             var storage = storageRead is null ? null : (await storageRead).Databases.GetValueOrDefault(database.Id)?.StorageBytes;
             // The backups section shows the same page error, which the tables read above may have just set.
             var backups = backupsRead is null ? null : (await backupsRead) with { Error = error };
-            var page = new DatabaseDetailPage(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title(tab)), database, tab, choices, error, openDelete || http.Request.Query["delete"] == "1", http.Request.Query["created"] == "1", backups, range, activity)
+            IReadOnlyList<string>? tableHistory = null;
+            if (tab == "tables")
+            {
+                try
+                {
+                    if (await http.RequestServices.GetRequiredService<SqlRuns>().ReadWorkspaceAsync(context, database.Id, http.RequestAborted) is { } workspace)
+                    {
+                        tableHistory = workspace.History;
+                    }
+                }
+                catch (SqlWorkspaceUnavailableException)
+                {
+                    tableHistory = null;
+                }
+            }
+            var page = new DatabaseDetailPage(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title(tab)), database, tab, choices, error, openDelete || http.Request.Query["delete"] == "1", http.Request.Query["created"] == "1", backups, range, activity, formError)
             {
                 Conflicts = conflictsRead is null ? null : await conflictsRead,
                 Replication = replicationRead is null ? null : await replicationRead,
@@ -343,7 +358,11 @@ namespace TerraScale.Dashboard.Features.Databases
                 StorageBytes = storage,
                 Grants = grants,
                 GrantForm = grantForm,
-                RegionsForm = regions
+                RegionsForm = regions,
+                TableDraft = tableDraft,
+                ShowCreateTable = openCreateTable || http.Request.Query["dialog"] == "create-table",
+                CreatedTable = createdTable.Length > 0 ? createdTable : http.Request.Query["created"].ToString() is { Length: > 0 and <= 128 } requested && !requested.Any(char.IsControl) ? requested : "",
+                SqlHistory = tableHistory
             };
             if (tab == "replication" && http.Request.Headers["Datastar-Request"] == "true")
             {

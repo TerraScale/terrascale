@@ -85,7 +85,7 @@ Supplying only `projectId` requires that project to belong to your saved organiz
 Use your client's tool discovery (`tools/list`) for the current names, parameters and descriptions; the server returns every tool in one page. A listed tool is not a grant of permission: calls still enforce membership, roles, resource access and availability. Current tools include:
 
 `execute_sql` runs reads, writes and schema changes; `run_sql` accepts reads only.
-`get_database_schema` lists SQL tables and their declared columns. `create_database` and `fork_database`
+`get_database_schema` lists the database's tables and their declared columns. `create_database` and `fork_database`
 accept `ttlHours`. With `pointInTime`, `fork_database` returns a running restore operation instead of waiting for the copy; poll `get_restore_status` for the new database. Backup and restore tools preserve the source database. See the complete
 [agent database workflow](/guides/agent-databases#agent-workflow), including scoped-key minting over an API key connection.
 
@@ -104,7 +104,7 @@ action in the dashboard. The resource remains until the dashboard completes dele
 
 The URL opens the database's danger zone, organization projects, function details,
 bucket or file page. For a saved query, pass `databaseId` to open that database's
-SQL editor; without it, select the database from the database list and open its SQL editor.
+SQL editor; without it, select the database from the database list and open its Tables tab.
 The dashboard retains its authorization and confirmation requirements.
 
 `execute_sql` still accepts writes and schema changes allowed by the key's scopes;

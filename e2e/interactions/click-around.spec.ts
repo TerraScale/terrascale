@@ -69,7 +69,7 @@ test('SQL editor creates a table, inserts and selects; a saved query reopens; th
 test('the new table form creates a table and opens the statement in the editor', async ({ page, audit }) => {
   const current = journey();
   const table = unique('formed').replaceAll('-', '_');
-  await page.goto(`/databases/${current.databaseId}/sql`);
+  await page.goto(`/databases/${current.databaseId}/tables`);
   await shell(page, current);
   await page.getByRole('button', { name: 'New table', exact: true }).click();
   const dialog = page.locator('#create-table');
@@ -95,6 +95,7 @@ test('the new table form creates a table and opens the statement in the editor',
   await page.waitForLoadState('load');
   await expect(page.locator('#sql')).toHaveValue(new RegExp(`CREATE TABLE "${table}"`));
   await expect(page.locator('#sql')).toHaveValue(/"name" TEXT NOT NULL/);
+  await page.goto(`/databases/${current.databaseId}/tables`);
   await page.getByRole('button', { name: 'New table', exact: true }).click();
   const again = page.locator('#create-table');
   await again.locator('#create-table-name').fill(table);
@@ -104,11 +105,11 @@ test('the new table form creates a table and opens the statement in the editor',
   await again.getByRole('button', { name: 'Create table', exact: true }).click();
   await page.waitForLoadState('load');
   await expect(page.getByRole('status').filter({ hasText: `Created table ${table}` })).toBeVisible();
-  await expect(page.locator('#sql-tables')).toContainText(table);
+  await expect(page.locator('[data-table="' + table + '"] a')).toHaveAttribute('aria-current', 'page');
   await audit.check('table created from the form');
   await page.getByRole('button', { name: 'New table', exact: true }).click();
   const duplicate = page.locator('#create-table');
-  audit.expectStatus(/\/api\/v1\/dashboard\/data\/sql\/tables(?:\?|$)/, 400);
+  audit.expectStatus(/\/api\/v1\/dashboard\/databases\/tables(?:\?|$)/, 400);
   await duplicate.locator('#create-table-name').fill(table);
   await duplicate.getByRole('button', { name: 'Create table', exact: true }).click();
   await expect(duplicate.locator('[role="alert"]')).toBeVisible();

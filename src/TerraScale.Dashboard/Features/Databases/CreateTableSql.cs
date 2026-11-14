@@ -1,8 +1,9 @@
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using TerraScale.Dashboard.Features.Data;
 
-namespace TerraScale.Dashboard.Features.Data
+namespace TerraScale.Dashboard.Features.Databases
 {
     public sealed record CreateTableColumn(string Name, string Type, bool PrimaryKey, bool NotNull, bool Unique, string DefaultValue);
 
