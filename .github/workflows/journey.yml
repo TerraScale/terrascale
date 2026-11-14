@@ -194,11 +194,11 @@ jobs:
             regions: 2
             nodes: 2
           - shard: multi-region faults
-            projects: fault/fault.spec.ts --project fault
+            projects: --project fault --grep-invert receipt|retained.receiver
             regions: 2
             nodes: 2
-          - shard: multi-region signing keys
-            projects: fault/signing-keys.spec.ts --project fault
+          - shard: multi-region receipt handoffs
+            projects: --project fault --grep receipt|retained.receiver
             regions: 2
             nodes: 2
     runs-on: ubuntu-24.04
