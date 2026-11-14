@@ -4,6 +4,12 @@
     <RootNamespace>TerraScale.Dashboard</RootNamespace>
     <AssemblyName>TerraScale.Dashboard</AssemblyName>
     <WebRoot>web/static</WebRoot>
+    <TieredPGO>true</TieredPGO>
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <PublishReadyToRunComposite>false</PublishReadyToRunComposite>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <GarbageCollectionAdaptationMode>1</GarbageCollectionAdaptationMode>
   </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="Common/Accounts/pricing.json" />
