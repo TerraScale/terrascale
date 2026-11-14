@@ -1,8 +1,10 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Backups.BackupPage>
 @using TerraScale.Dashboard.Features.Backups
 @using TerraScale.Dashboard.Features.Databases
+@inject AssetUrls Assets
 @{ var policy = Model.Listing?.Policy; var canManage = Model.Shell.Context.CanManage && Model.Database.Status == "ready"; var now = DateTimeOffset.UtcNow; var failedNewest = policy is not null && policy.FullBackupCron.Length > 0 && policy.LastFailedAt is { } f && (policy.LastSucceededAt is not { } s || f > s); }
 <div id="backup-page">
+<script type="module" src="@Assets.Url("js/backup-timeline.js")" nonce="@Model.Shell.Nonce"></script>
 @if(Model.Restore is not null){@(await RenderPartialAsync<TerraScale.Dashboard.Features.Backups.RestoreStatusView, TerraScale.Dashboard.Features.Backups.BackupPage>(Model))}
 <header class="ts-page-header"><h1 class="ts-page-title" id="backups-title">Backups</h1>
 @if(canManage){<div class="ts-page-actions"><form method="post" action="/api/v1/dashboard/backups" data-submit-once data-on:submit="evt.preventDefault(); @@post(el.action, {contentType:'form'})"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="databaseId" value="@Model.Database.Id" /><button class="ts-btn ts-btn-primary" type="submit">@Icons.Render("Archive",16)<span>Back up now</span></button></form></div>}
