@@ -32,16 +32,21 @@ namespace TerraScale.Dashboard.Features.Databases
                 var database = regionsContract
                     ? await databases.PlaceRegionsAsync(context, id, Selection(form, ""), [.. form["offered"].OfType<string>()], http.RequestAborted)
                     : await ApplyAsync(databases, backend, context, id, Selection(form, ""), http.RequestAborted);
+                if (http.Request.Headers["Datastar-Request"] == "true")
+                {
+                    return await DatabaseEndpoints.DetailPageAsync(http, await databases.CurrentAsync(context, http.RequestAborted), id, "replication", backend, databases,
+                        regions: new(asked, ""));
+                }
                 return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "replication")) : Results.Json(DatabaseEndpoints.DatabaseOutput(database));
             }
-            catch (DatabaseRegionsCopyingException copying) when (DatabaseResults.WantsHtml(http))
+            catch (DatabaseRegionsCopyingException copying) when (DatabaseResults.WantsHtml(http) || http.Request.Headers["Datastar-Request"] == "true")
             {
                 return await DatabaseEndpoints.DetailPageAsync(http, await databases.CurrentAsync(context, http.RequestAborted), id, "replication", backend, databases,
                     status: StatusCodes.Status202Accepted, regions: new(asked, copying.Message));
             }
             catch (Exception error) when (DatabaseResults.KnownFailure(error))
             {
-                return !DatabaseResults.WantsHtml(http) || DatabaseResults.Status(error) == 404
+                return !(DatabaseResults.WantsHtml(http) || http.Request.Headers["Datastar-Request"] == "true") || DatabaseResults.Status(error) == 404
                     ? DatabaseResults.PageFailure(http, context, error)
                     : await DatabaseEndpoints.DetailPageAsync(http, await databases.CurrentAsync(context, http.RequestAborted), id, "replication", backend, databases,
                         DatabaseResults.Message(error), status: DatabaseResults.Status(error), regions: new(asked, ""));

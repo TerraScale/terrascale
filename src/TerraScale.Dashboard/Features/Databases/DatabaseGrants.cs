@@ -4,7 +4,7 @@ using TerraScale.TerraBase.Contracts;
 namespace TerraScale.Dashboard.Features.Databases
 {
     // The submitted grant fields, kept so a refused save reopens its dialog with them.
-    public sealed record DatabaseGrantForm(string Table, string Where, string Columns);
+    public sealed record DatabaseGrantForm(string Table, string Where, string Columns, string Dialog);
 
     // Table read grants let end-user tokens read one table's shape; TerraBase owns and validates them.
     public static class DatabaseGrants
@@ -30,7 +30,7 @@ namespace TerraScale.Dashboard.Features.Databases
             }
 
             var id = form["databaseId"].ToString();
-            var submitted = new DatabaseGrantForm(form["table"].ToString().Trim(), form["where"].ToString().Trim(), form["columns"].ToString().Trim());
+            var submitted = new DatabaseGrantForm(form["table"].ToString().Trim(), form["where"].ToString().Trim(), form["columns"].ToString().Trim(), form["dialog"].ToString());
             try
             {
                 context = await databases.CurrentAsync(context, http.RequestAborted);
@@ -51,6 +51,10 @@ namespace TerraScale.Dashboard.Features.Databases
                 {
                     try { await backend.DeleteReadGrantAsync(scope, home, database.Id, submitted.Table, http.RequestAborted); }
                     catch (TerraBaseNotFoundException error) when (error.ErrorCode == "no_read_grant") { }
+                    if (http.Request.Headers["Datastar-Request"] == "true")
+                    {
+                        return await DatabaseEndpoints.DetailPageAsync(http, context, id, "grants", backend, databases);
+                    }
                     return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "grants")) : Results.NoContent();
                 }
 
@@ -65,17 +69,21 @@ namespace TerraScale.Dashboard.Features.Databases
                 {
                     throw new AccountAccessException("Table " + submitted.Table + " does not exist.", 422);
                 }
+                if (http.Request.Headers["Datastar-Request"] == "true")
+                {
+                    return await DatabaseEndpoints.DetailPageAsync(http, context, id, "grants", backend, databases);
+                }
                 return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "grants")) : Results.Json(grant);
             }
             catch (Exception error) when (DatabaseResults.KnownFailure(error))
             {
-                if (!DatabaseResults.WantsHtml(http) || DatabaseResults.Status(error) == 404 && error is not TerraBaseException)
+                if (!(DatabaseResults.WantsHtml(http) || http.Request.Headers["Datastar-Request"] == "true") || DatabaseResults.Status(error) == 404 && error is not TerraBaseException)
                 {
                     return DatabaseResults.PageFailure(http, context, error);
                 }
 
                 return await DatabaseEndpoints.DetailPageAsync(http, context, id, "grants", backend, databases, DatabaseResults.Message(error), status: DatabaseResults.Status(error),
-                    grantForm: action == "grants" ? submitted : null);
+                    grantForm: submitted);
             }
         }
     }
