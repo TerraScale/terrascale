@@ -1098,10 +1098,10 @@ def admission_case():
     request("PUT", f"/v1/management/organizations/{organization}/plan", {"plan": "enterprise"})
     marked = request("POST", f"/v1/projects/{project}/databases", {"name": "marked"})["id"]
     with Postgres(marked) as existing:
-        assert existing.query("BEGIN;") == {}
-        assert existing.query("SELECT 1;") == {}
         hook("tap-open", marked)
         sql(project, marked, ["CREATE TABLE captured(id INTEGER PRIMARY KEY);", "INSERT INTO captured VALUES (1);"])
+        assert existing.query("BEGIN;") == {}
+        assert existing.query("SELECT 1;") == {}
         hook("fault", marked)
         hook("tap-refused", marked)
         before = files(marked)

@@ -30,7 +30,6 @@ public static class RegionsExtensions
         services.AddSingleton<IRegionPeers, PeersFileRegionPeers>();
         services.AddSingleton<IHomeLocator, HomeLocator>();
         services.AddSingleton<HomeSocketRelay>();
-        services.AddSingleton<SocketRequestRelay>();
         services.AddSingleton<SqlConnectionMetrics>();
         services.AddHttpClient(HomeLocator.HttpClientName, client => client.Timeout = Timeout.InfiniteTimeSpan)
             .ConfigurePrimaryHttpMessageHandler((handler, _) =>
@@ -41,8 +40,8 @@ public static class RegionsExtensions
                 sockets.UseCookies = false;
                 sockets.PooledConnectionLifetime = Timeout.InfiniteTimeSpan;
                 sockets.PooledConnectionIdleTimeout = Timeout.InfiniteTimeSpan;
-                sockets.KeepAlivePingDelay = TimeSpan.FromMinutes(1);
-                sockets.KeepAlivePingTimeout = TimeSpan.FromSeconds(30);
+                sockets.KeepAlivePingDelay = TimeSpan.FromSeconds(2);
+                sockets.KeepAlivePingTimeout = TimeSpan.FromSeconds(5);
                 sockets.KeepAlivePingPolicy = HttpKeepAlivePingPolicy.Always;
             });
         return services;

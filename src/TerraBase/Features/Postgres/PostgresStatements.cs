@@ -444,9 +444,12 @@ internal static partial class PostgresStatements
 
     public static bool RollsBackTo(string text) => text.StartsWith("ROLLBACK", StringComparison.OrdinalIgnoreCase);
 
-    public static PgError Error(SqlError error) => error.Code == SqlErrors.WrongRegion
-        ? new("57P01", error.Message, Fatal: true)
-        : new(error.Sqlstate, error.Message);
+    public static PgError Error(SqlError error) => error.Code switch
+    {
+        SqlErrors.WrongRegion => new("57P01", error.Message, Fatal: true),
+        SqlErrors.WriteOutcomeUnknown => new(error.Sqlstate, error.Message, Fatal: true),
+        _ => new(error.Sqlstate, error.Message),
+    };
 
     public static bool TryEncode(SqlValue value, int oid, bool binary, out byte[]? bytes)
     {
