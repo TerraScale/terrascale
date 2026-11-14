@@ -22,7 +22,7 @@ internal sealed record NodeLease(string Node, string Region, string Session);
 
 internal sealed record HomeLease(string OrganizationId, string ProjectId, string DatabaseId, string Home, string Node, long Epoch, string Session, string? Adopted = null);
 
-internal sealed record HomeLeaseTaken(HomeLease? Previous, HomeLease Taken, ulong Revision);
+internal sealed record HomeLeaseTaken(HomeLease? Previous, HomeLease Taken);
 
 internal sealed record HeldRevisionAnswer(string Region, string? Revision);
 
@@ -233,7 +233,7 @@ internal sealed partial class HomeLeases(
 
         if (_js is null)
         {
-            return new HomeLeaseTaken(null, taken, 0);
+            return new HomeLeaseTaken(null, taken);
         }
 
         if (!owners.Writer)
@@ -255,20 +255,8 @@ internal sealed partial class HomeLeases(
             return null;
         }
 
-        try
-        {
-            var revision = current is null
-                ? await kv.CreateAsync(HomeKey(id), Encode(taken), cancellationToken: cancellationToken).ConfigureAwait(false)
-                : await kv.UpdateAsync(HomeKey(id), Encode(taken), current.Value.Revision, cancellationToken: cancellationToken).ConfigureAwait(false);
-            _homes[id] = (taken, revision);
-            leaseGate.Lease(id, held: false);
-            return new HomeLeaseTaken(existing, taken, revision);
-        }
-        catch (Exception error) when (error is NatsKVWrongLastRevisionException or NatsKVCreateException)
-        {
-            Refused(HomeRefusal.LeaseChanged, "home");
-            return null;
-        }
+        leaseGate.Lease(id, held: false);
+        return new HomeLeaseTaken(existing, taken);
     }
 
     internal async ValueTask<bool> CommitAsync(TenantContext database, HomeLeaseTaken taken, DatabaseRevision adopted, CancellationToken cancellationToken)
@@ -285,17 +273,29 @@ internal sealed partial class HomeLeases(
             return false;
         }
 
-        try
+        while (true)
         {
-            var revision = await kv.UpdateAsync(HomeKey(id), Encode(committed), taken.Revision, cancellationToken: cancellationToken).ConfigureAwait(false);
-            _homes[id] = (committed, revision);
-            leaseGate.Lease(id, held: true);
-            return true;
-        }
-        catch (NatsKVWrongLastRevisionException)
-        {
-            Refused(HomeRefusal.LeaseChanged, "home");
-            return false;
+            var current = await ReadAsync(kv, id, cancellationToken).ConfigureAwait(false);
+            var existing = current?.Value is { } bytes ? Decode(bytes) : null;
+            if (existing?.Home != taken.Previous?.Home || existing?.Node != taken.Previous?.Node || existing is not null && existing.Epoch >= committed.Epoch)
+            {
+                Refused(HomeRefusal.LeaseChanged, "home");
+                return false;
+            }
+
+            try
+            {
+                var revision = current is null
+                    ? await kv.CreateAsync(HomeKey(id), Encode(committed), cancellationToken: cancellationToken).ConfigureAwait(false)
+                    : await kv.UpdateAsync(HomeKey(id), Encode(committed), current.Value.Revision, cancellationToken: cancellationToken).ConfigureAwait(false);
+                _homes[id] = (committed, revision);
+                leaseGate.Lease(id, held: true);
+                return true;
+            }
+            catch (Exception error) when (error is NatsKVWrongLastRevisionException or NatsKVCreateException)
+            {
+                logger.ZLogInformation($"The previous home's lease changed while a home move committed; it is read again");
+            }
         }
     }
 
@@ -332,19 +332,19 @@ internal sealed partial class HomeLeases(
 
         var entry = await ReadAsync(kv, id, cancellationToken).ConfigureAwait(false);
         var current = entry?.Value is { } bytes ? Decode(bytes) : null;
-        if (current is not null && current.Home == source.Region && current.Node == source.Node)
+        if (current is null || current.Home != source.Region || current.Node != source.Node)
+        {
+            logger.ZLogWarning($"A home change is not rolled back: the lease names {current?.Node ?? "no node":@Node} in {current?.Home ?? "no region":@Home} at epoch {current?.Epoch ?? 0:@Epoch}, not the previous home {source.Node:@Previous}; this node keeps its copy fenced and the previous home keeps its file");
+            return null;
+        }
+
+        if (current.Epoch > version)
         {
             logger.ZLogWarning($"A home change was rolled back without rewriting the lease: it already names {current.Node:@Node} in {current.Home:@Home} at epoch {current.Epoch:@Epoch}");
             return current.Epoch;
         }
 
-        if (current is null || current.Node != options.MachineId || current.Epoch != version || current.Adopted is not null)
-        {
-            logger.ZLogWarning($"A home change is not rolled back: the lease names {current?.Node ?? "no node":@Node} in {current?.Home ?? "no region":@Home} at epoch {current?.Epoch ?? 0:@Epoch}, not this move's uncommitted lease at epoch {version:@Version} or the previous home {source.Node:@Previous}; this node keeps its copy fenced and the previous home keeps its file");
-            return null;
-        }
-
-        var restored = new HomeLease(database.OrganizationId, database.ProjectId!, id, source.Region, source.Node, version + 1, "");
+        var restored = current with { Epoch = version + 1 };
         try
         {
             var revision = await kv.UpdateAsync(HomeKey(id), Encode(restored), entry!.Value.Revision, cancellationToken: cancellationToken).ConfigureAwait(false);

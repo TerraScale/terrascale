@@ -1,14 +1,15 @@
 import { randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect } from '@playwright/test';
 import { test, database, json, name, project, removeDatabase, sql, type Cells } from '../placement/support';
 import { dash, e2eRoot, stateDir } from '../support/stack';
 import { journey, ownerSession, saveSecret } from '../support/state';
+import { Nats, putKey, seal } from '../replication/push.mjs';
 import { receiptHandoff } from './receipt-handoff';
-import { backupPuts, backupStore, cleanUp, continuity, counted, crashWrite, endpoint, faultId, fileHash, holdsFile, holeRecords, keptCopies, keptHash, Kv, Ledger, logged, metric, node, nodeHoles, nodes, nodeRequest, nodeStatus, plantHole, probe, promoting, regions, restartAfterKill, scrape, signIn, exchangedToken, systemContinuity, tokenReady, topology, writerIs, writerToken, type HomeLease, type Node, type Row } from './support';
+import { backupPuts, backupStore, cleanUp, continuity, counted, crashWrite, endpoint, faultId, fileHash, holdsFile, holeRecords, keptCopies, keptHash, Kv, Ledger, logged, metric, node, nodeBuild, nodeHoles, nodes, nodeRequest, nodeStatus, plantHole, probe, promoting, regions, restartAfterKill, scrape, signIn, exchangedToken, systemContinuity, tokenReady, topology, ulidAt, writerIs, writerToken, type HomeLease, type Node, type Row } from './support';
 
 test.beforeEach(async () => {
   expect(process.env.E2E_TARGET ?? 'local').toBe('local');
@@ -230,11 +231,9 @@ test('a move that fails before its commit point rolls back: the target acknowled
     const started = Date.now();
     const move = cells.post(`${endpoint('gru')}${database(ledger.id)}/move-home`, { data: { homeRegion: 'fra' }, timeout: 120_000 });
 
-    await test.step('the target takes the lease, stays fenced and acknowledges no write before its commit point', async () => {
-      await expect.poll(async () => (await kv.get<HomeLease>(homes, `home.${ledger.id}`))?.value, { message: 'journey-2 took the lease', timeout: 60_000, intervals: [100] })
-        .toMatchObject({ home: 'fra', node: 'journey-2', epoch: before.value.epoch + 1 });
-      expect((await homeLease(kv, ledger.id)).value.adopted ?? null, 'the lease records no adopted position before the commit point').toBeNull();
-      expect(promoting(target, ledger.id), 'the promotion fence is on disk').toBe(true);
+    await test.step('the lease keeps naming the old home, and the target stays fenced and acknowledges no write before its commit point', async () => {
+      await expect.poll(() => promoting(target, ledger.id), { message: 'the promotion fence is on disk', timeout: 60_000, intervals: [100] }).toBe(true);
+      expect((await homeLease(kv, ledger.id)).value, 'the target writes the lease only at its commit point').toMatchObject({ home: 'gru', node: 'journey-1', epoch: before.value.epoch });
       await expect.poll(async () => (await (await fetch(`http://127.0.0.1:${target.port}${database(ledger.id)}`, { headers: { authorization: `Bearer ${token}` } })).json()).homeRegion,
         { message: 'journey-2 recorded the new placement before its commit point', timeout: 30_000, intervals: [100] }).toBe('fra');
       expect(await ledger.refusal(target, token, [[22, 'during-move']]), 'the target refuses a write before its commit point')
@@ -306,10 +305,10 @@ test('a rollback keeps both copies in place until the lease names the old home a
     const move = cells.post(`${endpoint('gru')}${database(ledger.id)}/move-home`, { data: { homeRegion: 'fra' }, timeout: 120_000 });
 
     await test.step('while the target drains, the lease is rewritten to name a node that never held the database', async () => {
-      await expect.poll(async () => (await kv.get<HomeLease>(homes, `home.${ledger.id}`))?.value, { message: 'journey-2 took the lease', timeout: 60_000, intervals: [100] })
-        .toMatchObject({ home: 'fra', node: 'journey-2', epoch: before.value.epoch + 1 });
-      const taken = await homeLease(kv, ledger.id);
-      await kv.put(homes, `home.${ledger.id}`, { ...taken.value, node: 'journey-4' }, taken.seq);
+      await expect.poll(() => promoting(target, ledger.id), { message: 'journey-2 starts its promotion', timeout: 60_000, intervals: [100] }).toBe(true);
+      const current = await homeLease(kv, ledger.id);
+      expect(current.value, 'the target writes the lease only at its commit point').toMatchObject({ home: 'gru', node: 'journey-1', epoch: before.value.epoch });
+      await kv.put(homes, `home.${ledger.id}`, { ...current.value, home: 'fra', node: 'journey-4', epoch: before.value.epoch + 1 }, current.seq);
     });
 
     await test.step('the move stays unresolved: neither node sets its copy aside', async () => {
@@ -345,6 +344,130 @@ test('a rollback keeps both copies in place until the lease names the old home a
   } finally {
     await cleanUp(failure, async () => {
       kv.close();
+    });
+  }
+});
+
+test('a home move never applies a push again that the durable stream frontier covers, also after its applied id left the 7-day retention', async ({ cells }) => {
+  test.setTimeout(180_000);
+  const created = await json<{ id: string }>(await cells.post(`${endpoint('gru')}${project()}/databases`, {
+    data: { name: name('frontier-replay'), regions: [...regions] },
+  }), 201);
+  await sql(cells, endpoint('gru'), created.id, 'CREATE TABLE items (id TEXT PRIMARY KEY, value TEXT NOT NULL)');
+  const read = async (region: string) => (await sql(cells, endpoint(region), created.id, 'SELECT id, value FROM items ORDER BY id')).results[0].rows;
+  const kv = await Kv.open();
+  const nats = new Nats(readFileSync(join(stateDir, 'nats-token'), 'utf8').trim());
+  let failure: unknown;
+  try {
+    await nats.connect();
+    const lease = (await homeLease(kv, created.id)).value;
+    const scope = `${lease.organizationId}/${lease.projectId}/${created.id}`;
+    const subject = scope.replaceAll('/', '.');
+    const secrets = readFileSync(join(stateDir, 'secrets'), 'utf8').trim().split('\n');
+    const keyId = ulidAt(Date.now());
+    const dataKey = randomBytes(32);
+    await putKey({ master: Buffer.from(secrets[1], 'base64'), access: secrets[12], secret: secrets[13] }, scope, keyId, dataKey);
+    const at = Date.now() - 8 * 86_400_000;
+    const pushed = {
+      id: ulidAt(at), region: 'fra', hlc: { physicalMilliseconds: at, logical: 0, nodeId: 'journey-2' },
+      changes: [{ op: 'insert', table: 'items', key: null, values: { id: 'old', value: 'removed-by-table-replacement' } }],
+    };
+
+    await test.step('the home applies an 8-day-old push once; its applied id leaves the retention at once, its stream position stays in the frontier', async () => {
+      const applied = nats.event(`terrabase.applied.fra.${subject}`, (value: { id?: string }) => value.id === pushed.id);
+      const sent = await nats.request(`terrabase.push.fra.gru.${subject}`, seal(pushed, scope, keyId, dataKey), { 'Tb-Epoch': String(lease.epoch) });
+      expect(sent.error, JSON.stringify(sent)).toBeUndefined();
+      expect(await applied).toMatchObject({ id: pushed.id, state: 'confirmed' });
+      await expect.poll(() => read('gru')).toEqual([['old', 'removed-by-table-replacement']]);
+    });
+
+    await test.step('an acknowledged table replacement removes the pushed row in both regions', async () => {
+      const replaced = await cells.post(`${endpoint('gru')}${database(created.id)}/sql/execute`, { data: { statements: [
+        { sql: 'DROP TABLE items' },
+        { sql: 'CREATE TABLE items (id TEXT PRIMARY KEY, value TEXT NOT NULL)' },
+        { sql: "INSERT INTO items VALUES ('new', 'acknowledged-replacement')" },
+      ] } });
+      expect(replaced.status(), await replaced.text()).toBe(200);
+      for (const region of regions) await expect.poll(() => read(region), { message: `${region} serves only the replacement` }).toEqual([['new', 'acknowledged-replacement']]);
+    });
+
+    await test.step('the new home leaves the old push to its sequencer, which skips it by the frontier: the removed row stays removed', async () => {
+      const moved = await json<{ homeRegion: string }>(await cells.post(`${endpoint('gru')}${database(created.id)}/move-home`, { data: { homeRegion: 'fra' }, timeout: 120_000 }));
+      expect(moved.homeRegion).toBe('fra');
+      for (const region of regions) expect(await read(region), `${region} serves the acknowledged replacement after the home move`).toEqual([['new', 'acknowledged-replacement']]);
+      expect(logged(node('journey-2'), 'is older than the applied-id retention', `"Database":"${created.id}"`), 'the promotion drain left the old push to the sequencer').toBe(1);
+      const after = await cells.post(`${endpoint('fra')}${database(created.id)}/sql/execute`, { data: { statements: [{ sql: "INSERT INTO items VALUES ('later', 'after-the-move')" }] } });
+      expect(after.status(), await after.text()).toBe(200);
+      for (const region of regions) {
+        await expect.poll(() => read(region), { message: `${region} serves the write after the move and never the removed row` })
+          .toEqual([['later', 'after-the-move'], ['new', 'acknowledged-replacement']]);
+      }
+    });
+    await removeDatabase(cells, created.id);
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    await cleanUp(failure, async () => {
+      nats.close();
+      kv.close();
+    });
+  }
+});
+
+test('a source on the previous build keeps its file while a new target drains past the source\'s lease scan, and serves writes again after the rollback', async ({ cells, request }) => {
+  test.setTimeout(300_000);
+  const previous = process.env.E2E_PREVIOUS_TERRABASE;
+  expect(previous, 'E2E_PREVIOUS_TERRABASE names the base revision\'s TerraBase build').toMatch(/terrabase\.dll$/);
+  expect(existsSync(previous!), `${previous} exists`).toBe(true);
+  const gru = node('journey-1');
+  const target = node('journey-2');
+  const own = nodeBuild(gru);
+  await restartAfterKill(gru, true, undefined, undefined, previous)();
+  const token = await writerToken(request);
+  const kv = await Kv.open();
+  let failure: unknown;
+  try {
+    expect(nodeBuild(gru), 'journey-1 runs the previous build').toBe(previous);
+    const [ledger] = await createLedgers(cells, 1, 'mixed-rollback');
+    const before = await homeLease(kv, ledger.id);
+    const { organizationId, projectId } = before.value;
+    expect(holdsFile(gru, before.value)).toBe(true);
+    const demotions = await counted(gru, 'terrabase_home_demotions_total');
+    const published = await kv.publish(`terrabase.push.fra.gru.${organizationId}.${projectId}.${ledger.id}`, { undecodable: true }, { 'Tb-Epoch': String(before.value.epoch) });
+    expect(published.error, JSON.stringify(published)).toBeUndefined();
+    const started = Date.now();
+    const move = cells.post(`${endpoint('gru')}${database(ledger.id)}/move-home`, { data: { homeRegion: 'fra' }, timeout: 120_000 });
+
+    await test.step('while the new target is fenced, the lease names only the old source', async () => {
+      await expect.poll(() => promoting(target, ledger.id), { message: 'journey-2 starts its promotion', timeout: 60_000, intervals: [100] }).toBe(true);
+      expect((await homeLease(kv, ledger.id)).value, 'the target writes the lease only at its commit point').toMatchObject({ home: 'gru', node: 'journey-1', epoch: before.value.epoch });
+    });
+
+    await test.step('the drain outlasts the old source\'s lease scan and rolls back; the source kept its file and serves reads and writes', async () => {
+      const answer = await move;
+      expect(answer.status(), await answer.text()).toBe(503);
+      expect((await answer.json()).error.code).toBe('replica_not_ready');
+      expect(Date.now() - started, 'the move outlasted one lease scan of the old source').toBeGreaterThan(15_000);
+      expect(holdsFile(gru, before.value), 'the old source keeps its database file').toBe(true);
+      expect(await counted(gru, 'terrabase_home_demotions_total'), 'the old source never demoted itself').toBe(demotions);
+      await expect.poll(async () => (await homeLease(kv, ledger.id)).value, { message: 'the lease names journey-1 at the next epoch', timeout: 60_000 })
+        .toMatchObject({ home: 'gru', node: 'journey-1', epoch: before.value.epoch + 2 });
+      expect(promoting(target, ledger.id), 'the promotion fence is lifted').toBe(false);
+      await ledger.write(cells, 'gru', [[41, 'after-rollback-gru']]);
+      await ledger.write(cells, 'fra', [[42, 'after-rollback-fra']]);
+      await ledger.compare(cells);
+      expect(await ledger.readNode(gru, token), 'the old source serves every acknowledged row').toEqual(expect.arrayContaining(ledger.acknowledged));
+    });
+    await removeDatabase(cells, ledger.id);
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    await cleanUp(failure, async () => {
+      kv.close();
+      await restartAfterKill(gru, true, undefined, undefined, own)();
+      expect(nodeBuild(gru), 'journey-1 runs this build again').toBe(own);
     });
   }
 });
@@ -515,6 +638,90 @@ test('a regional writer role moves only with the target certificate, and a datab
     expect((await homeLease(kv, ledger.id)).value.session, 'journey-1 holds the lease under its new session').not.toBe(moved.session);
     await keptUnchanged();
     await ledger.write(cells, 'gru', [[802, 'after-restart']]);
+    await ledger.compare(cells);
+    await removeDatabase(cells, ledger.id);
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    await cleanUp(failure, async () => {
+      kv.close();
+    });
+  }
+});
+
+test('a writer that starts with a local replica it has not opened fences that database and serves no stale file until the replica is proven', async ({ cells, request }) => {
+  test.setTimeout(480_000);
+  const token = await writerToken(request);
+  const kv = await Kv.open();
+  const [ledger] = await createLedgers(cells, 1, 'cold-replica');
+  const gru = node('journey-1');
+  const partner = node('journey-3');
+  const moveHome = async (from: string, to: string) => {
+    const moved = await json<{ homeRegion: string }>(await cells.post(`${endpoint(from)}${database(ledger.id)}/move-home`, { data: { homeRegion: to }, timeout: 120_000 }));
+    expect(moved.homeRegion).toBe(to);
+    await ledger.compare(cells);
+  };
+  await moveHome('gru', 'fra');
+  await moveHome('fra', 'gru');
+  let failure: unknown;
+  try {
+    await restartAfterKill(partner, false)();
+    const primed = await nodeRequest(partner, '/v1/rollout/prime?source=journey-1', 'POST');
+    expect(primed.status, 'journey-3 catches up before it takes the writer role').toBe(204);
+    const drained = await nodeRequest(gru, '/v1/rollout/drain?target=journey-3', 'POST');
+    expect(drained.status, drained.body).toBe(204);
+    await writerIs('gru', 'journey-3');
+    await ledger.write(cells, 'gru', [[800, 'acknowledged-on-journey-3']]);
+    await ledger.compare(cells);
+    const lease = (await homeLease(kv, ledger.id)).value;
+    const route = `/v1/sync/organizations/${lease.organizationId}/projects/${lease.projectId}/databases/${ledger.id}`;
+    const current = JSON.parse((await nodeRequest(partner, `${route}/checksums?revision=ts1:00000000000000000000000000:1:0`)).body).revision as string;
+    const covers = (held: string) => {
+      const [, incarnation, generation, frame] = held.split(':');
+      const [, wanted, wantedGeneration, wantedFrame] = current.split(':');
+      return incarnation === wanted && (+generation > +wantedGeneration || +generation === +wantedGeneration && +frame >= +wantedFrame);
+    };
+    await expect.poll(async () => {
+      const held = await nodeRequest(gru, `${route}/held`);
+      return held.status === 200 && typeof JSON.parse(held.body).revision === 'string' && covers(JSON.parse(held.body).revision);
+    }, { message: 'journey-1\'s replica holds the row its primary file lacks' }).toBe(true);
+    const held = JSON.parse((await nodeRequest(gru, `${route}/held`)).body).revision as string;
+    const replicaFile = (holder: Node) => existsSync(join(stateDir, holder.service, '.replicas', lease.organizationId, lease.projectId, `${ledger.id}.db`));
+
+    const restartGru = restartAfterKill(gru, true);
+    expect(replicaFile(gru), 'journey-1 keeps its replica file on disk').toBe(true);
+    const owner = await kv.get<Record<string, unknown> & { node: string; epoch: number }>(owners, 'gru');
+    await kv.put(owners, 'gru', { ...owner!.value, node: 'journey-1', epoch: 1, previous: null, activated: false, transfer: null }, owner!.seq);
+    await expect.poll(async () => (await nodeStatus(partner)).writer, { message: 'journey-3 steps down for the owner record that names journey-1' }).toBe(false);
+    await restartGru();
+
+    await test.step('journey-1 starts as the gru writer: the database whose replica it has not opened is fenced and refuses writes and peers', async () => {
+      expect(((await nodeStatus(gru)).fenced ?? []).filter(entry => entry.databaseId === ledger.id), 'the unopened replica fences its database')
+        .toEqual([expect.objectContaining({ reason: 'position_unknown', epoch: 1 })]);
+      expect((await nodeRequest(gru, `${route}/checksums?revision=${encodeURIComponent(held)}`)).status, 'the stale primary file is not offered to peers').toBe(503);
+      expect(await ledger.refusal(gru, token, [[803, 'while-fenced']]), 'the fenced database refuses the write').toEqual(homeDown);
+    });
+
+    await test.step('writer renewals keep the fence without proof, and it clears once journey-3, which holds the row, is the writer', async () => {
+      const fencedAt = await counted(gru, 'terrabase_regional_fenced');
+      expect(fencedAt, 'the fenced database is counted').toBeGreaterThan(0);
+      expect(((await nodeStatus(gru)).fenced ?? []).map(entry => entry.databaseId)).toContain(ledger.id);
+      expect((await nodeRequest(gru, `${route}/checksums?revision=${encodeURIComponent(held)}`)).status).toBe(503);
+      const named = await kv.get<Record<string, unknown> & { node: string; epoch: number }>(owners, 'gru');
+      expect(named?.value.node).toBe('journey-1');
+      await kv.put(owners, 'gru', { ...named!.value, node: 'journey-3', epoch: 1, previous: null, activated: false, transfer: null }, named!.seq);
+      await writerIs('gru', 'journey-3');
+      await expect.poll(async () => (await nodeStatus(partner)).fenced ?? [], { message: 'journey-3 fences nothing' }).toEqual([]);
+      await expect.poll(async () => (await nodeStatus(gru)).fenced ?? [], { message: 'the fence clears once the owner record names another node' }).toEqual([]);
+      await ledger.compare(cells);
+      expect(await ledger.readNode(partner, token), 'the row acknowledged on journey-3 is served').toContainEqual([800, 'acknowledged-on-journey-3']);
+    });
+
+    const back = await nodeRequest(partner, '/v1/rollout/drain?target=journey-1', 'POST');
+    expect(back.status, back.body).toBe(204);
+    await writerIs('gru', 'journey-1');
+    await ledger.write(cells, 'gru', [[801, 'after-the-proof']]);
     await ledger.compare(cells);
     await removeDatabase(cells, ledger.id);
   } catch (error) {

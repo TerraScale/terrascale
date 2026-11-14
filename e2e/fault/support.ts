@@ -466,7 +466,7 @@ export function crashWrite(node: Node, ledger: Ledger, token: string) {
   return { sent, outcome: outcome.then(() => ({ error: undefined }), (error: Error) => ({ error })) };
 }
 
-export function restartAfterKill(node: Node, writer = true, access?: { token: string; path: string }, observe?: () => Promise<void>): () => Promise<void> {
+export function restartAfterKill(node: Node, writer = true, access?: { token: string; path: string }, observe?: () => Promise<void>, build?: string): () => Promise<void> {
   const pidFile = join(stateDir, 'pids', `${node.service}.pid`);
   const pid = Number(readFileSync(pidFile, 'utf8').trim());
   const environment = Object.fromEntries(readFileSync(`/proc/${pid}/environ`, 'utf8').split('\0').filter(Boolean).map(value => {
@@ -493,7 +493,8 @@ export function restartAfterKill(node: Node, writer = true, access?: { token: st
     const died = new Promise<never>((_, reject) => {
       exited = (code, signal) => reject(new Error(`the restarted ${node.name} exited (${code ?? signal}) before it opened its listeners`));
     });
-    const child = spawn(command[0], command.slice(1), { env: environment, stdio: ['ignore', output, output] });
+    const started = build === undefined ? command : [command[0], build];
+    const child = spawn(started[0], started.slice(1), { env: environment, stdio: ['ignore', output, output] });
     try {
       child.once('exit', exited);
       await once(child, 'spawn');
@@ -555,6 +556,24 @@ export async function tokenReady(node: Node, cells: Pick<Cells, 'get'>, path: st
     await response.dispose();
     return status;
   }, { message: `${node.name} must verify the existing token before authenticated recovery checks` }).toBe(200);
+}
+
+export function nodeBuild(node: Node): string {
+  const pid = Number(readFileSync(join(stateDir, 'pids', `${node.service}.pid`), 'utf8').trim());
+  const command = readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean);
+  expect(command.at(-1), `${node.name} runs a TerraBase build`).toMatch(/terrabase\.dll$/);
+  return command.at(-1)!;
+}
+
+export function ulidAt(at: number): string {
+  const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+  let value = BigInt(at) << 80n | BigInt(`0x${randomBytes(10).toString('hex')}`);
+  let text = '';
+  for (let index = 0; index < 26; index++) {
+    text = alphabet[Number(value & 31n)] + text;
+    value >>= 5n;
+  }
+  return text;
 }
 
 export function faultId(): string {

@@ -153,6 +153,11 @@ The `multi-region faults` shard of `journey.yml` shares the normal service and S
 the fault specs. Local runs use the same variables and normal prepare/start/up/stop lifecycle, followed by
 `bash env/local.sh exec npx playwright test --project fault` from `e2e/`.
 
+One fault case runs gru's writer on the base revision's TerraBase while a move to a node of this build rolls back.
+`E2E_PREVIOUS_TERRABASE` names that build's `terrabase.dll`: CI unpacks the `engine-rollback-baseline` artifact
+(the PR's base commit); locally, build `origin/main` with `bash e2e/env/build.sh <main checkout> <dir> terrabase`
+and export `E2E_PREVIOUS_TERRABASE=<dir>/terrabase/terrabase.dll` before `local.sh exec`.
+
 The shard also builds a journey-only receipt driver from the same product sources.
 Its exporter copy includes receipt kinds only inside that driver; the shipped exporter
 is unchanged. The driver uses the real engine, catalog schema, serializers and importer

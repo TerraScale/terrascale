@@ -326,15 +326,16 @@ internal sealed partial class TursoReplicas(
         _replicas.TryGetValue(Key(database), out var opening) && opening.IsValueCreated && opening.Value.IsCompletedSuccessfully ? opening.Value.Result.Held : null;
 
     public ReplicaHolding Holding(TenantContext database) =>
-        !_replicas.TryGetValue(Key(database), out var opening) ? new NoReplica()
-        : !opening.IsValueCreated || !opening.Value.IsCompletedSuccessfully
-            ? File.Exists(PathOf(Key(database)) + "-info") ? new PositionUnknown() : new NoReplica()
+        !_replicas.TryGetValue(Key(database), out var opening) || !opening.IsValueCreated || !opening.Value.IsCompletedSuccessfully
+            ? OnDisk(PathOf(Key(database))) ? new PositionUnknown() : new NoReplica()
         : opening.Value.Result switch
         {
             { Held: { } held } => new HeldAt(held),
             { Pulled: false } => new NoReplica(),
             _ => new PositionUnknown(),
         };
+
+    private static bool OnDisk(string path) => File.Exists(path) || File.Exists(path + "-info");
 
     public async ValueTask<ReplicaComparison?> CompareAsync(TenantContext database, DatabaseRevision revision, IReadOnlyList<RangeChecksum> home, CancellationToken cancellationToken)
     {
@@ -475,15 +476,21 @@ internal sealed partial class TursoReplicas(
 
         await Task.Run(() => RetainReplicaFiles(path)).ConfigureAwait(false);
         hexKey = await NewKeyAsync(path).ConfigureAwait(false);
-        var replica = new Replica(this, Tenant(key), await TursoSyncDatabase.CreateAsync(Options(path, hexKey, source, observed)).ConfigureAwait(false), path, observer, observed, logger, _time, pulled: false);
+        Replica? created = null;
         try
         {
-            _ = await replica.PullAsync(fromHome: true, CancellationToken.None).ConfigureAwait(false);
-            return replica;
+            created = new Replica(this, Tenant(key), await TursoSyncDatabase.CreateAsync(Options(path, hexKey, source, observed)).ConfigureAwait(false), path, observer, observed, logger, _time, pulled: false);
+            _ = await created.PullAsync(fromHome: true, CancellationToken.None).ConfigureAwait(false);
+            return created;
         }
         catch
         {
-            await replica.DisposeAsync().ConfigureAwait(false);
+            if (created is not null)
+            {
+                await created.DisposeAsync().ConfigureAwait(false);
+            }
+
+            _ = await Task.Run(() => DeleteFiles(path, keepDetached: true)).ConfigureAwait(false);
             throw;
         }
     }

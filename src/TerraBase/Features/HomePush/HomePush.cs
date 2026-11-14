@@ -51,7 +51,7 @@ internal sealed record LocalCommit(string? Id, HomeApplyResult? Home);
 
 internal sealed class LocalOutcomeUnknownException(string message, Exception inner) : Exception(message, inner);
 
-internal sealed record DrainedPush(string Region, HomeApplyResult Result, ulong? Sequence);
+internal sealed record DrainedPush(string Region, HomeApplyResult Result, ulong Sequence);
 
 internal partial class HomePush(
     TerraBaseOptions options, IRegionPeers peers, IReplicaCatalog catalog, IDatabaseReplicas replicas, IHomeApply apply, IHlcClock clock,
@@ -290,14 +290,21 @@ internal partial class HomePush(
             return [];
         }
 
-        var scans = new List<INatsJSConsumer>();
+        var scans = new List<(INatsJSConsumer Consumer, string Source)>();
         foreach (var origin in (await peers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false)).Select(peer => peer.Region).Append(options.Region).Distinct(StringComparer.Ordinal))
         {
-            scans.Add(await js.CreateOrderedConsumerAsync(PushNames.Stream(origin), new NatsJSOrderedConsumerOpts
+            var source = await SourceAsync(js, origin, cancellationToken).ConfigureAwait(false);
+            var consumer = await js.CreateOrderedConsumerAsync(PushNames.Stream(origin), new NatsJSOrderedConsumerOpts
             {
                 FilterSubjects = [PushNames.DatabaseFilter(origin, database)],
                 DeliverPolicy = ConsumerConfigDeliverPolicy.All,
-            }, cancellationToken).ConfigureAwait(false));
+            }, cancellationToken).ConfigureAwait(false);
+            if (source != await SourceAsync(js, origin, cancellationToken).ConfigureAwait(false))
+            {
+                throw new IOException("the push stream was recreated while the promotion drain opened it");
+            }
+
+            scans.Add((consumer, source));
         }
 
         List<DrainedPush> applied = [];
@@ -306,12 +313,15 @@ internal partial class HomePush(
             var read = 0;
             foreach (var scan in scans.ToList())
             {
-                await foreach (var message in scan.FetchNoWaitAsync<byte[]>(new NatsJSFetchOpts { MaxMsgs = 256 }, cancellationToken: cancellationToken).ConfigureAwait(false))
+                await foreach (var message in scan.Consumer.FetchNoWaitAsync<byte[]>(new NatsJSFetchOpts { MaxMsgs = 256 }, cancellationToken: cancellationToken).ConfigureAwait(false))
                 {
                     read++;
+                    var sequence = message.Metadata?.Sequence.Stream ?? throw new IOException("a retained origin push has no stream sequence");
                     if (Epoch(message.Headers) >= fence)
                     {
-                        continue;
+                        logger.ZLogInformation($"A push to {database.DatabaseId:@Database} from {message.Subject:@Subject} at stream sequence {sequence:@Sequence} names the new home's epoch; the new home's sequencer applies it and every later push of its origin in stream order");
+                        _ = scans.Remove(scan);
+                        break;
                     }
 
                     RegionTransaction? transaction;
@@ -321,7 +331,7 @@ internal partial class HomePush(
                     }
                     catch (Exception error) when (error is AmazonS3Exception or HttpRequestException or CryptographicException)
                     {
-                        logger.ZLogWarning($"A push to {database.DatabaseId:@Database} from {message.Subject:@Subject} at stream sequence {message.Metadata?.Sequence.Stream:@Sequence} is held at promotion: {RetryKind(error):@Kind}; the new home's sequencer applies it and every later push of its origin in stream order");
+                        logger.ZLogWarning($"A push to {database.DatabaseId:@Database} from {message.Subject:@Subject} at stream sequence {sequence:@Sequence} is held at promotion: {RetryKind(error):@Kind}; the new home's sequencer applies it and every later push of its origin in stream order");
                         _ = scans.Remove(scan);
                         break;
                     }
@@ -331,9 +341,16 @@ internal partial class HomePush(
                         throw new IOException("a retained origin push could not be decoded during promotion");
                     }
 
-                    var result = await apply.ApplyPromotingAsync(database, transaction, null, cancellationToken).ConfigureAwait(false)
+                    if (Ulid.TryParse(transaction.Id, out var created) && created.Time < time.GetUtcNow() - HomeApplier.KeptApplied + AppliedMargin)
+                    {
+                        logger.ZLogInformation($"A push to {database.DatabaseId:@Database} from {message.Subject:@Subject} at stream sequence {sequence:@Sequence} is older than the applied-id retention; the new home's sequencer decides it from its stream frontier, with every later push of its origin in stream order");
+                        _ = scans.Remove(scan);
+                        break;
+                    }
+
+                    var result = await apply.ApplyPromotingAsync(database, transaction, new StreamSequence(scan.Source, sequence), cancellationToken).ConfigureAwait(false)
                         ?? throw new StorageBusyException();
-                    applied.Add(new DrainedPush(transaction.Region!, result, message.Metadata?.Sequence.Stream));
+                    applied.Add(new DrainedPush(transaction.Region!, result, sequence));
                 }
             }
 
@@ -358,10 +375,7 @@ internal partial class HomePush(
             await nats.PublishAsync(PushNames.Applied(push.Region, database),
                 JsonSerializer.SerializeToUtf8Bytes(push.Result, HomeApplyJsonContext.Default.HomeApplyResult), cancellationToken: cancellationToken).ConfigureAwait(false);
             _applies?.Add(1, new KeyValuePair<string, object?>("state", push.Result.State));
-            if (push.Sequence is { } sequence)
-            {
-                Progressed(push.Region, database, sequence);
-            }
+            Progressed(push.Region, database, push.Sequence);
         }
     }
 
