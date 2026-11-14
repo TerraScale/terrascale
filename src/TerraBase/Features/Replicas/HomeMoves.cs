@@ -5,7 +5,6 @@ using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using TerraBase.Configuration;
-using TerraBase.Engine.Turso;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management;
@@ -403,21 +402,18 @@ internal sealed class HomeMoves(
             }
 
             await imports.ImportDatabaseAsync(database, detached, CancellationToken.None).ConfigureAwait(false);
-            detached = null;
             if (!await leases.TakeAsync(database, fromRegion, placement.Version, failedHome, CancellationToken.None).ConfigureAwait(false))
             {
                 leaseGate.Unlease(database.DatabaseId!);
-                _ = await engine.DeleteDatabaseAsync(database, CancellationToken.None).ConfigureAwait(false);
                 return new Conflict("another region holds the database's home lease", "move_aborted");
             }
 
+            var completing = detached;
+            detached = null;
+            replicas.CompleteDetach(completing);
+
             if (await tenants.UpdatePlacementAsync(database, placement, CancellationToken.None, name, identity).ConfigureAwait(false) is not PlacementUpdate { Updated: true })
             {
-                if (!leases.Active)
-                {
-                    _ = await engine.DeleteDatabaseAsync(database, CancellationToken.None).ConfigureAwait(false);
-                }
-
                 logger.ZLogError($"A new home's catalog did not take its placement; it keeps the database file and its lease");
                 return new Unavailable("the catalog did not take the new placement");
             }
@@ -435,7 +431,7 @@ internal sealed class HomeMoves(
         {
             if (detached is not null)
             {
-                TursoReplicas.DeleteDetached(detached);
+                replicas.CompleteDetach(detached);
             }
         }
     }

@@ -66,12 +66,11 @@ an atomic database rename always leaves a usable file/key pair, including
 after a crash. The private rewrite scratch has no independent key sidecar.
 This operation removes old physical history; it does not rotate the data key.
 
-There is no in-place rekey endpoint. Changing the master key's Vault version
-alone is not a rotation procedure: existing wrapped keys still require the
-old master. Master-key rotation requires separately reviewed offline
-rewrapping of every retained database and backup key, with the old master
-kept available until retained backups no longer need it. Credential changes
-and that operational procedure require their own authorization.
+There is no in-place data-key rekey endpoint. The master-key procedure in this original
+design is superseded by [master-key rotation and its local retirement inventory](backup.md#rotation-order).
+Changing a configured value in place cannot decrypt existing wrappers. Keep the original id
+and material configured, add a new id, activate it, and retire the old id only after every node
+reports zero local references. Unknown (-1) means do not retire.
 
 ## Format cutover and evidence
 

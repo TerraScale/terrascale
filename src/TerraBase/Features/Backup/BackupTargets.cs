@@ -26,7 +26,7 @@ internal sealed class BackupTarget(string revision, IObjectStore store, DataKeys
 
 internal sealed class BackupTargets(
     IObjectStore platform, DataKeys platformKeys, BackupReader platformReader, IProjectBackupDestinations destinations,
-    IMasterKey master, IWalBackup engine, TerraBaseOptions options, IHttpClientFactory http, TimeProvider time, ILogger<S3ObjectStore> logger,
+    IKeyring master, IWalBackup engine, TerraBaseOptions options, IHttpClientFactory http, TimeProvider time, ILogger<S3ObjectStore> logger,
     S3ObjectStore bucket, IDiskBudget disk, KeyCustody custody) : IDisposable
 {
     private readonly SemaphoreSlim _customerKeyReads = new(DataKeys.MaxReads, DataKeys.MaxReads);

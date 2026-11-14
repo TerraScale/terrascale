@@ -16,6 +16,8 @@ public interface IStorageEngine : IAsyncDisposable
 
     bool SystemDatabaseExists { get; }
 
+    ValueTask InventoryKeysAsync(CancellationToken cancellationToken);
+
     ValueTask<bool> CreateDatabaseWithIntentAsync(
         TenantContext database, TenantContext? source, Func<CancellationToken, ValueTask<bool>> recordIntent, CancellationToken cancellationToken);
 

@@ -1,0 +1,259 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using TerraBase.Features.Backup;
+using TerraBase.Primitives;
+using Turso.Data.Sqlite;
+using ZLogger;
+
+namespace TerraBase.Engine.Turso;
+
+internal sealed partial class TursoReplicas
+{
+    internal void RecoverDetached()
+    {
+        lock (KeyRecords)
+        {
+            if (!Directory.Exists(Root))
+            {
+                return;
+            }
+            foreach (var detached in DetachedPaths(Root))
+            {
+                TryRecoverDetached(detached);
+            }
+        }
+    }
+
+    private IEnumerable<string> DetachedPaths(string directory)
+    {
+        string[] files;
+        string[] children;
+        try
+        {
+            DatabaseKeys.RejectLink(directory);
+            files = Directory.GetFiles(directory, "*.promote.db*");
+            children = Directory.GetDirectories(directory);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            var scope = Path.GetRelativePath(Root, directory);
+            if (storage is TursoStorageEngine engine)
+            {
+                engine.RefuseDetachedScope(scope);
+            }
+            logger.ZLogError($"Detached import recovery cannot enumerate database scope {scope:@Scope}; its databases are refused and all copies preserved: {error.GetType().Name:@Error}");
+            yield break;
+        }
+        foreach (var detached in files.Select(path => path[..(path.LastIndexOf(".promote.db", StringComparison.Ordinal) + ".promote.db".Length)]).Distinct(StringComparer.Ordinal))
+        {
+            yield return detached;
+        }
+        foreach (var child in children.Where(child => Path.GetFileName(child) != ".retained"))
+        {
+            foreach (var detached in DetachedPaths(child))
+            {
+                yield return detached;
+            }
+        }
+    }
+
+    private void TryRecoverDetached(string detached, bool rethrow = false, bool finalizing = false)
+    {
+        try
+        {
+            RecoverDetached(detached, finalizing);
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or SqliteException or JsonException or DiskCapacityException)
+        {
+            var database = Path.GetRelativePath(Root, detached[..^".promote.db".Length] + ".db");
+            if (storage is TursoStorageEngine engine)
+            {
+                engine.RefuseDetached(database);
+            }
+            logger.ZLogError($"Detached import recovery refused database {database:@Database}; all remaining copies are preserved: {error.Message:@Error}");
+            if (rethrow)
+            {
+                throw;
+            }
+        }
+    }
+
+    internal static void PrepareImport(string source, string temporary, IKeyring master, string dataDirectory, IDiskBudget disk)
+    {
+        if (!source.EndsWith(".promote.db", StringComparison.Ordinal))
+        {
+            return;
+        }
+        lock (KeyRecords)
+        {
+            if (!ActiveDetached.Contains(source))
+            {
+                throw new IOException("a detached import must hold its registration");
+            }
+            var intent = DetachedImport.Read(source + ".importing", Path.GetFileName(source)[..^".promote.db".Length]);
+            var sourceKey = master.Unwrap(intent.SourceKey);
+            try
+            {
+                intent.Verify(source, sourceKey, dataDirectory, disk);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(sourceKey);
+            }
+            (intent with { DestinationKey = DatabaseKeys.ReadWrapped(temporary) }).Write(source + ".importing", create: false);
+        }
+    }
+
+    internal static void SealImport(string source, string temporary, string targetConnection, IKeyring master, string dataDirectory, IDiskBudget disk)
+    {
+        if (!source.EndsWith(".promote.db", StringComparison.Ordinal))
+        {
+            return;
+        }
+        var intent = DetachedImport.Read(source + ".importing", Path.GetFileName(source)[..^".promote.db".Length]);
+        using (var connection = new SqliteConnection(targetConnection))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = TursoStatements.RenewIncarnation;
+            command.Parameters.AddWithValue("$incarnation", intent.Incarnation);
+            command.ExecuteNonQuery();
+            command.Parameters.Clear();
+            command.CommandText = "PRAGMA wal_checkpoint(FULL);";
+            command.ExecuteScalar();
+        }
+        var key = master.Unwrap(DatabaseKeys.ReadWrapped(temporary));
+        try
+        {
+            intent.Verify(temporary, key, dataDirectory, disk);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(key);
+        }
+        using var handle = File.OpenHandle(temporary, FileMode.Open, FileAccess.ReadWrite);
+        RandomAccess.FlushToDisk(handle);
+    }
+
+    internal static void PublishImport(string source)
+    {
+        if (!source.EndsWith(".promote.db", StringComparison.Ordinal))
+        {
+            return;
+        }
+        lock (KeyRecords)
+        {
+            var intent = DetachedImport.Read(source + ".importing", Path.GetFileName(source)[..^".promote.db".Length]);
+            (intent with { Published = true }).Write(source + ".importing", create: false);
+        }
+    }
+
+    private void RecoverDetached(string detached, bool finalizing)
+    {
+        if (ActiveDetached.Contains(detached))
+        {
+            throw new IOException("a promotion already holds the detached replica");
+        }
+        var directory = Path.GetDirectoryName(detached)!;
+        if (!Directory.Exists(directory) || Directory.GetFiles(directory, Path.GetFileName(detached) + "*").Length == 0)
+        {
+            return;
+        }
+        var replica = detached[..^".promote.db".Length] + ".db";
+        var destination = Path.Combine(options.DataDirectory, Path.GetRelativePath(Root, replica));
+        foreach (var path in (string[])[detached, replica, destination])
+        {
+            DatabaseKeys.RejectLink(path);
+            DatabaseKeys.RejectLink(path + DatabaseKeys.Suffix);
+        }
+        var intent = DetachedImport.Read(detached + ".importing", Path.GetFileName(replica)[..^3]);
+        if (File.Exists(destination))
+        {
+            if (File.Exists(replica))
+            {
+                throw new InvalidDataException("an independent replica conflicts with a published detached import");
+            }
+            if (intent.DestinationKey is not { } wrapped)
+            {
+                throw new InvalidDataException("a destination exists without publication evidence");
+            }
+            var key = master.Unwrap(wrapped);
+            try
+            {
+                VerifyKey(DatabaseKeys.ReadWrapped(destination), key);
+                if (!finalizing || !intent.Published)
+                {
+                    intent.Verify(destination, key, options.DataDirectory, ((TursoStorageEngine)storage).Disk);
+                }
+                if (!intent.Published)
+                {
+                    (intent with { Published = true }).Write(detached + ".importing", create: false);
+                }
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(key);
+            }
+            return;
+        }
+        if (intent.Published)
+        {
+            throw new InvalidDataException("a published destination is missing; the detached source is retained");
+        }
+        var sourceKey = master.Unwrap(intent.SourceKey);
+        try
+        {
+            if (File.Exists(detached) && File.Exists(replica))
+            {
+                throw new InvalidDataException("an independent replica conflicts with the detached source");
+            }
+            if (File.Exists(detached))
+            {
+                VerifyKey(DatabaseKeys.ReadWrapped(detached), sourceKey);
+                File.Move(detached, replica, overwrite: false);
+            }
+            foreach (var file in Directory.GetFiles(directory, Path.GetFileName(detached) + "-*"))
+            {
+                DatabaseKeys.RejectLink(file);
+                File.Move(file, replica + file[detached.Length..], overwrite: false);
+            }
+            intent.Verify(replica, sourceKey, options.DataDirectory, ((TursoStorageEngine)storage).Disk);
+            if (DataKeyRecord(replica) is { } restored)
+            {
+                VerifyKey(restored, sourceKey);
+            }
+            else
+            {
+                using var file = new FileStream(replica + DatabaseKeys.Suffix, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                file.Write(Encoding.ASCII.GetBytes((intent.SourceKey.StartsWith("v2.", StringComparison.Ordinal) ? KeyHeader : PreviousKeyHeader) + intent.SourceKey + "\n"));
+                file.Flush(flushToDisk: true);
+            }
+            DirectorySync.Sync(directory);
+            if (!intent.Restored)
+            {
+                (intent with { Restored = true }).Write(detached + ".importing", create: false);
+            }
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(sourceKey);
+        }
+    }
+
+    private void VerifyKey(string wrapped, byte[] expected)
+    {
+        var actual = master.Unwrap(wrapped);
+        try
+        {
+            if (!CryptographicOperations.FixedTimeEquals(expected, actual))
+            {
+                throw new InvalidDataException("a detached import key does not match its intent");
+            }
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(actual);
+        }
+    }
+}

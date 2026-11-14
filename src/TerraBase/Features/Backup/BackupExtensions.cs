@@ -30,7 +30,6 @@ public static class BackupExtensions
                 provider.GetRequiredService<ICustomerBackupDns>(), provider.GetRequiredService<ICustomerBackupConnector>()))
             .AddHttpMessageHandler<CustomerBackupResponseLimits>();
         services.AddTransient<CustomerBackupResponseLimits>();
-        var master = new MasterKey(settings.MasterKey);
         services.AddGrpc().AddServiceOptions<KeyRevocationService>(grpc =>
         {
             grpc.CompressionProviders = [new ClockCompression()];
@@ -42,14 +41,13 @@ public static class BackupExtensions
             .AddSingleton(settings)
             .AddSingleton<S3ObjectStore>()
             .AddSingleton<IObjectStore>(provider => provider.GetRequiredService<S3ObjectStore>())
-            .AddSingleton<IMasterKey>(master)
             .AddSingleton<KeyCustody>()
             .AddSingleton<KeyRevocationLocal>()
             .AddSingleton<KeyRevocationPeers>()
             .AddSingleton<IShreddedDatabases>(provider => provider.GetRequiredService<Management.EngineManagementService>())
             .AddSingleton<ShreddedDatabaseSweep>()
             .AddHostedService(provider => provider.GetRequiredService<ShreddedDatabaseSweep>())
-            .AddSingleton(provider => new DataKeys(provider.GetRequiredService<KeyCustody>().Store, provider.GetRequiredService<IMasterKey>(),
+            .AddSingleton(provider => new DataKeys(provider.GetRequiredService<KeyCustody>().Store, provider.GetRequiredService<IKeyring>(),
                 provider.GetRequiredService<TimeProvider>(), provider.GetRequiredService<BackupSettings>(),
                 revocations: provider.GetRequiredService<KeyCustody>().Revocations))
             .AddHostedService<DataKeyRefresh>()

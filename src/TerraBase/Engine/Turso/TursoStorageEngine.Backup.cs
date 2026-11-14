@@ -89,12 +89,105 @@ internal sealed partial class TursoStorageEngine
         }
     }
 
+    public async ValueTask PreserveDatabaseAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        var (key, path) = Locate(database);
+        while (true)
+        {
+            Task? pending;
+            TursoDatabaseStore? retired = null;
+            var preserving = false;
+            await EnterCreationAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                ThrowIfIntentPending(key);
+                pending = (Task?)_initializing.GetValueOrDefault(key) ?? _migrating.GetValueOrDefault(key);
+                if (pending is null)
+                {
+                    if (_stores.TryGetValue(key, out var store))
+                    {
+                        ReserveIntent(key);
+                        preserving = true;
+                        retired = store;
+                        await Io.RunAsync(() => { store.Dispose(); return true; }, CancellationToken.None).ConfigureAwait(false);
+                        ExitCreation();
+                        try
+                        {
+                            await Pool.DrainedAsync(store).WaitAsync(QueryBudget, Time, cancellationToken).ConfigureAwait(false);
+                        }
+                        finally
+                        {
+                            await EnterCreationAsync(CancellationToken.None).ConfigureAwait(false);
+                        }
+                        if (Pool.FailedClosesOf(store) > 0)
+                        {
+                            throw new IOException("the previous handoff database still has native handles; all files are preserved");
+                        }
+                        _ = _stores.TryRemove(new KeyValuePair<(string, string, string), TursoDatabaseStore>(key, store));
+                    }
+                    await Io.RunAsync(() =>
+                    {
+                        RejectDatabaseLinks(path);
+                        var directory = Path.GetDirectoryName(path)!;
+                        if (!Directory.Exists(directory))
+                        {
+                            return true;
+                        }
+                        var files = Directory.GetFiles(directory, Path.GetFileName(path) + "*")
+                            .Where(file => file == path || file.StartsWith(path + "-", StringComparison.Ordinal)
+                                || file.StartsWith(path + ".", StringComparison.Ordinal)).ToArray();
+                        if (files.Length == 0)
+                        {
+                            return true;
+                        }
+                        var retained = Path.Combine(_dataDirectory, ".handoff", EntityIds.New().ToString(), key.Organization, key.Project);
+                        DatabaseKeys.RejectLink(Path.Combine(_dataDirectory, ".handoff"));
+                        Directory.CreateDirectory(retained);
+                        for (var ancestor = retained; ; ancestor = Path.GetDirectoryName(ancestor)!)
+                        {
+                            DirectorySync(ancestor);
+                            if (ancestor == _dataDirectory)
+                            {
+                                break;
+                            }
+                        }
+                        foreach (var file in files.OrderBy(file => file == path))
+                        {
+                            DatabaseKeys.RejectLink(file);
+                            File.Move(file, Path.Combine(retained, Path.GetFileName(file)), overwrite: false);
+                            DirectorySync(retained);
+                            DirectorySync(directory);
+                        }
+                        Interlocked.Increment(ref _fileEpoch);
+                        return true;
+                    }, CancellationToken.None).ConfigureAwait(false);
+                    _ = _publishing.TryRemove(key, out _);
+                    return;
+                }
+            }
+            finally
+            {
+                if (preserving)
+                {
+                    _pendingIntents.Remove(key);
+                }
+                ExitCreation();
+                if (retired is not null)
+                {
+                    Notify(DatabaseDeleted, retired, key.Database);
+                }
+            }
+            await pending.WaitAsync(QueryBudget, Time, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     public async ValueTask ImportDatabaseAsync(TenantContext database, string file, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(file);
 
         var (key, path) = Locate(database);
-        Task<TursoDatabaseStore> initialization;
+        Task initialization;
         await EnterCreationAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -112,6 +205,7 @@ internal sealed partial class TursoStorageEngine
             {
                 var sourceConnection = await Encryption.ExistingAsync(file, Io, cancellationToken).ConfigureAwait(false);
                 var targetConnection = await Encryption.CreateAsync(temporary, Io, cancellationToken).ConfigureAwait(false);
+                TursoReplicas.PrepareImport(file, temporary, Encryption.Keyring, _dataDirectory, Disk);
                 await Io.RunAsync(() =>
                 {
                     using var source = new TursoConnection(sourceConnection);
@@ -123,10 +217,16 @@ internal sealed partial class TursoStorageEngine
                     TursoCopy.Write(source, targetConnection, cancellationToken);
                 }, cancellationToken).ConfigureAwait(false);
                 await TursoDatabaseStore.InitializeAsync(key.Database, temporary, Io, _pragmas, Encryption, cancellationToken).ConfigureAwait(false);
+                await Io.RunAsync(() =>
+                {
+                    TursoReplicas.SealImport(file, temporary, targetConnection, Encryption.Keyring, _dataDirectory, Disk);
+                    return true;
+                }, cancellationToken).ConfigureAwait(false);
             }, key).ConfigureAwait(false);
-            await Io.RunAsync(() => DeleteFiles(file), CancellationToken.None).ConfigureAwait(false);
+            TursoReplicas.PublishImport(file);
             _checkpoint("create.published", database);
-            initialization = GetInitializationLocked(key, path, cancellationToken, out _);
+            initialization = file.EndsWith(".promote.db", StringComparison.Ordinal)
+                ? Task.CompletedTask : GetInitializationLocked(key, path, cancellationToken, out _);
         }
         finally
         {
