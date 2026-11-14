@@ -546,7 +546,7 @@ def delete_queued_case():
         assert hook("ledger", identity) == [0, 0], hook("ledger", identity)
         assert gauge("terrabase_storage_faulted_databases") == faulted
         hook("finish-delete", identity)
-        assert hook("ledger", identity) == [0, 0]
+        assert hook("ledger", identity) == [0, 0], hook("ledger", identity)
         assert sql(project, identity, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
         with Postgres(identity) as client:
             assert client.query("SELECT 1;") == {}
