@@ -94,6 +94,13 @@
   gap: var(--ts-s3);
 }
 
+.ts-rows > .ts-rows-more {
+  display: flex;
+  justify-content: center;
+  grid-template-columns: none;
+  padding: var(--ts-s3);
+}
+
 @container page (width < 960px) {
   .ts-backups-pitr .ts-filters {
     grid-template-columns: 1fr;

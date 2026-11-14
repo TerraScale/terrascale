@@ -86,7 +86,6 @@ namespace TerraScale.Dashboard.Features.Backups
     {
         public const int PageSize = 10;
 
-        public bool HasMore => NextCursor is not null;
         public bool CanManage => Shell.Context.CanManage && Database.Status == "ready";
         public bool CanRestore => CanManage && Shell.Context.Organization?.CanProvision(Shell.Context.UserId) == true;
     }
@@ -96,7 +95,6 @@ namespace TerraScale.Dashboard.Features.Backups
         public BackupBucketView? Bucket { get; init; }
         public bool BucketRead { get; init; }
         public RestoreProgress? Restore { get; init; }
-        public BackupPageSlice? Slice { get; init; }
         public WholeDatabaseRecoveryPage? Recovery { get; init; }
     }
 
