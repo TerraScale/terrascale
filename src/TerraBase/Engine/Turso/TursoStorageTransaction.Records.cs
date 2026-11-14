@@ -1,5 +1,7 @@
 using System.Buffers;
 using System.Text;
+using System.Security.Cryptography;
+using TerraBase.Features.Backup;
 using TerraBase.Features.Qos;
 using TerraBase.Primitives;
 
@@ -8,6 +10,9 @@ namespace TerraBase.Engine.Turso;
 internal sealed partial class TursoStorageTransaction
 {
     private HashSet<string>? _kinds;
+
+    internal static bool CredentialKind(string kind) => kind.StartsWith("backup_destination_history/", StringComparison.Ordinal)
+        || kind.StartsWith("projects/", StringComparison.Ordinal) && kind.EndsWith("/backup_destination", StringComparison.Ordinal);
 
     public ValueTask<StoredRecord?> GetAsync(string kind, string id, CancellationToken cancellationToken) =>
         RunAsync(() =>
@@ -49,6 +54,12 @@ internal sealed partial class TursoStorageTransaction
             ThrowIfReadOnly();
             ArgumentException.ThrowIfNullOrEmpty(id);
             var body = StrictJson.Read(json, requireObject: false);
+            if (CredentialKind(kind))
+            {
+                var record = CustomerCredentials.ReadRecord(json);
+                var key = store.Encryption.Keyring.Unwrap(record.Credentials.WrappedKey);
+                CryptographicOperations.ZeroMemory(key);
+            }
             if (_kinds?.Contains(kind) != true)
             {
                 if (Command(TursoStatements.GetKind, kind).ExecuteScalar() is null)

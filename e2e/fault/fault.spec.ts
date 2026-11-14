@@ -95,6 +95,56 @@ test('restore a backup into another database and compare its rows with the snaps
   }
 });
 
+test('an idle backup reaches acknowledged writes without another write, including after a writer restart', async ({ cells }) => {
+  const writer = (await topology()).find(node => node.region === 'gru')!;
+  const created = await json<{ id: string }>(await cells.post(`${endpoint('gru')}${project()}/databases`, {
+    data: { name: name('idle-backup'), regions: ['gru'] },
+  }), 201);
+  const ledger = new Ledger(created.id);
+  const restored: string[] = [];
+  const latest = async () => {
+    const window = await cells.get(`${endpoint('gru')}${database(created.id)}/point-in-time`);
+    return window.status() === 200 ? Date.parse((await window.json() as { latest: string }).latest) : 0;
+  };
+  const recover = async (acked: number) => {
+    await expect.poll(latest, { message: 'the idle backup proves every acknowledged write without a later source write' }).toBeGreaterThanOrEqual(acked);
+    const at = await latest();
+    const plan = await json<{ window: { latest: string } }>(await cells.post(`${endpoint('gru')}${database(created.id)}/point-in-time/plan`, {
+      data: { pointInTime: new Date(at).toISOString() },
+    }));
+    expect(Date.parse(plan.window.latest), 'the stored objects also prove the acknowledged write').toBeGreaterThanOrEqual(acked);
+    const operation = await json<{ id: string }>(await cells.post(`${endpoint('gru')}${database(created.id)}/point-in-time/restore`, {
+      data: { pointInTime: new Date(at).toISOString(), name: name('idle-restored') },
+    }), 202);
+    let copy = '';
+    await expect.poll(async () => {
+      const state = await json<{ status: string; database: string; errorCode?: string }>(await cells.get(`${endpoint('gru')}${database(created.id)}/restores/${operation.id}`));
+      expect(state.status, state.errorCode).not.toBe('failed');
+      if (state.status === 'completed') copy = state.database;
+      return state.status;
+    }, { message: 'the idle backup restores its acknowledged rows' }).toBe('completed');
+    restored.push(copy);
+    expect(await ledger.read(cells, 'gru', copy)).toEqual(ledger.acknowledged);
+    console.log(`idle backup ${created.id}: acknowledged=${acked} proven=${at} restored=${JSON.stringify(ledger.acknowledged)}`);
+  };
+  try {
+    await sql(cells, endpoint('gru'), created.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
+    await expect.poll(latest, { message: 'the initial snapshot is stored before the isolated write' }).toBeGreaterThan(0);
+    await ledger.write(cells, 'gru', [[1, 'before-restart']]);
+    await recover(Date.now());
+    await ledger.write(cells, 'gru', [[2, 'restart-immediately']]);
+    const acked = Date.now();
+    const restart = restartAfterKill(writer, true);
+    await restart();
+    await expect.poll(() => probe(writer, '/readyz'), { message: 'the restarted writer is ready' }).toBe(200);
+    await tokenReady(writer, cells, database(created.id));
+    await recover(acked);
+  } finally {
+    for (const copy of restored) await removeDatabase(cells, copy);
+    await removeDatabase(cells, created.id);
+  }
+});
+
 test('history lost while the backup store is unreachable is one hole each time, also across a generation restart and a node restart, and restores refuse every hole', async ({ cells }) => {
   const writer = (await topology()).find(node => node.region === 'gru')!;
   const created = await json<{ id: string }>(await cells.post(`${endpoint('gru')}${project()}/databases`, {
@@ -146,6 +196,7 @@ test('history lost while the backup store is unreachable is one hole each time, 
     await backupStore('down');
     outage = true;
     const inside = await churn(75);
+    console.log('backup holes: first discard completed');
     const duringSent = Date.now();
     await ledger.write(cells, 'gru', [[2, 'during-outage']]);
     const duringAcked = Date.now();
@@ -203,15 +254,18 @@ test('history lost while the backup store is unreachable is one hole each time, 
     expect(kept, 'the restart keeps the last stored position until a replacement is stored').toMatchObject({ replacing: true, storedIncarnation: kept.incarnation });
     expect(kept.storedPosition).toBeGreaterThanOrEqual(closed.storedPosition!);
     const insideSecond = await churn(75);
+    console.log('backup holes: second discard completed');
     await expect.poll(counted, { message: 'history discarded while the replacement cannot be stored is one more hole, counted once' }).toEqual({ holes: holes + 2, recorded: recordedHoles + 2 });
     const twoHoles = (await continuity(writer, created.id)).holes;
     expect(twoHoles).toHaveLength(2);
     expect(twoHoles[1]).toMatchObject({ incarnation: kept.incarnation, from: kept.storedPosition, open: true });
     await churn(65);
+    console.log('backup holes: later discard completed');
     await expect.poll(async () => (await continuity(writer, created.id)).holes[1]!.to,
       { message: 'a later discard moves the open hole to the new start of the change log' }).toBeGreaterThan(twoHoles[1]!.to);
     expect(await metric(writer, 'terrabase_backup_holes_recorded_total')).toBe(recordedHoles + 2);
 
+    console.log('backup holes: restarting writer');
     const beforeRestart = await nodeHoles(writer);
     const systemBefore = await systemContinuity(writer);
     const restart = restartAfterKill(writer, true, undefined, async () => {
@@ -221,6 +275,7 @@ test('history lost while the backup store is unreachable is one hole each time, 
       outage = false;
     });
     await restart();
+    console.log('backup holes: writer restarted');
     await expect.poll(() => probe(writer, '/readyz'), { message: 'the restarted writer is ready' }).toBe(200);
     await tokenReady(writer, cells, database(created.id));
     expect(await metric(writer, 'terrabase_catalog_closed', 'reason="store_unavailable"')).toBe(0);
@@ -506,6 +561,9 @@ test('another region outside admitted peers cannot interrupt local writer renewa
       await restartAfterKill(target, false)();
       const caughtUp = await nodeRequest(target, `/v1/rollout/prime?source=${foreign.name}`, 'POST');
       expect(caughtUp.status, caughtUp.body).toBe(204);
+      await restartAfterKill(target, false)();
+      const primedAgain = await nodeRequest(target, `/v1/rollout/prime?source=${foreign.name}`, 'POST');
+      expect(primedAgain.status, primedAgain.body).toBe(204);
     }
     await expect.poll(() => nodeStatus(local), { message: 'local authority is restored before cleanup' })
       .toMatchObject({ writer: true, ready: true });

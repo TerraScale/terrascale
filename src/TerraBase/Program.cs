@@ -131,7 +131,9 @@ try
     callers.Observe(app.Services.GetRequiredService<IMeterFactory>(), app.Services.GetRequiredService<TimeProvider>());
     try
     {
-        _ = app.Services.GetRequiredService<IStorageEngine>();
+        var engine = app.Services.GetRequiredService<IStorageEngine>();
+        await engine.InventoryKeysAsync(app.Lifetime.ApplicationStopping);
+        _ = app.Services.GetRequiredService<IDatabaseReplicas>();
     }
     catch (TerraBaseConfigurationException error)
     {

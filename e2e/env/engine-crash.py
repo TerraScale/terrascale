@@ -1209,6 +1209,54 @@ def admission_case():
     end()
 
 
+def repair_keys(identities, healthy):
+    start()
+    damaged, inaccessible = identities
+    hook("intent", damaged)
+    hook("intent", inaccessible)
+    end(hard=True)
+    key = state / "data" / organization / project / (damaged + ".db.key")
+    original_key = key.read_bytes()
+    record = original_key.decode().splitlines()
+    wrapped = bytearray(base64.b64decode(record[1]))
+    wrapped[-1] ^= 1
+    key.write_text(record[0] + "\n" + base64.b64encode(wrapped).decode() + "\n")
+    blocked = state / "data" / organization / project / (inaccessible + ".db.key")
+    blocked.chmod(0)
+    try:
+        start()
+        assert gauge("terrabase_storage_proof_pending") == 2
+        assert hook("ledger", damaged) == [0, 1]
+        assert hook("ledger", inaccessible) == [0, 1]
+        assert sql(project, healthy, ["SELECT count(*) FROM healthy;"])["results"][0]["rows"] == [[1]]
+    finally:
+        key.write_bytes(original_key)
+        blocked.chmod(0o600)
+    wait_for_proofs()
+    for identity in (damaged, inaccessible):
+        assert hook("ledger", identity) == [0, 0]
+        hook("check", identity)
+    print(
+        "damaged wrapped key and inaccessible key: INCOMPLETE, no faults, intents retained; healthy "
+        "database readable; both recover after key repair",
+        flush=True,
+    )
+    end()
+
+
+@case("key-repair")
+def key_repair_case():
+    start()
+    identities = [
+        request("POST", f"/v1/projects/{project}/databases", {"name": name})["id"]
+        for name in ("key-damaged", "key-inaccessible")
+    ]
+    healthy = request("POST", f"/v1/projects/{project}/databases", {"name": "key-healthy"})["id"]
+    sql(project, healthy, ["CREATE TABLE healthy(value INTEGER);", "INSERT INTO healthy VALUES (1);"])
+    end()
+    repair_keys(identities, healthy)
+
+
 @case("recovery")
 def recovery_case():
     start()
@@ -1355,38 +1403,7 @@ def recovery_case():
         )
         end()
 
-    start()
-    damaged, inaccessible = databases[:2]
-    hook("intent", damaged)
-    hook("intent", inaccessible)
-    end(hard=True)
-    key = state / "data" / organization / project / (damaged + ".db.key")
-    original_key = key.read_bytes()
-    record = original_key.decode().splitlines()
-    wrapped = bytearray(base64.b64decode(record[1]))
-    wrapped[-1] ^= 1
-    key.write_text(record[0] + "\n" + base64.b64encode(wrapped).decode() + "\n")
-    blocked = state / "data" / organization / project / (inaccessible + ".db.key")
-    blocked.chmod(0)
-    try:
-        start()
-        assert gauge("terrabase_storage_proof_pending") == 2
-        assert hook("ledger", damaged) == [0, 1]
-        assert hook("ledger", inaccessible) == [0, 1]
-        assert sql(project, request_database, ["SELECT count(*) FROM healthy;"])["results"][0]["rows"] == [[1]]
-    finally:
-        key.write_bytes(original_key)
-        blocked.chmod(0o600)
-    wait_for_proofs()
-    for identity in (damaged, inaccessible):
-        assert hook("ledger", identity) == [0, 0]
-        hook("check", identity)
-    print(
-        "damaged wrapped key and inaccessible key: INCOMPLETE, no faults, intents retained; healthy "
-        "database readable; both recover after key repair",
-        flush=True,
-    )
-    end()
+    repair_keys(databases[:2], request_database)
     assert rollback_count == 9, rollback_count
     for name in ("_system.db", "_intents.db"):
         path = state / "data" / name

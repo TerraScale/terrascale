@@ -3,6 +3,9 @@ name: Journey
 on:
   workflow_call:
     inputs:
+      keyring:
+        type: boolean
+        required: true
       engine:
         type: boolean
         required: true
@@ -212,6 +215,7 @@ jobs:
             echo "E2E_TOOLS=$HOME/.cache/terrascale-e2e"
             echo "E2E_BUILD=$RUNNER_TEMP/services"
             echo "E2E_SDK_BUILD=$RUNNER_TEMP/sdk"
+            echo "E2E_KEYRING_DRIVER=$RUNNER_TEMP/services/keyring/TerraBase.LiveRestoreDrill.dll"
           } >> "$GITHUB_ENV"
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
         with:
@@ -298,3 +302,66 @@ jobs:
           include-hidden-files: true
           retention-days: 7
           if-no-files-found: ignore
+
+  keyring:
+    name: keyring recovery and rotation
+    if: inputs.keyring
+    needs: services
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      DOTNET_PROCESSOR_COUNT: 4
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+      DOTNET_NOLOGO: 1
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24.21.0'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: services-terrabase
+          path: ${{ runner.temp }}/services
+      - name: Keyring paths
+        run: |
+          {
+            echo "E2E_BUILD=$RUNNER_TEMP/services"
+            echo "E2E_STATE=$RUNNER_TEMP/keyring-state"
+            echo "E2E_KEYRING_BASELINE=$RUNNER_TEMP/services/keyring-baseline/terrabase.dll"
+            echo "E2E_KEYRING_DRIVER=$RUNNER_TEMP/services/keyring/TerraBase.LiveRestoreDrill.dll"
+          } >> "$GITHUB_ENV"
+      - name: Install the API journey
+        working-directory: e2e
+        run: npm ci --no-audit --no-fund
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        id: keyring-baseline
+        with:
+          path: ${{ runner.temp }}/services/keyring-baseline
+          key: keyring-baseline-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('e2e/keyring/build.sh', 'global.json', 'benchmark/turso-sync-host/turso-pin.env') }}
+      - name: Build the single-key baseline
+        if: steps.keyring-baseline.outputs.cache-hit != 'true'
+        run: bash e2e/keyring/build.sh
+      - name: Prove key retention, rotation and promotion recovery
+        run: |
+          sudo sysctl -q -w kernel.apparmor_restrict_unprivileged_userns=0
+          started=$SECONDS
+          bash e2e/keyring/proof.sh
+          echo "keyring proof took $((SECONDS - started)) s"
+      - id: keyring-scrub
+        name: Redact keyring evidence
+        if: always()
+        run: python3 e2e/env/scrub.py "$E2E_STATE"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: failure() && steps.keyring-scrub.outcome == 'success'
+        with:
+          name: keyring-evidence
+          path: ${{ runner.temp }}/keyring-state
+          include-hidden-files: true
+          retention-days: 7

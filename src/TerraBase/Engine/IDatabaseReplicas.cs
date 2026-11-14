@@ -28,6 +28,8 @@ internal interface IDatabaseReplicas
 
     ValueTask<string?> DetachAsync(TenantContext database, CancellationToken cancellationToken);
 
+    void CompleteDetach(string file);
+
     bool Holds(TenantContext database);
 
     IReadOnlyList<TenantContext> List();
