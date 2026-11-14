@@ -127,7 +127,6 @@ export interface Overview {
   endpoints: Endpoint[];
   /** Certificates of measured hosts expiring within two weeks, or expired. */
   expiring: Certificate[];
-  /** Canary credentials expiring within two weeks, or already expired. */
   credentials: { componentId: string; expiresAt: string }[];
   activeIncidents: Incident[];
   resolvedIncidents: Incident[];
