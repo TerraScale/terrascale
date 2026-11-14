@@ -30,6 +30,7 @@ export async function rawSqlSocket(url: string, credential?: string) {
   const [response, socket, head] = await upgraded;
   expect(response.statusCode).toBe(101);
   const events = new EventEmitter();
+  const firstMessage = once(events, 'message');
   let closeFrame!: (event: { code: number; reason: string }) => void;
   const closing = new Promise<{ code: number; reason: string }>(resolve => { closeFrame = resolve; });
   const closed = new Promise<void>(resolve => socket.once('close', () => {
@@ -60,7 +61,7 @@ export async function rawSqlSocket(url: string, credential?: string) {
   });
 
   if (head.length > 0) socket.unshift(head);
-  return { socket: socket as Socket, closing, closed, events };
+  return { socket: socket as Socket, closing, closed, events, firstMessage };
 }
 
 export function pacedWrite(socket: Socket, bytes: Buffer, bytesPerSecond: number, chunkBytes: number): Promise<boolean> {
