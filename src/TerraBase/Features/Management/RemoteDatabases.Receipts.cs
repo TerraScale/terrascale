@@ -34,7 +34,7 @@ internal sealed partial class RemoteDatabases
             return response.StatusCode switch
             {
                 HttpStatusCode.NoContent => ReceiptDelivery.Recorded,
-                HttpStatusCode.NotFound or HttpStatusCode.Conflict => ReceiptDelivery.Refused,
+                HttpStatusCode.Conflict => ReceiptDelivery.Refused,
                 _ => ReceiptDelivery.Unavailable,
             };
         }

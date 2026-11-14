@@ -172,6 +172,14 @@ row/byte-limit rejection. Only the journey copy sends receipts; the product
 importer and handoff refusal path are unchanged in the driver. It adds no runtime
 product setting.
 
+The early-receipt case uses a unique database per invocation. It seeds an authorized
+holder before its regional writer has the purge record. It waits for the real maintenance sender's first delivery,
+checks that the writer retains live row 73 without storing unbound evidence,
+then installs the writer's authority. The same writer must record the receipt on
+a normal maintenance pass and complete backup erasure. R3 waits for the deleted
+restriction database's internal receipt status to settle on every node before
+measuring destination traffic; its zero-traffic assertions remain unchanged.
+
 The retained-receiver case uses isolated real driver nodes. Its source seeds a retained
 catalog record without enabling a production deletion feature. Repeated missing-registration
 sweeps must preserve the receiver's original row; restoring the source registration and

@@ -26,6 +26,7 @@ internal sealed partial class EngineManagementService
     private readonly Counter<long> _purgeErrors = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.purge.errors");
     private readonly ConcurrentDictionary<(string Database, DateTimeOffset RequestedAt), byte> _skippedPurges = new();
     private readonly ConcurrentDictionary<(string Database, DateTimeOffset RequestedAt), string> _deliveredReceipts = new();
+    private readonly ConcurrentDictionary<(string Database, DateTimeOffset RequestedAt), string> _refusedReceipts = new();
     private readonly ConcurrentDictionary<(string Database, DateTimeOffset RequestedAt), string> _receiptWaits = new();
     private long _receiptsUndelivered;
     private long _receiptsPassUndelivered;
@@ -254,7 +255,8 @@ internal sealed partial class EngineManagementService
         }
 
         var writer = $"{owner.Node}@{owner.Epoch}";
-        if (_deliveredReceipts.TryGetValue(key, out var delivered) && delivered == writer)
+        if (_deliveredReceipts.TryGetValue(key, out var delivered) && delivered == writer
+            || _refusedReceipts.TryGetValue(key, out var refused) && refused == writer)
         {
             return;
         }
@@ -275,7 +277,7 @@ internal sealed partial class EngineManagementService
                 logger.ZLogInformation($"Erasure receipt of database {id:@Database} recorded by regional writer {owner.Node:@Writer} at epoch {owner.Epoch:@Epoch}");
                 break;
             case ReceiptDelivery.Refused:
-                _deliveredReceipts[key] = writer;
+                _refusedReceipts[key] = writer;
                 _ = _receiptWaits.TryRemove(key, out _);
                 logger.ZLogWarning($"Regional writer {owner.Node:@Writer} at epoch {owner.Epoch:@Epoch} refused the erasure receipt of database {id:@Database}: its purge record does not name this node for the same deletion; the receipt is offered again when the writer changes");
                 break;
@@ -312,13 +314,13 @@ internal sealed partial class EngineManagementService
 
         return await WriteAsync<PeerReceiptAnswer>(async transaction =>
         {
-            if (await GetAsync(transaction, DatabasePurge.Kind, id, ManagementJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false) is not { FormatVersion: 1 } purge
-                || !DatabasePurge.SameDatabase(purge.Database, receipt.Database))
+            var purge = await GetAsync(transaction, DatabasePurge.Kind, id, ManagementJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
+            if (purge is null)
             {
                 return PeerReceiptAnswer.Unknown;
             }
 
-            if (!purge.ExpectedHolders.Contains(receipt.MachineId, StringComparer.Ordinal) || !receipt.Binds(purge, receipt.MachineId))
+            if (purge.FormatVersion != 1 || !purge.ExpectedHolders.Contains(receipt.MachineId, StringComparer.Ordinal) || !receipt.Binds(purge, receipt.MachineId))
             {
                 return PeerReceiptAnswer.Unbound;
             }
@@ -333,7 +335,31 @@ internal sealed partial class EngineManagementService
             return PeerReceiptAnswer.Recorded;
         }, static _ => PeerReceiptAnswer.NotWriter, cancellationToken).ConfigureAwait(false);
     }
+
+    internal ValueTask<PurgeReceiptStatus> PurgeReceiptStatusAsync(string id, CancellationToken cancellationToken) =>
+        ReadAsync<PurgeReceiptStatus>(async transaction =>
+        {
+            var purge = await GetAsync(transaction, DatabasePurge.Kind, id, ManagementJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
+            if (purge is not { FormatVersion: 1 })
+            {
+                return new(false, false);
+            }
+
+            if (regionalOwners.Writer)
+            {
+                return new(true, await DatabasePurge.AreActiveCopiesAbsentAsync(transaction, purge, cancellationToken).ConfigureAwait(false));
+            }
+
+            var owner = regionalOwners.Find(options.Region);
+            var key = (id, purge.RequestedAt);
+            var writer = owner is null ? null : $"{owner.Node}@{owner.Epoch}";
+            var settled = writer is not null && (_deliveredReceipts.TryGetValue(key, out var delivered) && delivered == writer
+                || _refusedReceipts.TryGetValue(key, out var refused) && refused == writer);
+            return new(true, !purge.ExpectedHolders.Contains(options.MachineId, StringComparer.Ordinal) || settled);
+        }, static _ => new(false, false), cancellationToken);
 }
+
+internal sealed record PurgeReceiptStatus(bool Known, bool Settled);
 
 internal enum PeerReceiptAnswer
 {

@@ -25,7 +25,10 @@ region's writer, its purge pass (every 2 s) sends that receipt to the writer's i
 (`PUT /v1/sync/purge-receipts`). The writer records it only when its own purge record names that holder for the same
 deletion (`404` for an unknown purge, `409` for another holder or deletion, `503` on a machine that is not the writer).
 The holder sends each receipt once to each writer and epoch, so a planned drain and an unplanned writer change both
-lead to one more delivery. While no writer is known or the writer does not answer, the receipt waits in the holder's
+lead to one more delivery. A 404 means authority has not arrived yet: the writer stores no receipt and authorizes
+no deletion, and the holder offers its durable receipt again on the normal pass. Only a 409 is a definitive refusal
+for that writer and epoch. Successful delivery and definitive refusal have separate caches.
+While no writer is known or the writer does not answer, the receipt waits in the holder's
 catalog and every pass offers it again; `terrabase_purge_receipts_undelivered` counts those receipts, and a warning
 names the database and the cause (`no_writer`, `writer_unknown`, `writer_unavailable`) once per writer and cause.
 

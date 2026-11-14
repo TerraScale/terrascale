@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using TerraBase.Engine;
 using TerraBase.Features.Management;
+using TerraBase.Features.Backup;
 using TerraBase.Features.Replicas;
 using TerraBase.Tenancy;
 using TerraBase.Primitives;
@@ -136,7 +137,11 @@ internal static class ReceiptImportProof
             Console.WriteLine("RECEIPT_NODE started");
             while (await Console.In.ReadLineAsync(cancellationToken) is { } command && command != "stop")
             {
-                if (command.StartsWith("stage ", StringComparison.Ordinal))
+                if (command.StartsWith("early-", StringComparison.Ordinal))
+                {
+                    await EarlyReceiptAsync(app, command, cancellationToken);
+                }
+                else if (command.StartsWith("stage ", StringComparison.Ordinal))
                 {
                     await SeedAsync(engine, command[6..], cancellationToken);
                 }
@@ -177,6 +182,60 @@ internal static class ReceiptImportProof
         {
             await app.StopAsync(CancellationToken.None);
         }
+    }
+
+    private static async Task EarlyReceiptAsync(WebApplication app, string command, CancellationToken token)
+    {
+        var engine = app.Services.GetRequiredService<IStorageEngine>();
+        var database = Database with { DatabaseId = Environment.GetEnvironmentVariable("E2E_RECEIPT_DATABASE")
+            ?? throw new InvalidOperationException("early receipt database missing") };
+        var kind = DatabasePurge.Receipts(database.DatabaseId!);
+        if (command == "early-erasure")
+        {
+            var backup = app.Services.GetRequiredService<DatabaseBackupPurge>();
+            await backup.RunOnceAsync(token);
+            await backup.RunOnceAsync(token);
+            await using var read = await (await engine.OpenSystemDatabaseAsync(token)).BeginTransactionAsync(false, token);
+            var purge = await SystemCatalog.GetAsync(read, DatabasePurge.Kind, database.DatabaseId!, ManagementJsonContext.Default.DatabasePurgeRecord, token);
+            Require(purge?.BackupVerifiedAt is not null, "early receipt did not complete backup erasure");
+            return;
+        }
+
+        if (command is "early-live" or "early-absent")
+        {
+            if (command == "early-live")
+            {
+                Require(await engine.CreateDatabaseAsync(database, token), "receipt ordering database was not created");
+            }
+            var store = await engine.OpenDatabaseAsync(database, token) ?? throw new InvalidOperationException("receipt ordering database missing");
+            await using var data = await store.BeginDurableTransactionAsync(token);
+            if (command == "early-live")
+            {
+                _ = await data.ExecuteStatementAsync(Sql("CREATE TABLE receipt_ordering (value INTEGER)"), token);
+                _ = await data.ExecuteStatementAsync(Sql("INSERT INTO receipt_ordering VALUES (73)"), token);
+                await data.CommitAsync(token);
+            }
+            else
+            {
+                var rows = await data.ExecuteStatementAsync(Sql("SELECT value FROM receipt_ordering"), token);
+                Require(rows.Rows.Count == 1 && rows.Rows[0][0] is long value && value == 73, "an early receipt deleted live data without authority");
+                await using var read = await (await engine.OpenSystemDatabaseAsync(token)).BeginTransactionAsync(false, token);
+                Require(await read.GetAsync(DatabasePurge.Kind, database.DatabaseId!, token) is null
+                    && (await read.ListAsync(kind, null, 10, 8192, token)).Records.Count == 0,
+                    "an early receipt stored unbound deletion evidence");
+            }
+            return;
+        }
+
+        var holder = command[command.IndexOf(' ')..].Trim();
+        await using var transaction = await (await engine.OpenSystemDatabaseAsync(token)).BeginDurableTransactionAsync(token);
+        var record = Purge with { Database = database, ExpectedHolders = [holder] };
+        await SystemCatalog.PutAsync(transaction, DatabasePurge.Kind, database.DatabaseId!, record, ManagementJsonContext.Default.DatabasePurgeRecord, token);
+        if (command.StartsWith("early-holder ", StringComparison.Ordinal))
+        {
+            await SystemCatalog.PutAsync(transaction, kind, holder, PurgeReceipt with { Database = database, MachineId = holder }, ManagementJsonContext.Default.DatabasePurgeReceipt, token);
+        }
+        await transaction.CommitAsync(token);
     }
 
     private static async Task SeedAsync(IStorageEngine engine, string name, CancellationToken cancellationToken)

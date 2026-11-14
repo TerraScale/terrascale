@@ -17,6 +17,7 @@ import { newAddress } from '../support/inbox';
 import { forgedHeaders, issueKey, sourceRefusals, unanswered } from './forwarding';
 import { createApiKey } from '../support/paid';
 import { signInToken } from '../support/auth-management';
+import { nodeRequest } from '../fault/support';
 
 test.skip(production || process.env.E2E_REGIONS !== '2', 'placement requires the local stack started with E2E_REGIONS=2');
 test.describe.configure({ mode: 'default', timeout: 180_000 });
@@ -183,6 +184,16 @@ test('R3 replace: authorization ends at the source before discovery or connectio
   const databaseKey = await issueKey(current.organizationId, current.projectId, restricted.id);
   const projectKey = await issueKey('00000000000000000000000001', '00000000000000000000000002');
   await removeDatabase(cells, restricted.id);
+  const holders = readFileSync(join(stateDir, 'peers'), 'utf8').trim().split('\n').map(line => {
+    const [name, , address] = line.split(' ');
+    return { name, address };
+  });
+  await expect.poll(async () => Promise.all(holders.map(async holder => {
+    const response = await nodeRequest(holder, '/v1/sync/purge-receipts/' + restricted.id);
+    expect(response.status, response.body).toBe(200);
+    return JSON.parse(response.body) as { known: boolean; settled: boolean };
+  })), { message: 'the restricted database erasure receipts have settled at every current regional writer' })
+    .toEqual(holders.map(() => ({ known: true, settled: true })));
   const created = await named(cells, replica, name('source-auth'), ['fra'], current.projectId);
   try {
     await sourceRefusals(cells, request, page, created.id, { project: projectKey, database: databaseKey });
