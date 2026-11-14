@@ -166,10 +166,16 @@ export async function writerToken(request: APIRequestContext): Promise<string> {
   return grant.access_token;
 }
 
+const signInReuse = 120_000;
+let signedIn: { token: string; at: number } | undefined;
+
 export async function signIn(): Promise<string> {
+  if (signedIn && Date.now() - signedIn.at < signInReuse) return signedIn.token;
+  const at = Date.now();
   const context = await addressedRequest.newContext({ storageState: ownerSession() });
   try {
-    return await signInToken(context, 'fault-sign-in');
+    signedIn = { token: await signInToken(context, 'fault-sign-in'), at };
+    return signedIn.token;
   } finally {
     await context.dispose();
   }
