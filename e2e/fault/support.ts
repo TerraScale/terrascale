@@ -7,7 +7,7 @@ import { request } from 'node:http';
 import { connect } from 'node:http2';
 import { createConnection } from 'node:net';
 import { join } from 'node:path';
-import { expect, request as apiRequest, type APIRequestContext } from '@playwright/test';
+import { expect, test, request as apiRequest, type APIRequestContext } from '@playwright/test';
 import { database, json, sql, type Cells } from '../placement/support';
 import { keyId } from '../support/api-key';
 import { auth, r2StandIn, stateDir } from '../support/stack';
@@ -29,7 +29,7 @@ export const node = (name: string) => nodes.find(candidate => candidate.name ===
 
 export type Node = typeof nodes[number];
 type NodeStatus = { node: string; owner: string; epoch: number; writer: boolean; ready: boolean; session: string; unserved?: Unserved[] | null; kept?: KeptCopy[] | null;
-  fenced?: FencedDatabase[] | null };
+  fenced?: FencedDatabase[] | null; unready?: string | null };
 export type Row = [number, string];
 export const regions = ['gru', 'fra'] as const;
 export const endpoint = (region: string) => `https://${region}.api.terrascale.tech`;
@@ -263,11 +263,24 @@ export class Kv {
   }
 }
 
+export async function cleanUp(failure: unknown, cleanup: () => Promise<void>): Promise<void> {
+  try {
+    await cleanup();
+  } catch (error) {
+    if (failure === undefined) throw error;
+    await test.info().attach('cleanup error after the case failed', {
+      body: error instanceof Error ? error.stack ?? error.message : String(error),
+      contentType: 'text/plain',
+    });
+  }
+}
+
 export async function topology(): Promise<Node[]> {
   const writers: Node[] = [];
   for (const node of nodes) {
-    const status = await nodeStatus(node);
-    expect(status).toMatchObject({ node: node.name, ready: true });
+    let status = await nodeStatus(node);
+    await expect.poll(async () => (status = await nodeStatus(node)), { message: `${node.name} is ready before the case starts` })
+      .toMatchObject({ node: node.name, ready: true });
     expect(nodes.filter(peer => peer.region === node.region).map(peer => peer.name)).toContain(status.owner);
     if (status.writer) {
       expect(status.owner).toBe(node.name);
