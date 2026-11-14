@@ -1,0 +1,10 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Data.DataPage>
+@using TerraScale.Dashboard.Features.Data
+@using System.Text.Json
+<div id="sql-output" class="ts-stack-lg" data-init="@(Model.RunUrl.Length > 0 ? "history.replaceState(history.state, '', " + JsonSerializer.Serialize(Model.RunUrl) + ")" : "void 0")">
+@if(Model.Error.Length > 0){<div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p></div>}
+@if(Model.SqlNotice.Length > 0){<div class="ts-alert ts-alert-warning" role="status" data-sql-notice><p class="ts-alert-body">@Model.SqlNotice</p></div>}
+@if(Model.FormError.Length > 0 && Model.Dialog.Length==0){<div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-title">@(Model.FormError.StartsWith("SQL outcome unknown", StringComparison.Ordinal) ? "Outcome unknown" : "Query failed")</p><p class="ts-alert-body">@Model.FormError</p></div><p class="ts-meta">Request ID: <code>@RequestIdentity.Id</code> · <a href="@("/support?relatedRequestId=" + RequestIdentity.Id)">Contact support</a></p>
+}else if(Model.Analysis.Ok){@(await RenderPartialAsync<SqlAnalysisCard,DataPage>(Model))}else if(!string.IsNullOrEmpty(Model.Analysis.Error) && Model.Sql.Trim().Length > 0){<div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Analysis.Error</p></div>}
+@if(Model.SqlResult is not null){@(await RenderPartialAsync<SqlResultView,DataPage>(Model))}
+</div>

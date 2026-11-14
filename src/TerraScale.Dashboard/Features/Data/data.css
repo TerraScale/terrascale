@@ -107,29 +107,9 @@
   }
 }
 
-/* SQL console: editor and results beside the saved queries. */
-.ts-data-sql-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
-  align-items: start;
-  gap: var(--ts-s10);
-}
-
-.ts-data-queries {
-  display: grid;
-  list-style: none;
-}
-
-.ts-data-queries > li {
-  display: flex;
-  align-items: center;
-  gap: var(--ts-s2);
-  padding: var(--ts-s3) 0;
-  border-top: 1px solid var(--ts-line);
-}
-
 .ts-data-query {
   display: grid;
+  text-decoration: none;
   flex: 1;
   gap: 2px;
   min-width: 0;
@@ -140,25 +120,19 @@
   text-decoration: none;
 }
 
-.ts-data-query:hover > .ts-strong {
+.ts-data-query:hover > .ts-rows-title {
   color: var(--ts-link);
 }
 
 .ts-data-query > code {
   overflow: hidden;
+  border: 0;
   padding: 0;
   background: none;
   color: var(--ts-ink-3);
   font-size: var(--ts-fs-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-@media (max-width: 79.99rem) {
-  .ts-data-sql-grid {
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--ts-s6);
-  }
 }
 
 /* Query results: one row per result row and one column per field. The table
@@ -205,19 +179,18 @@
   color: var(--ts-ink-3);
 }
 
-/* The SQL console's run history sits at the start of its actions. */
 .ts-data-sql-history {
-  width: auto;
+  min-width: 0;
   max-width: 18rem;
   margin-right: auto;
 }
 
-.ts-data-sql-side {
-  min-width: 0;
+.ts-data-sql-history .ts-select {
+  width: 100%;
 }
 
-.ts-data-sql-grid #sql-editor .ts-form-actions > [commandfor="save-query"] {
-  margin-left: auto;
+.ts-data-sql-toolbar {
+  flex-wrap: wrap;
 }
 
 .ts-data-nav .ts-input-group > svg {
@@ -233,4 +206,8 @@
   width: 100%;
   padding-left: calc(var(--ts-s3) + 22px);
   padding-right: var(--ts-s3);
+}
+
+.ts-data-sql #saved-queries .ts-rows > li {
+  grid-template-columns: minmax(0, 1fr) auto;
 }
