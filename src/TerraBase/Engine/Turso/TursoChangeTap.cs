@@ -350,7 +350,7 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
         }
 
         var changed = bytes > 0;
-        var witnessAfter = changed ? started.ToUnixTimeSeconds() + 1 : _witnessAfter;
+        var witnessAfter = changed ? _time.GetUtcNow().ToUnixTimeSeconds() + 1 : _witnessAfter;
         DateTimeOffset? mark = null;
         if (after == end && (changed || started.ToUnixTimeSeconds() >= witnessAfter))
         {

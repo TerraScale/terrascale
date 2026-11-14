@@ -183,7 +183,8 @@ transaction. The backup's tap reads that table:
    newest COMMIT row that existed when it started (not a read stopped at 32 MiB), a read mark follows them with that
    start time: every transaction committed before it is in the log before the mark. Both records are additive: the
    object format, the bucket layout and older logs (plain commits only) stay readable. After a read appends changes,
-   the first caught-up read starting in a later whole second appends one more read mark, even without another change.
+   the first caught-up read starting after that read's completion second appends one more read mark, even without
+   another change.
    That witness closes the last transaction's second so every acknowledged write can be restored without a later write.
    Reopening or rewinding the tap also schedules one witness after the current second. Once caught up and witnessed,
    an idle tap appends nothing until another change arrives.
