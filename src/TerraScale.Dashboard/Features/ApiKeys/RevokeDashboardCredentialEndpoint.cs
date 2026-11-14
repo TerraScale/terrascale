@@ -44,7 +44,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
 
             try { await ApiKeyPages.RecordRevokeAsync(http, context, accounts, keys, form["keyId"].ToString()); }
             catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.WantsHtml(http) ? await ApiKeyPages.PageAsync(http, context, keys, databases, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error)) : DatabaseEndpoints.Failure(error); }
-            return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther("/api-keys" + http.Request.QueryString) : Results.NoContent();
+            return await ApiKeyResults.RevokedAsync(http, context, keys, databases);
         }
     }
 }

@@ -219,11 +219,6 @@
   display: none;
 }
 
-.ts-spending-form {
-  display: grid;
-  gap: var(--ts-s3);
-}
-
 .ts-spending-control {
   display: flex;
   flex-wrap: wrap;

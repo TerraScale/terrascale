@@ -438,7 +438,7 @@ export const dashboardStates: readonly PageState[] = [
     name: 'usage',
     url: () => '/usage',
     covers: { path: /^\/usage$/ },
-    heading: title('By project', 2),
+    heading: title('Usage'),
     data: async (page, journey) => {
       await expect(page.locator('#usage-allowance-title')).toHaveText('Free plan allowance');
       await expect(page.locator('main')).toContainText(journey.projectName);
@@ -448,7 +448,7 @@ export const dashboardStates: readonly PageState[] = [
     name: 'usage of the project',
     url: (journey) => `/usage?tab=overview&project=${journey.projectId}&database=`,
     covers: { path: /^\/usage$/, query: { tab: /^overview$/, project: id, database: optionalId } },
-    heading: title('By database', 2),
+    heading: title('Usage'),
     data: async (page, journey) => {
       await expect(page.locator('#usage-allowance-title')).toHaveText('Free plan allowance');
       await expect(page.locator('main')).toContainText(journey.databaseName);

@@ -1,10 +1,11 @@
 using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Features.Billing;
+using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard.Features.Usage
 {
-    public sealed class SpendingCapEndpoint(DashboardSessions sessions, AccountService accounts, SpendingService spending) : EndpointWithoutRequest<IResult>
+    public sealed class SpendingCapEndpoint(DashboardSessions sessions, AccountService accounts, SpendingService spending, UsageService usage) : EndpointWithoutRequest<IResult>
     {
         public override void Configure() => Post("/api/v1/dashboard/usage/spending-cap");
 
@@ -30,12 +31,27 @@ namespace TerraScale.Dashboard.Features.Usage
 
             if (!SpendingForm.TryParse(form, out var capCents))
             {
-                return HttpRedirects.SeeOther("/usage?tab=settings&saved=invalid");
+                return await SavedAsync(http, sessions, accounts, usage, "invalid");
             }
 
             try { await spending.SetCapAsync(context, capCents, http.RequestAborted); }
             catch (AccountAccessException error) { return Results.Text(error.Message, statusCode: error.StatusCode); }
-            return HttpRedirects.SeeOther("/usage?tab=settings&saved=ok");
+            return await SavedAsync(http, sessions, accounts, usage, "ok");
+        }
+
+        private static async Task<IResult> SavedAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, UsageService usage, string saved)
+        {
+            if (http.Request.Headers["Datastar-Request"] != "true")
+            {
+                return HttpRedirects.SeeOther("/usage?tab=settings&saved=" + saved);
+            }
+
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts) ?? throw new AccountAccessException("Sign in again.");
+            var tab = http.Request.Query["tab"].ToString() == "overview" ? "overview" : "settings";
+            var selection = UsageSelection.For(context, http.Request.Query["project"].ToString(), http.Request.Query["database"].ToString(), http.Request.Query["range"].ToString());
+            var page = await usage.LoadAsync(ShellModel.For(http, selection.Context, "Usage"), selection, tab, saved, http.RequestAborted);
+            await DatastarEvents.PatchElementsAsync(http, UsagePageView.Create(page));
+            return Results.Empty;
         }
     }
 }
