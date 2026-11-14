@@ -177,8 +177,9 @@ internal sealed partial class UsageMeter
             {
                 var database = entries.Key;
 
-                if (await EngineManagementService.DatabaseTenantUncheckedAsync(
-                    transaction, database.OrganizationId, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false) is null)
+                if (await CatalogTables.RetiredAsync(transaction, database.OrganizationId, cancellationToken).ConfigureAwait(false)
+                    || await CatalogTables.RetiredAsync(transaction, database.ProjectId, cancellationToken).ConfigureAwait(false)
+                    || await CatalogTables.RetiredAsync(transaction, database.DatabaseId, cancellationToken).ConfigureAwait(false))
                 {
                     dropped++;
                     foreach (var granularity in UsageWindow.Granularities)

@@ -3,6 +3,7 @@ import { once } from 'node:events';
 import { closeSync, mkdtempSync, openSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect } from '@playwright/test';
+import { nodeRequest } from '../fault/support';
 import { stateDir } from '../support/stack';
 
 export type RegionProcess = { region: string; endpoint: string; stop(): Promise<void> };
@@ -23,11 +24,11 @@ export async function startRegion(region: string, index: number): Promise<Region
   execFileSync('mkfifo', [gate]);
   const log = join(directory, 'node.log');
   const output = openSync(log, 'w', 0o600);
-  const node = spawn('nice', ['-n', '19', 'unshare', '--net', 'bash', '-c',
+  const node = spawn('unshare', ['--net', 'bash', '-c',
     'read -r ready < "$1"; exec dotnet "$2"', 'region', gate, join(process.env.E2E_BUILD!, 'terrabase', 'terrabase.dll')], {
     env: {
       ...environment, TS_REGION: region, TS_NODE: `journey-extra-${region}`,
-      TERRABASE_DATA_DIRECTORY: join(directory, 'data'),
+      TERRABASE_DATA_DIRECTORY: join(stateDir, 'namespace', `region-data-${region}`),
       TERRABASE_PORT: String(port), TERRABASE_METRICS_PORT: String(9391 + index * 100),
       TERRABASE_POSTGRES_PORT: String(6732 + index * 100),
     },
@@ -56,10 +57,14 @@ export async function startRegion(region: string, index: number): Promise<Region
     inside('ip', ['route', 'add', 'default', 'via', `10.228.${index}.1`]);
     inside('sysctl', ['-qw', 'net.ipv4.conf.all.route_localnet=1', 'net.ipv4.ip_nonlocal_bind=1']);
     writeFileSync(gate, 'ready\n');
-    await expect.poll(() => {
+    await expect.poll(async () => {
       expect(node.exitCode, `${region} stays running`).toBeNull();
-      return readFileSync(log, 'utf8').includes('Application started.');
-    }, { message: `${region} opens its real listeners` }).toBe(true);
+      if (!readFileSync(log, 'utf8').includes('Application started.')) return null;
+      const response = await nodeRequest({ name: `journey-extra-${region}`, address }, '/v1/rollout/status');
+      expect(response.status, response.body).toBe(200);
+      return JSON.parse(response.body) as { node: string; owner: string; writer: boolean; ready: boolean };
+    }, { message: `${region} is ready to serve as its regional writer` })
+      .toMatchObject({ node: `journey-extra-${region}`, owner: `journey-extra-${region}`, writer: true, ready: true });
     return { region, endpoint, stop };
   } catch (error) {
     await stop();

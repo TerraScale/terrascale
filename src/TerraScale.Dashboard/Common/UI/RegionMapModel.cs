@@ -11,6 +11,7 @@ namespace TerraScale.Dashboard.Common.UI
         public string Key => Code.ToLowerInvariant();
         public string Title => Regions.Name(Code) is { Length: > 0 } known ? known : Name.Length > 0 ? Name : Key;
         public string Flag => Regions.Flag(Regions.Country(Code) is { Length: > 0 } known ? known : Country);
+        public string PingUrl => Regions.PingUrl(Code);
     }
 
     public sealed record RegionMapModel(string Id, RegionMapMode Mode, IReadOnlyList<RegionMapRegion> Regions, IReadOnlyList<string> Selected)
@@ -21,6 +22,7 @@ namespace TerraScale.Dashboard.Common.UI
         public string OrderField { get; init; } = "";
         public bool Exclusive { get; init; }
         public bool Bleed { get; init; }
+        public bool Pings { get; init; } = true;
         public string Minimum { get; init; } = "";
 
         public static RegionMapModel Select(string id, IEnumerable<string> regions, IEnumerable<string> selected)

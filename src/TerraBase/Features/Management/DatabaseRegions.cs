@@ -115,7 +115,7 @@ internal static class DatabaseRegions
         return app;
     }
 
-    internal static async Task ProxyAsync(HttpContext context, string region)
+    internal static async Task ProxyAsync(HttpContext context, string region, byte[]? body = null)
     {
         if (Listeners.IsForwarded(context))
         {
@@ -147,7 +147,7 @@ internal static class DatabaseRegions
             return;
         }
 
-        await HomeForwarding.ForwardAsync(context, target).ConfigureAwait(false);
+        await HomeForwarding.ForwardAsync(context, target, body).ConfigureAwait(false);
     }
 
     internal static async ValueTask<FindDatabaseRecordResult> RecordAsync(HttpContext context, string project, string database)
