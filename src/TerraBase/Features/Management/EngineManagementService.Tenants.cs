@@ -40,7 +40,7 @@ internal sealed partial class EngineManagementService
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), (long Sequence, ManagedDatabase? Record)> _records = new();
 
     private readonly Lock _planGate = new();
-    private readonly Dictionary<string, (Ulid Incarnation, long Sequence, PlanTier Plan)> _plans = [];
+    private readonly Dictionary<string, (Ulid Incarnation, long Sequence, bool Writer, PlanTier Plan)> _plans = [];
 
     private readonly ConcurrentDictionary<(string Organization, string Project, string DatabaseId), (long Sequence, DatabaseRecordResult Value)> _placements = new();
     private readonly ConcurrentDictionary<(string Organization, string Project, string DatabaseId), (long Sequence, RegisteredDatabaseResult Value)> _registrations = new();
@@ -547,17 +547,18 @@ internal sealed partial class EngineManagementService
         var store = await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
         var incarnation = store.Incarnation;
         var sequence = store.CommitSequence;
+        var writer = regionalOwners.Writer;
         lock (_planGate)
         {
-            if (Looked("plans", _plans.TryGetValue(organizationId, out var cached) && cached.Incarnation == incarnation && cached.Sequence == sequence))
+            if (Looked("plans", _plans.TryGetValue(organizationId, out var cached) && cached.Incarnation == incarnation && cached.Sequence == sequence && cached.Writer == writer))
             {
                 return cached.Plan;
             }
         }
 
-        var result = await ShareMissAsync("plan", (organizationId, incarnation.ToString(), ""), sequence, token => ReadAsync<TenantPlanResult>(async transaction =>
+        var result = await ShareMissAsync("plan", (organizationId, incarnation.ToString(), writer ? "writer" : ""), sequence, token => ReadAsync<TenantPlanResult>(async transaction =>
             Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, token).ConfigureAwait(false))
-                ? await AdmissionPlanAsync(transaction, organizationId, token).ConfigureAwait(false)
+                ? await AdmissionPlanAsync(transaction, organizationId, writer, token).ConfigureAwait(false)
                 : UnreadableCatalog,
             static error => error, token), cancellationToken).ConfigureAwait(false);
         if (result is PlanTier plan && store.Incarnation == incarnation && store.CommitSequence == sequence)
@@ -569,7 +570,7 @@ internal sealed partial class EngineManagementService
                     _plans.Clear();
                 }
 
-                _plans[organizationId] = (incarnation, sequence, plan);
+                _plans[organizationId] = (incarnation, sequence, writer, plan);
             }
         }
 

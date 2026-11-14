@@ -13,12 +13,11 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Regions;
 
-internal readonly union ForwardingAdmission(TenantContext, Done, NotFound, Forbidden, Unavailable);
+internal readonly union ForwardingAdmission(TenantContext, NotFound, Forbidden, Unavailable);
 
 internal static class ForwardingAuthorization
 {
     internal sealed class Refused;
-    internal sealed class ExecutorResolves;
     private sealed class Authorized;
     private static readonly string[] SqlScopes = [ApiKeyScopes.SqlRead];
 
@@ -84,7 +83,11 @@ internal static class ForwardingAuthorization
         {
             return DatabaseRoute.UnknownDatabase;
         }
-        return new Done();
+        return await tenants.PlanAsync(key.OrganizationId, cancellationToken).ConfigureAwait(false) switch
+        {
+            PlanTier plan => new TenantContext(key.OrganizationId, plan, project, canonical),
+            Unavailable unavailable => unavailable,
+        };
     }
 
     internal static async ValueTask<bool> CheckAsync(HttpContext context, CancellationToken cancellationToken)
@@ -132,23 +135,18 @@ internal static class ForwardingAuthorization
         }
         var result = await AuthorizeAsync(context.RequestServices, key, project, context.Request.RouteValues["database"] as string,
             socket ? SqlScopes : [], token?.Allowlists ?? [], IpAllowlists.ClientOf(context), cancellationToken).ConfigureAwait(false);
-        switch (result)
+        if (result is TenantContext tenant)
         {
-            case TenantContext tenant:
-                UsageRequestMetering.Attribute(context, tenant);
-                context.Features.Set(new Authorized());
-                return true;
-            case Done:
-                context.Features.Set(new ExecutorResolves());
-                context.Features.Set(new Authorized());
-                return true;
+            UsageRequestMetering.Attribute(context, tenant);
+            context.Features.Set(new Authorized());
+            return true;
         }
         return result switch
         {
             NotFound missing => await RefuseAsync(missing).ConfigureAwait(false),
             Forbidden forbidden => await RefuseAsync(forbidden).ConfigureAwait(false),
             Unavailable unavailable => await RefuseAsync(unavailable).ConfigureAwait(false),
-            TenantContext or Done => throw new InvalidOperationException("authorization was already handled"),
+            TenantContext => throw new InvalidOperationException("authorization was already handled"),
         };
 
         async ValueTask<bool> RefuseAsync(ForwardingAdmission failure)
@@ -158,7 +156,7 @@ internal static class ForwardingAuthorization
                 NotFound error => (ErrorResponse.From(error), error.Code, error.Message ?? "the database does not exist"),
                 Forbidden error => (ErrorResponse.From(error), error.Code, error.Message),
                 Unavailable error => (ErrorResponse.From(error), error.Code, error.Message),
-                TenantContext or Done => throw new InvalidOperationException("an authorized request cannot be refused"),
+                TenantContext => throw new InvalidOperationException("an authorized request cannot be refused"),
             };
             context.Features.Set(new Refused());
             if (context.Features.Get<HomeSocketRelay.BrowserConnection>() is { } browser)
