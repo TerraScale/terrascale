@@ -244,7 +244,7 @@ test('a move that fails before its commit point rolls back: the target acknowled
       expect(copies).toEqual([expect.objectContaining({ organizationId, projectId, databaseId: ledger.id })]);
       expect(copies[0].files).toContain(`${ledger.id}.db`);
       expect(copies[0].bytes).toBeGreaterThan(0);
-      expect(logged(target, 'Preserved a database copy', `"Database":"${ledger.id}"`, '"Reason":"move_rolled_back"'), 'the target logs why it preserved its copy').toBe(1);
+      await expect.poll(() => logged(target, 'Preserved a database copy', `"Database":"${ledger.id}"`, '"Reason":"move_rolled_back"'), { message: 'the target logs why it preserved its copy' }).toBe(1);
       await expect.poll(() => counted(target, 'terrabase_storage_retained_files'), { message: 'the retained inventory counts the preserved copy' })
         .toBeGreaterThanOrEqual(copies[0].files.length);
     });
@@ -299,7 +299,7 @@ test('a rollback keeps both copies in place until the lease names the old home a
       await kv.put(homes, `home.${ledger.id}`, { ...current.value, home: 'gru', node: 'journey-1', epoch: before.value.epoch + 2, session: '', adopted: null }, current.seq);
       await expect.poll(() => keptCopies(target, ledger.id), { message: 'the target sets its imported copy aside only now', timeout: 60_000 })
         .toEqual([expect.objectContaining({ databaseId: ledger.id })]);
-      expect(logged(target, 'Preserved a database copy', `"Database":"${ledger.id}"`, '"Reason":"move_rolled_back"'), 'the target logs why it preserved its copy').toBe(1);
+      await expect.poll(() => logged(target, 'Preserved a database copy', `"Database":"${ledger.id}"`, '"Reason":"move_rolled_back"'), { message: 'the target logs why it preserved its copy' }).toBe(1);
       expect(promoting(target, ledger.id), 'the promotion fence is lifted').toBe(false);
       expect(holdsFile(gru, before.value), 'the old home still holds its file').toBe(true);
       expect(await keptCopies(gru, ledger.id)).toEqual([]);
