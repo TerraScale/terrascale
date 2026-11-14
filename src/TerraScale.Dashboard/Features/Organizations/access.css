@@ -88,7 +88,7 @@
 }
 
 .ts-access-share-label > .ts-dot {
-  color: var(--tone);
+  background: var(--tone);
 }
 
 .ts-access-share-value {

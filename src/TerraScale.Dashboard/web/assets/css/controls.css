@@ -449,6 +449,46 @@ legend {
   font-weight: 600;
 }
 
+.ts-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-s2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.ts-chip {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.ts-chip > input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ts-chip > span {
+  padding: var(--ts-s1) var(--ts-s3);
+  border: 1px solid var(--ts-line-strong);
+  border-radius: var(--ts-radius);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-chip > input:checked + span {
+  border-color: var(--ts-accent);
+  background: var(--ts-accent-soft);
+  color: var(--ts-ink);
+}
+
+.ts-chip > input:focus-visible + span {
+  outline: var(--ts-ring);
+  outline-offset: 2px;
+}
+
 /* Filter forms: a wrapping row of compact labelled controls. */
 .ts-filters {
   display: flex;

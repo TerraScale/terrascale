@@ -37,7 +37,8 @@
 .ts-login-regions .ts-dot {
   width: 6px;
   height: 6px;
-  color: var(--ts-link);
+  background: var(--ts-link);
+  box-shadow: none;
 }
 
 /* Decorative auth aside; operational maps retain their shared component. */

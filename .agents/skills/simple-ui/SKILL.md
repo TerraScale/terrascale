@@ -25,6 +25,90 @@ description: TerraScale UI standard — simple purpose, architecture, design and
 - Accessibility: `aria-label`, `ts-sr-only` text, `<label>` and `<legend>`. Drop `aria-describedby` that pointed at removed hints.
 - Data itself (values, names, timestamps, code snippets the user copies).
 
+## Page layout
+
+Every dashboard page follows the same skeleton: header, stats strip, columns. The classes live in the shared CSS (`layout.css`, `surfaces.css`, `data.css`, `controls.css`), never in a feature stylesheet.
+
+1. **Page header**: title left, one primary action right. On database pages the header sits under the database tabs.
+
+   ```html
+   <header class="ts-page-header">
+     <h1 class="ts-page-title">Backups</h1>
+     <div class="ts-page-actions"><button class="ts-btn ts-btn-primary">Back up now</button></div>
+   </header>
+   ```
+
+2. **Stats strip** when the page has health or totals: 2 to 4 stats, label + value; `.ts-stat-meta` only for data (a time, a total), never captions.
+
+   ```html
+   <dl class="ts-stats" aria-label="Backup health">
+     <div class="ts-stat"><dt class="ts-stat-label">Last backup</dt><dd class="ts-stat-value">2 h ago</dd><dd class="ts-stat-meta">Succeeded · 03:00 UTC</dd></div>
+   </dl>
+   ```
+
+3. **Body**: `.ts-columns` with `.ts-columns-main` (the content the page is about) and `.ts-columns-side` (settings cards, storage, small forms). One-column pages skip it; the side column appears at 960px and up.
+
+   ```html
+   <div class="ts-columns">
+     <div class="ts-columns-main"><!-- restore points, main cards --></div>
+     <div class="ts-columns-side"><!-- schedule, storage --></div>
+   </div>
+   ```
+
+4. **Card**: title left in the header, actions right; optional footer with Save/Cancel right, primary last.
+
+   ```html
+   <section class="ts-card ts-card-boxed ts-card-flush">
+     <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title">Schedule</h2></div><div class="ts-card-actions"></div></header>
+     <div class="ts-card-body"></div>
+     <footer class="ts-card-foot"><button class="ts-btn ts-btn-secondary">Reset</button><button class="ts-btn ts-btn-primary">Save schedule</button></footer>
+   </section>
+   ```
+
+5. **Create**: "New X" is `ts-btn ts-btn-primary ts-btn-sm` in the card header actions (or the page header when the page is about one list), and the empty state repeats it.
+
+6. **Filters**: right side of the card header actions or a `.ts-toolbar`, inputs and button bottom-aligned; filters apply on change, so no Apply button; never `.ts-row` for a form.
+
+   ```html
+   <form class="ts-filters" method="get">
+     <select class="ts-select" data-on:change="el.form.requestSubmit()"></select>
+   </form>
+   ```
+
+7. **Lists**: `.ts-rows` for records with a status badge and one action on the right; `.ts-table` in `.ts-table-wrap` with the last column `.ts-table-actions` for wide data.
+
+   ```html
+   <ul class="ts-rows">
+     <li><span class="ts-dot" data-tone="success" aria-hidden="true"></span><div class="ts-stack-sm"><span class="ts-rows-title">Today, 03:00 UTC</span><span class="ts-rows-meta">Scheduled · full</span></div><span class="ts-badge ts-badge-success"><span class="ts-dot" aria-hidden="true"></span>Succeeded</span><span class="ts-rows-size">412 MB</span><div class="ts-rows-actions"><button class="ts-btn ts-btn-secondary ts-btn-sm">Restore…</button></div></li>
+   </ul>
+   <div class="ts-rows-more"><button class="ts-btn ts-btn-ghost ts-btn-sm">Show older restore points</button></div>
+   ```
+
+8. **Presets over codes**: `.ts-chips` for a choice of 2 to 6 options (schedule presets, retention), the raw value (e.g. the cron) read-only in `.ts-stat-meta`-style mono text, a "Custom" chip revealing the raw input.
+
+   ```html
+   <fieldset class="ts-chips">
+     <legend class="ts-label">Full backup</legend>
+     <label class="ts-chip"><input type="radio" name="schedule" value="daily" checked><span>Daily</span></label>
+     <label class="ts-chip"><input type="radio" name="schedule" value="weekly"><span>Weekly</span></label>
+   </fieldset>
+   ```
+
+9. **Empty state**: one sentence plus the create button.
+
+   ```html
+   <div class="ts-empty" role="status"><p class="ts-empty-title">No restore points yet.</p><button class="ts-btn ts-btn-primary ts-btn-sm">Back up now</button></div>
+   ```
+
+10. **Destructive**: `ts-btn-danger` trigger in the danger card or the row actions, always opening a dialog; the dialog's danger submit sits right in `.ts-dialog-footer`.
+
+11. **Saves do not reload the page**: forms post with Datastar and the endpoint answers with patched elements (pattern: `Features/Notifications/NotificationReadForm.cshtml`, `Features/Analytics/FilterMenuView.cshtml`). A full redirect only when the action leaves the page (delete, open another database).
+
+    ```html
+    <form method="post" action="/backups/schedule" data-on:submit="@post('/backups/schedule', {contentType:'form'})"></form>
+    ```
+
+
 ## DX and AX
 
 - Delete CSS classes, slice parameters and C# properties that only fed removed text; no dead code.
