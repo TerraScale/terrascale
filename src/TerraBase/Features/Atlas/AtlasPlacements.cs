@@ -29,7 +29,7 @@ internal sealed class NoAtlasPlacements : IAtlasPlacements
 }
 
 internal sealed class AtlasPlacementPublisher(
-    IHttpClientFactory http, ECDsa key, Uri atlasUrl, TimeProvider time, IMeterFactory meters, ILogger<AtlasPlacementPublisher> logger, SystemCatalog catalog, TerraBaseOptions options)
+    IHttpClientFactory http, ECDsa key, Uri atlasUrl, TimeProvider time, IMeterFactory meters, ILogger<AtlasPlacementPublisher> logger, Lazy<SystemCatalog> catalog, TerraBaseOptions options)
     : BackgroundService, IAtlasPlacements
 {
     internal const string HttpClientName = "atlas-publish";
@@ -50,7 +50,7 @@ internal sealed class AtlasPlacementPublisher(
         try
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10), time);
-            var queued = await catalog.WriteUncheckedAsync(async transaction =>
+            var queued = await catalog.Value.WriteUncheckedAsync(async transaction =>
             {
                 await EnqueueAsync(transaction, project, database, region, timeout.Token).ConfigureAwait(false);
                 return true;
@@ -113,12 +113,12 @@ internal sealed class AtlasPlacementPublisher(
         TenantContext? after = null;
         while (true)
         {
-            var page = await catalog.ReadUncheckedAsync(
+            var page = await catalog.Value.ReadUncheckedAsync(
                 async transaction => await CatalogTables.DatabasesHomedAsync(transaction, options.Region, options.Region, after, Batch, cancellationToken).ConfigureAwait(false),
                 cancellationToken).ConfigureAwait(false);
             foreach (var database in page)
             {
-                var queued = await catalog.WriteUncheckedAsync(async transaction =>
+                var queued = await catalog.Value.WriteUncheckedAsync(async transaction =>
                 {
                     var current = await CatalogTables.DatabaseAsync(transaction, database.ProjectId!, database.DatabaseId!, cancellationToken).ConfigureAwait(false);
                     if (current is not null && current.Home(options.Region) == options.Region)
@@ -146,7 +146,7 @@ internal sealed class AtlasPlacementPublisher(
     internal async Task RunOnceAsync(CancellationToken token)
     {
         var now = time.GetUtcNow();
-        var inventory = await catalog.ReadUncheckedAsync(async transaction =>
+        var inventory = await catalog.Value.ReadUncheckedAsync(async transaction =>
         {
             string? after = null;
             long pending = 0;
@@ -259,7 +259,7 @@ internal sealed class AtlasPlacementPublisher(
 
     private async Task RemoveAsync((string Id, AtlasPlacementWork Work)[] rows, bool published, CancellationToken token)
     {
-        _ = await catalog.WriteUncheckedAsync(async transaction =>
+        _ = await catalog.Value.WriteUncheckedAsync(async transaction =>
         {
             foreach (var item in rows)
             {
@@ -293,7 +293,7 @@ internal sealed class AtlasPlacementPublisher(
     private async Task RetryAsync((string Id, AtlasPlacementWork Work)[] rows, CancellationToken token)
     {
         var now = time.GetUtcNow().ToUnixTimeSeconds();
-        _ = await catalog.WriteUncheckedAsync(async transaction =>
+        _ = await catalog.Value.WriteUncheckedAsync(async transaction =>
         {
             foreach (var item in rows)
             {

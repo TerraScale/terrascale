@@ -1,5 +1,6 @@
 using System.Diagnostics.Metrics;
 using TerraBase.Configuration;
+using TerraBase.Features.Management;
 
 namespace TerraBase.Features.Atlas;
 
@@ -17,7 +18,7 @@ public static class AtlasExtensions
         services.AddSingleton(provider => new AtlasPlacementPublisher(
             provider.GetRequiredService<IHttpClientFactory>(), options.AtlasPublishKey!, options.AtlasUrl,
             provider.GetRequiredService<TimeProvider>(), provider.GetRequiredService<IMeterFactory>(),
-            provider.GetRequiredService<ILogger<AtlasPlacementPublisher>>(), provider.GetRequiredService<Management.SystemCatalog>(), options));
+            provider.GetRequiredService<ILogger<AtlasPlacementPublisher>>(), new Lazy<SystemCatalog>(provider.GetRequiredService<SystemCatalog>), options));
         services.AddSingleton<IAtlasPlacements>(provider => provider.GetRequiredService<AtlasPlacementPublisher>());
         services.AddHostedService(provider => provider.GetRequiredService<AtlasPlacementPublisher>());
         return services;

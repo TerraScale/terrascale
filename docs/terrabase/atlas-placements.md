@@ -51,8 +51,9 @@ Both or neither; one alone fails startup with
   Startup exports the private parameters and verifies the P-256 curve OID; public-only,
   unreadable and other-curve keys fail with the configuration error naming this setting.
 
-With neither set, nothing is registered and TerraBase behaves exactly as without this
-feature.
+With neither set, the no-op placement service is registered and no publisher runs.
+With both set, the publisher resolves the system catalog lazily after management
+construction, avoiding a cycle through the catalog guard.
 
 ## Metrics
 
