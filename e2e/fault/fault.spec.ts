@@ -531,14 +531,19 @@ test('a deletion whose holder hands the writer role over before the new writer h
   test.setTimeout(300_000);
   const gru = node('journey-1');
   const partner = node('journey-3');
+  await restartAfterKill(partner, false)();
   const [ledger] = await createLedgers(cells, 1, 'holder-handoff');
   await removeDatabase(cells, ledger.id);
   const passed = (target: Node) => logged(target, 'Backup erasure of database', `"Database":"${ledger.id}"`, 'is verified')
     + logged(target, 'Backup erasure of database', `"Database":"${ledger.id}"`, '"Reason":"verification_pending"');
   let failure: unknown;
+  let handedOver = false;
   try {
+    const primed = await nodeRequest(partner, '/v1/rollout/prime?source=journey-1', 'POST');
+    expect(primed.status, 'journey-3, restarted after it last gave up the writer role, catches up before it takes it again').toBe(204);
     const drained = await nodeRequest(gru, '/v1/rollout/drain?target=journey-3', 'POST');
     expect(drained.status, drained.body).toBe(204);
+    handedOver = true;
     await writerIs('gru', 'journey-3');
     await expect.poll(() => passed(partner), {
       message: 'the new writer gets the erasure proof of journey-1, the holder that deleted the database, and its backup erasure goes past the active copies', timeout: 180_000,
@@ -552,6 +557,10 @@ test('a deletion whose holder hands the writer role over before the new writer h
     throw error;
   } finally {
     await cleanUp(failure, async () => {
+      if (!handedOver) return;
+      await restartAfterKill(gru, false)();
+      const caughtUp = await nodeRequest(gru, '/v1/rollout/prime?source=journey-3', 'POST');
+      expect(caughtUp.status, 'journey-1, restarted after it gave up the writer role, catches up before it takes it back').toBe(204);
       const back = await nodeRequest(partner, '/v1/rollout/drain?target=journey-1', 'POST');
       expect(back.status, back.body).toBe(204);
       await writerIs('gru', 'journey-1');
