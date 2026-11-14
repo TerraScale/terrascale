@@ -132,3 +132,21 @@ test('create, deploy, test run, edit and redeploy a function from the editor', a
   await expect(page.getByRole('definition').filter({ hasText: 'Cron */5 * * * * UTC' })).toBeVisible();
   console.log('Functions editor: invalid JavaScript stays in the editor, deploy, test run, invalid JSON, edit and redeploy with cron.');
 });
+
+test('a handler status is the test-run result', async ({ page }) => {
+  const current = journey();
+  const name = unique('status');
+  const source = 'async function handler() { return { status: 404, body: { missing: true } }; }';
+  await page.goto(`/databases/${current.databaseId}/functions?edit=new`);
+  await page.locator('#function-name').fill(name);
+  await setSource(page, source);
+  await page.getByRole('button', { name: 'Deploy function', exact: true }).click();
+  await page.waitForURL((url) => url.searchParams.get('function') === name && url.searchParams.get('deployed') === '1');
+  await page.getByRole('button', { name: 'Test run', exact: true }).click();
+  const result = page.locator('#function-result');
+  await expect(result).toContainText('404');
+  await expect(result).toContainText('application/json');
+  await expect(result).toContainText(/\{\s*"missing"\s*:\s*true\s*\}/);
+  await expect(page.locator('#function-event-error')).toHaveCount(0);
+  console.log('Functions test run: a handler 404 and its JSON body are the result.');
+});

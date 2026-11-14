@@ -174,18 +174,21 @@ namespace TerraScale.Dashboard.Features.Functions
                 }
 
                 var body = raw.Trim().Length == 0 ? "{}" : raw;
-                string result;
+                string result = "";
+                TerraBaseException? fault = null;
                 try
                 {
                     result = await functions.InvokeAsync(context, database, name, body, http.RequestAborted);
                 }
-                catch (TerraBaseException error) when (error.Status == 500)
+                catch (TerraBaseException error)
                 {
-                    result = error.Message;
+                    fault = error;
                 }
 
                 logs = await functions.LogsAsync(context, database, name, http.RequestAborted);
-                return View(http, context, database, items, selected, logs, runEvent: body, runResult: result);
+                return fault is null
+                    ? View(http, context, database, items, selected, logs, runEvent: body, runResult: result)
+                    : View(http, context, database, items, selected, logs, status: fault.Status, runEvent: body, runError: fault.Message);
             }
             catch (Exception error) when (KnownFailure(error, http))
             {
