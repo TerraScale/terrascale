@@ -1,5 +1,6 @@
+using TerraScale.Dashboard.Platform.Datastar;
+using TerraScale.Dashboard.Common.UI;
 using TerraScale.Endpoints;
-
 namespace TerraScale.Dashboard.Features.Backups
 {
     public sealed class ListBackupsEndpoint(DashboardSessions sessions, AccountService accounts, BackupService backups) : EndpointWithoutRequest<IResult>
@@ -20,6 +21,15 @@ namespace TerraScale.Dashboard.Features.Backups
                 var (limit, after) = CursorPaging.Read(http.Request);
                 var id = http.Request.Query["databaseId"].ToString();
                 var slice = await backups.ListPageAsync(context, id, after.Length == 0 ? null : after, limit, http.RequestAborted);
+                if (http.Request.Headers["Datastar-Request"] == "true")
+                {
+                    http.Response.Headers["datastar-selector"] = "#restore-points-list";
+                    http.Response.Headers["datastar-mode"] = "append";
+                    var database = DatabaseService.Database(context, id);
+                    await DatastarEvents.PatchElementsAsync(http, RestorePointsView.Create(new(ShellModel.For(http, context, database.Name + " · Backups"), database, "", "", "", slice.Items, slice.NextCursor)));
+                    return Results.Empty;
+                }
+
                 return Results.Json(new BackupRestList(slice.Policy, slice.Items, slice.NextCursor, slice.HasMore, limit));
             }
             catch (Exception error) when (BackupEndpoints.KnownFailure(error) &&

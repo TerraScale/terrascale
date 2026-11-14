@@ -196,7 +196,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
             if (tool == "create_backup")
             {
                 var backup = await backups.CreateAsync(scope, region, databaseId, ct);
-                return Reply(new BackupView(backup.Id, backup.Status, backup.CreatedAt, backup.SizeBytes), McpAgentJson.Default.BackupView);
+                return Reply(new BackupView(backup.Id, backup.Status, backup.Trigger, backup.CreatedAt, backup.SizeBytes), McpAgentJson.Default.BackupView);
             }
             if (tool == "get_restore_status")
             {

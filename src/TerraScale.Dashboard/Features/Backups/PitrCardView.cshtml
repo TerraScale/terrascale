@@ -1,0 +1,46 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Backups.PitrCardModel>
+@using TerraScale.Dashboard.Features.Backups
+@using TerraScale.Dashboard.Features.Databases
+@{ var recovery = Model.Recovery; var window = recovery.Available?.Window; var canManage = Model.Shell.Context.CanManage && Model.Database.Status == "ready"; }
+<section class="ts-card ts-backups-pitr" id="pitr-card" aria-labelledby="pitr-card-title">
+<header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="pitr-card-title">Restore to a point in time</h2></div>
+@if(Model.HasBucket){<div class="ts-card-actions"><form method="get" action="@DatabaseService.Path(Model.Database.Id, "backups")" data-on:change="el.requestSubmit()" data-on:submit="evt.preventDefault(); @@get(el.action + '?pitr=' + encodeURIComponent(el.elements['pitr-source-select'].value), {contentType:'form'})"><select class="ts-select" id="pitr-source-select" name="pitr" aria-label="Backup source"><option value="platform" selected="@(recovery.Destination == "platform" ? "selected" : null)">TerraScale storage</option><option value="customer" selected="@(recovery.Destination == "customer" ? "selected" : null)">Your bucket</option></select></form></div>}
+</header>
+<div class="ts-card-body ts-stack-lg">
+@if(recovery.Error.Length > 0){<div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@recovery.Error</p></div>}
+@if(!canManage){<p class="ts-meta">Requires organization management access.</p>}
+else if(window is null){<div class="ts-empty" role="status"><p class="ts-empty-title">No retained point-in-time history for this source yet.</p></div>}
+else{
+var start = window.Earliest; var end = window.Latest; var span = end - start; var selected = Model.Selected(start, end);
+string At(DateTimeOffset instant) => Math.Clamp((instant - start).TotalMilliseconds / span.TotalMilliseconds * 100, 0, 100).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+<div class="ts-backups-window">
+<button type="button" class="ts-backups-track" id="pitr-track" data-start="@start.ToString("O", System.Globalization.CultureInfo.InvariantCulture)" data-end="@end.ToString("O", System.Globalization.CultureInfo.InvariantCulture)" aria-label="Choose a restore time between @BackupHealth.Utc(start) and @BackupHealth.Utc(end)"><span class="ts-backups-bar" aria-hidden="true"></span>@foreach(var point in Model.Points){<span class="ts-backups-tick @(point.Trigger == "scheduled" ? "ts-backups-tick-full" : "")" style="--at:@(At(point.CreatedAt))%" aria-hidden="true"></span>}<span class="ts-backups-cursor" style="--at:@(At(selected))%" aria-hidden="true"></span></button>
+<div class="ts-backups-axis ts-mono" aria-hidden="true">@foreach(var label in Model.Axis(start, end)){<span>@label</span>}</div>
+</div>
+<form method="post" action="@("/databases/" + Model.Database.Id + "/point-in-time")" class="ts-filters" data-on:submit="evt.preventDefault(); @@post(el.action, {contentType:'form', headers:{'Datastar-Request':'true'}})">
+<input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
+<input type="hidden" name="operation" value="plan" />
+<input type="hidden" name="destination" value="@recovery.Destination" />
+<div class="ts-field"><label class="ts-label" for="pitr-point">Time (UTC)</label><input class="ts-input ts-mono" id="pitr-point" name="point" type="datetime-local" step="1" value="@RecoveryPoint.Input(selected)" required /></div>
+<div class="ts-field"><label class="ts-label" for="pitr-name">New database name</label><input class="ts-input ts-mono" id="pitr-name" name="name" value="@recovery.Name" pattern="@DatabaseService.NameInputPattern" title="@DatabaseService.NameHint" placeholder="@(Model.Database.Name + "-restore")" maxlength="63" /></div>
+<button class="ts-btn ts-btn-secondary" type="submit">Preview</button>
+</form>
+@if(recovery.Plan is { } plan){
+<section aria-labelledby="pitr-plan-title" class="ts-backups-plan">
+<h3 class="ts-card-title" id="pitr-plan-title">Advisory plan</h3>
+<dl class="ts-kv"><div><dt>Source</dt><dd>@(recovery.Destination == "platform" ? "TerraScale storage" : "Your bucket")</dd></div><div><dt>Chosen UTC time</dt><dd class="ts-mono">@BackupHealth.Utc(selected)</dd></div><div><dt>Snapshot UTC</dt><dd class="ts-mono">@BackupHealth.Utc(plan.SnapshotAt)</dd></div><div><dt>Applicable segments</dt><dd>@plan.SegmentCount.ToString(System.Globalization.CultureInfo.InvariantCulture)</dd></div><div><dt>Latest segment UTC</dt><dd class="ts-mono">@(plan.LatestSegmentAt is { } latest ? BackupHealth.Utc(latest) : "None")</dd></div><div><dt>New database</dt><dd class="ts-mono">@recovery.Name</dd></div></dl>
+<div class="ts-stack-md">
+<form method="post" action="@("/databases/" + Model.Database.Id + "/point-in-time")" class="ts-form" data-submit-once data-on:submit="evt.preventDefault(); @@post(el.action, {contentType:'form', headers:{'Datastar-Request':'true'}})">
+<input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="operation" value="restore" /><input type="hidden" name="destination" value="@recovery.Destination" /><input type="hidden" name="point" value="@RecoveryPoint.Input(selected)" /><input type="hidden" name="name" value="@recovery.Name" />
+<div class="ts-field"><label class="ts-label" for="pitr-confirm">Type @recovery.Name to confirm the new database name</label><input class="ts-input" id="pitr-confirm" name="confirmName" value="@recovery.ConfirmName" autocomplete="off" maxlength="63" required /></div>
+<button class="ts-btn ts-btn-primary" type="submit">Restore as new database</button>
+</form>
+<form method="post" action="@("/databases/" + Model.Database.Id + "/point-in-time")" class="ts-form" data-submit-once data-on:submit="evt.preventDefault(); @@post(el.action, {contentType:'form', headers:{'Datastar-Request':'true'}})">
+<input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="operation" value="rewind" /><input type="hidden" name="destination" value="@recovery.Destination" /><input type="hidden" name="point" value="@RecoveryPoint.Input(selected)" />
+<div class="ts-field"><label class="ts-label" for="pitr-confirm-database">Type @Model.Database.Name to restore it in place</label><input class="ts-input" id="pitr-confirm-database" name="confirmDatabase" value="@recovery.ConfirmDatabase" autocomplete="off" maxlength="63" required /></div>
+<button class="ts-btn ts-btn-danger" type="submit">Restore in place</button>
+</form>
+</div>
+</section>}
+}
+</div></section>

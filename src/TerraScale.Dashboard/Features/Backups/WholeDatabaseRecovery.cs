@@ -29,6 +29,35 @@ namespace TerraScale.Dashboard.Features.Backups
         public RestoreProgress? Restore { get; init; }
     }
 
+    public sealed record PitrCardModel(ShellModel Shell, DatabaseRecord Database, WholeDatabaseRecoveryPage Recovery, IReadOnlyList<BackupView> Points, bool HasBucket)
+    {
+        public DateTimeOffset Selected(DateTimeOffset earliest, DateTimeOffset latest)
+        {
+            return DateTimeOffset.TryParseExact(Recovery.Point,
+                ["yyyy-MM-dd'T'HH:mm", "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFzzz"],
+                CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsed)
+                && parsed >= earliest && parsed <= latest ? parsed : latest;
+        }
+
+        public IReadOnlyList<string> Axis(DateTimeOffset earliest, DateTimeOffset latest)
+        {
+            var labels = new List<string> { Label(earliest) };
+            var steps = 3;
+            for (var step = 1; step <= steps; step++)
+            {
+                labels.Add(Label(earliest + TimeSpan.FromTicks((latest - earliest).Ticks * step / (steps + 1))));
+            }
+
+            labels.Add("Now");
+            return [.. labels];
+        }
+
+        private static string Label(DateTimeOffset at)
+        {
+            return at.UtcDateTime.ToString("MMM d", CultureInfo.InvariantCulture);
+        }
+    }
+
     public sealed class WholeDatabaseRecovery(TerraBaseRpcClient rpc, IProjectAccessTokens tokens, DatabaseService databases, IDbContextFactory<DashboardDbContext> storage, TimeProvider time)
     {
         public async Task<(AccountContext Context, DatabaseRecord Database)> SourceAsync(AccountContext context, string id, CancellationToken ct)
@@ -214,7 +243,7 @@ namespace TerraScale.Dashboard.Features.Backups
     {
         public static IEndpointRouteBuilder MapWholeDatabaseRecovery(this IEndpointRouteBuilder endpoints)
         {
-            endpoints.MapMethods("/databases/{databaseId}/point-in-time", ["GET", "POST"], async Task<IResult> (HttpContext http, string databaseId,
+            endpoints.MapMethods("/databases/{databaseId}/point-in-time", ["POST"], async Task<IResult> (HttpContext http, string databaseId,
                 DashboardSessions sessions, AccountService accounts, WholeDatabaseRecovery recovery) =>
             {
                 var context = await AccountRequest.RequireAsync(http, sessions, accounts);
@@ -227,66 +256,51 @@ namespace TerraScale.Dashboard.Features.Backups
                 {
                     (context, var database) = await recovery.SourceAsync(context, databaseId, http.RequestAborted);
                     http.Response.Headers.CacheControl = "no-store";
-                    var form = HttpMethods.IsPost(http.Request.Method) ? await FormRequests.ReadAsync(http, http.RequestAborted) : null;
-                    if (form is not null && !Csrf.Validate(http, form))
+                    var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+                    if (!Csrf.Validate(http, form))
                     {
-                        return RequestError.FormExpired(http, DatabaseService.Path(database.Id, "point-in-time"), Results.BadRequest("Invalid form token."));
+                        return RequestError.FormExpired(http, DatabaseService.Path(database.Id, "backups"), Results.BadRequest("Invalid form token."));
                     }
 
-                    var page = new WholeDatabaseRecoveryPage(ShellModel.For(http, context, database.Name + " · Point-in-time recovery"), database,
-                        form?["destination"].ToString() ?? http.Request.Query["destination"].FirstOrDefault() ?? "platform",
-                        form?["point"].ToString() ?? "", form?["name"].ToString() ?? "", form?["confirmName"].ToString() ?? "",
-                        ConfirmDatabase: form?["confirmDatabase"].ToString() ?? "");
+                    var page = new WholeDatabaseRecoveryPage(ShellModel.For(http, context, database.Name + " · Backups"), database,
+                        form["destination"].ToString() is { Length: > 0 } destination ? destination : "platform",
+                        form["point"].ToString() ?? "", form["name"].ToString() ?? "", form["confirmName"].ToString() ?? "",
+                        ConfirmDatabase: form["confirmDatabase"].ToString() ?? "");
                     var status = 200;
                     try
                     {
                         page = page with { Available = await recovery.WindowAsync(context, databaseId, page.Destination, http.RequestAborted) };
-                        if (form is null && page.Available.Window is { } window)
-                        {
-                            page = page with { Point = RecoveryPoint.Input(window.Latest) };
-                        }
-
-                        if (form?["operation"].ToString() == "plan")
+                        if (form["operation"].ToString() == "plan" && page.Error.Length == 0)
                         {
                             page = page with { Plan = await recovery.PlanAsync(context, databaseId, page.Destination, page.Point, http.RequestAborted) };
                         }
 
-                        if (form?["operation"].ToString() == "rewind")
+                        if (form["operation"].ToString() == "rewind" && page.Error.Length == 0)
                         {
                             await recovery.RewindAsync(context, databaseId, page.Destination, page.Point, page.ConfirmDatabase, http.RequestAborted);
                             return HttpRedirects.SeeOther(DatabaseService.Path(databaseId));
                         }
 
-                        if (form?["operation"].ToString() == "restore")
+                        if (form["operation"].ToString() == "restore" && page.Error.Length == 0)
                         {
                             var started = await recovery.StartRestoreAsync(context, databaseId, page.Destination, page.Point, page.Name, page.ConfirmName, http.RequestAborted);
-                            return HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "point-in-time") + "?restore=" + started.OperationId);
+                            return HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "backups") + "?restore=" + started.OperationId);
                         }
                     }
                     catch (Exception error) when (BackupEndpoints.KnownFailure(error) && !http.RequestAborted.IsCancellationRequested)
-                    { status = DatabaseResults.Status(error); page = page with { Error = DatabaseResults.Message(error) }; }
-                    var restoreOperation = http.Request.Query["restore"].ToString();
-                    if (restoreOperation.Length > 0)
                     {
-                        try
-                        {
-                            page = page with
-                            {
-                                Restore = await http.RequestServices.GetRequiredService<BackupService>()
-                                .RestoreStatusAsync(context, databaseId, restoreOperation, http.RequestAborted)
-                            };
-                        }
-                        catch (Exception failure) when (BackupEndpoints.KnownFailure(failure) && !http.RequestAborted.IsCancellationRequested)
-                        { page = page with { Restore = new(restoreOperation, "failed", ErrorMessage: DatabaseResults.Message(failure)) }; }
+                        status = DatabaseResults.Status(error);
+                        page = page with { Point = form["point"].ToString() ?? page.Point, Error = DatabaseResults.Message(error) };
                     }
 
-                    if (http.Request.Headers["Datastar-Request"] == "true" && page.Restore is not null)
-                    {
-                        await DatastarEvents.PatchElementsAsync(http, WholeDatabaseRestoreStatusView.Create(page));
+                if (http.Request.Headers["Datastar-Request"] == "true")
+                {
+                    var card = await BackupEndpoints.PitrCardAsync(http, context, database, page, null, null, http.RequestAborted);
+                    await DatastarEvents.PatchElementsAsync(http, PitrCardView.Create(card));
                         return Results.Empty;
                     }
 
-                    var view = WholeDatabaseRecoveryView.Create(page); view.StatusCode = status; return view;
+                    return HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "backups"));
                 }
                 catch (Exception error) when (BackupEndpoints.KnownFailure(error)) { return DatabaseResults.PageFailure(http, context, error); }
             });
