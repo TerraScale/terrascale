@@ -70,6 +70,8 @@ machine that applied it.
 
 ## Client routing and Atlas compatibility
 
+TerraBase publishes database placements to Atlas; see [Atlas placements](atlas-placements.md).
+
 Clients resolve regional endpoints through ts-atlas, allow an explicitly
 configured static endpoint override, and retain the selected endpoint and
 region pin for the session. A static override bypasses discovery. Regional

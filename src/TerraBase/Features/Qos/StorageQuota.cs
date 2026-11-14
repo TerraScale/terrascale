@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using Microsoft.Extensions.Caching.Memory;
 using TerraBase.Engine;
@@ -10,6 +11,8 @@ namespace TerraBase.Features.Qos;
 internal sealed class StorageQuota : IStorageQuota, IDisposable
 {
     internal static readonly Unavailable AccountingUnavailable = new("storage accounting is at capacity; retry later", "storage_accounting_busy");
+    internal static readonly Unavailable AccountingPending = new("storage accounting is waiting for a database copy under recovery; retry later", "storage_accounting_busy");
+    private static readonly StorageUsage Unrestricted = new(0, 0, false);
 
     internal static Unavailable Failure(TenantPlanResult plan) => plan switch
     {
@@ -25,12 +28,13 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
 
     private readonly SemaphoreSlim[] _gates = [.. Enumerable.Range(0, 256).Select(_ => new SemaphoreSlim(1, 1))];
     private readonly MemoryCache _usage = new(new MemoryCacheOptions { SizeLimit = 1024 });
+    private readonly ConcurrentDictionary<(string Organization, string? Project, string? Database), long> _logical = new();
     private readonly IStorageEngine _engine;
     private readonly ITenantDirectory _directory;
-    private readonly Func<PlanTier, long> _limit;
+    private readonly Func<string, PlanTier, long> _limit;
 
-    public StorageQuota(IStorageEngine engine, ITenantDirectory directory) : this(engine, directory, plan => QosPolicy.For(plan).StorageBytes) { }
-    internal StorageQuota(IStorageEngine engine, ITenantDirectory directory, Func<PlanTier, long> limit)
+    public StorageQuota(IStorageEngine engine, ITenantDirectory directory) : this(engine, directory, (organization, plan) => QosPolicy.For(organization, plan).StorageBytes) { }
+    internal StorageQuota(IStorageEngine engine, ITenantDirectory directory, Func<string, PlanTier, long> limit)
     {
         _engine = engine;
         _directory = directory;
@@ -47,9 +51,9 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
             return Failure(currentPlan);
         }
 
-        if (_limit(plan) == long.MaxValue)
+        if (_limit(database.OrganizationId, plan) == long.MaxValue)
         {
-            return new StorageQuotaLease(null, long.MaxValue, _ => ValueTask.FromResult<StorageQuotaBytesResult>(0L), _ => { });
+            return new StorageQuotaLease(null, long.MaxValue, _ => ValueTask.FromResult<StorageQuotaBytesResult>(Unrestricted), _ => { });
         }
 
         var gate = _gates[Stripe(database.OrganizationId)];
@@ -63,10 +67,10 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
                 return Failure(checkedPlan);
             }
 
-            var limit = _limit(livePlan);
+            var limit = _limit(database.OrganizationId, livePlan);
             if (limit == long.MaxValue)
             {
-                var unrestricted = new StorageQuotaLease(null, long.MaxValue, _ => ValueTask.FromResult<StorageQuotaBytesResult>(0L), _ => { });
+                var unrestricted = new StorageQuotaLease(null, long.MaxValue, _ => ValueTask.FromResult<StorageQuotaBytesResult>(Unrestricted), _ => { });
                 gate.Release();
                 return unrestricted;
             }
@@ -80,14 +84,17 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
             return new StorageQuotaLease(gate, limit, async token =>
             {
                 current = await UsageAsync(store, token).ConfigureAwait(false);
+                Learn(database, current.Bytes);
                 var used = checked(current.Bytes + await FileBytesAsync(database.OrganizationId, token).ConfigureAwait(false));
-                return await SumRegisteredBytesAsync(database.OrganizationId, used, database, token).ConfigureAwait(false);
+                return await SumRegisteredBytesAsync(database.OrganizationId, new StorageUsage(used, 0, false), database, token).ConfigureAwait(false);
             }, delta =>
             {
                 var committedSequence = store.CommitSequence;
                 if (current is not null && committedSequence == current.Sequence + 1)
                 {
-                    Remember(store, new Usage(committedSequence, checked(current.Bytes + delta)));
+                    var usage = new Usage(committedSequence, checked(current.Bytes + delta));
+                    Remember(store, usage);
+                    Learn(database, usage.Bytes);
                 }
             });
         }
@@ -126,7 +133,7 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
                     return Failure(checkedPlan);
                 }
 
-                limits.Add(organization, _limit(plan));
+                limits.Add(organization, _limit(organization, plan));
             }
 
             return new StorageQuotaGroupLease(gates, limits, OrganizationUsageAsync);
@@ -146,7 +153,9 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
     {
         var store = await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException("the staged database no longer exists");
-        return (await UsageAsync(store, cancellationToken).ConfigureAwait(false)).Bytes;
+        var bytes = (await UsageAsync(store, cancellationToken).ConfigureAwait(false)).Bytes;
+        Learn(database, bytes);
+        return bytes;
     }
 
     public async ValueTask<OrganizationBytesResult> ReadOrganizationsAsync(CancellationToken cancellationToken)
@@ -160,9 +169,9 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
                 return error;
             }
 
-            if (walked is long used)
+            if (walked is StorageUsage used)
             {
-                bytes[candidate.OrganizationId] = checked(bytes.GetValueOrDefault(candidate.OrganizationId) + used);
+                bytes[candidate.OrganizationId] = checked(bytes.GetValueOrDefault(candidate.OrganizationId) + used.Known + used.Unverified);
             }
         }
 
@@ -175,9 +184,10 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
         new FileStorageUsage(_engine).BytesAsync(organizationId, null, cancellationToken);
 
     private async ValueTask<StorageQuotaBytesResult> OrganizationUsageAsync(string organizationId, CancellationToken cancellationToken) =>
-        await SumRegisteredBytesAsync(organizationId, await FileBytesAsync(organizationId, cancellationToken).ConfigureAwait(false), null, cancellationToken).ConfigureAwait(false);
+        await SumRegisteredBytesAsync(organizationId, new StorageUsage(await FileBytesAsync(organizationId, cancellationToken).ConfigureAwait(false), 0, false), null, cancellationToken)
+            .ConfigureAwait(false);
 
-    private async ValueTask<StorageQuotaBytesResult> SumRegisteredBytesAsync(string organizationId, long used, TenantContext? exclude, CancellationToken cancellationToken)
+    private async ValueTask<StorageQuotaBytesResult> SumRegisteredBytesAsync(string organizationId, StorageUsage used, TenantContext? exclude, CancellationToken cancellationToken)
     {
         await foreach (var candidate in _engine.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
         {
@@ -193,9 +203,9 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
                 return error;
             }
 
-            if (walked is long bytes)
+            if (walked is StorageUsage bytes)
             {
-                used = checked(used + bytes);
+                used = new StorageUsage(checked(used.Known + bytes.Known), checked(used.Unverified + bytes.Unverified), used.Unbounded || bytes.Unbounded);
             }
         }
 
@@ -215,10 +225,34 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
             return null;
         }
 
-        return await _engine.OpenDatabaseAsync(candidate, cancellationToken).ConfigureAwait(false) is { } store
-            ? (await UsageAsync(store, cancellationToken).ConfigureAwait(false)).Bytes
-            : null;
+        try
+        {
+            if (await _engine.OpenDatabaseAsync(candidate, cancellationToken).ConfigureAwait(false) is not { } store)
+            {
+                return null;
+            }
+
+            var bytes = (await UsageAsync(store, cancellationToken).ConfigureAwait(false)).Bytes;
+            Learn(candidate, bytes);
+            return new StorageUsage(bytes, 0, false);
+        }
+        catch (Exception refused) when (refused is StorageCopyFaultedException or StorageProofPendingException)
+        {
+            if (_logical.TryGetValue(Key(candidate), out var recorded))
+            {
+                return new StorageUsage(recorded, 0, false);
+            }
+
+            return await _engine.GetDatabaseSizeAsync(candidate, cancellationToken).ConfigureAwait(false) is { } resting
+                ? new StorageUsage(0, resting, false)
+                : new StorageUsage(0, 0, true);
+        }
     }
+
+    private void Learn(TenantContext database, long bytes) => _logical[Key(database)] = bytes;
+
+    private static (string Organization, string? Project, string? Database) Key(TenantContext database) =>
+        (database.OrganizationId, database.ProjectId, database.DatabaseId);
 
     private async ValueTask<Usage> UsageAsync(IDatabaseStore store, CancellationToken cancellationToken)
     {

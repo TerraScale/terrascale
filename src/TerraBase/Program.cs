@@ -6,6 +6,7 @@ using TerraBase.Engine.Turso;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.ApiReference;
 using TerraBase.Features.Backup;
+using TerraBase.Features.Atlas;
 using TerraBase.Features.Health;
 using TerraBase.Features.Clock;
 using TerraBase.Features.HomeApply;
@@ -122,6 +123,7 @@ builder.Services.AddTerraBaseHealth();
 builder.Services.AddTerraBasePressure();
 builder.Services.AddTerraBaseStats();
 builder.Services.AddTerraBaseShapes();
+builder.Services.AddTerraBaseAtlas(options);
 builder.Services.AddTerraBaseCatalog();
 builder.Services.AddTerraBaseRpc();
 
@@ -153,6 +155,11 @@ try
     app.UseTerraBaseUsage();
     app.UseTerraBaseBadRequests();
     app.UseRouting();
+    app.Use((context, next) =>
+    {
+        SqlSocketInput.Wrap(context);
+        return next(context);
+    });
     app.UseWebSockets();
     app.UseTerraBaseClientCors();
     app.UseTerraBaseShapeNoStore();

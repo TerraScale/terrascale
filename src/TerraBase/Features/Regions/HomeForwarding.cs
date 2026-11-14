@@ -218,21 +218,26 @@ internal static class HomeForwarding
         return peer is null ? null : new HomeNode(home, peer.Address);
     }
 
-    internal static async Task<bool> ForwardBrowserAsync(HttpContext context, WebSocket socket, byte[] frame, CancellationToken cancellationToken)
+    internal static async Task<bool> ForwardBrowserAsync(HttpContext context, WebSocket socket, byte[] frame, Action authenticated, CancellationToken cancellationToken)
     {
         var auth = RequestJson.Read<SqlSocketRequest>(frame, SqlErrors.InvalidRequest) is SqlSocketRequest parsed ? parsed : null;
         context.Features.Set(new HomeSocketRelay.BrowserConnection(socket, auth?.Id));
-        HomeNode? destination = null;
-        await QosExtensions.AdmitAsync(context, async admitted =>
+        HomeNode? destination;
+        using (var deadline = ProxyRequestBudget.For(context).Link(cancellationToken))
         {
-            using var deadline = ProxyRequestBudget.For(admitted).Link(cancellationToken);
-            destination = await HomeOfAsync(admitted, deadline.Token).ConfigureAwait(false);
-            if (destination is not null)
+            destination = await HomeOfAsync(context, deadline.Token).ConfigureAwait(false);
+        }
+
+        if (destination is not null)
+        {
+            await QosExtensions.AdmitAsync(context, async admitted =>
             {
+                authenticated();
                 await admitted.RequestServices.GetRequiredService<HomeSocketRelay>()
                     .RunAsync(admitted, destination, cancellationToken, socket, frame).ConfigureAwait(false);
-            }
-        }, context.RequestServices.GetRequiredService<IMemoryBudget>()).ConfigureAwait(false);
+            }, context.RequestServices.GetRequiredService<IMemoryBudget>()).ConfigureAwait(false);
+        }
+
         return destination is not null || context.Features.Get<ForwardingAuthorization.Refused>() is not null || socket.State != WebSocketState.Open;
     }
 

@@ -26,7 +26,7 @@ internal sealed class MemoryBudget : IMemoryBudget
     public IMemoryReservation? TryReserve(long bytes, TenantContext? tenant)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(bytes);
-        var share = tenant is null ? 1 : QosPolicy.For(tenant.Plan).MemoryShare;
+        var share = tenant is null ? 1 : QosPolicy.For(tenant).MemoryShare;
         var tenantLimit = share == 1 ? _limit : (long)(_limit * share);
         var tenantReservations = Math.Min(MaxReservations - 4096, (int)(MaxReservations * share));
         if (bytes == 0)

@@ -24,21 +24,21 @@ internal sealed class OperationAllowance : IOperationAllowance
 {
     private readonly UsageMeter _meter;
     private readonly ITenantDirectory _directory;
-    private readonly Func<PlanTier, MeteredOperation, long> _limit;
+    private readonly Func<string, PlanTier, MeteredOperation, long> _limit;
 
     public OperationAllowance(UsageMeter meter, ITenantDirectory directory) : this(meter, directory, Limit) { }
 
-    internal OperationAllowance(UsageMeter meter, ITenantDirectory directory, Func<PlanTier, MeteredOperation, long> limit)
+    internal OperationAllowance(UsageMeter meter, ITenantDirectory directory, Func<string, PlanTier, MeteredOperation, long> limit)
     {
         _meter = meter;
         _directory = directory;
         _limit = limit;
     }
 
-    private static long Limit(PlanTier plan, MeteredOperation operation) => operation switch
+    private static long Limit(string organization, PlanTier plan, MeteredOperation operation) => operation switch
     {
-        MeteredOperation.Write => QosPolicy.For(plan).MonthlyWriteCap,
-        _ => QosPolicy.For(plan).MonthlySqlReads,
+        MeteredOperation.Write => QosPolicy.For(organization, plan).MonthlyWriteCap,
+        _ => QosPolicy.For(organization, plan).MonthlySqlReads,
     };
 
     public async ValueTask<OperationAllowanceCheck> CheckAsync(TenantContext database, MeteredOperation operation, CancellationToken cancellationToken)
@@ -54,7 +54,7 @@ internal sealed class OperationAllowance : IOperationAllowance
             };
         }
 
-        var limit = _limit(plan, operation);
+        var limit = _limit(database.OrganizationId, plan, operation);
         if (limit == long.MaxValue)
         {
             return new Done();

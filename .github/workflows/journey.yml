@@ -189,6 +189,10 @@ jobs:
             projects: --project pages-desktop --project paid-invitation
           - shard: phone and flows
             projects: --project pages-mobile --project hosted --project interactions --project invitation
+          - shard: session limits
+            projects: placement/session-limits.spec.ts --project placement --workers 1
+            regions: 2
+            nodes: 2
           - shard: multi-region faults
             projects: --project fault
             regions: 2
@@ -256,6 +260,8 @@ jobs:
         timeout-minutes: 2
         run: |
           bash e2e/env/pki.sh
+          sudo apt-get update
+          sudo apt-get install --yes strace
           sudo sysctl -q -w kernel.apparmor_restrict_unprivileged_userns=0
           bash e2e/env/local.sh start
       - name: Egress guard
