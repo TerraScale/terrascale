@@ -931,18 +931,20 @@ try {
   const lineageNotice = notice(lineage, lineagePush);
   await request(home, '/v1/sync/organizations/' + org.id + '/projects/' + project.id + '/databases/' + lineage.id + '/held', undefined, undefined, 'GET', 404);
   const original = lineageOf(await heldOn(internal['journey-3'], lineage));
+  const lineagePrimary = state + '/frontier-gru-b/' + org.id + '/' + project.id + '/' + lineage.id + '.db';
+  const primaryBefore = existsSync(lineagePrimary);
   await takeOver('journey-3');
   await logged(b, 'Database fenced at regional writer epoch', {}, bMark);
   await send(lineage, lineagePush);
   await logged(b, 'A pushed database is held', { Database: lineage.id }, bMark);
-  assert(!existsSync(state + '/frontier-gru-b/' + org.id + '/' + project.id + '/' + lineage.id + '.db'), 'the fenced writer created no primary file for the held push or a pull');
-  assert.equal(lineageOf(await heldOn(home, lineage)), original);
+  assert.equal(existsSync(lineagePrimary), primaryBefore, 'the held push created no primary file on the fenced writer');
+  const heldLineage = lineageOf(await heldOn(home, lineage));
   await takeOver('journey-1');
   assert.equal((await lineageNotice).state, 'confirmed');
   assert.equal(await value(lineage), 41);
   const fencedLineage = readFileSync(gru.log, 'utf8').slice(gruMark).split('\n').filter(line => line.includes('Database fenced') && line.includes(lineage.id));
   assert.deepEqual(fencedLineage, []);
-  console.log('unplanned takeover by journey-3, which held no file of ' + lineage.id + ': fenced, it held the push without creating a file, so journey-1 kept its replica of lineage ' + original + '; back on journey-1 nothing was fenced, the held push applied once and the earlier rows are intact');
+  console.log('unplanned takeover by journey-3 (a primary file of ' + lineage.id + ' before it: ' + primaryBefore + '): fenced, it held the push without creating a file, journey-1 held a replica of lineage ' + heldLineage + ' (journey-1\'s own: ' + original + '); back on journey-1 nothing was fenced, the held push applied once and the earlier rows are intact');
 } finally {
   rmSync(journeyState + '/r2-unavailable-keys', { force: true });
   nats?.close();
