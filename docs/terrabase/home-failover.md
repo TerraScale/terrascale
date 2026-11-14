@@ -172,8 +172,8 @@ Only the certificate the target writes in the drain protocol (`prepared.<region>
 it applied every position the source certified) authorizes a new owner. The owner record's own `prepared` field is never
 read. The one exception is a first writer: an owner record at epoch 1 with no previous node needs no certificate, so
 rewriting the key to such a record names that node as writer, subject to the activation check below. Every other
-rewrite of the owner record is refused: the named node logs `Regional writer refused` and stays a non-writer
-(`terrabase.home.refusals{scope="writer",reason="unproven"}`).
+rewrite of the owner record is refused: the named node logs `Regional writer refused` once per revision of the owner
+record and stays a non-writer (`terrabase.home.refusals{scope="writer",reason="unproven"}`).
 
 On every activation, including a first writer at epoch 1, the node checks each database homed in the region whose home
 lease (when there is one) names this region. A database whose local replica is newer than its primary file, or that has a

@@ -35,7 +35,7 @@ internal sealed partial class RegionalHandoff
     private readonly HashSet<string> _walkFenced = new(StringComparer.Ordinal);
     private sealed record DatabaseFence(TenantContext Database, FencedDatabase Status);
     private sealed record LocalDataRefusal(HomeRefusal Kind, string Detail);
-    private long _unprovenEpoch;
+    private ulong _unprovenRevision;
     private bool _pageCaughtUp;
     private RegionalOwner? _startupOwner;
     private bool _protocolPublished;
@@ -59,7 +59,7 @@ internal sealed partial class RegionalHandoff
         attempt.CancelAfter(AttemptBudget);
         try
         {
-            if (!await PreparedOwnerAsync(kv, owner, attempt.Token).ConfigureAwait(false))
+            if (!await PreparedOwnerAsync(kv, owner, entry.Revision, attempt.Token).ConfigureAwait(false))
             {
                 return;
             }
@@ -282,7 +282,7 @@ internal sealed partial class RegionalHandoff
             : current ? prepared : null;
     }
 
-    private async Task<bool> PreparedOwnerAsync(INatsKVStore kv, RegionalOwner owner, CancellationToken token)
+    private async Task<bool> PreparedOwnerAsync(INatsKVStore kv, RegionalOwner owner, ulong revision, CancellationToken token)
     {
         if (owner is { Epoch: 1, Previous: null })
         {
@@ -307,9 +307,9 @@ internal sealed partial class RegionalHandoff
             await WritePreparedAsync(kv, new RegionalPrepared(owner.Previous ?? owner.Node, owner.Node, owner.Epoch - 1, null), token).ConfigureAwait(false);
             return true;
         }
-        if (_unprovenEpoch != owner.Epoch)
+        if (_unprovenRevision != revision)
         {
-            _unprovenEpoch = owner.Epoch;
+            _unprovenRevision = revision;
             services.GetRequiredService<HomeLeases>().Refused(HomeRefusal.Unproven, "writer");
             logger.ZLogWarning($"Regional writer refused: the owner record names this node at epoch {owner.Epoch:@Epoch} without a certificate this node wrote in a drain");
         }
