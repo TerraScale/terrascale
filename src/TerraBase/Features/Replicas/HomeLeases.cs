@@ -46,7 +46,7 @@ internal interface IHomeWriteLease
 
 internal sealed partial class HomeLeases(
     TerraBaseOptions options, IReplicaCatalog catalog, DatabaseFences fences, HomeLeaseGate leaseGate, RegionReplication replication, IStorageEngine engine,
-    IDatabaseRevisions revisions, IHomeMoveCatalog moves, KeptCopies kept, IMeterFactory meters, ILogger<HomeLeases> logger, RegionalOwners owners)
+    IDatabaseRevisions revisions, IDatabaseReplicas replicas, IHomeMoveCatalog moves, KeptCopies kept, IMeterFactory meters, ILogger<HomeLeases> logger, RegionalOwners owners)
     : BackgroundService, IHomeWriteLease
 {
     internal const string Bucket = "terrabase-homes";
@@ -400,6 +400,7 @@ internal sealed partial class HomeLeases(
             try
             {
                 fences.Release(id);
+                replicas.ArchiveCompletedImport(database);
                 _ = await engine.DeleteDatabaseAsync(database, CancellationToken.None).ConfigureAwait(false);
             }
             catch (Exception error) when (error is IOException or InvalidOperationException)
