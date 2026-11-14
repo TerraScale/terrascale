@@ -202,6 +202,10 @@ try {
   const first = await create('frontier');
   const other = await create('independent');
   const sql = (db, statement, expected = 200) => request(home, '/v1/projects/' + project.id + '/databases/' + db.id + '/sql/execute', { statements: [{ sql: statement }] }, undefined, 'POST', expected);
+  const certify = async (owner, node) => {
+    const ack = await nats.request('$KV.terrabase-region-owners.prepared.gru.' + node, { source: owner.node, target: node, epoch: owner.epoch, operation: null });
+    assert(!ack.error, JSON.stringify(ack));
+  };
   for (const db of [first, other]) {
     await sql(db, 'CREATE TABLE items (id INTEGER PRIMARY KEY, value INTEGER)');
     await sql(db, 'CREATE TABLE applications (tx TEXT PRIMARY KEY, value INTEGER)');
@@ -288,6 +292,7 @@ try {
     const changed = { ...owner, node, epoch: owner.epoch + 1, previous: owner.node, activated: true, transfer: null,
       prepared: { source: owner.node, target: node, epoch: owner.epoch } };
     const seen = progress(lateSent, 1, consumer => consumer === 'home-gru-epoch-' + changed.epoch);
+    await certify(owner, node);
     const ack = await nats.request('$KV.terrabase-region-owners.gru', changed, { 'Nats-Expected-Last-Subject-Sequence': String(stored.message.seq) });
     assert(!ack.error, JSON.stringify(ack));
     await seen;
@@ -610,6 +615,7 @@ try {
     const epoch = owner.epoch + 1;
     const changed = { ...owner, node, epoch, previous: owner.node, activated: true, transfer: null,
       prepared: { source: owner.node, target: node, epoch: owner.epoch } };
+    await certify(owner, node);
     const ack = await nats.request('$KV.terrabase-region-owners.gru', changed, { 'Nats-Expected-Last-Subject-Sequence': String(stored.message.seq) });
     assert(!ack.error, JSON.stringify(ack));
     return epoch;
