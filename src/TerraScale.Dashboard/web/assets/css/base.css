@@ -25,6 +25,7 @@
 html {
   min-width: 320px;
   background: var(--ts-canvas);
+  color-scheme: dark;
   color: var(--ts-ink);
   font-family: var(--ts-font-sans);
   font-size: var(--ts-fs-md);
