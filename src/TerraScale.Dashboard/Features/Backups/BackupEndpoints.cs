@@ -30,7 +30,7 @@ namespace TerraScale.Dashboard.Features.Backups
                     await backups.CreateAsync(context, databaseId, http.RequestAborted);
                     if (DatabaseEndpoints.WantsHtml(http) && http.Request.Headers["Datastar-Request"] == "true")
                     {
-                        var page = await PageAsync(http, context, DatabaseService.Database(context, databaseId), "");
+                        var page = await PageAsync(http, context, DatabaseService.Database(context, databaseId), "", export: true);
                         return await PatchBackupsAsync(http, page);
                     }
 
@@ -53,7 +53,7 @@ namespace TerraScale.Dashboard.Features.Backups
                         form["incrementalBackupCron"].ToString(), days, http.RequestAborted);
                     if (DatabaseEndpoints.WantsHtml(http) && http.Request.Headers["Datastar-Request"] == "true")
                     {
-                        var page = await PageAsync(http, context, DatabaseService.Database(context, databaseId), "");
+                        var page = await PageAsync(http, context, DatabaseService.Database(context, databaseId), "", export: true);
                         return await PatchBackupsAsync(http, page);
                     }
 
@@ -70,7 +70,7 @@ namespace TerraScale.Dashboard.Features.Backups
 
                     if (DatabaseEndpoints.WantsHtml(http) && http.Request.Headers["Datastar-Request"] == "true")
                     {
-                        var page = await PageAsync(http, context, DatabaseService.Database(context, databaseId), "");
+                        var page = await PageAsync(http, context, DatabaseService.Database(context, databaseId), "", export: true);
                         return await PatchBackupsAsync(http, page);
                     }
 
