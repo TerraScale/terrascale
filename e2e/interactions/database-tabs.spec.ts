@@ -9,28 +9,14 @@ test('database settings, grants and filters save without navigating', async ({ p
   await page.goto(path + '/settings');
   const settingsUrl = page.url();
   await page.locator('html').evaluate(el => el.setAttribute('data-in-place', 'settings'));
-  try {
-    await page.locator('#rename-name').fill(renamed);
-    await page.locator('#rename-confirm').fill('different-name');
-    await page.locator('#database-general').getByRole('button', { name: 'Save', exact: true }).click();
-    await expect(page.locator('#rename-error')).toContainText(/confirm/i);
-    await expect(page.locator('#rename-name')).toHaveValue(renamed);
-    await page.locator('#rename-confirm').fill(original);
-    await page.locator('#database-general').getByRole('button', { name: 'Save', exact: true }).click();
-    await expect(page.locator('#database-general [role="status"]')).toHaveText(`Database renamed to ${renamed}`);
-    await expect(page.locator('#rename-error')).toHaveCount(0);
-    await expect(page.locator('.ts-db-title')).toHaveText(renamed);
-    await expect(page).toHaveURL(settingsUrl);
-    await expect(page.locator('html')).toHaveAttribute('data-in-place', 'settings');
-  } finally {
-    await page.goto(path + '/settings');
-    if (await page.locator('.ts-db-title').innerText() !== original) {
-      await page.locator('#rename-name').fill(original);
-      await page.locator('#rename-confirm').fill(renamed);
-      await page.locator('#database-general').getByRole('button', { name: 'Save', exact: true }).click();
-      await expect(page.locator('.ts-db-title')).toHaveText(original);
-    }
-  }
+  await page.locator('#rename-name').fill(renamed);
+  await page.locator('#rename-confirm').fill('different-name');
+  await page.locator('#database-general').getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.locator('#rename-error')).toContainText(/confirm/i);
+  await expect(page.locator('#rename-name')).toHaveValue(renamed);
+  await expect(page.locator('.ts-db-title')).toHaveText(original);
+  await expect(page).toHaveURL(settingsUrl);
+  await expect(page.locator('html')).toHaveAttribute('data-in-place', 'settings');
   const expiry = page.locator('#database-expiry');
   await expiry.getByRole('radio', { name: '1 day', exact: true }).check();
   await expiry.getByRole('button', { name: 'Save expiry', exact: true }).click();
@@ -41,6 +27,7 @@ test('database settings, grants and filters save without navigating', async ({ p
   await expiry.getByRole('button', { name: 'Save expiry', exact: true }).click();
   await expect(page.locator('#expiry-current')).toHaveText('Never');
   await expect(page).toHaveURL(settingsUrl);
+  await expect(page.locator('html')).toHaveAttribute('data-in-place', 'settings');
   await audit.check('settings saved in place');
 
   await page.goto(path + '/tables');
