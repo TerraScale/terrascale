@@ -76,7 +76,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 using var preauthentication = services.GetRequiredService<QosSessions>().TryPreauthenticate(client, HandshakeTimeout, handshake.Token);
                 if (preauthentication is null)
                 {
-                    output.Error("53300", "organization session limit exceeded", fatal: true);
+                    output.Error("53300", QosSessions.ConnectionAttemptsMessage, fatal: true);
                     await output.FlushAsync(closed).ConfigureAwait(false);
                     return;
                 }

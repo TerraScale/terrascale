@@ -5,11 +5,13 @@ namespace TerraBase.Features.Qos;
 
 internal sealed class SessionRelay(TimeProvider time) : IDisposable
 {
+    private const int MaxPending = 256;
     private readonly Lock _gate = new();
     private readonly Queue<(char Reply, long Sent, bool Commits, long? Id, Action<bool>? Completed)> _pending = new();
     private readonly SqlTransactionClock _transaction = new(time);
     private SessionMessageDeadline? _waiting;
     private TaskCompletionSource? _settled;
+    private TaskCompletionSource? _room;
     private Task? _ending;
     private bool _inTransaction;
     private bool _failed;
@@ -60,6 +62,22 @@ internal sealed class SessionRelay(TimeProvider time) : IDisposable
             {
                 pending.Completed?.Invoke(false);
             }
+
+            _room?.TrySetCanceled();
+        }
+    }
+
+    public Task RoomAsync(CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            if (_pending.Count < MaxPending)
+            {
+                return Task.CompletedTask;
+            }
+
+            _room ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            return _room.Task.WaitAsync(cancellationToken);
         }
     }
 
@@ -104,10 +122,10 @@ internal sealed class SessionRelay(TimeProvider time) : IDisposable
 
             if (reply != '\0' && (!_failed || reply == 'Z'))
             {
-                if (_pending.Count >= 256)
+                if (_pending.Count >= MaxPending)
                 {
                     completed?.Invoke(false);
-                    throw new InvalidDataException("too many pending relay messages");
+                    throw new InvalidOperationException("a relay sent past its backpressure");
                 }
 
                 if (_pending.Count == 0)
@@ -121,10 +139,6 @@ internal sealed class SessionRelay(TimeProvider time) : IDisposable
             else
             {
                 completed?.Invoke(false);
-                if (_pending.Count == 0)
-                {
-                    Release();
-                }
             }
         }
     }
@@ -197,9 +211,19 @@ internal sealed class SessionRelay(TimeProvider time) : IDisposable
                 _answer.ExpectAnswer(_pending.Count > 0);
             }
 
+            if (_pending.Count < MaxPending && _room is { } room)
+            {
+                _room = null;
+                room.TrySetResult();
+            }
+
             if (_pending.Count == 0)
             {
-                Release();
+                if (reply is 'Z' or 'R')
+                {
+                    Release();
+                }
+
                 _settled?.TrySetResult();
                 _waiting?.Resume(_inTransaction ? _transaction.Remaining : null);
             }

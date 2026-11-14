@@ -100,7 +100,7 @@ internal static class HomeSessionFrames
         }
     }
 
-    public static async ValueTask WriteAsync<T>(PipeWriter output, T value, JsonTypeInfo<T> type, Action? sending, CancellationToken cancellationToken)
+    public static async ValueTask WriteAsync<T>(PipeWriter output, T value, JsonTypeInfo<T> type, Action<int>? sending, CancellationToken cancellationToken)
     {
         var json = JsonSerializer.SerializeToUtf8Bytes(value, type);
         if (json.Length > MaxBytes)
@@ -112,7 +112,7 @@ internal static class HomeSessionFrames
         BinaryPrimitives.WriteInt32BigEndian(prefix, json.Length);
         output.Advance(4);
         output.Write(json);
-        sending?.Invoke();
+        sending?.Invoke(json.Length + 4);
         _ = await output.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -409,7 +409,7 @@ internal sealed class HomeSqlSession(
                 }
 
                 await HomeSessionFrames.WriteAsync(upstream, call with { PushThrough = local.LastPushed(database), Remaining = TransactionClock.Remaining }, ReplicasJsonContext.Default.HomeSessionCall,
-                    () => sent = true, waiting.Token).ConfigureAwait(false);
+                    _ => sent = true, waiting.Token).ConfigureAwait(false);
                 if (await ReceiveAsync(deadline, waiting.Token).ConfigureAwait(false) is not { } answer)
                 {
                     return Lost(commits && sent);

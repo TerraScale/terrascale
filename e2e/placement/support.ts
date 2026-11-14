@@ -112,7 +112,8 @@ export async function removeDatabase(cells: Cells, id: string, projectId?: strin
       expect((await response.json()).error.code).toBe('move_in_progress');
       return false;
     }
+    if (response.status() === 429) return false;
     await status(response, 204);
     return true;
-  }, { message: 'delete the database after any pending move settles', timeout: 60_000, intervals: [250, 500, 1000] }).toBe(true);
+  }, { message: 'delete the database after any pending move settles and the organization budget refills', timeout: 60_000, intervals: [250, 500, 1000] }).toBe(true);
 }

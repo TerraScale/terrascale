@@ -1,7 +1,8 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
-import { once } from 'node:events';
+import { EventEmitter, once } from 'node:events';
+import { connect, type Socket } from 'node:net';
 import { expect } from '@playwright/test';
 import { rawSqlSocket, frame, scheduleStatement } from '../support/sql-socket';
 import { holdPeerStream, holdPeerReplies } from '../support/peer-stream-fault';
@@ -760,5 +761,234 @@ test('verified platform EF transactions bypass new session accounting and retain
       runner.kill('SIGTERM');
       await exited;
     }
+  }
+});
+
+async function wire(port: number, db: string, startup = true) {
+  const current = journey();
+  const socket = connect(port, '127.0.0.1');
+  await once(socket, 'connect');
+  const types: string[] = [];
+  const errors: string[] = [];
+  const events = new EventEmitter();
+  let buffered = Buffer.alloc(0);
+  socket.on('data', (chunk: Buffer) => {
+    buffered = Buffer.concat([buffered, chunk]);
+    while (buffered.length >= 5 && buffered.length >= 1 + buffered.readInt32BE(1)) {
+      const length = buffered.readInt32BE(1);
+      const type = String.fromCharCode(buffered[0]);
+      const body = buffered.subarray(5, length + 1);
+      buffered = buffered.subarray(length + 1);
+      if (type === 'R' && body.readInt32BE() === 3 && startup) socket.write(message('p', Buffer.from(current.apiKey + '\0')));
+      types.push(type);
+      if (type === 'E') errors.push(body.toString().split('\0').filter(Boolean).join(' | '));
+      events.emit('message', type, body);
+    }
+  });
+  socket.on('error', () => {});
+  const closed = new Promise<void>(resolve => socket.once('close', () => { events.emit('message', 'closed', Buffer.alloc(0)); resolve(); }));
+  const next = (...wanted: string[]) => new Promise<{ type: string; body: Buffer }>(resolve => {
+    const on = (type: string, body: Buffer) => {
+      if (wanted.includes(type) || type === 'closed') { events.off('message', on); resolve({ type, body }); }
+    };
+    events.on('message', on);
+  });
+  const parameters = Buffer.from(`user\0any\0database\0${current.projectId}/${db}\0\0`);
+  const prefix = Buffer.alloc(8);
+  prefix.writeInt32BE(parameters.length + 8);
+  prefix.writeInt32BE(196608, 4);
+  const opened = next(startup ? 'Z' : 'R', 'E');
+  socket.write(Buffer.concat([prefix, parameters]));
+  return { socket, types, errors, closed, next, opened: (await opened).type };
+}
+
+function slowReader(socket: Socket, bytesPerSecond: number) {
+  socket.on('data', (chunk: Buffer) => {
+    socket.pause();
+    setTimeout(() => socket.resume(), chunk.length * 1000 / bytesPerSecond);
+  });
+}
+
+function insertBatch(count: number, first: number) {
+  const batch: Buffer[] = [];
+  for (let index = 0; index < count; index++) {
+    batch.push(message('P', Buffer.concat([Buffer.from(`\0INSERT INTO pipelined VALUES (${first + index})\0`), Buffer.alloc(2)])));
+    batch.push(message('B', Buffer.concat([Buffer.from('\0\0'), Buffer.alloc(6)])));
+    batch.push(message('E', Buffer.concat([Buffer.from('\0'), Buffer.alloc(4)])));
+  }
+  batch.push(message('S', Buffer.alloc(0)));
+  return Buffer.concat(batch);
+}
+
+test('a pipelined extended-protocol batch of any size runs the same through the relay as at the home', async ({ cells }) => {
+  const created = await json<Database>(await cells.post(home + project() + '/databases', {
+    data: { name: name('pipelined'), homeRegion: 'gru', replicaRegions: [] },
+  }), 201);
+  try {
+    await sql(cells, home, created.id, 'CREATE TABLE pipelined (value INTEGER)');
+    let committed = 0;
+    for (const port of [6432, 6532]) {
+      for (const count of [80, 86, 100, 120]) {
+        const client = await wire(port, created.id);
+        expect(client.opened).toBe('Z');
+        const before = client.types.length;
+        const ready = client.next('Z');
+        client.socket.write(insertBatch(count, port * 1_000_000 + count * 1000));
+        const label = `${count} statements on port ${port}: ${client.errors.join(';')}`;
+        expect((await ready).type, label).toBe('Z');
+        expect(client.errors.every(error => error.startsWith('SERROR | VERROR | C53300 | Mtenant busy')), label).toBe(true);
+        const completed = client.types.slice(before).filter(type => type === 'C').length;
+        expect(completed + client.errors.length, label).toBeGreaterThan(0);
+        committed += completed;
+        const again = client.next('Z');
+        client.socket.write(message('Q', Buffer.from('SELECT 1\0')));
+        expect((await again).type, label).toBe('Z');
+        client.socket.destroy();
+        await client.closed;
+      }
+    }
+    await expect.poll(async () => {
+      const counted = await cells.post(home + database(created.id) + '/sql/execute', { data: { statements: [{ sql: 'SELECT COUNT(*) FROM pipelined' }] } });
+      return counted.status() === 200 ? (await counted.json()).results[0].rows : counted.status();
+    }, { message: 'every completed statement committed, and nothing else' }).toEqual([[committed]]);
+  } finally {
+    await removeDatabase(cells, created.id);
+  }
+});
+
+test('a WebSocket relay answers 300 pipelined calls in order like the home', async ({ cells, request }) => {
+  const created = await json<Database>(await cells.post(home + project() + '/databases', {
+    data: { name: name('ws-pipelined'), homeRegion: 'gru', replicaRegions: [] },
+  }), 201);
+  try {
+    const token = await credential(request);
+    for (const port of [8080, 8180]) {
+      const ws = await rawSqlSocket('http://127.0.0.1:' + port + database(created.id) + '/sql/ws', token);
+      const answers: { id: number; type: string; error?: { code: string } }[] = [];
+      const last = new Promise<void>(resolve => ws.events.on('message', (answer: { id: number; type: string; error?: { code: string } }) => {
+        answers.push(answer);
+        if (answer.id === 300) resolve();
+      }));
+      ws.socket.write(Buffer.concat(Array.from({ length: 300 }, (_, index) =>
+        frame(1, Buffer.from(JSON.stringify({ id: index + 1, type: 'execute', statements: [{ sql: 'SELECT ' + (index + 1) }] }))))));
+      expect(await Promise.race([last.then(() => 'answered'), ws.closing.then(close => JSON.stringify(close))]), 'port ' + port).toBe('answered');
+      expect(answers.map(answer => answer.id)).toEqual(Array.from({ length: 300 }, (_, index) => index + 1));
+      expect(answers.filter(answer => answer.type !== 'result' && answer.error?.code !== 'tenant_busy'), 'port ' + port).toEqual([]);
+      let call = 300;
+      await expect.poll(async () => {
+        const reply = once(ws.events, 'message');
+        ws.socket.write(frame(1, Buffer.from(JSON.stringify({ id: ++call, type: 'execute', statements: [{ sql: 'SELECT 1' }] }))));
+        return ((await reply)[0] as { type: string }).type;
+      }, { message: 'the session stays open and serves once the organization budget refills' }).toBe('result');
+      ws.socket.destroy();
+      await ws.closed;
+    }
+  } finally {
+    await removeDatabase(cells, created.id);
+  }
+});
+
+test('a Postgres client that reads a large answer slowly but steadily keeps its session at the home and through the relay', async ({ cells }) => {
+  test.setTimeout(150_000);
+  const created = await json<Database>(await cells.post(home + project() + '/databases', {
+    data: { name: name('slow-reader'), homeRegion: 'gru', replicaRegions: [] },
+  }), 201);
+  const large = 'SELECT hex(zeroblob(1500000))';
+  try {
+    const viaPostgres = async (port: number) => {
+      const client = await wire(port, created.id);
+      expect(client.opened).toBe('Z');
+      slowReader(client.socket, 60_000);
+      const began = performance.now();
+      const row = client.next('D', 'E');
+      const ready = client.next('Z');
+      client.socket.write(message('Q', Buffer.from(large + '\0')));
+      const delivered = await row;
+      expect(delivered.type, `Postgres port ${port} after ${Math.round(performance.now() - began)} ms, ${client.socket.bytesRead} bytes: ${client.errors.join(';')}`).toBe('D');
+      expect(delivered.body.readInt32BE(2)).toBe(3_000_000);
+      expect((await ready).type).toBe('Z');
+      const again = client.next('Z');
+      client.socket.write(message('Q', Buffer.from('SELECT 7\0')));
+      expect((await again).type).toBe('Z');
+      expect(client.errors).toEqual([]);
+      client.socket.destroy();
+      await client.closed;
+    };
+    await Promise.all([viaPostgres(6432), viaPostgres(6532)]);
+  } finally {
+    await removeDatabase(cells, created.id);
+  }
+});
+
+test('one address may hold as many connection attempts as the largest organization session allowance', async ({ cells }) => {
+  const created = await json<Database>(await cells.post(home + project() + '/databases', {
+    data: { name: name('attempts'), homeRegion: 'gru', replicaRegions: [] },
+  }), 201);
+  const attempts: Awaited<ReturnType<typeof wire>>[] = [];
+  try {
+    for (let index = 0; index < 128; index++) {
+      const attempt = await wire(6432, created.id, false);
+      attempts.push(attempt);
+      expect(attempt.opened, 'attempt ' + (index + 1) + ': ' + attempt.errors.join(';')).toBe('R');
+    }
+    const refused = await wire(6432, created.id, false);
+    attempts.push(refused);
+    expect(refused.opened).toBe('E');
+    expect(refused.errors).toEqual(['SFATAL | VFATAL | C53300 | Mtoo many concurrent connection attempts from this address']);
+    const ws = await rawSqlSocket('http://127.0.0.1:8080' + database(created.id) + '/sql/ws');
+    expect((await once(ws.events, 'message'))[0]).toMatchObject({ type: 'error', error: { code: 'tenant_busy', message: 'too many concurrent connection attempts from this address' } });
+    expect((await ws.closing).code).toBe(1008);
+    ws.socket.destroy();
+  } finally {
+    for (const attempt of attempts) attempt.socket.destroy();
+    await Promise.all(attempts.map(attempt => attempt.closed));
+    await removeDatabase(cells, created.id);
+  }
+});
+
+test('a busy organization is refused only between Postgres batches, never inside one', async ({ cells, request }) => {
+  const created = await json<Database>(await cells.post(home + project() + '/databases', {
+    data: { name: name('busy-batch'), homeRegion: 'gru', replicaRegions: [] },
+  }), 201);
+  const gru = Number(readFileSync(join(stateDir, 'pids', 'terrabase.pid'), 'utf8').trim());
+  const clients: Awaited<ReturnType<typeof wire>>[] = [];
+  const rejected = async () => {
+    const response = await request.get('http://127.0.0.1:9191/metrics');
+    expect(response.status()).toBe(200);
+    return (await response.text()).split('\n').filter(line => /^terrabase_qos_rejected_total\{[^\n]*reason="concurrency"/.test(line))
+      .reduce((sum, line) => sum + Number(line.split(' ').at(-1)), 0);
+  };
+  try {
+    await sql(cells, home, created.id, 'CREATE TABLE pipelined (value INTEGER)');
+    const batch = await wire(6532, created.id);
+    clients.push(batch);
+    for (let index = 0; index < 6; index++) clients.push(await wire(6532, created.id));
+    expect(clients.map(client => client.opened)).toEqual(Array(7).fill('Z'));
+    const parsed = batch.next('1');
+    batch.socket.write(message('P', Buffer.concat([Buffer.from('\0INSERT INTO pipelined VALUES (1)\0'), Buffer.alloc(2)])));
+    expect((await parsed).type).toBe('1');
+    const before = await rejected();
+    process.kill(gru, 'SIGSTOP');
+    let holder = 1;
+    await expect.poll(async () => {
+      if (holder < clients.length) clients[holder++].socket.write(message('Q', Buffer.from('SELECT 1\0')));
+      return rejected();
+    }, { message: 'the organization is busy at the entry region' }).toBeGreaterThan(before);
+    const ready = batch.next('Z');
+    batch.socket.write(Buffer.concat([
+      message('B', Buffer.concat([Buffer.from('\0\0'), Buffer.alloc(6)])),
+      message('E', Buffer.concat([Buffer.from('\0'), Buffer.alloc(4)])),
+      message('S', Buffer.alloc(0)),
+    ]));
+    process.kill(gru, 'SIGCONT');
+    expect((await ready).type, batch.errors.join(';')).toBe('Z');
+    expect(batch.errors).toEqual([]);
+    expect(batch.types.filter(type => type === 'C')).toHaveLength(1);
+    expect((await sql(cells, home, created.id, 'SELECT value FROM pipelined')).results[0].rows).toEqual([[1]]);
+  } finally {
+    process.kill(gru, 'SIGCONT');
+    for (const client of clients) client.socket.destroy();
+    await Promise.all(clients.map(client => client.closed));
+    await removeDatabase(cells, created.id);
   }
 });

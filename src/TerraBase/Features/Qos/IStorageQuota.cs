@@ -9,7 +9,9 @@ public readonly union StorageQuotaEntry(StorageQuotaLease, Unavailable);
 
 public readonly union StorageQuotaGroupEntry(StorageQuotaGroupLease, Unavailable);
 
-public readonly union StorageQuotaBytesResult(long, Unavailable);
+public readonly union StorageQuotaBytesResult(StorageUsage, Unavailable);
+
+public sealed record StorageUsage(long Known, long Unverified, bool Unbounded);
 
 public readonly union StorageQuotaCheck(Done, QuotaExceeded, Unavailable);
 
@@ -123,11 +125,12 @@ static file class StorageQuotaRule
 {
     internal static StorageQuotaCheck Growth(long limit, long delta, StorageQuotaBytesResult counted) => counted switch
     {
-        long used => used > limit || delta > limit - used
-            ? new QuotaExceeded(string.Create(CultureInfo.InvariantCulture,
+        StorageUsage { Known: var used } when used > limit || delta > limit - used =>
+            new QuotaExceeded(string.Create(CultureInfo.InvariantCulture,
                 $"the organization storage quota would be exceeded: {used / 1_000_000_000m:F2} GB used of {limit / 1_000_000_000m:F2} GB on this plan; delete data or upgrade the plan at https://dash.terrascale.tech/organization?tab=billing"),
-                "storage_quota")
-            : new Done(),
+                "storage_quota"),
+        StorageUsage usage when usage.Unbounded || delta > limit - usage.Known - usage.Unverified => StorageQuota.AccountingPending,
+        StorageUsage => new Done(),
         Unavailable error => error,
     };
 }

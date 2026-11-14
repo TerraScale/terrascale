@@ -11,6 +11,7 @@ internal sealed class PgWriter(PipeWriter pipe)
     private static readonly UTF8Encoding Utf8 = new(false, true);
     private readonly ArrayBufferWriter<byte> _body = new();
     private byte _type;
+    private long _flushed;
     public long Written { get; private set; }
 
     public void Begin(char type)
@@ -81,7 +82,8 @@ internal sealed class PgWriter(PipeWriter pipe)
     public async ValueTask<FlushResult> FlushAsync(CancellationToken cancellationToken)
     {
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        bounded.CancelAfter(QosSessions.MessageTimeout);
+        bounded.CancelAfter(QosSessions.SendTimeout(Written - _flushed));
+        _flushed = Written;
         return await pipe.FlushAsync(bounded.Token).ConfigureAwait(false);
     }
 

@@ -12,9 +12,11 @@ internal sealed class QosSessions
     public static readonly TimeSpan AnswerTimeout = TimeSpan.FromMinutes(10);
     public static readonly TimeSpan MessageTimeout = TimeSpan.FromSeconds(30);
     public const int MinimumMessageBytesPerSecond = 16 * 1024;
+    public static TimeSpan SendTimeout(long bytes) => MessageTimeout + TimeSpan.FromSeconds((double)bytes / MinimumMessageBytesPerSecond);
     private const int MaxSessions = 4096;
     private const int MaxRelays = MaxSessions / 2;
-    private const int MaxPreauthenticationPerAddress = 8;
+    public const string ConnectionAttemptsMessage = "too many concurrent connection attempts from this address";
+    private static readonly int MaxPreauthenticationPerAddress = QosPolicy.For(PlanTier.Enterprise).Sessions;
     private readonly Lock _gate = new();
     private readonly Dictionary<string, (int Count, int Limit)> _counts = [];
     private readonly Dictionary<IPAddress, int> _preauthentication = [];

@@ -268,7 +268,7 @@ internal sealed class HomeSessionEndpoint(
     private static async ValueTask AnswerAsync(PipeWriter output, HomeSessionAnswer answer, CancellationToken cancellationToken)
     {
         using var sending = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        sending.CancelAfter(QosSessions.MessageTimeout);
-        await HomeSessionFrames.WriteAsync(output, answer, ReplicasJsonContext.Default.HomeSessionAnswer, sending: null, sending.Token).ConfigureAwait(false);
+        await HomeSessionFrames.WriteAsync(output, answer, ReplicasJsonContext.Default.HomeSessionAnswer, bytes => sending.CancelAfter(QosSessions.SendTimeout(bytes)), sending.Token)
+            .ConfigureAwait(false);
     }
 }

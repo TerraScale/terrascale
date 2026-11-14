@@ -355,6 +355,18 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
         {
             while (true)
             {
+                if (input is not null)
+                {
+                    try
+                    {
+                        await state.RoomAsync(cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        break;
+                    }
+                }
+
                 WebSocketReceiveResult read;
                 bool? answered = null;
                 (long? Id, int RetryAfter, bool Transaction)? refused = null;
@@ -522,7 +534,7 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
                 try
                 {
                     using var sending = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                    sending.CancelAfter(QosSessions.MessageTimeout);
+                    sending.CancelAfter(QosSessions.SendTimeout(message.Length));
                     var client = input is null ? to : from;
                     await clientSends.WaitAsync(sending.Token).ConfigureAwait(false);
                     try

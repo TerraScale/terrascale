@@ -60,8 +60,7 @@ internal sealed class SessionMessageDeadline : IDisposable
             {
                 _started ??= arrived;
                 _bytes += bytes;
-                var remaining = QosSessions.MessageTimeout + TimeSpan.FromSeconds((double)_bytes / QosSessions.MinimumMessageBytesPerSecond)
-                    - _time.GetElapsedTime(_started.Value);
+                var remaining = QosSessions.SendTimeout(_bytes) - _time.GetElapsedTime(_started.Value);
                 Arm(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero);
             }
         }

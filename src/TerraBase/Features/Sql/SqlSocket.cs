@@ -49,6 +49,7 @@ internal sealed class SqlSocket(
     public const string AuthExpired = "authentication did not finish within 5 seconds";
 
     private static readonly SqlError SessionLimit = new(SqlErrors.TenantBusy, "organization session limit exceeded");
+    private static readonly SqlError ConnectionAttempts = new(SqlErrors.TenantBusy, QosSessions.ConnectionAttemptsMessage);
 
     private static readonly SqlError AuthFirst = new(SqlErrors.Unauthorized, "the first frame is {\"type\":\"auth\",\"token\":\"…\"}");
     private static readonly SqlError UnknownDatabase = new(SqlErrors.Unauthorized, "the database does not exist or the credential does not reach it");
@@ -91,7 +92,7 @@ internal sealed class SqlSocket(
         using var preauthentication = sessions.TryPreauthenticate(IpAllowlists.ClientOf(context), AuthDeadline, cancellationToken, database?.OrganizationId);
         if (preauthentication is null)
         {
-            await RefuseAsync(null, SessionLimit, cancellationToken).ConfigureAwait(false);
+            await RefuseAsync(null, ConnectionAttempts, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -673,7 +674,7 @@ internal sealed class SqlSocket(
     {
         var bytes = JsonSerializer.SerializeToUtf8Bytes(frame, type);
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        bounded.CancelAfter(QosSessions.MessageTimeout);
+        bounded.CancelAfter(QosSessions.SendTimeout(bytes.Length));
         cancellationToken = bounded.Token;
         await _send.WaitAsync(cancellationToken).ConfigureAwait(false);
         try

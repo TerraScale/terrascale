@@ -218,7 +218,7 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
                 : header[0] == 'C' && body.AsSpan().SequenceEqual("BEGIN\0"u8) ? true
                 : header[0] == 'C' && (body.AsSpan().SequenceEqual("COMMIT\0"u8) || body.AsSpan().SequenceEqual("ROLLBACK\0"u8)) ? false : null;
             using var sending = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            sending.CancelAfter(QosSessions.MessageTimeout);
+            sending.CancelAfter(QosSessions.SendTimeout(header.Length + body.Length));
             state.Answer.Pause();
             try
             {
@@ -346,6 +346,7 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
             await _ready.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
             while (true)
             {
+                await state.RoomAsync(cancellationToken).ConfigureAwait(false);
                 using var deadline = state.Wait();
                 using var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
                 try
