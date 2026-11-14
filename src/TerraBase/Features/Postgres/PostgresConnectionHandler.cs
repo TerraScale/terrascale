@@ -105,6 +105,10 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             {
                 using var refused = new CancellationTokenSource();
                 using var abort = refused.Token.Register(abortConnection);
+                using var expiry = session.TokenExpiry is { } end
+                    ? new CancellationTokenSource(end - Time.GetUtcNow() is { Ticks: > 0 } left ? left : TimeSpan.Zero, Time)
+                    : null;
+                using var expired = expiry?.Token.Register(abortConnection);
                 using var watch = KeyWatch.Start(services.GetRequiredService<IKeyAuthority>(), session.Key is not null, session.Until,
                     async token => await services.GetRequiredService<TsAuthKeyExchange>().ExchangeAsync(session.ApiKey, session.Project, token).ConfigureAwait(false) is TsAuthKeyGrant grant ? grant.Key : null,
                     refused, services.GetRequiredService<TimeProvider>());
@@ -294,6 +298,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                                 PreviousHome = previousHome,
                                 Key = authorized.Key,
                                 Until = authorized.Until,
+                                TokenExpiry = authorized.TokenExpiry,
                                 Project = project,
                                 Lease = lease,
                             };
@@ -472,7 +477,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         }
         return await Tenants.FindDatabaseAsync(found, key.ProjectId, database[(slash + 1)..], cancellationToken).ConfigureAwait(false) switch
         {
-            TenantContext tenant when restriction is null || restriction == tenant.DatabaseId => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.SqlWrite), key.Key, until),
+            TenantContext tenant when restriction is null || restriction == tenant.DatabaseId => new Authorized(tenant, key.Scopes.Contains(ApiKeyScopes.SqlWrite), key.Key, until, key.Key is null ? key.ValidTo : null),
             Unavailable => new PgError("57P03", "the database is unavailable; retry"),
             NotFound => await UnheldAsync(found, key.ProjectId, database[(slash + 1)..], restriction, cancellationToken).ConfigureAwait(false),
             _ => Denied,
@@ -858,6 +863,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
                 return new PgError(kind == 'S' ? "26000" : "34000", "prepared statement or portal does not exist");
             case 'E':
+                if (session.TokenExpiry is { } expiredAt && Time.GetUtcNow() >= expiredAt)
+                {
+                    return Denied;
+                }
+
                 var (executed, maxRows) = (message.CString(), message.Int32());
                 if (!session.Portals.TryGetValue(executed, out var running))
                 {
@@ -1089,6 +1099,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         IDatabaseStore? store = null;
         try
         {
+            if (session.TokenExpiry is { } until && Time.GetUtcNow() >= until)
+            {
+                return Denied;
+            }
+
             var access = await AuthorizeAsync(session.ApiKey, session.Database, session.Client, running.Token).ConfigureAwait(false);
             if (access is not Authorized { Database: var database })
             {
@@ -1264,7 +1279,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         return bytes;
     }
 
-    private sealed record Authorized(TenantContext Database, bool CanWrite, KeyToken? Key = null, DateTimeOffset? Until = null);
+    private sealed record Authorized(TenantContext Database, bool CanWrite, KeyToken? Key = null, DateTimeOffset? Until = null, DateTimeOffset? TokenExpiry = null);
     private enum Counting
     {
         None,
@@ -1316,6 +1331,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
         public KeyToken? Key { get; init; }
         public DateTimeOffset? Until { get; init; }
+        public DateTimeOffset? TokenExpiry { get; init; }
 
         public string? Project { get; init; }
 
