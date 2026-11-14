@@ -27,6 +27,7 @@ import { atom, calendar, rss } from "./feeds/feeds";
 import { DAY, HOUR, startOfHour } from "./format";
 import { cacheKey, oneOf, readQuery, text as short, type QuerySpec } from "./http/cache";
 import { contentSecurityPolicy, type PolicyOptions } from "./http/csp";
+import { edgeCached } from "./http/edge-cache";
 import { secure } from "./http/security";
 import { Measurements } from "./measure";
 import { overview, snapshotWindow } from "./overview";
@@ -433,29 +434,25 @@ export default {
 
     const fragment = url.searchParams.get("fragment") === "main";
     const query = readQuery(url, match.value.query);
-    const key = new Request(cacheKey(url, query, fragment));
-    const cache = caches.default;
-    let response = await cache.match(key);
-    // An edge hit carries the zone's hour-long browser cache TTL instead of
-    // ours, so browsers would keep showing a page an incident has outdated.
-    if (response) response = secure(response, true);
-    else {
-      response = await render(
-        match.value,
-        env,
-        {
-          now,
-          origin: url.origin,
-          fragment,
-          params: match.params,
-          query,
-          policy: match.value.policy,
-        },
-        request,
-      );
-      if (response.ok) ctx.waitUntil(cache.put(key, response.clone()));
-    }
-    return request.method === "HEAD" ? new Response(null, response) : response;
+    return edgeCached(
+      request,
+      ctx,
+      () =>
+        render(
+          match.value,
+          env,
+          {
+            now,
+            origin: url.origin,
+            fragment,
+            params: match.params,
+            query,
+            policy: match.value.policy,
+          },
+          request,
+        ),
+      match.value.query,
+    );
   },
 
   async scheduled(controller, env, ctx): Promise<void> {

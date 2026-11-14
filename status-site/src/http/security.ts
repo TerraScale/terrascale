@@ -5,7 +5,7 @@ export const CACHE_SECONDS = 10;
 
 export function secure(response: Response, cacheable: boolean): Response {
   const headers = new Headers(response.headers);
-  headers.set("cache-control", cacheable ? `public, max-age=${CACHE_SECONDS}` : "no-store");
+  headers.set("cache-control", cacheable ? `public, max-age=${CACHE_SECONDS}, stale-while-revalidate=60` : "no-store");
   headers.set("x-content-type-options", "nosniff");
   if (!headers.has("referrer-policy")) headers.set("referrer-policy", "strict-origin-when-cross-origin");
   headers.set("strict-transport-security", "max-age=31536000");

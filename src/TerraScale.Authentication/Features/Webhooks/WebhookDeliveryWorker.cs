@@ -101,16 +101,29 @@ public sealed partial class WebhookDeliveryWorker(AuthData data, AuthSchema sche
         var sending = delivery with { StartedAt = cycleStartedAt, Status = "sending", Attempts = delivery.Attempts + 1, CycleAttempts = delivery.CycleAttempts + 1, NextAttemptAt = leaseUntil };
         var claim = Change.Update(current, sending);
         var attempt = new WebhookAttemptRecord(AuthIds.New(), delivery.Id, delivery.ProjectId, now, "sending", 0, null, null);
-        List<Change> claims = [claim, Change.Update(state, state.Value with { LeaseUntil = leaseUntil, LastServedAt = now }), Change.Insert(attempt)];
-        var interrupted = await data.ReadAsync((db, token) => db.WebhookAttempts.Where(row => row.DeliveryId == delivery.Id && row.Status == "sending")
-            .WithVersion().ToListAsync(token), cancellationToken).ConfigureAwait(false);
-        claims.AddRange(interrupted.Select(row => Change.Update(row, row.Value with { Status = "interrupted" })));
+        var leased = state.Value with { LeaseUntil = leaseUntil, LastServedAt = now };
+        var stateClaim = Change.Update(state, leased);
+        var attemptClaim = Change.Insert(attempt);
+        List<Change> claims = [claim, stateClaim, attemptClaim];
+        if (delivery.Status == "sending")
+        {
+            var interrupted = await data.ReadAsync((db, token) => db.WebhookAttempts.Where(row => row.DeliveryId == delivery.Id && row.Status == "sending")
+                .WithVersion().ToListAsync(token), cancellationToken).ConfigureAwait(false);
+            claims.AddRange(interrupted.Select(row => Change.Update(row, row.Value with { Status = "interrupted" })));
+        }
         if (!await data.SaveAsync(claims, cancellationToken).ConfigureAwait(false))
         {
             return false;
         }
 
-        var previousAttempt = await data.ReadAsync((db, token) => db.WebhookAttempts.FromSql($"""
+        var started = clock.GetTimestamp();
+        var result = await this.SendAsync(endpoint, evt, budgetToken, cancellationToken).ConfigureAwait(false);
+        var finishedAt = clock.GetUtcNow();
+        var latencyMs = (int)clock.GetElapsedTime(started).TotalMilliseconds;
+        WebhookAttemptRecord? previousAttempt = null;
+        if (!result.Success)
+        {
+            previousAttempt = await data.ReadAsync((db, token) => db.WebhookAttempts.FromSql($"""
             SELECT a.* FROM webhook_deliveries AS d
             JOIN webhook_attempts AS a ON a.delivery_id = d.id
             WHERE d.endpoint_id = {delivery.EndpointId} AND d.project_id = {delivery.ProjectId}
@@ -120,36 +133,27 @@ public sealed partial class WebhookDeliveryWorker(AuthData data, AuthSchema sche
             ORDER BY a.id DESC
             LIMIT 1
             """).OrderByDescending(row => row.Id).FirstOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
-        var started = clock.GetTimestamp();
-        var result = await this.SendAsync(endpoint, evt, budgetToken, cancellationToken).ConfigureAwait(false);
-        var finishedAt = clock.GetUtcNow();
-        var latest = await data.ReadAsync((db, token) => db.WebhookEndpointStates.Where(row => row.EndpointId == endpoint.Id && row.ProjectId == delivery.ProjectId)
-            .WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
-        if (latest is null || latest.Value.LeaseUntil != leaseUntil)
-        {
-            return false;
         }
 
-        DateTimeOffset? failedSince = result.Success ? null : (previousAttempt is { Status: "failed" } && previousAttempt.CreatedAt >= now.AddHours(-10) ? latest.Value.FirstFailureAt : null) ?? now;
-        var disabledAt = failedSince <= finishedAt.AddDays(-5) ? finishedAt : latest.Value.DisabledAt;
+        DateTimeOffset? failedSince = result.Success ? null : (previousAttempt is { Status: "failed" } && previousAttempt.CreatedAt >= now.AddHours(-10) ? leased.FirstFailureAt : null) ?? now;
+        var disabledAt = failedSince <= finishedAt.AddDays(-5) ? finishedAt : leased.DisabledAt;
         var next = finishedAt + TimeSpan.FromSeconds(Math.Min(21600, 5 * Math.Pow(2, Math.Min(sending.CycleAttempts - 1, 13))) * (0.5 + Random.Shared.NextDouble()));
         next = next > cycleStartedAt.AddHours(24) ? cycleStartedAt.AddHours(24) : next;
         var status = result.Success ? "delivered" : disabledAt is not null ? "disabled" : finishedAt >= cycleStartedAt.AddHours(24) ? "exhausted" : "pending";
-        var completed = attempt with { Status = result.Success ? "delivered" : "failed", LatencyMs = (int)clock.GetElapsedTime(started).TotalMilliseconds, ResponseCode = result.Code, ResponseBody = result.Body };
-        var storedAttempt = await data.ReadAsync((db, token) => db.WebhookAttempts.Where(row => row.Id == attempt.Id).WithVersion().SingleAsync(token), cancellationToken).ConfigureAwait(false);
+        var completed = attempt with { Status = result.Success ? "delivered" : "failed", LatencyMs = latencyMs, ResponseCode = result.Code, ResponseBody = result.Body };
         List<Change> changes =
         [
             Change.Update(sending with { Status = status, NextAttemptAt = next }, claim.Version),
-            Change.Update(storedAttempt, completed),
-            Change.Update(latest, latest.Value with { LeaseUntil = finishedAt, FirstFailureAt = failedSince, DisabledAt = disabledAt }),
+            Change.Update(completed, attemptClaim.Version),
+            Change.Update(leased with { LeaseUntil = finishedAt, FirstFailureAt = failedSince, DisabledAt = disabledAt }, stateClaim.Version),
         ];
-        if (disabledAt is not null && latest.Value.DisabledAt is null)
+        if (disabledAt is not null && leased.DisabledAt is null)
         {
             changes.Add(Change.Insert(new WebhookOutboxRecord(delivery.ProjectId, delivery.ProjectId, "webhook.endpoint_disabled", AuthIds.New(), finishedAt,
                 "", null, null, "pending", 0, finishedAt, EndpointId: endpoint.Id)));
         }
 
-        if (disabledAt is not null && latest.Value.DisabledAt is null)
+        if (disabledAt is not null && leased.DisabledAt is null)
         {
             changes.AddRange(await notifications.ReserveAsync(delivery.ProjectId, endpoint.Id, cancellationToken).ConfigureAwait(false));
         }
