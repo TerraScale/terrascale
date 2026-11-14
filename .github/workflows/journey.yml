@@ -189,6 +189,7 @@ jobs:
           - shard: session limits
             projects: placement/session-limits.spec.ts --project placement --workers 1
             regions: 2
+            nodes: 2
           - shard: multi-region faults
             projects: --project fault
             regions: 2
