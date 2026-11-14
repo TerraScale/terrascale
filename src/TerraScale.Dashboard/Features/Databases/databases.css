@@ -487,3 +487,19 @@ dialog.ts-db-create-dialog .ts-dialog-content {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+#conflicts .ts-card-actions {
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: flex-end;
+}
+
+#conflicts .ts-filters {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+#conflicts .ts-filters .ts-field {
+  flex: 1 1 10rem;
+  min-width: 0;
+}

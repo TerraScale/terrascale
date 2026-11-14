@@ -1,7 +1,7 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Databases.DatabaseDetailPage>
 @using TerraScale.Dashboard.Features.Databases
 <section class="ts-card ts-card-boxed" id="replication" aria-labelledby="replication-title">
-<header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="replication-title">Replication</h2></div><div class="ts-card-actions"><a class="ts-btn ts-btn-secondary ts-btn-sm" href="@DatabaseService.Path(Model.Database.Id, "replication")">Refresh</a></div></header>
+<header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="replication-title">Replication</h2></div></header>
 <div class="ts-card-body">
 <span hidden data-on-interval__duration.10s="@("@get('" + DatabaseService.Path(Model.Database.Id, "replication") + "')")"></span>
 @if(Model.Replication is { Error.Length: > 0 } failed){<div class="ts-alert ts-alert-warning" role="alert"><p class="ts-alert-body">@failed.Error</p></div>}

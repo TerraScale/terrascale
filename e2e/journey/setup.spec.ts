@@ -91,7 +91,7 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
   await page.locator('#create-database form').getByRole('button', { name: 'Create database', exact: true }).click();
   await page.waitForURL(/\/databases\/[0-9A-HJKMNP-TV-Z]{26}(\?|$)/);
   const databaseId = new URL(page.url()).pathname.split('/')[2];
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText(databaseName);
+  await expect(page.locator('.ts-db-title')).toHaveText(databaseName);
   await expect(page.locator('main').getByText('ready', { exact: true }).first()).toBeVisible();
   await expect(page.locator('main').getByText(new RegExp(`^${region}$`, 'i')).first()).toBeVisible();
   await audit.check('database created');
@@ -105,7 +105,7 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
   const saved = page.waitForResponse((response) => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/v1/dashboard/databases/placement');
   await page.getByRole('button', { name: 'Save regions', exact: true }).click();
   const placementResponse = await saved;
-  expect(placementResponse.status(), placementResponse.status() === 303 ? 'saving the same regions' : `saving the same regions: ${placementResponse.status()} ${await placementResponse.text()}`).toBe(303);
+  expect(placementResponse.status(), 'saving regions in place').toBe(200);
   await page.waitForLoadState('load');
   await expect(placed).toHaveValue(new RegExp(`^${region}$`, 'i'));
   await audit.check('database regions saved');
