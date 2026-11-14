@@ -39,7 +39,17 @@ namespace TerraScale.Dashboard.Features.Backups
                 if (action == "policy")
                 {
                     var days = int.TryParse(form["retentionDays"], NumberStyles.None, CultureInfo.InvariantCulture, out var parsed) ? parsed : 0;
-                    var policy = await backups.SetPolicyAsync(context, databaseId, form["fullBackupCron"].ToString(),
+                    var preset = form["schedulePreset"].ToString();
+                    var hour = int.TryParse(form["hour"].ToString() is { Length: > 0 } daily ? daily : form["weeklyHour"], NumberStyles.None, CultureInfo.InvariantCulture, out var postedHour) ? postedHour : 3;
+                    var cron = preset switch
+                    {
+                        "every6" => BackupSchedule.Cron(new EveryHours(6)),
+                        "every12" => BackupSchedule.Cron(new EveryHours(12)),
+                        "daily" => BackupSchedule.Cron(new Daily(Math.Clamp(hour, 0, 23))),
+                        "weekly" => BackupSchedule.Cron(new Weekly(Math.Clamp(hour, 0, 23), Math.Clamp(int.TryParse(form["day"], NumberStyles.None, CultureInfo.InvariantCulture, out var day) ? day : 0, 0, 6))),
+                        _ => form["fullBackupCron"].ToString(),
+                    };
+                    var policy = await backups.SetPolicyAsync(context, databaseId, cron,
                         form["incrementalBackupCron"].ToString(), days, http.RequestAborted);
                     if (DatabaseEndpoints.WantsHtml(http) && http.Request.Headers["Datastar-Request"] == "true")
                     {
