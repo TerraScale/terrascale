@@ -3,8 +3,10 @@ using System.Diagnostics;
 using System.Buffers.Binary;
 using System.Diagnostics.Metrics;
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading.Channels;
+using Amazon.S3;
 using NativeCompressions;
 using NATS.Client.Core;
 using NATS.Client.JetStream;
@@ -302,7 +304,7 @@ internal partial class HomePush(
         while (true)
         {
             var read = 0;
-            foreach (var scan in scans)
+            foreach (var scan in scans.ToList())
             {
                 await foreach (var message in scan.FetchNoWaitAsync<byte[]>(new NatsJSFetchOpts { MaxMsgs = 256 }, cancellationToken: cancellationToken).ConfigureAwait(false))
                 {
@@ -312,8 +314,19 @@ internal partial class HomePush(
                         continue;
                     }
 
-                    if (message.Data is not { } data
-                        || await DecodeAsync(database, data, cancellationToken).ConfigureAwait(false) is not { } transaction)
+                    RegionTransaction? transaction;
+                    try
+                    {
+                        transaction = message.Data is { } data ? await DecodeAsync(database, data, cancellationToken).ConfigureAwait(false) : null;
+                    }
+                    catch (Exception error) when (error is AmazonS3Exception or HttpRequestException or CryptographicException)
+                    {
+                        logger.ZLogWarning($"A push to {database.DatabaseId:@Database} from {message.Subject:@Subject} at stream sequence {message.Metadata?.Sequence.Stream:@Sequence} is held at promotion: {RetryKind(error):@Kind}; the new home's sequencer applies it and every later push of its origin in stream order");
+                        _ = scans.Remove(scan);
+                        break;
+                    }
+
+                    if (transaction is null)
                     {
                         throw new IOException("a retained origin push could not be decoded during promotion");
                     }
