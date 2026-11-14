@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { Nats, putKey as putSealedKey, seal } from './push.mjs';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { appendFileSync, cpSync, openSync, closeSync, readFileSync, mkdirSync, writeFileSync, watch, rmSync } from 'node:fs';
+import { appendFileSync, cpSync, openSync, closeSync, existsSync, readFileSync, mkdirSync, writeFileSync, watch, rmSync } from 'node:fs';
 import { connect as http2 } from 'node:http2';
 import { createConnection, createServer } from 'node:net';
 import { setPriority } from 'node:os';
@@ -935,13 +935,14 @@ try {
   await logged(b, 'Database fenced at regional writer epoch', {}, bMark);
   await send(lineage, lineagePush);
   await logged(b, 'A pushed database is held', { Database: lineage.id }, bMark);
-  const foreign = await heldOn(home, lineage, revision => lineageOf(revision) !== original);
+  assert(!existsSync(state + '/frontier-gru-b/' + org.id + '/' + project.id + '/' + lineage.id + '.db'), 'the fenced writer created no primary file for the held push or a pull');
+  assert.equal(lineageOf(await heldOn(home, lineage)), original);
   await takeOver('journey-1');
   assert.equal((await lineageNotice).state, 'confirmed');
   assert.equal(await value(lineage), 41);
   const fencedLineage = readFileSync(gru.log, 'utf8').slice(gruMark).split('\n').filter(line => line.includes('Database fenced') && line.includes(lineage.id));
   assert.deepEqual(fencedLineage, []);
-  console.log('unplanned takeover by journey-3, which held no file of ' + lineage.id + ': its empty file reached journey-1 as a replica of another lineage (' + foreign + '); back on journey-1 that replica fenced nothing, the held push applied once and the earlier rows are intact');
+  console.log('unplanned takeover by journey-3, which held no file of ' + lineage.id + ': fenced, it held the push without creating a file, so journey-1 kept its replica of lineage ' + original + '; back on journey-1 nothing was fenced, the held push applied once and the earlier rows are intact');
 } finally {
   rmSync(journeyState + '/r2-unavailable-keys', { force: true });
   nats?.close();

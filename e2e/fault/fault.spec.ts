@@ -445,8 +445,12 @@ test('a regional writer role moves only with the target certificate, and a datab
     expect(await regional.readNode(gru, token), 'another database of the region accepts writes on the same writer').toEqual(regional.acknowledged);
     expect(((await nodeStatus(gru)).fenced ?? []).map(entry => entry.databaseId), 'the ledger stays fenced while the other database is served').toContain(ledger.id);
     await removeDatabase(cells, regional.id);
+    const primed = await nodeRequest(partner, '/v1/rollout/prime?source=journey-1', 'POST');
+    expect(primed, 'journey-3 cannot read its replica of the fenced ledger from journey-1 and answers unavailable when its drain budget runs out')
+      .toMatchObject({ status: 503, body: expect.stringContaining('"unavailable"') });
     await kv.put(owners, 'gru', { ...recreated!.value, node: 'journey-3', epoch: 1, previous: null, activated: false, transfer: null }, recreated!.seq);
     await writerIs('journey-3');
+    expect((await nodeStatus(partner)).fenced ?? [], 'journey-3 holds the lease with a primary file that covers its adopted position, so its unreadable replica fences nothing').toEqual([]);
     expect((await nodeStatus(gru)).fenced ?? [], 'the fences clear once the owner record names another node').toEqual([]);
     expect(await counted(gru, 'terrabase_regional_fenced')).toBe(0);
     await ledger.compare(cells, [[800, 'written-on-journey-3']]);
