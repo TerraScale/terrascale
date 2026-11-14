@@ -132,6 +132,15 @@ async function resolve(request: Request, env: Env, ctx: ExecutionContext, url: U
   const stale = topologyStale || placementRead.stale;
   const staleLimit = staleAfterS(env);
   const targetId = placementRead.doc?.region ?? null;
+  if (database !== null && targetId === null) {
+    return errorResponse(
+      "placement_unavailable",
+      "No database placement is available",
+      "Retry after the database placement is published.",
+      503,
+      headers,
+    );
+  }
   const ranked = rankedRegions(topology, clientPoint(request), staleLimit);
   const selected =
     targetId === null

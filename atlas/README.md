@@ -20,7 +20,7 @@ Returns `{v, updated, stale, closest, regions, services}`. Regions include `heal
 curl "https://atlas.terrascale.tech/v1/resolve?project=p1&database=orders&fresh=1"
 ```
 
-Returns `{v, project, database?, region, api, auth, health, placement, stale, pin, expires}`. A database placement selects its region even when down (`placement: "known"`). Missing database, missing placement or a tombstone selects the closest usable region (`placement: "any"`). A placed region absent from topology returns `503 no_eligible_region`. An unreadable placement fails with `503 discovery_unavailable`.
+Returns `{v, project, database?, region, api, auth, health, placement, stale, pin, expires}`. A database placement selects its region even when down (`placement: "known"`). Omitting the database selects the closest usable region (`placement: "any"`). A named database with a missing placement or tombstone returns `503 placement_unavailable`; it never selects an arbitrary region. A placed region absent from topology returns `503 no_eligible_region`. An unreadable placement fails with `503 discovery_unavailable`.
 
 Project IDs are 1–128 ASCII letters, digits, underscores or hyphens, beginning with a letter or digit (including UUIDs, ULIDs and `p1`). Database names match `^[a-z][a-z0-9_-]{0,62}$`. Region/service IDs are 1–63 lowercase letters, digits or hyphens, beginning with a letter and ending with a letter or digit. Invalid resolve parameters return `400 invalid_project` or `invalid_database`.
 
