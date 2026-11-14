@@ -2,7 +2,7 @@
   "recovery": ["recovery"],
   "admission": ["admission", "latency", "native", "delete-race", "recreate", "opened-key", "migration"],
   "publication": ["native-timeout", "barrier-no-intent", "session-open-kill", "shutdown-busy"],
-  "proofs": ["proof-isolation", "orphan-key", "delete-forget", "memory", "key-retry", "independent", "delete-queued"],
+  "proofs": ["proof-isolation", "key-repair", "orphan-key", "delete-forget", "memory", "key-retry", "independent", "delete-queued"],
   "integrity": ["first-open", "creation", "checkpoints", "unknown-key", "marker", "integrity"],
   "idle": ["busy-retry", "idle-cost"]
 }

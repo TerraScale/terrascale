@@ -13,7 +13,7 @@ namespace TerraBase.Features.Management.Backups;
 
 internal sealed class ProjectBackupDestinations(
     SystemCatalog catalog, TerraBaseOptions options, IHttpClientFactory http, TimeProvider time, IHostApplicationLifetime lifetime, Lazy<ICatalogGate> gate,
-    IMasterKey? master = null) : IProjectBackupDestinations
+    IKeyring? master = null) : IProjectBackupDestinations
 {
     internal static string Kind(string projectId) => ProjectState(projectId) + "backup_destination";
     private const string Current = "current";

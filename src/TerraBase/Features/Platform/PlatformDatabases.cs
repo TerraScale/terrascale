@@ -30,7 +30,7 @@ internal static class PlatformDatabases
     };
 
     public static readonly Conflict Orphaned = new(
-        "a platform database file has no catalog record; the file audit deletes it 24 hours after it first sees it", "platform_database_orphaned");
+        "a platform database file has no catalog record; the file is preserved for recovery", "platform_database_orphaned");
 
     public static bool IsPlatform(string? organizationId) => organizationId == OrganizationId;
 

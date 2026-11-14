@@ -7,6 +7,7 @@ import { saveCookies } from './state';
 
 const wcag = ['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'];
 const reportedConsole: ReadonlySet<string> = new Set(['error', 'warning', 'assert']);
+const regionPingProbe = /^https:\/\/[a-z][a-z0-9-]*\.api\.terrascale\.tech\/healthz\?p=\d+-\d+$/;
 const secrets = '[data-mfa-secret], img[src^="data:image/png"], input[type=password], .ts-apikeys-secret-value, .ts-apikeys-secret-mask, #access-token-secret, #alert-secret';
 
 type Expected = { url: RegExp; status: number; seen: number; logged: number };
@@ -17,6 +18,8 @@ export class Audit {
   private readonly inflight = new Map<Request, number>();
   private readonly downloads = new Set<string>();
   private failed: { url: string; error: string }[] = [];
+  private readonly probeConsole: { url: string; problem: string }[] = [];
+  private readonly probeFailures = new Map<string, number>();
   private generation = 0;
   private lastActivity = Date.now();
 
@@ -27,10 +30,20 @@ export class Audit {
     page.on('console', (message) => {
       if (!reportedConsole.has(message.type())) return;
       if (this.expectedLoadFailure(message.text(), message.location().url)) return;
+      if (message.type() === 'error' && message.text().startsWith('Failed to load resource: net::') && regionPingProbe.test(message.location().url)) {
+        this.probeConsole.push({ url: message.location().url, problem: `console error: ${message.text()} at ${message.location().url}` });
+        return;
+      }
       this.problems.push(`console ${message.type()}: ${message.text()} at ${message.location().url}`);
     });
     page.on('pageerror', (error) => this.problems.push(`uncaught page error: ${error.message}`));
-    page.on('requestfailed', (request) => this.failed.push({ url: request.url(), error: `${request.method()} ${request.url()} ${request.failure()?.errorText ?? ''}` }));
+    page.on('requestfailed', (request) => {
+      if (this.isRegionPingProbe(request)) {
+        this.probeFailures.set(request.url(), (this.probeFailures.get(request.url()) ?? 0) + 1);
+        return;
+      }
+      this.failed.push({ url: request.url(), error: `${request.method()} ${request.url()} ${request.failure()?.errorText ?? ''}` });
+    });
     page.on('download', (download) => this.downloads.add(download.url()));
     page.on('response', (response) => this.response(response));
     page.on('request', (request) => this.started(request));
@@ -60,11 +73,13 @@ export class Audit {
   }
 
   private started(request: Request): void {
+    if (this.isRegionPingProbe(request)) return;
     this.inflight.set(request, this.generation);
     this.lastActivity = Date.now();
   }
 
   private ended(request: Request): void {
+    if (this.isRegionPingProbe(request)) return;
     this.inflight.delete(request);
     this.lastActivity = Date.now();
   }
@@ -112,10 +127,23 @@ export class Audit {
   }
 
   private failures(): string[] {
-    return this.failed
-      .splice(0)
-      .filter((failure) => !(this.downloads.has(failure.url) && failure.error.endsWith(' net::ERR_ABORTED')))
-      .map((failure) => `request failed: ${failure.error}`);
+    const consoleProblems = this.probeConsole.splice(0).filter((message) => {
+      const remaining = (this.probeFailures.get(message.url) ?? 0) - 1;
+      if (remaining < 0) return true;
+      if (remaining === 0) this.probeFailures.delete(message.url);
+      else this.probeFailures.set(message.url, remaining);
+      return false;
+    }).map((message) => message.problem);
+    return [
+      ...consoleProblems,
+      ...this.failed.splice(0)
+        .filter((failure) => !(this.downloads.has(failure.url) && failure.error.endsWith(' net::ERR_ABORTED')))
+        .map((failure) => `request failed: ${failure.error}`),
+    ];
+  }
+
+  private isRegionPingProbe(request: Request): boolean {
+    return request.method() === 'GET' && regionPingProbe.test(request.url());
   }
 
   private expectedLoadFailure(text: string, url: string): boolean {

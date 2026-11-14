@@ -65,6 +65,7 @@ jobs:
       status: ${{ steps.filter.outputs.status }}
       dashboard: ${{ steps.filter.outputs.dashboard }}
       journey: ${{ steps.journey.outputs.journey }}
+      keyring: ${{ steps.filter.outputs.keyring }}
       engine: ${{ steps.filter.outputs.engine }}
       frontier: ${{ steps.filter.outputs.frontier }}
     steps:
@@ -224,6 +225,14 @@ jobs:
               - sdk/rust/**/!(AGENTS.md|CLAUDE.md)
               - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md|CLAUDE.md)
               - Makefile
+              - .github/workflows/ci.yml
+            keyring:
+              - e2e/keyring/**
+              - e2e/interactions/keyring.spec.ts
+              - e2e/env/{build.sh,hostnames,r2.mjs,scrub.py}
+              - e2e/{package.json,package-lock.json,playwright.config.ts,tsconfig.json}
+              - e2e/support/{stack.ts,state.ts}
+              - .github/workflows/journey.yml
               - .github/workflows/ci.yml
             docs:
               - docs-site/**/!(AGENTS.md|CLAUDE.md)
@@ -927,6 +936,7 @@ jobs:
       || (github.event_name == 'workflow_dispatch' && !inputs.reconcile_auth && !inputs.native_artifacts && inputs.publication == 'release')))
     uses: ./.github/workflows/journey.yml
     with:
+      keyring: ${{ contains(fromJSON(needs.changes.outputs.dotnet), 'terrabase') || needs.changes.outputs.keyring == 'true' || github.event_name != 'pull_request' }}
       engine: ${{ needs.changes.outputs.engine == 'true' }}
       frontier: ${{ github.event_name != 'pull_request' || needs.changes.outputs.frontier == 'true' }}
 
