@@ -2,16 +2,15 @@
 @using TerraScale.Dashboard.Features.Databases
 @if(Model.Conflicts is { } conflicts){
 <section class="ts-card ts-card-boxed" id="conflicts" aria-labelledby="conflicts-title">
-<header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="conflicts-title">Conflicts</h2></div><div class="ts-card-actions"><a class="ts-link" href="https://docs.terrascale.tech/guides/multi-region-writes-and-conflicts" @(ExternalLink.Attributes)>Conflict rules@(ExternalLink.Hint)</a></div></header>
+<header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="conflicts-title">Conflicts</h2></div><div class="ts-card-actions"><form class="ts-filters" method="get" action="@DatabaseService.Path(Model.Database.Id, "conflicts")" aria-label="Filter conflicts" data-on:submit="evt.preventDefault(); history.replaceState(null, '', el.action + '?' + new URLSearchParams(new FormData(el))); @@get(el.action, {contentType: 'form', retryMaxCount: 0})">
+<div class="ts-field"><label class="ts-label" for="conflict-table">Table</label><input class="ts-input ts-mono" id="conflict-table" data-on:change="el.form.requestSubmit()" name="table" value="@conflicts.Table" maxlength="256" placeholder="All tables" /></div>
+<div class="ts-field"><label class="ts-label" for="conflict-since">Since (UTC)</label><input class="ts-input" type="datetime-local" id="conflict-since" data-on:change="el.form.requestSubmit()" name="since" value="@conflicts.Since" step="any" /></div>
+<div class="ts-field"><label class="ts-label" for="conflict-until">Until (UTC)</label><input class="ts-input" type="datetime-local" id="conflict-until" data-on:change="el.form.requestSubmit()" name="until" value="@conflicts.Until" step="any" /></div>
+</form></div></header>
 <div class="ts-card-body ts-stack-lg">
-<form class="ts-row" method="get" action="@DatabaseService.Path(Model.Database.Id, "conflicts")" aria-label="Filter conflicts">
-<div class="ts-field"><label class="ts-label" for="conflict-table">Table</label><input class="ts-input ts-mono" id="conflict-table" name="table" value="@conflicts.Table" maxlength="256" placeholder="All tables" /></div>
-<div class="ts-field"><label class="ts-label" for="conflict-since">Since (UTC)</label><input class="ts-input" type="datetime-local" id="conflict-since" name="since" value="@conflicts.Since" step="any" /></div>
-<div class="ts-field"><label class="ts-label" for="conflict-until">Until (UTC)</label><input class="ts-input" type="datetime-local" id="conflict-until" name="until" value="@conflicts.Until" step="any" /></div>
-<button class="ts-btn ts-btn-secondary" type="submit">Apply</button>
-</form>
-@if(conflicts.Error.Length > 0){<div class="ts-alert ts-alert-warning" role="alert"><p class="ts-alert-body">@conflicts.Error</p><a class="ts-link" href="@conflicts.Path(Model.Database.Id, conflicts.Before)">Retry</a></div>}
-else if(conflicts.Listing is { Conflicts.Count: 0 }){<div class="ts-empty" role="status"><p class="ts-empty-title">No conflicts match these filters.</p><a class="ts-btn ts-btn-secondary ts-btn-sm" href="@DatabaseService.Path(Model.Database.Id, "conflicts")">Show recent conflicts</a></div>}
+
+@if(conflicts.Error.Length > 0){<div class="ts-alert ts-alert-warning" role="alert"><p class="ts-alert-body">@conflicts.Error</p><a class="ts-link" href="@conflicts.Path(Model.Database.Id, conflicts.Before)" data-on:click="evt.preventDefault(); history.replaceState(null, '', el.href); @@get(el.href, {retryMaxCount: 0})">Retry</a></div>}
+else if(conflicts.Listing is { Conflicts.Count: 0 }){<div class="ts-empty" role="status"><p class="ts-empty-title">No conflicts match these filters.</p><a class="ts-btn ts-btn-secondary ts-btn-sm" href="@DatabaseService.Path(Model.Database.Id, "conflicts")" data-on:click="evt.preventDefault(); history.replaceState(null, '', el.href); @@get(el.href, {retryMaxCount: 0})">Show recent conflicts</a></div>}
 else if(conflicts.Listing is { } listing){
 <div class="ts-table-wrap" role="region" aria-label="Recent conflicts" tabindex="0"><table class="ts-table"><thead><tr><th scope="col">Recorded (UTC)</th><th scope="col">Table / row key</th><th scope="col">Column</th><th scope="col">Winning write</th><th scope="col">Losing write</th><th scope="col">Reason</th></tr></thead><tbody>
 @foreach(var conflict in listing.Conflicts){
@@ -22,8 +21,8 @@ else if(conflicts.Listing is { } listing){
 <td><details><summary>@conflict.Kind</summary><p>@conflict.Message</p>@if(conflict.Loser.State == "superseded"){<p>The greater column HLC wins: milliseconds, logical counter, then node ID in ordinal order. Other columns can still apply.</p>}else{<p>No changes from this transaction applied at the home.</p>}</details></td></tr>
 }
 </tbody></table></div>
-@if(listing.NextBefore is { } next){<a class="ts-btn ts-btn-secondary ts-btn-sm" href="@conflicts.Path(Model.Database.Id, next)">Older conflicts</a>}
-@if(conflicts.Before.Length > 0){<a class="ts-link" href="@conflicts.Path(Model.Database.Id)">Newest conflicts</a>}
+@if(listing.NextBefore is { } next){<a class="ts-btn ts-btn-secondary ts-btn-sm" href="@conflicts.Path(Model.Database.Id, next)" data-on:click="evt.preventDefault(); history.replaceState(null, '', el.href); @@get(el.href, {retryMaxCount: 0})">Older conflicts</a>}
+@if(conflicts.Before.Length > 0){<a class="ts-link" href="@conflicts.Path(Model.Database.Id)" data-on:click="evt.preventDefault(); history.replaceState(null, '', el.href); @@get(el.href, {retryMaxCount: 0})">Newest conflicts</a>}
 }
 </div></section>
 }

@@ -364,7 +364,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 CreatedTable = createdTable.Length > 0 ? createdTable : http.Request.Query["created"].ToString() is { Length: > 0 and <= 128 } requested && !requested.Any(char.IsControl) ? requested : "",
                 SqlHistory = tableHistory
             };
-            if (tab == "replication" && http.Request.Headers["Datastar-Request"] == "true")
+            if (tab == "replication" && HttpMethods.IsGet(http.Request.Method) && http.Request.Headers["Datastar-Request"] == "true")
             {
                 await DatastarEvents.PatchElementsAsync(http, DatabaseReplicationView.Create(page));
                 return Results.Empty;
@@ -375,6 +375,12 @@ namespace TerraScale.Dashboard.Features.Databases
                 var card = await BackupEndpoints.PitrCardAsync(http, context, database,
                     recovery with { Error = page.Backups.Error }, page.Backups.Listing, page.Backups.Bucket, http.RequestAborted);
                 await DatastarEvents.PatchElementsAsync(http, PitrCardView.Create(card));
+                return Results.Empty;
+            }
+
+            if (tab is "grants" or "conflicts" or "replication" && http.Request.Headers["Datastar-Request"] == "true")
+            {
+                await DatastarEvents.PatchElementsAsync(http, DatabaseDetailSection.Create(page));
                 return Results.Empty;
             }
 
