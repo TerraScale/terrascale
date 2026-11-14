@@ -899,6 +899,49 @@ try {
   assert.equal(behindApplied, null);
   assert.deepEqual(await applications(behind), [behindFirst.id, behindSecond.id, behindThird.id]);
   console.log('origin stream restored from a snapshot under the same identity (last sequence ' + snapshotLast + ' below the frontier ' + frontierBefore + '): held with reason stream_behind, the new message at sequence ' + behindSent.seq + ' not applied');
+  const lineage = await create('lineage');
+  await sql(lineage, 'CREATE TABLE items (id INTEGER PRIMARY KEY, value INTEGER)');
+  await sql(lineage, 'CREATE TABLE applications (tx TEXT PRIMARY KEY, value INTEGER)');
+  await sql(lineage, 'INSERT INTO items VALUES (1, 40)');
+  await putSealedKey({ master, access, secret }, org.id + '/' + project.id + '/' + lineage.id, keyId, dataKey);
+  const takeOver = async node => {
+    const stored = await nats.request('$JS.API.STREAM.MSG.GET.KV_terrabase-region-owners', { last_by_subj: '$KV.terrabase-region-owners.gru' });
+    const owner = JSON.parse(Buffer.from(stored.message.data, 'base64'));
+    const certified = await nats.request('$KV.terrabase-region-owners.prepared.gru.' + node, { source: owner.node, target: node, epoch: owner.epoch, operation: null });
+    assert(!certified.error, JSON.stringify(certified));
+    const changed = { ...owner, node, epoch: owner.epoch + 1, previous: owner.node, activated: true, transfer: null,
+      prepared: { source: owner.node, target: node, epoch: owner.epoch } };
+    const ack = await nats.request('$KV.terrabase-region-owners.gru', changed, { 'Nats-Expected-Last-Subject-Sequence': String(stored.message.seq) });
+    assert(!ack.error, JSON.stringify(ack));
+    return changed.epoch;
+  };
+  const lineageOf = revision => revision.split(':')[1];
+  const heldOn = async (address, db, accepted = () => true) => {
+    const deadline = Date.now() + 90_000;
+    while (true) {
+      const held = await request(address, '/v1/sync/organizations/' + org.id + '/projects/' + project.id + '/databases/' + db.id + '/held', undefined, undefined, 'GET', [200, 404]);
+      if (held.revision && accepted(held.revision)) return held.revision;
+      assert(Date.now() < deadline, 'the node at ' + address + ' never held the expected replica of ' + db.id);
+      await new Promise(resolveWait => setTimeout(resolveWait, 100));
+    }
+  };
+  const bMark = readFileSync(b.log, 'utf8').length;
+  const gruMark = readFileSync(gru.log, 'utf8').length;
+  const lineagePush = transaction([effect(41)]);
+  const lineageNotice = notice(lineage, lineagePush);
+  await request(home, '/v1/sync/organizations/' + org.id + '/projects/' + project.id + '/databases/' + lineage.id + '/held', undefined, undefined, 'GET', 404);
+  const original = lineageOf(await heldOn(internal['journey-3'], lineage));
+  await takeOver('journey-3');
+  await logged(b, 'Database fenced at regional writer epoch', {}, bMark);
+  await send(lineage, lineagePush);
+  await logged(b, 'A pushed database is held', { Database: lineage.id }, bMark);
+  const foreign = await heldOn(home, lineage, revision => lineageOf(revision) !== original);
+  await takeOver('journey-1');
+  assert.equal((await lineageNotice).state, 'confirmed');
+  assert.equal(await value(lineage), 41);
+  const fencedLineage = readFileSync(gru.log, 'utf8').slice(gruMark).split('\n').filter(line => line.includes('Database fenced') && line.includes(lineage.id));
+  assert.deepEqual(fencedLineage, []);
+  console.log('unplanned takeover by journey-3, which held no file of ' + lineage.id + ': its empty file reached journey-1 as a replica of another lineage (' + foreign + '); back on journey-1 that replica fenced nothing, the held push applied once and the earlier rows are intact');
 } finally {
   rmSync(journeyState + '/r2-unavailable-keys', { force: true });
   nats?.close();

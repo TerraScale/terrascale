@@ -101,7 +101,9 @@ A home moves only through a planned move (R9), to the current writer of the targ
    replica as the home file and takes the lease with one compare-and-set, `{home: old}` → `{home: new, node, epoch}`,
    without `adopted`.
 5. The target records the new placement, prepares home apply, and applies the pushes still addressed to the former home
-   (epoch below the move's). It holds the applied notices those pushes would send to their origins.
+   (epoch below the move's). It holds the applied notices those pushes would send to their origins. A push that cannot
+   be decoded yet because its data key or the object store is unavailable stops the drain of its origin: the former home
+   never applied it either, and the target's sequencer applies it and every later push of that origin in stream order.
 6. **Commit point**: one compare-and-set on the lease adds `adopted`, the replica's position before the import. It runs
    only after the placement update, the prepare and the drain have all succeeded. Then the target lifts the fence,
    sends the held notices and serves. After the commit point nothing rolls back: the target is the home and the move
@@ -176,11 +178,11 @@ rewrite of the owner record is refused: the named node logs `Regional writer ref
 record and stays a non-writer (`terrabase.home.refusals{scope="writer",reason="unproven"}`).
 
 On every activation, including a first writer at epoch 1, the node checks each database homed in the region whose home
-lease (when there is one) names this region. A database whose local replica is newer than its primary file, or that has a
-replica and no primary file (`reason="replica_newer"`, `reason="primary_missing"`), is fenced: the node still becomes the
+lease (when there is one) names this region. A database whose local replica is newer than its primary file, whose replica of another incarnation holds a user
+table, or that has a replica and no primary file (`reason="replica_newer"`, `reason="primary_missing"`), is fenced: the node still becomes the
 region's writer and serves every other database, but it does not take that database's home lease and answers each write
 to it with 503 `unavailable`. Reads follow the usual rules. A database whose lease names another region is not served by
-this region's writer, so it is not checked. Before comparing, the node catches up the replicas whose position it cannot
+this region's writer, so it is not checked. A replica of another incarnation that holds only the engine's own tables proves no write is missing, so it fences nothing. Before comparing, the node catches up the replicas whose position it cannot
 read through their followers, together and once per page of homed databases, within 1 s, so the check ends inside one
 2 s activation attempt. A replica whose position still cannot be read (its last pull failed, or it is reopening or was
 reopened from a file it pulled before and has not pulled since) proves nothing; a replica still being created holds no
