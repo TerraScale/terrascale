@@ -38,7 +38,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 var database = await databases.RenameAsync(context, id, form["name"].ToString(), form["confirmName"].ToString(), http.RequestAborted);
                 if (http.Request.Headers["Datastar-Request"] == "true")
                 {
-                    return await PageAsync(http, context, id, renamed: true);
+                    return await PageAsync(http, await databases.CurrentAsync(context, http.RequestAborted), id, renamed: true);
                 }
                 return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "settings") + "?renamed=1") : Results.Json(database);
             }

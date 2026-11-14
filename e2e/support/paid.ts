@@ -39,7 +39,7 @@ export async function createDatabase(page: Page, audit: Audit, name: string, reg
   await page.locator('#database-name').fill(name);
   await page.locator('#create-database form').getByRole('button', { name: 'Create database', exact: true }).click();
   await page.waitForURL(/\/databases\/[0-9A-HJKMNP-TV-Z]{26}(\?|$)/);
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText(name);
+  await expect(page.locator('.ts-db-title')).toHaveText(name);
   await expect(page.locator('main').getByText('ready', { exact: true }).first()).toBeVisible();
   await expect(page.locator('main').getByText(new RegExp(`^${region}$`, 'i')).first()).toBeVisible();
   await audit.check(label);

@@ -370,7 +370,13 @@ namespace TerraScale.Dashboard.Features.Databases
                 return Results.Empty;
             }
 
-            if (tab is "grants" or "conflicts" or "replication" && http.Request.Headers["Datastar-Request"] == "true")
+            if (tab == "conflicts" && http.Request.Headers["Datastar-Request"] == "true")
+            {
+                await DatastarEvents.PatchElementsAsync(http, DatabaseConflictsView.Create(page));
+                return Results.Empty;
+            }
+
+            if (tab is "grants" or "replication" && http.Request.Headers["Datastar-Request"] == "true")
             {
                 await DatastarEvents.PatchElementsAsync(http, DatabaseDetailSection.Create(page));
                 return Results.Empty;

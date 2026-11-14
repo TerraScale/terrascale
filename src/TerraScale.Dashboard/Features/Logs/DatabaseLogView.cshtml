@@ -1,5 +1,6 @@
 @using TerraScale.Dashboard.Common.Charts
 @inherits RazorSlice<TerraScale.Dashboard.Features.Logs.DatabaseLogPage>
+@using TerraScale.Dashboard.Features.Logs
 @implements IUsesLayout<TerraScale.Dashboard.Common.UI.Slices.ShellDocument, ShellModel>
 @using System.Globalization
 @(await RenderPartialAsync<DatabaseLogSection, DatabaseLogPage>(Model))

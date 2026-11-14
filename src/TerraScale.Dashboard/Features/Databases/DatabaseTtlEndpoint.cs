@@ -31,7 +31,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 var database = await databases.SetTtlAsync(context, id, clear ? null : DatabaseTtl.Hours(form["ttlHours"].ToString()), http.RequestAborted);
                 if (http.Request.Headers["Datastar-Request"] == "true")
                 {
-                    return await DatabaseSettingsEndpoints.PageAsync(http, context, id, ttlHours: clear ? "" : form["ttlHours"].ToString(), expirySaved: true);
+                    return await DatabaseSettingsEndpoints.PageAsync(http, await databases.CurrentAsync(context, http.RequestAborted), id, ttlHours: clear ? "" : form["ttlHours"].ToString(), expirySaved: true);
                 }
                 return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "settings")) : Results.Json(database, DatabaseTtlJson.Default.DatabaseRecord);
             }

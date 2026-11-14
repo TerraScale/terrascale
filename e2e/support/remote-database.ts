@@ -66,8 +66,8 @@ async function manageRemoteDatabase(page: Page, request: APIRequestContext, audi
     const response = await answer;
     if (action === 'create') id = /\/databases\/([0-9A-HJKMNP-TV-Z]{26})/.exec(response.headers().location ?? '')?.[1] ?? '';
     await answered(response);
-    expect(response.status(), action + ' redirects after saving').toBe(303);
-    await page.waitForLoadState('load');
+    expect(response.status(), action + ' answers after saving').toBe(action === 'rename' ? 200 : 303);
+    if (action !== 'rename') await page.waitForLoadState('load');
     if (failures.length) await answered(failures[0]);
   }
 
@@ -153,8 +153,10 @@ async function manageRemoteDatabase(page: Page, request: APIRequestContext, audi
     await healthy('remote database settings');
     await page.locator('#rename-name').fill(renamed);
     await page.locator('#rename-confirm').fill(name);
-    await submit('rename', () => page.getByRole('button', { name: 'Rename database', exact: true }).click());
+    const settingsUrl = page.url();
+    await submit('rename', () => page.locator('#database-general').getByRole('button', { name: 'Save', exact: true }).click());
     await expect(page.locator('.ts-db-head .ts-db-title')).toHaveText(renamed);
+    await expect(page).toHaveURL(settingsUrl);
     await healthy('remote database renamed');
     await answered(await page.reload());
     await expect(page.locator('.ts-db-head .ts-db-title')).toHaveText(renamed);

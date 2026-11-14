@@ -50,7 +50,7 @@ function stat(page: Page, label: string) {
 }
 
 async function databaseHeader(page: Page, journey: Journey): Promise<void> {
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText(journey.databaseName);
+  await expect(page.locator('.ts-db-title')).toHaveText(journey.databaseName);
   const header = page.locator('main');
   await expect(header.getByText('ready', { exact: true }).first()).toBeVisible();
   await expect(header.getByText(new RegExp(`^${journey.databaseRegion}$`, 'i')).first()).toBeVisible();
@@ -101,8 +101,8 @@ const databaseTabs: [string, string, Identity][] = [
   ['logs', 'Logs', title('Request logs', 2)],
   ['backups', 'Backups', title('Backup policy', 2)],
   ['branches', 'Forks', title('Forks', 2)],
-  ['settings', 'Settings', title('Settings', 2)],
-  ['danger', 'Danger zone', title('Danger zone', 2)],
+  ['settings', 'Settings', title('Settings')],
+  ['danger', 'Danger zone', title('Delete database', 2)],
   ['point-in-time', 'Point-in-time recovery', title('Restore database at UTC time', 2)],
 ];
 
