@@ -293,10 +293,10 @@ namespace TerraScale.Dashboard.Features.Backups
                         page = page with { Point = form["point"].ToString() ?? page.Point, Error = DatabaseResults.Message(error) };
                     }
 
-                if (http.Request.Headers["Datastar-Request"] == "true")
-                {
-                    var card = await BackupEndpoints.PitrCardAsync(http, context, database, page, null, null, http.RequestAborted);
-                    await DatastarEvents.PatchElementsAsync(http, PitrCardView.Create(card));
+                    if (http.Request.Headers["Datastar-Request"] == "true")
+                    {
+                        var card = await BackupEndpoints.PitrCardAsync(http, context, database, page, null, null, http.RequestAborted);
+                        await DatastarEvents.PatchElementsAsync(http, PitrCardView.Create(card));
                         return Results.Empty;
                     }
 
