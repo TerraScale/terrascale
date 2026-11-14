@@ -22,24 +22,15 @@ internal static class RegionalForwarding
         return app;
     }
 
-    internal static bool ForwardsToWriter(HttpContext context) => Listeners.ArrivedOn(context) == TerraBaseListener.Client
-        && !context.WebSockets.IsWebSocketRequest && context.User.Identity?.IsAuthenticated == true && Regional(context)
-        && !context.RequestServices.GetRequiredService<RegionalOwners>().Writer;
-
-    private static bool Regional(HttpContext context)
-    {
-        var metadata = context.GetEndpoint()?.Metadata.GetMetadata<ListenerMetadata>();
-        return (metadata?.Listeners.Contains(TerraBaseListener.Client) == true
-            || ReferenceEquals(metadata, ListenerMetadata.Management)
-            || context.Request.Path.StartsWithSegments("/admin"))
-            && !ReferenceEquals(metadata, ListenerMetadata.Probe);
-    }
-
     private static async Task ServeAsync(HttpContext context, RequestDelegate next)
     {
         var services = context.RequestServices;
         var owners = services.GetRequiredService<RegionalOwners>();
-        if (!Regional(context))
+        var metadata = context.GetEndpoint()?.Metadata.GetMetadata<ListenerMetadata>();
+        var served = metadata?.Listeners.Contains(TerraBaseListener.Client) == true
+            || ReferenceEquals(metadata, ListenerMetadata.Management)
+            || context.Request.Path.StartsWithSegments("/admin");
+        if (!served || ReferenceEquals(metadata, ListenerMetadata.Probe))
         {
             await next(context).ConfigureAwait(false);
             return;
