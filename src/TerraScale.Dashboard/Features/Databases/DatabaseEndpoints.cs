@@ -370,6 +370,14 @@ namespace TerraScale.Dashboard.Features.Databases
                 return Results.Empty;
             }
 
+            if (tab == "backups" && http.Request.Headers["Datastar-Request"] == "true" && page.Backups is { Recovery: { } recovery })
+            {
+                var card = await TerraScale.Dashboard.Features.Backups.BackupEndpoints.PitrCardAsync(http, context, database,
+                    recovery with { Error = page.Backups.Error }, page.Backups.Listing, page.Backups.Bucket, http.RequestAborted);
+                await DatastarEvents.PatchElementsAsync(http, TerraScale.Dashboard.Features.Backups.PitrCardView.Create(card));
+                return Results.Empty;
+            }
+
             if (tab == "backups" && http.Request.Headers["Datastar-Request"] == "true" && page.Backups?.Restore is not null)
             {
                 await DatastarEvents.PatchElementsAsync(http, TerraScale.Dashboard.Features.Backups.RestoreStatusView.Create(page.Backups));

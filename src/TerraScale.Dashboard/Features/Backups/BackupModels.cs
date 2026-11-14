@@ -3,7 +3,7 @@ using TerraScale.Dashboard.Common.UI;
 
 namespace TerraScale.Dashboard.Features.Backups
 {
-    public sealed record BackupView(string Id, string Status, DateTimeOffset CreatedAt, long SizeBytes);
+    public sealed record BackupView(string Id, string Status, string Trigger, DateTimeOffset CreatedAt, long SizeBytes);
     public sealed record BackupPolicyErrorView(string Code, string Message);
     public sealed record BackupPolicyView(string FullBackupCron, string IncrementalBackupCron, int RetentionDays,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? UpdatedAt = null,
@@ -66,16 +66,38 @@ namespace TerraScale.Dashboard.Features.Backups
         {
             return at.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture);
         }
+
+        public static string RowTitle(DateTimeOffset at, DateTimeOffset now)
+        {
+            var day = now.UtcDateTime.Date;
+            var date = at.UtcDateTime;
+            var time = date.ToString("HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture);
+            var label = date.Date == day ? "Today"
+                : date.Date == day.AddDays(-1) ? "Yesterday"
+                : date.ToString("MMM d", System.Globalization.CultureInfo.InvariantCulture);
+            return label + ", " + time;
+        }
     }
     // The project's own bucket at TerraBase (credentials are write-only there) and a database's scheduled NDJSON export into it.
     public sealed record BackupDestinationView(string Endpoint, string Region, string Bucket, string Mode, DateTimeOffset? UpdatedAt);
     public sealed record BackupBucketView(BackupDestinationView? Destination);
+    public sealed record RestorePointsModel(ShellModel Shell, DatabaseRecord Database, string Error, string RestoreId, string Name,
+        IReadOnlyList<BackupView> Items, string? NextCursor)
+    {
+        public const int PageSize = 10;
+
+        public bool HasMore => NextCursor is not null;
+        public bool CanManage => Shell.Context.CanManage && Database.Status == "ready";
+        public bool CanRestore => CanManage && Shell.Context.Organization?.CanProvision(Shell.Context.UserId) == true;
+    }
     public sealed record BackupPage(ShellModel Shell, DatabaseRecord Database, BackupListing? Listing,
         string Error = "", string RestoreId = "", string Name = "", string? FullBackupCron = null, string? RetentionDays = null)
     {
         public BackupBucketView? Bucket { get; init; }
         public bool BucketRead { get; init; }
         public RestoreProgress? Restore { get; init; }
+        public BackupPageSlice? Slice { get; init; }
+        public WholeDatabaseRecoveryPage? Recovery { get; init; }
     }
 
     public interface IBackupBackend
