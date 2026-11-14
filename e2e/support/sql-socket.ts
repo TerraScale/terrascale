@@ -16,11 +16,12 @@ export function frame(opcode: number, payload: Buffer, final = true): Buffer {
   return Buffer.concat([prefix, mask, masked]);
 }
 
-export async function rawSqlSocket(url: string, credential?: string) {
+export async function rawSqlSocket(url: string, credential?: string, headers: Record<string, string> = {}) {
   const request = upgrade(url, {
     headers: {
       connection: 'Upgrade', upgrade: 'websocket', 'sec-websocket-version': '13',
       'sec-websocket-key': randomBytes(16).toString('base64'), 'sec-websocket-protocol': 'terrascale.sql.v1',
+      ...headers,
       ...(credential ? { authorization: 'Bearer ' + credential } : {}),
     },
   });
