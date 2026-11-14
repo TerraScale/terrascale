@@ -195,7 +195,6 @@ namespace TerraScale.Dashboard
                 EndpointRegistration.Create<SavedQueriesListEndpoint>(),
                 EndpointRegistration.Create<RunSqlEndpoint>(),
                 EndpointRegistration.Create<CheckSqlEndpoint>(),
-                EndpointRegistration.Create<SqlCatalogEndpoint>(),
                 EndpointRegistration.Create<CreateTableEndpoint>(),
                 EndpointRegistration.Create<SaveQueryEndpoint>(),
                 EndpointRegistration.Create<DeleteSavedQueryEndpoint>(),
@@ -322,7 +321,7 @@ namespace TerraScale.Dashboard
                 context.Items["nonce"] = nonce;
                 var path = context.Request.Path.Value ?? "";
                 var editorStyles = path.StartsWith("/api/v1/dashboard/data/", StringComparison.Ordinal) ||
-                    path.StartsWith("/databases/", StringComparison.Ordinal) && path.EndsWith("/sql", StringComparison.Ordinal) ||
+                    path.StartsWith("/databases/", StringComparison.Ordinal) && (path.EndsWith("/sql", StringComparison.Ordinal) || path.EndsWith("/tables", StringComparison.Ordinal)) ||
                     path.StartsWith("/api/v1/dashboard/functions/", StringComparison.Ordinal) ||
                     path.StartsWith("/databases/", StringComparison.Ordinal) && path.EndsWith("/functions", StringComparison.Ordinal);
                 var reference = context.Request.Path.StartsWithSegments("/reference");

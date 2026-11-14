@@ -1,11 +1,12 @@
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Features.Data;
 using TerraScale.Endpoints;
 
-namespace TerraScale.Dashboard.Features.Data
+namespace TerraScale.Dashboard.Features.Databases
 {
     public sealed class CreateTableEndpoint(DashboardSessions sessions, AccountService accounts, DataService data, SavedQueryService saved) : EndpointWithoutRequest<IResult>
     {
-        public override void Configure() => Post("/api/v1/dashboard/data/sql/tables");
+        public override void Configure() => Post("/api/v1/dashboard/databases/tables");
 
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {
@@ -19,7 +20,7 @@ namespace TerraScale.Dashboard.Features.Data
             var form = await FormRequests.ReadAsync(http, cancellationToken);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "sql"), Results.BadRequest("Invalid form token."));
+                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "tables"), Results.BadRequest("Invalid form token."));
             }
 
             var id = form["databaseId"].ToString();
@@ -50,15 +51,17 @@ namespace TerraScale.Dashboard.Features.Data
 
                 var parsed = CreateTableSql.Parse(form);
                 var denied = DatabaseResults.Status(error) == StatusCodes.Status403Forbidden;
-                return await DataEndpoints.PageAsync(http, context, id, data, saved, DatabaseResults.Message(error), denied ? "" : "create-table",
-                    form["sql"].ToString(), status: DatabaseResults.Status(error), tableDraft: denied ? null : parsed.Draft);
+                return await DatabaseEndpoints.DetailPageAsync(http, context, id, "tables", http.RequestServices.GetRequiredService<IDatabaseBackend>(),
+                    http.RequestServices.GetRequiredService<DatabaseService>(), DatabaseResults.Message(error), status: DatabaseResults.Status(error),
+                    formError: denied ? "" : DatabaseResults.Message(error), tableDraft: denied ? null : parsed.Draft);
             }
         }
 
-        private async Task<IResult> RejectAsync(HttpContext http, AccountContext context, string id, CreateTableResult parsed, string sql, int status)
+        private static async Task<IResult> RejectAsync(HttpContext http, AccountContext context, string id, CreateTableResult parsed, string sql, int status)
         {
             return DatabaseResults.WantsHtml(http)
-                ? await DataEndpoints.PageAsync(http, context, id, data, saved, parsed.Error, "create-table", sql, status: status, tableDraft: parsed.Draft)
+                ? await DatabaseEndpoints.DetailPageAsync(http, context, id, "tables", http.RequestServices.GetRequiredService<IDatabaseBackend>(),
+                    http.RequestServices.GetRequiredService<DatabaseService>(), parsed.Error, status: status, formError: parsed.Error, tableDraft: parsed.Draft)
                 : Results.Problem(parsed.Error, statusCode: status);
         }
 
@@ -104,15 +107,16 @@ namespace TerraScale.Dashboard.Features.Data
             try
             {
                 var receipt = await http.RequestServices.GetRequiredService<SqlRuns>().SaveAsync(context, id, sql, history, result, "", StatusCodes.Status200OK, cancellationToken);
-                var location = DatabaseService.Path(id, "sql") + "?result=" + Uri.EscapeDataString(receipt) + "&created=" + Uri.EscapeDataString(parsed.Draft.Name);
+                var location = DatabaseService.Path(id, "tables") + "?table=" + Uri.EscapeDataString(parsed.Draft.Name) + "&created=" + Uri.EscapeDataString(parsed.Draft.Name);
                 return DatabaseResults.WantsHtml(http)
                     ? HttpRedirects.SeeOther(location)
                     : Results.Json(new { columns = result.Columns, rows = result.Rows, rowsAffected = result.RowsAffected, lastInsertRowId = result.LastInsertRowId });
             }
             catch (Exception error) when (SqlWorkspace.Unavailable(error) && !cancellationToken.IsCancellationRequested)
             {
-                return await DataEndpoints.PageAsync(http, context, id, data, saved, sql: sql, sqlResult: result, createdTable: parsed.Draft.Name,
-                    sqlNotice: "This outcome could not be saved for later viewing. Refreshing this page would send the statement again.");
+                return await DatabaseEndpoints.DetailPageAsync(http, context, id, "tables", http.RequestServices.GetRequiredService<IDatabaseBackend>(),
+                    http.RequestServices.GetRequiredService<DatabaseService>(), "This outcome could not be saved for later viewing. Refreshing this page would send the statement again.",
+                    status: StatusCodes.Status503ServiceUnavailable, createdTable: parsed.Draft.Name);
             }
         }
 

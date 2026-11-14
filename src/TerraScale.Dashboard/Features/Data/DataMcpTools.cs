@@ -15,7 +15,7 @@ namespace TerraScale.Dashboard.Features.Data
             return data.SqlAsync(Scope(organizationId, projectId), databaseId, sql, true, Cancellation);
         }
 
-        [McpServerTool(Name = "get_database_schema", Title = "Get database schema", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List SQL tables and their declared columns and types, including empty tables. Returns at most 100 tables; truncated indicates more tables exist. Requires read access.")]
+        [McpServerTool(Name = "get_database_schema", Title = "Get database schema", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List the database's tables and their declared columns and types, including empty tables. Returns at most 100 tables; truncated indicates more tables exist. Requires read access.")]
         public Task<SqlCatalog> Schema(string databaseId, string? organizationId = null, string? projectId = null)
         {
             return data.CatalogAsync(Scope(organizationId, projectId), databaseId, Cancellation);

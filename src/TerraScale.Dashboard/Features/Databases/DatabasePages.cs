@@ -145,7 +145,7 @@ namespace TerraScale.Dashboard.Features.Databases
 
     public sealed record DatabaseDetailPage(ShellModel Shell, DatabaseRecord Database, string Tab, IReadOnlyList<DatabaseRegion> Choices,
         string Error = "", bool OpenDelete = false, bool Created = false, TerraScale.Dashboard.Features.Backups.BackupPage? Backups = null,
-        string Range = "24h", DatabaseActivity? Activity = null)
+        string Range = "24h", DatabaseActivity? Activity = null, string FormError = "")
     {
         public DatabaseConflictsPage? Conflicts { get; init; }
         public DatabaseReplication? Replication { get; init; }
@@ -153,14 +153,17 @@ namespace TerraScale.Dashboard.Features.Databases
         public string TtlHours { get; init; } = "";
         public string PointInTime { get; init; } = "";
         public DatabaseTables? Tables { get; init; }
-        // The table shown on the Tables tab and its first rows.
         public string Table { get; init; } = "";
         public DatabaseSqlResult? Preview { get; init; }
         public long? StorageBytes { get; init; }
         public IReadOnlyList<DatabaseReadGrant>? Grants { get; init; }
-        // A refused grant save reopens the grant dialog with what was submitted.
         public DatabaseGrantForm? GrantForm { get; init; }
         public bool OpenGrant => Tab == "grants" && GrantForm is not null && Error.Length > 0 && Context.CanManage;
+        public CreateTableDraft? TableDraft { get; init; }
+        public bool OpenCreateTable => Tab == "tables" && Context.CanWriteProjectData && (TableDraft is not null || ShowCreateTable);
+        public bool ShowCreateTable { get; init; }
+        public string CreatedTable { get; init; } = "";
+        public IReadOnlyList<string>? SqlHistory { get; init; }
         public bool ShowFork { get; init; }
         public bool OpenBranch => Tab == "branches" && (ShowFork || BranchName is not null && Error.Length > 0) && Context.CanManage && Database.Status == "ready";
         // Each activity card keeps its own range; changing one keeps the others as they are.
@@ -194,7 +197,7 @@ namespace TerraScale.Dashboard.Features.Databases
             : string.Join(", ", Serving.Select(DatabasesPage.RegionDisplay));
         public (string Tone, string Title, HtmlString Body) CreatedState => DatabasesPage.Tone(Database.Status) switch
         {
-            "success" => ("success", Database.Name + " is ready", new HtmlString("<a class=\"ts-link\" href=\"" + DatabaseService.Path(Database.Id, "sql") + "\">Open SQL editor</a> to create a table.")),
+            "success" => ("success", Database.Name + " is ready", new HtmlString("<a class=\"ts-link\" href=\"" + DatabaseService.Path(Database.Id, "tables") + "\">Open the Tables tab</a> to create a table.")),
             "danger" => ("danger", Database.Name + " could not be created", new HtmlString("The data plane did not finish creating it. Delete it and create it again, or contact support if it keeps failing.")),
             _ => ("info", Database.Name + " is being created", new HtmlString("The data plane is still placing it in " + Placement + ". Its status changes to ready when it can take requests."))
         };
