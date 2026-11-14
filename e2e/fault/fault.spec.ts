@@ -9,7 +9,7 @@ import { auth, dash, e2eRoot, stateDir } from '../support/stack';
 import { keyId } from '../support/api-key';
 import { journey, ownerSession, saveSecret } from '../support/state';
 import { receiptHandoff } from './receipt-handoff';
-import { backupPuts, backupStore, continuity, crashWrite, endpoint, faultId, holeRecords, Ledger, metric, nodeHoles, nodes, nodeRequest, nodeStatus, plantHole, probe, regions, restartAfterKill, scrape, tokenReady, topology } from './support';
+import { backupPuts, backupStore, continuity, crashWrite, endpoint, faultId, holeRecords, Ledger, metric, nodeHoles, nodes, nodeRequest, nodeStatus, plantHole, probe, regions, restartAfterKill, systemContinuity, scrape, tokenReady, topology } from './support';
 
 test.beforeEach(async () => {
   expect(process.env.E2E_TARGET ?? 'local').toBe('local');
@@ -217,6 +217,7 @@ test('history lost while the backup store is unreachable is one hole each time, 
 
     console.log('backup holes: restarting writer');
     const beforeRestart = await nodeHoles(writer);
+    const systemBefore = await systemContinuity(writer);
     const restart = restartAfterKill(writer, true, undefined, async () => {
       expect(await probe(writer, '/readyz')).toBe(503);
       expect(await metric(writer, 'terrabase_catalog_closed', 'reason="store_unavailable"')).toBe(1);
@@ -238,12 +239,15 @@ test('history lost while the backup store is unreachable is one hole each time, 
     expect(afterSecond.some(key => key.includes('/holes/') && key.endsWith('-closed'))).toBe(true);
     expect(settled.holes.map(hole => [hole.incarnation, hole.from])).toEqual([[opened.incarnation, opened.holes[0]!.from], [kept.incarnation, kept.storedPosition]]);
     const afterRestart = await nodeHoles(writer);
-    expect(new Set(afterRestart).size, `every hole on the node is recorded once: ${afterRestart.join(', ')}`).toBe(afterRestart.length);
-    expect(afterRestart.filter(hole => hole.startsWith(`${settled.file} `))).toEqual(beforeRestart.filter(hole => hole.startsWith(`${settled.file} `)));
-    const restartHoles = afterRestart.filter(hole => !beforeRestart.includes(hole));
-    console.log(`holes the restarted writer recorded for history it discarded before its backups resumed: ${JSON.stringify(restartHoles)}`);
-    await expect.poll(counted, { message: 'the restarted writer counts only the holes the node did not hold before, each once' })
-      .toEqual({ holes: holes + 2 + restartHoles.length, recorded: restartHoles.length });
+    expect(afterRestart.toSorted(), 'every change the restarted writer made before its backup taps opened is kept until they ship it: no new hole on any file')
+      .toEqual(beforeRestart.toSorted());
+    await expect.poll(counted, { message: 'the restarted writer records no hole' }).toEqual({ holes: holes + 2, recorded: 0 });
+    await expect.poll(async () => (await systemContinuity(writer)).storedPosition!,
+      { message: 'the system database ships the writes it made before its backup tap opened' }).toBeGreaterThan(systemBefore.storedPosition!);
+    const systemAfter = await systemContinuity(writer);
+    console.log(`system backup of ${writer.name}: stored ${systemBefore.storedPosition} before the kill, ${systemAfter.storedPosition} after the restart`);
+    expect(systemAfter).toMatchObject({ incarnation: systemBefore.incarnation, storedIncarnation: systemBefore.incarnation });
+    expect(systemAfter.holes.map(hole => [hole.incarnation, hole.from])).toEqual(systemBefore.holes.map(hole => [hole.incarnation, hole.from]));
 
     const error = await refusal(inside);
     const [from, to] = [Date.parse(error.unavailableFrom), Date.parse(error.unavailableTo)];

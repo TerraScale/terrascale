@@ -27,7 +27,7 @@ internal sealed partial class TursoDatabaseStore
                 using var mutation = EnterMutation();
                 if (Captures && BackupAnchor is null && Volatile.Read(ref BackupTaps) == 0)
                 {
-                    _ = TursoStorageTransaction.Trim(writer.Connection, null, long.MaxValue, IsSystem);
+                    TrimUntapped(writer.Connection, null);
                     ObserveCdcSize(writer.Connection);
                 }
 
@@ -70,7 +70,7 @@ internal sealed partial class TursoDatabaseStore
                 var before = RetainedCdcRows;
                 if (BackupAnchor is null && Volatile.Read(ref BackupTaps) == 0)
                 {
-                    _ = TursoStorageTransaction.Trim(writer.Connection, null, long.MaxValue, IsSystem);
+                    TrimUntapped(writer.Connection, null);
                 }
                 ObserveCdcSize(writer.Connection);
                 if (RetainedCdcRows < before)

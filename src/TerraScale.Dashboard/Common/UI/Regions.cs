@@ -34,5 +34,10 @@ namespace TerraScale.Dashboard.Common.UI
         {
             return Array.Find(Flags, flag => string.Equals(flag, country, StringComparison.OrdinalIgnoreCase)) ?? "";
         }
+
+        public static string PingUrl(string code)
+        {
+            return DatabaseRegion.FromId(code?.ToLowerInvariant()) is { } region ? region.Api + "healthz" : "";
+        }
     }
 }

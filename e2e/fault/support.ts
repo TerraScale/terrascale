@@ -41,6 +41,13 @@ export async function continuity(node: Node, id: string): Promise<BackupContinui
   return { ...files[0]!.continuity!, file: files[0]!.file };
 }
 
+export async function systemContinuity(node: Node): Promise<BackupContinuity & { file: string }> {
+  const all = await backupFiles(node);
+  const system = all.find(file => file.file.endsWith(`/_system/nodes/${node.name}`));
+  expect(system?.continuity, JSON.stringify(all.map(file => file.file))).toBeTruthy();
+  return { ...system!.continuity!, file: system!.file };
+}
+
 export async function nodeHoles(node: Node): Promise<string[]> {
   return (await backupFiles(node)).flatMap(file => (file.continuity?.holes ?? []).map(hole => `${file.file} ${hole.incarnation} ${hole.from}`));
 }
