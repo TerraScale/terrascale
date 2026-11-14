@@ -263,18 +263,24 @@ internal sealed partial class RegionalHandoff(
 
     internal async Task<bool> PrimeAsync(string source, CancellationToken cancellationToken)
     {
-        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        bounded.CancelAfter(DrainBudget);
-        cancellationToken = bounded.Token;
         if (owners.Find(options.Region)?.Node != source || source == options.MachineId)
         {
             return false;
         }
 
+        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        bounded.CancelAfter(DrainBudget);
         var replication = services.GetRequiredService<RegionReplication>();
-        await replication.SyncCatalogsAsync(cancellationToken).ConfigureAwait(false);
-        await replication.PullAllAsync(cancellationToken).ConfigureAwait(false);
-        return await services.GetRequiredService<Health.INodeReadiness>().IsReadyAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await replication.SyncCatalogsAsync(bounded.Token).ConfigureAwait(false);
+            await replication.PullAllAsync(bounded.Token).ConfigureAwait(false);
+            return await services.GetRequiredService<Health.INodeReadiness>().IsReadyAsync(bounded.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
     }
 
     internal async Task<bool> PrepareAsync(RegionalPrepare request, CancellationToken cancellationToken)
