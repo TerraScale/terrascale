@@ -329,10 +329,19 @@ internal sealed partial class RegionalHandoff
             {
                 return false;
             }
+            List<TenantContext> checkedDatabases = [];
+            foreach (var database in page.Databases)
+            {
+                if (Compared(database) && !await LeaseCoversAsync(database, token).ConfigureAwait(false))
+                {
+                    checkedDatabases.Add(database);
+                }
+            }
+
             if (!_pageCaughtUp)
             {
                 _pageCaughtUp = true;
-                IReadOnlyList<TenantContext> unheld = [.. page.Databases.Where(database => Compared(database) && replicas.Holding(database) is not HeldAt)];
+                IReadOnlyList<TenantContext> unheld = [.. checkedDatabases.Where(database => replicas.Holding(database) is not HeldAt)];
                 if (await CatchUpAsync(unheld, token).ConfigureAwait(false) is > 0 and var late)
                 {
                     logger.ZLogWarning($"The activation check could not catch up {late:@Late} of {unheld.Count:@Databases} local replicas within {CatchUpBudget.TotalSeconds:@Seconds} s; a database whose replica position stays unknown stays fenced until a later attempt reads it");
@@ -341,7 +350,7 @@ internal sealed partial class RegionalHandoff
 
             foreach (var database in page.Databases)
             {
-                if (Compared(database) && await RefusalAsync(database, token).ConfigureAwait(false) is { } refusal)
+                if (checkedDatabases.Contains(database) && await RefusalAsync(database, token).ConfigureAwait(false) is { } refusal)
                 {
                     Fence(database, refusal, owner.Epoch);
                     _walkFenced.Add(database.DatabaseId!);
@@ -374,16 +383,23 @@ internal sealed partial class RegionalHandoff
 
         var replicas = services.GetRequiredService<IDatabaseReplicas>();
         var leases = services.GetRequiredService<HomeLeases>();
-        IReadOnlyList<DatabaseFence> fenced = [.. _fenced.Values];
-        _ = await CatchUpAsync([.. fenced.Select(fence => fence.Database).Where(database => replicas.Holding(database) is PositionUnknown)], token).ConfigureAwait(false);
-        var catalog = services.GetRequiredService<IReplicaCatalog>();
-        foreach (var fence in fenced)
+        List<DatabaseFence> unproven = [];
+        List<DatabaseFence> covered = [];
+        foreach (var fence in _fenced.Values)
         {
-            if (Compared(fence.Database) && await RefusalAsync(fence.Database, token).ConfigureAwait(false) is { } refusal)
+            (Compared(fence.Database) && !await LeaseCoversAsync(fence.Database, token).ConfigureAwait(false) ? unproven : covered).Add(fence);
+        }
+
+        _ = await CatchUpAsync([.. unproven.Select(fence => fence.Database).Where(database => replicas.Holding(database) is PositionUnknown)], token).ConfigureAwait(false);
+        var catalog = services.GetRequiredService<IReplicaCatalog>();
+        foreach (var fence in unproven.Concat(covered))
+        {
+            var compared = unproven.Contains(fence);
+            if (compared && await RefusalAsync(fence.Database, token).ConfigureAwait(false) is { } refusal)
             {
                 Fence(fence.Database, refusal, owner.Epoch);
             }
-            else if (Compared(fence.Database) && replicas.Holding(fence.Database) is NoReplica
+            else if (compared && replicas.Holding(fence.Database) is NoReplica
                 && await catalog.FindAsync(fence.Database, token).ConfigureAwait(false) is TenantDatabaseRecord { Placement.Home: var home } && home == options.Region)
             {
                 continue;
@@ -397,6 +413,18 @@ internal sealed partial class RegionalHandoff
 
     private bool Compared(TenantContext database) => !PlatformDatabases.IsPlatformDatabase(database.DatabaseId)
         && (services.GetRequiredService<HomeLeases>().Find(database.DatabaseId!) is not { } lease || lease.Home == options.Region);
+
+    private async Task<bool> LeaseCoversAsync(TenantContext database, CancellationToken token)
+    {
+        if (services.GetRequiredService<HomeLeases>().Find(database.DatabaseId!) is not { Adopted: { } adopted } lease
+            || lease.Home != options.Region || lease.Node != options.MachineId || !DatabaseRevision.TryParse(adopted, out var position))
+        {
+            return false;
+        }
+
+        return await services.GetRequiredService<IDatabaseRevisions>().CurrentRevisionAsync(database, token).ConfigureAwait(false) is { } primary
+            && primary.Incarnation == position.Incarnation && DatabaseRevision.Compare(primary, position) >= 0;
+    }
 
     private async Task<LocalDataRefusal?> RefusalAsync(TenantContext database, CancellationToken token) =>
         services.GetRequiredService<IDatabaseReplicas>().Holding(database) switch
