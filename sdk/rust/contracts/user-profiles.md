@@ -1,7 +1,6 @@
 # Project user profiles
 
 Producer: [C48 contract](../../../docs/auth/user-profiles.md).
-Wire examples: [shared auth fixtures](../../dotnet/contracts/auth/fixtures/project-tenant.json).
 
 | Method and path | Operation | Scope | Response |
 | --- | --- | --- | --- |

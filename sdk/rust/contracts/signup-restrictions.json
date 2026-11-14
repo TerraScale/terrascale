@@ -1,5 +1,5 @@
 {
-  "source": "src/TerraScale.Authentication/Features/ProjectTenants; sdk/dotnet/contracts/auth/fixtures/signup-restrictions.json",
+  "source": "src/TerraScale.Authentication/Features/ProjectTenants",
   "operations": {
     "create_project_invitation": {
       "method": "POST",
