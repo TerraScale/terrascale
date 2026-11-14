@@ -410,6 +410,8 @@ test('a regional writer role moves only with the target certificate, and a datab
     const rewritten = await kv.get<{ node: string }>(owners, 'gru');
     await kv.remove(owners, 'gru', rewritten!.seq);
     await writerIs('journey-1');
+    await expect.poll(async () => (await kv.get<{ node: string; epoch: number }>(owners, 'gru'))?.value, { message: 'journey-1 writes a new owner record at epoch 1' })
+      .toMatchObject({ node: 'journey-1', epoch: 1 });
     console.log('rewritten owner record refused; a deleted key brought journey-1 back as writer at epoch 1 with current primary files');
 
     const drained = await nodeRequest(gru, '/v1/rollout/drain?target=journey-3', 'POST');

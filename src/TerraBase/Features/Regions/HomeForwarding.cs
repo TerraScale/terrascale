@@ -399,7 +399,10 @@ internal static class HomeForwarding
             }
 
             Sign(context, request, target.Region);
-            request.Headers.TryAddWithoutValidation(AccountingHeader, "source");
+            if (context.Features.Get<ForwardingAuthorization.ExecutorResolves>() is null)
+            {
+                request.Headers.TryAddWithoutValidation(AccountingHeader, "source");
+            }
             if (pushThrough is not null)
             {
                 request.Headers.TryAddWithoutValidation(PushThroughHeader, pushThrough);
