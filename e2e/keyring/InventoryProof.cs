@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -111,6 +112,50 @@ internal static class InventoryProof
         Console.WriteLine("keyring-driver:retained-images-trimmed");
     }
 
+    private static void RetainExisting()
+    {
+        TerraBaseOptions.ReadSecretFiles();
+        var options = TerraBaseOptions.FromProcess([]);
+        using var connection = OpenCatalog(options);
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT kind, id, body FROM _tb_records WHERE kind GLOB 'projects/*/backup_destination' LIMIT 1;";
+        string kind;
+        string id;
+        string body;
+        using (var rows = command.ExecuteReader())
+        {
+            Require(rows.Read(), "existing backup credentials are missing");
+            kind = rows.GetString(0);
+            id = rows.GetString(1);
+            body = rows.GetString(2);
+        }
+        var record = CustomerCredentials.ReadRecord(Encoding.UTF8.GetBytes(body));
+        var active = Ring(options.DatabaseKeyring!.Active, options.DatabaseKeyring.Keys);
+        var old = Ring("k0", options.DatabaseKeyring.Keys);
+        var key = active.Unwrap(record.Credentials.WrappedKey);
+        try
+        {
+            var previous = record with { Credentials = record.Credentials with { WrappedKey = old.Rewrap(key, "retained-existing") } };
+            command.CommandText = "PRAGMA capture_data_changes_conn('full');";
+            command.ExecuteNonQuery();
+            using var transaction = connection.BeginTransaction();
+            command.Transaction = transaction;
+            command.CommandText = "UPDATE _tb_records SET body = $body WHERE kind = $kind AND id = $id;";
+            command.Parameters.AddWithValue("$kind", kind);
+            command.Parameters.AddWithValue("$id", id);
+            command.Parameters.AddWithValue("$body", JsonSerializer.Serialize(previous, BackupJsonContext.Default.ProjectBackupDestinationRecord));
+            Require(command.ExecuteNonQuery() == 1, "existing credential was not wrapped under the old key");
+            command.Parameters["$body"].Value = body;
+            Require(command.ExecuteNonQuery() == 1, "existing credential was not restored");
+            transaction.Commit();
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(key);
+        }
+        Console.WriteLine("keyring-driver:retained-existing");
+    }
+
     private static SqliteConnection OpenCatalog(TerraBaseOptions options)
     {
         var ring = Ring(options.DatabaseKeyring!.Active, options.DatabaseKeyring.Keys);
@@ -196,11 +241,22 @@ internal static class InventoryProof
         while (await timer.WaitForNextTickAsync(cancellationToken));
     }
 
-    internal static async Task HoldRetainedAsync(IServiceProvider services, CancellationToken cancellationToken)
+    internal static async Task HoldRetainedAsync(IServiceProvider services, bool existing, CancellationToken cancellationToken)
     {
+        if (existing)
+        {
+            await WaitForMaintenanceAsync(cancellationToken);
+        }
         await using var tap = await services.GetRequiredService<IWalBackup>().OpenTapAsync(null, cancellationToken)
             ?? throw new InvalidOperationException("catalog backup tap is missing");
-        await SeedStoredAsync("retained", cancellationToken);
+        if (existing)
+        {
+            RetainExisting();
+        }
+        else
+        {
+            await SeedStoredAsync("retained", cancellationToken);
+        }
         var stopping = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var registration = services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping.Register(() => stopping.TrySetResult());
         await stopping.Task.WaitAsync(cancellationToken);

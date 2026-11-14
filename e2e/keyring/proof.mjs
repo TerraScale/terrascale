@@ -232,8 +232,10 @@ try {
   const leftover = join(data, '_system.db.key.rewrapping');
   writeFileSync(leftover, readFileSync(join(data, '_system.db.key')), { mode: 0o600 });
   stalledUploads = true;
-  child = node(candidate, 'k1');
+  child = node(process.env.E2E_KEYRING_DRIVER, 'k1', {}, ['inventory-retained-existing']);
   await ready(child);
+  await until('retained credential setup', child, async () =>
+    readFileSync(join(profile, `node-${sequence}.log`), 'utf8').includes('keyring-driver:retained-existing'));
   await until('rotation and local inventory', child, async () => {
     const current = await metrics();
     return value(current, 'terrabase_keys_last_complete') > 0 && value(current, 'terrabase_keys_wrapped', 'key_id="k0"') === 0;

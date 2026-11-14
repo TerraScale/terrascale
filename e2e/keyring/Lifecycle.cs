@@ -100,9 +100,9 @@ internal static class Lifecycle
                 await InventoryProof.CostAsync(app.Services, startup.Elapsed.TotalMilliseconds, cancellationToken);
                 return;
             }
-            if (args[0] == "inventory-retained")
+            if (args[0] is "inventory-retained" or "inventory-retained-existing")
             {
-                await InventoryProof.HoldRetainedAsync(app.Services, cancellationToken);
+                await InventoryProof.HoldRetainedAsync(app.Services, args[0] == "inventory-retained-existing", cancellationToken);
                 return;
             }
             if (args[0] == "inventory-import")
