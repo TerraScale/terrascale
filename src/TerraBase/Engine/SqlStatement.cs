@@ -67,4 +67,6 @@ internal sealed class SqlStatementException(SqlFailure failure, string message, 
     public SqlFailure Failure { get; } = failure;
 
     public bool TransactionEnded { get; } = transactionEnded;
+
+    public int EngineCode { get; init; }
 }

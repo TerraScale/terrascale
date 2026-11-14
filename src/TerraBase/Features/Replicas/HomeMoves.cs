@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
+using NATS.Client.Core;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
@@ -38,6 +39,7 @@ internal sealed class HomeMoves(
     private static readonly TimeSpan PeerTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan SettleEvery = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan DrainBudget = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan CatchUpBound = TimeSpan.FromSeconds(30);
 
     private readonly HttpClient _http = PeerHttp.Create(credential);
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new(StringComparer.Ordinal);
@@ -45,10 +47,13 @@ internal sealed class HomeMoves(
     private readonly ConcurrentDictionary<string, MoveRequest> _running = new(StringComparer.Ordinal);
     private readonly Meter _meter = meters.Create(Telemetry.MeterName);
     private Histogram<double>? _pause;
+    private Counter<long>? _catchUpTimeouts;
 
     public override Task StartAsync(CancellationToken cancellationToken)
     {
         _pause = _meter.CreateHistogram<double>("terrabase.placement.move.pause", "ms", "Time writes of a database paused while its home moved.");
+        _catchUpTimeouts = _meter.CreateCounter<long>("terrabase.placement.move.catch_up_timeouts", "{move}",
+            "Promotions that answered before the new home's sequencers reached the end of every origin stream.");
         return base.StartAsync(cancellationToken);
     }
 
@@ -297,7 +302,13 @@ internal sealed class HomeMoves(
 
             if (placement.Home == options.Region)
             {
-                return new HomePromoteAnswer(placement.Version >= request.Version);
+                if (placement.Version >= request.Version)
+                {
+                    await CatchUpAsync(database).ConfigureAwait(false);
+                    return new HomePromoteAnswer(true);
+                }
+
+                return new HomePromoteAnswer(false);
             }
 
             if (placement.Home != request.FromRegion || placement.Version >= request.Version)
@@ -426,6 +437,7 @@ internal sealed class HomeMoves(
             fences.Lift(id);
             logger.ZLogInformation($"A home move committed: this node is the home at epoch {placement.Version:@Epoch}, holding {adopted.ToString():@Adopted}; it serves writes from now on");
             await pushes.PublishDrainedAsync(database, drained, CancellationToken.None).ConfigureAwait(false);
+            await CatchUpAsync(database).ConfigureAwait(false);
             return new HomePromoteAnswer(true);
         }
         catch (Exception error) when (error is not OperationCanceledException)
@@ -529,6 +541,48 @@ internal sealed class HomeMoves(
         replication.WakeCatalog(source.Region);
         logger.ZLogWarning($"A home move was rolled back before its commit point: {source.Node:@Node} in {source.Region:@Region} is the home again; this node acknowledged no write as home and kept its imported copy");
         return true;
+    }
+
+    private async Task CatchUpAsync(TenantContext database)
+    {
+        using var bound = new CancellationTokenSource(CatchUpBound, time);
+        var backoff = new Backoff(TimeSpan.FromMilliseconds(200), TimeSpan.FromSeconds(5));
+        try
+        {
+            while (true)
+            {
+                try
+                {
+                    await pushes.CatchUpAsync(database, bound.Token).ConfigureAwait(false);
+                    logger.ZLogInformation($"A new home's sequencers reached the end of every origin stream for the database");
+                    return;
+                }
+                catch (Exception error) when (error is not OperationCanceledException)
+                {
+                    logger.ZLogWarning($"A new home's sequencers wait to start: {error.GetType().Name:@Error}");
+                    await Task.Delay(backoff.Next(), time, bound.Token).ConfigureAwait(false);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (bound.IsCancellationRequested)
+        {
+            _catchUpTimeouts?.Add(1);
+            IReadOnlyList<(string Origin, ulong Frontier, ulong Last)> behind;
+            try
+            {
+                behind = await pushes.BehindAsync(database, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception error) when (error is IOException or NatsException or StorageBusyException or SqlStatementException)
+            {
+                logger.ZLogWarning($"A new home of {database.DatabaseId:@Database} answers promoted before its sequencers reached the end of every origin stream; how far behind is unknown: {error.GetType().Name:@Error}");
+                return;
+            }
+
+            foreach (var (origin, frontier, last) in behind)
+            {
+                logger.ZLogWarning($"A new home of {database.DatabaseId:@Database} answers promoted while the push from {origin:@Origin} is behind: frontier {frontier:@Frontier}, stream last {last:@Last}");
+            }
+        }
     }
 
     private async Task<IReadOnlyList<HomePush.DrainedPush>?> DrainAsync(TenantContext database, long fence)

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
@@ -13,7 +14,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.HomeApply;
 
-internal sealed class ApplyEndpoint(IHomeApply apply, ITenantDirectory tenants, IReplicaCatalog catalog, IMemoryBudget memory, TerraBaseOptions options)
+internal sealed class ApplyEndpoint(HomePush.HomePush pushes, ITenantDirectory tenants, IReplicaCatalog catalog, IMemoryBudget memory, TerraBaseOptions options)
     : EndpointWithoutRequest<IResult>
 {
     internal const long MaxBodyBytes = 8 * 1024 * 1024;
@@ -23,9 +24,11 @@ internal sealed class ApplyEndpoint(IHomeApply apply, ITenantDirectory tenants, 
         Post("/v1/sync/organizations/{organization}/projects/{project}/databases/{database}/apply");
         Name("applyRegionTransaction");
         Summary("Applies a transaction committed in another region at the database's home");
-        Description("Internal listener only, behind the peer credential; 404 on the public listener. Applies the transaction all or nothing with column "
-            + "last-writer-wins by HLC, or records it as reverted in terrascale.conflicts; either way 200 with its state. Sending it again returns the "
-            + "recorded state. 404 when the database is not homed here or its placement does not name the region; 503 when the home is unavailable.");
+        Description("Internal listener only, behind the peer credential; 404 on the public listener. The transaction is one its origin already stored in its "
+            + "push stream, sent by a partner finishing a lost node's held transaction; the optional position query names its stream sequence. The home "
+            + "never applies it here: it wakes the sequencer of that origin and database and answers 200 with the recorded state once the transaction is "
+            + "decided (by its id, or because the database's frontier reached the position), otherwise 503 so the partner keeps its hold and retries. "
+            + "404 when the database is not homed here or its placement does not name the region.");
         Tags("Administration");
         AllowAnonymous();
         Metadata(new RequestBodyMetadata(typeof(RegionTransaction), "application/json"), ListenerMetadata.Internal);
@@ -64,6 +67,17 @@ internal sealed class ApplyEndpoint(IHomeApply apply, ITenantDirectory tenants, 
             return ErrorResponse.From(new Validation(invalid));
         }
 
+        ulong? position = null;
+        if (HttpContext.Request.Query.TryGetValue("position", out var positionText))
+        {
+            if (!ulong.TryParse(positionText.ToString(), NumberStyles.None, CultureInfo.InvariantCulture, out var parsed) || parsed == 0)
+            {
+                return ErrorResponse.From(new Validation("position is a stream sequence"));
+            }
+
+            position = parsed;
+        }
+
         var found = await tenants.FindDatabaseAsync(HttpContext.RouteValue("organization"), HttpContext.RouteValue("project"), HttpContext.RouteValue("database"), cancellationToken).ConfigureAwait(false);
         if (found is not TenantContext database)
         {
@@ -85,9 +99,9 @@ internal sealed class ApplyEndpoint(IHomeApply apply, ITenantDirectory tenants, 
         {
             using (QosContext.Enter(database, memory))
             {
-                return await apply.ApplyAsync(database, transaction!, cancellationToken).ConfigureAwait(false) is { } result
+                return await pushes.DecidedAsync(database, transaction!, position, cancellationToken).ConfigureAwait(false) is { } result
                     ? TypedResults.Json(result, HomeApplyJsonContext.Default.HomeApplyResult)
-                    : ErrorResponse.From(new NotFound("the database is not stored on this node"));
+                    : ErrorResponse.From(new Unavailable("the transaction is not decided at the home yet; retry"));
             }
         }
         catch (Exception error) when (error is StorageBusyException or QosMemoryException or SqlStatementException)

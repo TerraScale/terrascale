@@ -347,8 +347,24 @@ internal sealed partial class TursoStorageTransaction
         }
 
         var (failure, reported) = Classify(native, error);
-        return new SqlStatementException(failure, reported, ended, error);
+        return new SqlStatementException(failure, reported, ended, error) { EngineCode = EngineCode(error) };
     }
+
+    private static int EngineCode(TursoException error)
+    {
+        for (Exception? current = error; current is not null; current = current.InnerException)
+        {
+            if (current is TursoNativeException { StatusCode: NativeConstraint })
+            {
+                return SqliteConstraintCode;
+            }
+        }
+
+        return Unwrap(error).Code;
+    }
+
+    private const uint NativeConstraint = 129;
+    private const int SqliteConstraintCode = 19;
 
     internal static (SqlFailure Failure, string Message) Classify(TursoDatabaseHandle native, TursoException error)
     {

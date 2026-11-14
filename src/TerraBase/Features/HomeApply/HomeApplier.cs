@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Features.Sync;
 using TerraBase.Features.Clock;
 using TerraBase.Features.HomeApply;
 using TerraBase.Features.Replicas;
@@ -23,7 +24,7 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
     internal const int MaxChanges = 1024;
     internal const int KeptConflicts = 10_000;
     private static readonly TimeSpan KeptConflictAge = TimeSpan.FromDays(30);
-    private static readonly TimeSpan KeptApplied = TimeSpan.FromDays(7);
+    internal static readonly TimeSpan KeptApplied = TimeSpan.FromDays(7);
 
     private static readonly string[] Tables =
     [
@@ -32,20 +33,21 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         ConflictTable.Ddl,
     ];
 
-    public ValueTask<HomeApplyResult?> ApplyAsync(TenantContext database, RegionTransaction transaction, CancellationToken cancellationToken) =>
-        ApplyAsync(database, transaction, promotion: false, cancellationToken);
+    public ValueTask<HomeApplyResult?> ApplyAsync(TenantContext database, RegionTransaction transaction, StreamSequence? position, CancellationToken cancellationToken) =>
+        ApplyAsync(database, transaction, position, promotion: false, cancellationToken);
 
-    public ValueTask<HomeApplyResult?> ApplyPromotingAsync(TenantContext database, RegionTransaction transaction, CancellationToken cancellationToken) =>
-        ApplyAsync(database, transaction, promotion: true, cancellationToken);
+    public ValueTask<HomeApplyResult?> ApplyPromotingAsync(TenantContext database, RegionTransaction transaction, StreamSequence? position, CancellationToken cancellationToken) =>
+        ApplyAsync(database, transaction, position, promotion: true, cancellationToken);
 
     private ValueTask<IStorageTransaction?> BeginAsync(TenantContext database, bool promotion, CancellationToken cancellationToken) => promotion
         ? engine.BeginPromotionTransactionAsync(database, cancellationToken)
         : engine.BeginTransactionAsync(database, write: true, cancellationToken);
 
-    private async ValueTask<HomeApplyResult?> ApplyAsync(TenantContext database, RegionTransaction transaction, bool promotion, CancellationToken cancellationToken)
+    private async ValueTask<HomeApplyResult?> ApplyAsync(TenantContext database, RegionTransaction transaction, StreamSequence? position, bool promotion, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(database);
         ArgumentNullException.ThrowIfNull(transaction);
+        transaction = transaction with { Position = position };
         var id = transaction.Id!;
         var region = transaction.Region!;
         var stamp = transaction.Hlc!.Value;
@@ -70,8 +72,19 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         await using (applying.ConfigureAwait(false))
         {
             await EnsureTablesAsync(applying, cancellationToken).ConfigureAwait(false);
+            if (position is not null && !await Frontier.BehindAsync(applying, position, cancellationToken).ConfigureAwait(false))
+            {
+                return await RecordedAsync(applying, id, cancellationToken).ConfigureAwait(false) ?? new HomeApplyResult(id, WriteStates.Provisional, [], []);
+            }
+
             if (await RecordedAsync(applying, id, cancellationToken).ConfigureAwait(false) is { } recorded)
             {
+                if (position is not null)
+                {
+                    await Frontier.AdvanceAsync(applying, position, cancellationToken).ConfigureAwait(false);
+                    _ = await applying.CommitAsync(cancellationToken).ConfigureAwait(false);
+                }
+
                 return recorded;
             }
 
@@ -123,6 +136,57 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         catch (SqlStatementException error) when (error.Failure is Busy or Interrupted or StorageFailure)
         {
             throw new StorageBusyException();
+        }
+    }
+
+    public async ValueTask<ulong?> FrontierAsync(TenantContext database, string source, CancellationToken cancellationToken)
+    {
+        IStorageTransaction? reading;
+        try
+        {
+            reading = await engine.BeginTransactionAsync(database, write: false, cancellationToken).ConfigureAwait(false);
+        }
+        catch (SqlStatementException error) when (error.Failure is Busy or Interrupted or StorageFailure)
+        {
+            throw new StorageBusyException();
+        }
+
+        if (reading is null)
+        {
+            return null;
+        }
+
+        await using (reading.ConfigureAwait(false))
+        {
+            return (await Frontier.ReadAsync(reading, cancellationToken).ConfigureAwait(false)).GetValueOrDefault(source);
+        }
+    }
+
+    public async ValueTask SkipAsync(TenantContext database, StreamSequence position, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(position);
+        IStorageTransaction? skipping;
+        try
+        {
+            skipping = await engine.BeginTransactionAsync(database, write: true, cancellationToken).ConfigureAwait(false);
+        }
+        catch (SqlStatementException error) when (error.Failure is Busy or Interrupted or StorageFailure)
+        {
+            throw new StorageBusyException();
+        }
+
+        if (skipping is null)
+        {
+            return;
+        }
+
+        await using (skipping.ConfigureAwait(false))
+        {
+            if (await Frontier.BehindAsync(skipping, position, cancellationToken).ConfigureAwait(false))
+            {
+                await Frontier.AdvanceAsync(skipping, position, cancellationToken).ConfigureAwait(false);
+                _ = await skipping.CommitAsync(cancellationToken).ConfigureAwait(false);
+            }
         }
     }
 
@@ -390,6 +454,11 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
     private async ValueTask RecordAsync(
         IStorageTransaction transaction, RegionTransaction region, HomeApplyResult result, List<ConflictRecord> conflicts, CancellationToken cancellationToken)
     {
+        if (region.Position is { } position)
+        {
+            await Frontier.AdvanceAsync(transaction, position, cancellationToken).ConfigureAwait(false);
+        }
+
         var now = time.GetUtcNow();
         _ = await transaction.RunAsync("INSERT INTO _ts_applied (id, region, state, result, applied_at) VALUES (?, ?, ?, ?, ?)", [region.Id, region.Region, result.State, JsonSerializer.Serialize(result, HomeApplyJsonContext.Default.HomeApplyResult), now.ToUnixTimeMilliseconds()], cancellationToken)
             .ConfigureAwait(false);
@@ -430,15 +499,23 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         return new string(id);
     }
 
-    private static string? Rejects(SqlStatementException error) => error.Failure switch
+    private const int SqliteTooBig = 18;
+    private const int SqliteConstraint = 19;
+    private const int SqliteMismatch = 20;
+
+    private static string? Rejects(SqlStatementException error) => (error.EngineCode & 0xff) switch
     {
-        Unique => "unique",
-        PrimaryKey => "primary_key",
-        NotNull => "not_null",
-        Check => "check",
-        ForeignKeyFailure => "foreign_key",
-        Constraint => "constraint",
-        KnownError or TooBig => "constraint",
-        NoSuchTable or NoSuchColumn or Syntax or AlreadyExists or Busy or Interrupted or ReadOnly or StaleRow or Error or StorageFailure => null,
+        SqliteConstraint => error.Failure switch
+        {
+            Unique => "unique",
+            PrimaryKey => "primary_key",
+            NotNull => "not_null",
+            Check => "check",
+            ForeignKeyFailure => "foreign_key",
+            Constraint or KnownError or TooBig or NoSuchTable or NoSuchColumn or Syntax or AlreadyExists or Busy or Interrupted or ReadOnly or StaleRow or Error
+                or StorageFailure => "constraint",
+        },
+        SqliteTooBig or SqliteMismatch => "constraint",
+        _ => null,
     };
 }

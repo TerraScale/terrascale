@@ -2,8 +2,8 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 
-const platformBuckets = new Set(['journey-backups', 'ts-terrabase-shapes-prod']);
-const platformObject = /^\/(journey-backups|ts-terrabase-shapes-prod)\/((?:v1|catalog-anchor)\/[^?]+)$/;
+const platformBuckets = new Set(['journey-backups', 'journey-shapes', 'ts-terrabase-shapes-prod']);
+const platformObject = /^\/(journey-backups|journey-shapes|ts-terrabase-shapes-prod)\/((?:v1|catalog-anchor)\/[^?]+)$/;
 const origin = 'https://dash.terrascale.tech';
 const bucket = /^\/(terrascale-[a-z]+-files)\/(app-files\/[0-9A-Z]{26}\/[0-9A-Z]{26}\/[0-9A-Z]{26}\/[0-9A-Z]{26})$/;
 const listing = /^\/(terrascale-[a-z]+-files)\/?$/;
@@ -156,7 +156,7 @@ createServer((request, response) => {
     response.writeHead(204, { 'access-control-allow-methods': 'PUT', 'access-control-allow-headers': 'content-type, x-amz-checksum-sha256', 'access-control-max-age': '600' });
     return response.end();
   }
-  const platformBucket = /^\/(journey-backups|ts-terrabase-shapes-prod)\/?$/.exec(rawPath);
+  const platformBucket = /^\/(journey-backups|journey-shapes|ts-terrabase-shapes-prod)\/?$/.exec(rawPath);
   if (!target && !listed && !platformBucket) return unexpected(request, response, 404, 'NoSuchBucket', 'path outside the files bucket');
   const chunks = [];
   request.on('data', (chunk) => chunks.push(chunk));
@@ -166,7 +166,7 @@ createServer((request, response) => {
     const authenticated = signed(request, rawPath, query);
     if (typeof authenticated === 'string') return unexpected(request, response, 403, 'SignatureDoesNotMatch', authenticated);
     const { account } = authenticated;
-    const key = target ? `${account}/${target[1]}/${target[2]}` : null;
+    const key = target ? `${account}/${target[1] === 'journey-shapes' ? 'ts-terrabase-shapes-prod' : target[1]}/${target[2]}` : null;
     if (platform && query.has('uploadId')) return unexpected(request, response, 400, 'InvalidRequest', 'multipart uploads are not implemented');
     if (platform && /^[0-9a-f]{64}$/.test(request.headers['x-amz-content-sha256'] ?? '')
       && request.headers['x-amz-content-sha256'] !== sha256(body, 'hex'))
@@ -211,6 +211,10 @@ createServer((request, response) => {
       return response.end();
     }
     if (request.method !== 'GET' && request.method !== 'HEAD') return unexpected(request, response, 405, 'MethodNotAllowed', 'unsupported method');
+    const unavailable = process.env.E2E_STATE + '/r2-unavailable-keys';
+    const refused = platform && existsSync(unavailable) ? JSON.parse(readFileSync(unavailable, 'utf8'))[target[2]] : undefined;
+    if (refused === 403) return fail(response, 403, 'AccessDenied', 'Access Denied');
+    if (refused === 503) return fail(response, 503, 'ServiceUnavailable', 'The object is temporarily unavailable.');
     const stored = objects.get(key);
     if (!stored) return fail(response, 404, 'NoSuchKey', 'The specified key does not exist.');
     response.writeHead(200, {

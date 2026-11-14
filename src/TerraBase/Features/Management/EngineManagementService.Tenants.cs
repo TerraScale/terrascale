@@ -612,6 +612,16 @@ internal sealed partial class EngineManagementService
                 static error => error, cancellationToken);
     }
 
+    public ValueTask<DeletedDatabaseResult> DeletedAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+        return database.DatabaseId is null
+            ? ValueTask.FromResult<DeletedDatabaseResult>(false)
+            : ReadAsync<DeletedDatabaseResult>(async transaction =>
+                await DatabasePurge.IsDeletedAsync(transaction, database.DatabaseId, cancellationToken).ConfigureAwait(false),
+                static error => error, cancellationToken);
+    }
+
     private static Unavailable UnreadableCatalog => ManagementErrors.CatalogUnsupported;
 
     private static readonly Conflict CatalogDatabaseDeleted = new("a database deleted here is not brought back", "database_deleted");

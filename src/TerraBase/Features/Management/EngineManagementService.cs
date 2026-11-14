@@ -6,6 +6,7 @@ using System.Text.Json.Serialization.Metadata;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
+using TerraBase.Features.Atlas;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Management.Backups;
@@ -26,7 +27,7 @@ internal sealed partial class EngineManagementService(
     IStorageEngine engine, IOrphanDatabaseFiles orphanFiles, TimeProvider time, TerraBaseOptions options, ILogger<EngineManagementService> logger, DatabaseLifecycleCheckpoint checkpoint, IMeterFactory meters,
     IProjectAuthorityVerifier projectAuthority, Lazy<IStorageQuota> quota, IRegionPeers regionPeers,
     Lazy<ICatalogGate> catalogGate, DatabaseAllowance databaseAllowance, Lazy<IBackupKeyShredding> shredding, RemoteDatabases remote,
-    Lazy<IProjectFileErasure> fileErasure, ClosureFanout closureFanout)
+    Lazy<IProjectFileErasure> fileErasure, ClosureFanout closureFanout, IAtlasPlacements atlas)
     : IManagementService, ITenantDirectory, IHostedService, ICatalogGuard, IDatabaseFileCatalog, IShreddedDatabases
 {
     private const string Catalog = ManagementCatalog.Kind;

@@ -1,15 +1,20 @@
 using TerraBase.Engine;
+using TerraBase.Features.Sync;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.HomeApply;
 
 internal interface IHomeApply
 {
-    ValueTask<HomeApplyResult?> ApplyAsync(TenantContext database, RegionTransaction transaction, CancellationToken cancellationToken);
+    ValueTask<HomeApplyResult?> ApplyAsync(TenantContext database, RegionTransaction transaction, StreamSequence? position, CancellationToken cancellationToken);
 
     ValueTask<HomeApplyResult?> StateAsync(TenantContext database, string transactionId, CancellationToken cancellationToken);
 
-    ValueTask<HomeApplyResult?> ApplyPromotingAsync(TenantContext database, RegionTransaction transaction, CancellationToken cancellationToken);
+    ValueTask<HomeApplyResult?> ApplyPromotingAsync(TenantContext database, RegionTransaction transaction, StreamSequence? position, CancellationToken cancellationToken);
+
+    ValueTask<ulong?> FrontierAsync(TenantContext database, string source, CancellationToken cancellationToken);
+
+    ValueTask SkipAsync(TenantContext database, StreamSequence position, CancellationToken cancellationToken);
 
     ValueTask PrepareAsync(TenantContext database, CancellationToken cancellationToken);
 
