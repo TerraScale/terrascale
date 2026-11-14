@@ -2,7 +2,7 @@
 @using System.Text.Json
 @using System.Globalization
 @{ var result = Model.SqlResult!; var shown = result.Rows.Take(200).ToArray(); }
-<section class="ts-card ts-card-flush" id="sql-result" aria-labelledby="sql-result-title" data-sql-result>
+<section class="ts-card ts-card-flush" id="sql-result" aria-labelledby="sql-result-title" data-sql-result data-run-url="@Model.RunUrl">
 <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="sql-result-title">Query result</h2></div></header>
 <div class="ts-card-body ts-stack-sm">
 @if(result.Columns.Count == 0){<p class="ts-meta" role="status" aria-live="polite">@ValueFormat.Plural(result.RowsAffected, "row") affected@(result.LastInsertRowId is { } id && result.RowsAffected > 0 ? " · last insert rowid " + id : "")</p>}
