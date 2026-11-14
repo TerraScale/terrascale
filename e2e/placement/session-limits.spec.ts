@@ -160,7 +160,7 @@ test('authenticated relays share the tenant cap and leave relay capacity for ano
         }
         const refused = await rawSqlSocket('http://127.0.0.1:8180' + database(created.id) + '/sql/ws', token);
         held.push(refused);
-        const response = once(refused.events, 'message');
+        const response = refused.firstMessage;
         expect((await response)[0]).toMatchObject({ type: 'error', error: { code: 'tenant_busy', sqlstate: '53300' } });
         const accepted = await rawSqlSocket('http://127.0.0.1:8180' + otherPath + '/' + second.id + '/sql/ws', otherToken);
         held.push(accepted);
@@ -1074,7 +1074,7 @@ test('one address may hold as many connection attempts as the largest organizati
     expect(refused.opened).toBe('E');
     expect(refused.errors).toEqual(['SFATAL | VFATAL | C53300 | Mtoo many concurrent connection attempts from this address']);
     const ws = await rawSqlSocket('http://127.0.0.1:8080' + database(created.id) + '/sql/ws');
-    expect((await once(ws.events, 'message'))[0]).toMatchObject({ type: 'error', error: { code: 'tenant_busy', message: 'too many concurrent connection attempts from this address' } });
+    expect((await ws.firstMessage)[0]).toMatchObject({ type: 'error', error: { code: 'tenant_busy', message: 'too many concurrent connection attempts from this address' } });
     expect((await ws.closing).code).toBe(1008);
     ws.socket.destroy();
   } finally {
