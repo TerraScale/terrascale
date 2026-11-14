@@ -382,7 +382,7 @@ internal sealed partial class HomeLeases(
 
                 if (!Proves(lease, mine))
                 {
-                    if (await kept.KeepAsync(database, unproven, cancellationToken).ConfigureAwait(false) is not null)
+                    if (await kept.KeepAsync(database, unproven, cancellationToken).ConfigureAwait(false))
                     {
                         fences.Release(id);
                         leaseGate.Unlease(id);

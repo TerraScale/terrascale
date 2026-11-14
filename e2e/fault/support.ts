@@ -21,7 +21,7 @@ export const nodes = [
   { name: 'journey-3', region: 'gru', address: '127.0.0.3', port: 8280, metrics: 9291, service: 'terrabase-gru-2' },
   { name: 'journey-4', region: 'fra', address: '127.0.0.4', port: 8380, metrics: 9391, service: 'terrabase-fra-2' },
 ] as const;
-export type KeptCopy = { id: string; organizationId: string; projectId: string; databaseId: string; revision?: string | null; reason: string; keptAt: string; files: string[]; bytes: number };
+export type KeptCopy = { id: string; organizationId: string; projectId: string; databaseId: string; files: string[]; bytes: number };
 export type FencedDatabase = { databaseId: string; reason: string; epoch: number; detail: string };
 export type Unserved = { databaseId: string; region: string; node: string; epoch: number; cause: string };
 export type HomeLease = { organizationId: string; projectId: string; databaseId: string; home: string; node: string; epoch: number; session: string; adopted?: string | null };
@@ -89,6 +89,13 @@ export async function backupPuts(file: string): Promise<string[]> {
   return (await response.json() as string[]).filter(key => key.startsWith(`${file}/`));
 }
 
+const handoffBudget = 30_000;
+const nodeRequestTimeout = 15_000;
+
+function nodeRequestTimeoutFor(path: string): number {
+  return /^\/v1\/rollout\/(drain|prime)\b/.test(path) ? handoffBudget + nodeRequestTimeout : nodeRequestTimeout;
+}
+
 export async function nodeRequest(node: { name: string; address: string }, path: string, method = 'GET', payload?: unknown, user?: string): Promise<{ status: number; body: string }> {
   const credential = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
   const session = connect(`http://${node.address}:8081`);
@@ -97,7 +104,7 @@ export async function nodeRequest(node: { name: string; address: string }, path:
     ...(payload === undefined ? {} : { 'content-type': 'application/json' }),
     ...(user ? { 'x-terrabase-user-id': user } : {}),
   });
-  stream.setTimeout(15_000, () => stream.destroy(new Error(`node request timed out for ${node.name}: ${method} ${path.split('?')[0]}`)));
+  stream.setTimeout(nodeRequestTimeoutFor(path), () => stream.destroy(new Error(`node request timed out for ${node.name}: ${method} ${path.split('?')[0]}`)));
   session.on('error', error => stream.destroy(error));
   try {
     const response = once(stream, 'response');
@@ -123,7 +130,7 @@ export async function keptCopies(node: Node, id: string): Promise<KeptCopy[]> {
 
 export function keptHash(node: Node, copy: KeptCopy): string {
   const hash = createHash('sha256');
-  for (const file of copy.files) hash.update(readFileSync(join(stateDir, node.service, '.kept', copy.id, file)));
+  for (const file of copy.files) hash.update(readFileSync(join(stateDir, node.service, '.handoff', copy.id, copy.organizationId, copy.projectId, file)));
   return hash.digest('hex');
 }
 

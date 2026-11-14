@@ -5,6 +5,7 @@ using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Replicas;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -54,6 +55,7 @@ internal static class QosExtensions
     {
         ArgumentNullException.ThrowIfNull(app);
         app.Use((context, next) => context.Features.Get<ApiKey>() is null && context.User.Identity?.IsAuthenticated != true
+            || RegionalForwarding.ForwardsToWriter(context)
             ? next(context)
             : AdmitAsync(context, next, context.RequestServices.GetRequiredService<IMemoryBudget>()));
         return app;

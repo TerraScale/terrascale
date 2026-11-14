@@ -231,14 +231,23 @@ const test = base.extend<{}, { promotion: Promotion }>({
       let promoting = true;
       let concurrentWrites = 0;
       let writesBeforeReply = 0;
+      let refusedBeforeCommit = 0;
       const writer = (async () => {
         do {
           const placement = await request(replica, 'GET', syncPath(two.id) + '/placement', undefined, false);
           if (placement.homeRegion === 'fra') {
-            if (promoting) writesBeforeReply++;
-            await request(replica, 'POST', projectPath + '/databases/' + String(two.id) + '/sql/execute', {
-              statements: [{ sql: 'UPDATE keyring_rows SET value = 42' }],
-            }, false);
+            const beforeReply = promoting;
+            try {
+              await request(replica, 'POST', projectPath + '/databases/' + String(two.id) + '/sql/execute', {
+                statements: [{ sql: 'UPDATE keyring_rows SET value = 42' }],
+              }, false);
+            } catch (error) {
+              expect(beforeReply, 'only an uncommitted move refuses a write').toBe(true);
+              expect(error instanceof Error ? error.message : '').toContain(': 503 unavailable the database is moving its home region; retry');
+              refusedBeforeCommit++;
+              continue;
+            }
+            if (beforeReply) writesBeforeReply++;
             concurrentWrites++;
           }
         } while (promoting || concurrentWrites === 0);
@@ -253,7 +262,7 @@ const test = base.extend<{}, { promotion: Promotion }>({
         await writer;
       }
       expect(concurrentWrites).toBeGreaterThan(0);
-      console.log('home move concurrent writer: ' + concurrentWrites + ' writes, ' + writesBeforeReply + ' started before promotion reply; healthy destination served');
+      console.log('home move concurrent writer: ' + concurrentWrites + ' writes, ' + writesBeforeReply + ' acknowledged and ' + refusedBeforeCommit + ' refused before the promotion reply; healthy destination served');
       expect(readFileSync(promotedKey(two.id), 'ascii').startsWith('TERRABASE-DB-KEY-2\nv2.k1.')).toBe(true);
       expect(existsSync(secondObserved)).toBe(true);
       expect(readFileSync(secondObserved, 'ascii').startsWith('TERRABASE-DB-KEY-2\nv2.k1.')).toBe(true);

@@ -241,10 +241,12 @@ test('a move that fails before its commit point rolls back: the target acknowled
       expect(holdsFile(gru, before.value), 'the old home keeps its database file').toBe(true);
       expect(holdsFile(target, before.value), 'the target moved its imported copy out of the database path').toBe(false);
       const copies = await keptCopies(target, ledger.id);
-      expect(copies).toEqual([expect.objectContaining({ reason: 'move_rolled_back', organizationId, projectId, databaseId: ledger.id })]);
+      expect(copies).toEqual([expect.objectContaining({ organizationId, projectId, databaseId: ledger.id })]);
       expect(copies[0].files).toContain(`${ledger.id}.db`);
       expect(copies[0].bytes).toBeGreaterThan(0);
-      expect(await counted(target, 'terrabase_home_kept_files')).toBeGreaterThanOrEqual(copies[0].files.length);
+      expect(logged(target, 'Preserved a database copy', `"Database":"${ledger.id}"`, '"Reason":"move_rolled_back"'), 'the target logs why it preserved its copy').toBe(1);
+      await expect.poll(() => counted(target, 'terrabase_storage_retained_files'), { message: 'the retained inventory counts the preserved copy' })
+        .toBeGreaterThanOrEqual(copies[0].files.length);
     });
 
     await test.step('the old home judged nothing during its own move and deleted nothing', async () => {
@@ -296,7 +298,8 @@ test('a rollback keeps both copies in place until the lease names the old home a
       const current = await homeLease(kv, ledger.id);
       await kv.put(homes, `home.${ledger.id}`, { ...current.value, home: 'gru', node: 'journey-1', epoch: before.value.epoch + 2, session: '', adopted: null }, current.seq);
       await expect.poll(() => keptCopies(target, ledger.id), { message: 'the target sets its imported copy aside only now', timeout: 60_000 })
-        .toEqual([expect.objectContaining({ reason: 'move_rolled_back' })]);
+        .toEqual([expect.objectContaining({ databaseId: ledger.id })]);
+      expect(logged(target, 'Preserved a database copy', `"Database":"${ledger.id}"`, '"Reason":"move_rolled_back"'), 'the target logs why it preserved its copy').toBe(1);
       expect(promoting(target, ledger.id), 'the promotion fence is lifted').toBe(false);
       expect(holdsFile(gru, before.value), 'the old home still holds its file').toBe(true);
       expect(await keptCopies(gru, ledger.id)).toEqual([]);
@@ -452,7 +455,7 @@ test('a regional writer role moves only with the target certificate, and a datab
     await ledger.compare(cells);
     await expect.poll(async () => (await homeLease(kv, ledger.id)).value, { message: 'the lease carries the adopted position back to journey-1' })
       .toMatchObject({ node: 'journey-1', adopted: adopted.adopted });
-    const prepared = (await keptCopies(gru, ledger.id)).filter(copy => copy.reason === 'handoff_prepare');
+    const prepared = (await keptCopies(gru, ledger.id)).filter(copy => !hashes.has(copy.id));
     expect(prepared, 'the drain back set journey-1\'s earlier primary file aside instead of deleting it').toHaveLength(1);
     hashes.set(prepared[0].id, keptHash(gru, prepared[0]));
     await keptUnchanged();

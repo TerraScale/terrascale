@@ -5,7 +5,7 @@ writer role, move only through a planned move or a planned drain to a node that 
 previous holder acknowledged. Nothing moves when a node stops: the database waits, and is unavailable for the writes
 that need its home. No node deletes a database file unless another node has proven, at a lease revision read again
 just before the delete, that it holds its content. A file that no other copy is proven to cover stays in place and
-fenced, or is set aside and kept; nothing discards it.
+fenced, or is preserved and inventoried; nothing discards it.
 Availability is given up before durability.
 
 ## Lease store
@@ -97,7 +97,7 @@ A home moves only through a planned move (R9), to the current writer of the targ
    version). Until the fence is lifted the target accepts no write, direct or pushed: every write answers the retryable
    `the database is moving its home region`, and a pushed transaction is not acknowledged, so it is delivered again.
    Only the move's own prepare and drain transactions pass the fence.
-4. A file already at the target's database path is set aside as a kept copy (`move_target`). The target imports its
+4. A file already at the target's database path is preserved as a kept copy (`move_target`). The target imports its
    replica as the home file and takes the lease with one compare-and-set, `{home: old}` → `{home: new, node, epoch}`,
    without `adopted`.
 5. The target records the new placement, prepares home apply, and applies the pushes still addressed to the former home
@@ -143,22 +143,27 @@ lease's `adopted`:
 - **Not proven**: a lease without `adopted` (an uncommitted move, or a claim by an earlier build), or no lease at all,
   proves nothing about any copy: the file stays in place and fenced and the catalog is not changed. A lease with
   `adopted` that does not cover the final position means the new home serves without part of this file: the file is
-  set aside as a kept copy (`move_unproven` after a planned move, `lease_unproven` otherwise). The node never takes the
+  preserved as a kept copy (`move_unproven` after a planned move, `lease_unproven` otherwise). The node never takes the
   home back; the only way a home returns is a planned move, with the same proof as any other.
 
 ## Kept copies
 
-A kept copy is a database file a node holds and does not serve. Every one lives in `<data>/.kept/<id>/`: the database
-file and its sidecars (key, revision manifest, WAL), moved there by rename, and `kept.json`
-`{id, organizationId, projectId, databaseId, revision, reason, keptAt, files, bytes}`. The reasons are
-`move_rolled_back`, `move_unproven`, `lease_unproven`, `move_target` and `handoff_prepare`.
+A kept copy is a database file a node holds and does not serve. It is set aside through the storage engine's one
+preservation path, the same one a regional drain's prepare uses: the store is closed and drained, then the database file
+and its sidecars (key, revision manifest, WAL) are moved by rename to `<data>/.handoff/<id>/<organizationId>/<projectId>/`.
+The reason (`move_rolled_back`, `move_unproven`, `lease_unproven` or `move_target`) and the position the copy held are
+logged when it is preserved.
 
-- No automatic path deletes, truncates or overwrites a kept copy. The database file audit and the orphan sweep skip
-  `.kept`.
-- A path that needs a database file's place (a planned move to this node, a regional drain's prepare on this node) sets
-  the file aside as a kept copy and proceeds; it never deletes it and never fails because of it.
-- `terrabase.home.kept.files` and `terrabase.home.kept.bytes` measure the kept copies; `/v1/rollout/status` lists them
-  (`kept`).
+- No automatic path deletes, truncates or overwrites a kept copy. Only the erasure of a deleted database removes its
+  preserved copies, as it removes every other file of that database.
+- A path that needs a database file's place (a planned move to this node, a regional drain's prepare on this node)
+  preserves the file and proceeds; it never deletes it and never fails because of it.
+- A promotion completes its detached import before anything preserves the imported file: the detached source and its
+  import record move to the replica's `.retained` archive when the import is published or put back, so a later
+  preservation of the imported file never leaves a published import without its destination.
+- The local key inventory counts every preserved file: `terrabase.storage.retained_files` and
+  `terrabase.storage.retained_bytes` measure them, and a non-empty preserved file makes the key-retirement counts
+  unknown. `/v1/rollout/status` lists the kept copies (`kept`: `{id, organizationId, projectId, databaseId, files, bytes}`).
 - Removing kept copies is an operator action and not part of this build.
 
 ## Regional writer proof
@@ -191,7 +196,7 @@ has no homed databases, so its first node in name order becomes writer at epoch 
 are current passes the same check.
 
 The new writer's lease rewrite (`TakeRegionalAsync`) carries `adopted` forward. A regional drain's prepare imports the
-target's replica as its primary file; a file already at that path is set aside as a kept copy (`handoff_prepare`).
+target's replica as its primary file; a file already at that path is preserved the same way and listed as a kept copy.
 
 ## Mixed builds during a rollout
 
@@ -238,7 +243,7 @@ and fenced. The claimant serves the database when it is its region's writer; oth
 - `terrabase.regional.fenced{reason}`: databases of this node's region that refuse writes because the writer's activation
   check cannot prove their primary file covers their replica; `/v1/rollout/status` `fenced` names them.
 - `terrabase.home.unserved{region}`: databases whose lease names a node that cannot serve them, by the lease's region.
-- `terrabase.home.kept.files`, `terrabase.home.kept.bytes`: the kept copies on this node.
+- `terrabase.storage.retained_files`, `terrabase.storage.retained_bytes`: the kept copies and other retained files on this node.
 - `terrabase.home.demotions`: database files this node deleted after the new home proved it holds their content.
 - `terrabase.home.leased`: databases whose writes on this node need its lease.
 

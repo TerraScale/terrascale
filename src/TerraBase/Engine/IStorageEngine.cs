@@ -44,8 +44,6 @@ public interface IStorageEngine : IAsyncDisposable
 
     ValueTask<bool> DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken, bool retainIntentOwnership = false, Ulid? incarnation = null);
 
-    ValueTask<IReadOnlyList<string>> SetAsideDatabaseAsync(TenantContext database, string directory, CancellationToken cancellationToken);
-
     ValueTask<bool> VerifyDatabaseErasureAsync(TenantContext database, CancellationToken cancellationToken);
 
     IEnumerable<StoredDatabaseFile> EnumerateDatabaseFiles(CancellationToken cancellationToken = default);

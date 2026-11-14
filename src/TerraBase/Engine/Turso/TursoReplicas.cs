@@ -230,6 +230,7 @@ internal sealed partial class TursoReplicas(
         {
             ActiveDetached.Remove(detached);
             TryRecoverDetached(detached, rethrow: true, finalizing: true);
+            ArchiveCompletedDetached(detached);
         }
     }
 

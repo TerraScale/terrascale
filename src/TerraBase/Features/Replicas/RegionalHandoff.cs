@@ -357,7 +357,6 @@ internal sealed partial class RegionalHandoff(
 
             try
             {
-                _ = await services.GetRequiredService<KeptCopies>().KeepAsync(database, KeepReason.HandoffPrepare, cancellationToken).ConfigureAwait(false);
                 var imports = services.GetRequiredService<IWalBackup>();
                 await imports.PreserveDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
                 await imports.ImportDatabaseAsync(database, detached, cancellationToken).ConfigureAwait(false);
