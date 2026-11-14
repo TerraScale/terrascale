@@ -131,11 +131,9 @@ namespace TerraScale.Dashboard.Features.Backups
             }
 
             WholeDatabaseRecoveryPage? recovery = null;
-            PitrCardModel? pitr = null;
-            if (context.CanManage && database.Status == "ready")
+            if (export && context.CanManage && database.Status == "ready")
             {
-                pitr = await PitrCardAsync(http, context, database, recovery, listing, bucket, http.RequestAborted);
-                recovery = pitr.Recovery;
+                recovery = (await PitrCardAsync(http, context, database, null, listing, bucket, http.RequestAborted)).Recovery;
             }
 
             return new(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title("backups")), database, listing, error,

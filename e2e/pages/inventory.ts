@@ -99,11 +99,10 @@ const databaseTabs: [string, string, Identity][] = [
   ['replication', 'Replication', title('Replication', 2)],
   ['conflicts', 'Conflicts', title('Conflicts', 2)],
   ['logs', 'Logs', title('Request logs', 2)],
-  ['backups', 'Backups', title('Backup policy', 2)],
+  ['backups', 'Backups', title('Restore to a point in time', 2)],
   ['branches', 'Forks', title('Forks', 2)],
   ['settings', 'Settings', title('Settings', 2)],
   ['danger', 'Danger zone', title('Danger zone', 2)],
-  ['point-in-time', 'Point-in-time recovery', title('Restore database at UTC time', 2)],
 ];
 
 const tabStates: Record<string, PagePattern['query']> = {
@@ -277,6 +276,15 @@ export const dashboardStates: readonly PageState[] = [
         if (tab === 'replication') {
           await expect(page.getByRole('heading', { level: 2, name: 'Regions', exact: true })).toBeVisible();
           await regionPicked(page, 'database-regions', journey);
+        }
+        if (tab === 'backups') {
+          const url = page.url();
+          await expect(page.locator('#schedule-chips')).toBeVisible();
+          await page.locator('#schedule-chips input[value="daily"]').check();
+          await page.locator('#schedule-hour').selectOption('3');
+          await page.getByRole('button', { name: 'Save schedule' }).click();
+          await expect(page).toHaveURL(url);
+          await expect(page.locator('#schedule-cron')).toHaveText('0 3 * * *');
         }
       },
     }),
