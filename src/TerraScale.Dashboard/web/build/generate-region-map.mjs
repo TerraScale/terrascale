@@ -36,28 +36,74 @@ const pins = REGIONS.map(region => {
   const pin = map.getPin({ lat: region.lat, lng: region.lng });
   return { ...region, x: round(pin.x), y: round(pin.y) };
 });
-
-const generated = map.getSVG({
-  radius: 0.18,
-  color: "rgba(37, 99, 235, 0.52)",
-  backgroundColor: "transparent",
+const number = value => {
+  const rounded = round(value);
+  return String(Number.isInteger(rounded) ? rounded : +rounded.toFixed(2));
+};
+const dotRows = points
+  .slice()
+  .sort((a, b) => a.y - b.y || a.x - b.x)
+  .reduce((acc, point) => {
+    let row = acc[acc.length - 1];
+    if (!row || row.y !== point.y) acc.push((row = { y: point.y, xs: [] }));
+    row.xs.push(point.x);
+    return acc;
+  }, []);
+const rowRuns = dotRows.map(row => {
+  const runs = [];
+  let start = row.xs[0];
+  let previous = start;
+  for (const x of row.xs.slice(1)) {
+    if (x - previous === 1) previous = x;
+    else {
+      runs.push([start, previous]);
+      start = previous = x;
+    }
+  }
+  runs.push([start, previous]);
+  return { y: row.y, runs };
 });
-const openingTag = generated.match(/<svg\b[^>]*>/)?.[0];
-if (!openingTag) throw new Error("dotted-map did not generate an SVG root element");
-
-const accessibleTag = openingTag.replace(
-  />$/,
-  ' id="terrascale-region-map" role="img" aria-labelledby="terrascale-region-map-title terrascale-region-map-description" data-projection="vanDerGrinten" data-grid="diagonal">',
+const longest = Math.max(...rowRuns.flatMap(row => row.runs.map(([a, b]) => b - a + 1)));
+const powerTemplate = power =>
+  power === 1
+    ? `<g id="w1"><circle r=".18"/></g>`
+    : `<g id="w${power}"><use href="#w${power / 2}"/><use href="#w${power / 2}" x="${power / 2}"/></g>`;
+const powers = [];
+for (let power = 1; power <= longest; power *= 2) powers.push(power);
+const runUses = rowRuns.map(
+  row =>
+    `    <g transform="translate(0 ${row.y})">${row.runs
+      .map(([a, b]) => {
+        const marks = [];
+        let length = b - a + 1;
+        let offset = 0;
+        for (const power of [...powers].reverse()) {
+          if (length < power) continue;
+          marks.push(`<use href="#w${power}"${offset ? ` x="${number(a + offset)}"` : ` x="${number(a)}"`}/>`);
+          offset += power;
+          length -= power;
+        }
+        return marks.join("");
+      })
+      .join("")}</g>`,
 );
-const regionMarks = pins
-  .map(pin => `    <circle data-region="${pin.code}" data-name="${pin.name}" data-lat="${pin.lat}" data-lng="${pin.lng}" cx="${pin.x}" cy="${pin.y}" r="0.5" fill="none"><title>${pin.name} (${pin.code})</title></circle>`)
-  .join("\n");
-const svg = generated
-  .replace(
-    openingTag,
-    `${accessibleTag}\n  <title id="terrascale-region-map-title">TerraScale region map</title>\n  <desc id="terrascale-region-map-description">A dotted world map with every TerraScale region.</desc>`,
-  )
-  .replace(/\s*<\/svg>\s*$/, `\n  <g id="terrascale-region-map-regions">\n${regionMarks}\n  </g>\n</svg>\n`);
+
+const svg = [
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 136 80" id="terrascale-region-map" role="img" aria-labelledby="terrascale-region-map-title terrascale-region-map-description" data-projection="vanDerGrinten" data-grid="diagonal">`,
+  `  <title id="terrascale-region-map-title">TerraScale region map</title>`,
+  `  <desc id="terrascale-region-map-description">A dotted world map with every TerraScale region.</desc>`,
+  `  <defs>`,
+  ...powers.map(power => `    ${powerTemplate(power)}`),
+  `  </defs>`,
+  `  <g fill="rgba(37, 99, 235, 0.52)">`,
+  ...runUses,
+  `  </g>`,
+  `  <g id="terrascale-region-map-regions">`,
+  ...pins.map(pin => `    <circle data-region="${pin.code}" data-name="${pin.name}" data-lat="${pin.lat}" data-lng="${pin.lng}" cx="${pin.x}" cy="${pin.y}" r="0.5" fill="none"><title>${pin.name} (${pin.code})</title></circle>`),
+  `  </g>`,
+  `</svg>`,
+  "",
+].join("\n");
 
 const data = [
   `export const columns = ${WIDTH};`,
