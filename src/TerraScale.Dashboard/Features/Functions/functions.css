@@ -1,0 +1,10 @@
+.ts-functions-endpoint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ts-s2);
+}
+
+.ts-functions-endpoint .ts-mono {
+  overflow-wrap: anywhere;
+}

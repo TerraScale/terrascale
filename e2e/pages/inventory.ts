@@ -50,7 +50,7 @@ function stat(page: Page, label: string) {
 }
 
 async function databaseHeader(page: Page, journey: Journey): Promise<void> {
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText(journey.databaseName);
+  await expect(page.locator('.ts-db-title')).toHaveText(journey.databaseName);
   const header = page.locator('main');
   await expect(header.getByText('ready', { exact: true }).first()).toBeVisible();
   await expect(header.getByText(new RegExp(`^${journey.databaseRegion}$`, 'i')).first()).toBeVisible();
@@ -95,7 +95,7 @@ const databaseTabs: [string, string, Identity][] = [
   ['tables', 'Tables', currentTab('Database sections', 'Tables')],
   ['grants', 'Grants', title('Grants', 2)],
   ['sql', 'SQL editor', title('Saved queries', 2)],
-  ['functions', 'Functions', title('Functions', 2)],
+  ['functions', 'Functions', title('Functions', 1)],
   ['replication', 'Replication', title('Replication', 2)],
   ['conflicts', 'Conflicts', title('Conflicts', 2)],
   ['logs', 'Logs', title('Request logs', 2)],
@@ -107,7 +107,7 @@ const databaseTabs: [string, string, Identity][] = [
 ];
 
 const tabStates: Record<string, PagePattern['query']> = {
-  functions: { function: /^([a-z0-9][a-z0-9_-]{0,62})?$/, edit: /^(new|1)?$/ },
+  functions: { function: /^([a-z0-9][a-z0-9_-]{0,62})?$/, edit: /^(new)?$/, trigger: /^(http|cron)?$/, status: /^(ok|error)?$/, deployed: /^1?$/ },
   sql: { result: optionalId, savedQueryId: optionalId, created: /^.{0,128}$/ },
   tables: { table: /^[A-Za-z0-9_]*$/, created: /^.{0,128}$/ },
 };
