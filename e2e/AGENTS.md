@@ -155,7 +155,8 @@ the fault specs. Local runs use the same variables and normal prepare/start/up/s
 
 One fault case runs gru's writer on the base revision's TerraBase while a move to a node of this build rolls back.
 `E2E_PREVIOUS_TERRABASE` names that build's `terrabase.dll`: CI unpacks the `engine-rollback-baseline` artifact
-(the PR's base commit); locally, build `origin/main` with `bash e2e/env/build.sh <main checkout> <dir> terrabase`
+(the PR's base commit) in the `multi-region home moves and receipt handoffs` shard. That shard runs the home-move
+cases with the receipt handoffs, so each fault shard's Journey step stays within its 15-minute limit; locally, build `origin/main` with `bash e2e/env/build.sh <main checkout> <dir> terrabase`
 and export `E2E_PREVIOUS_TERRABASE=<dir>/terrabase/terrabase.dll` before `local.sh exec`.
 
 The shard also builds a journey-only receipt driver from the same product sources.

@@ -202,11 +202,11 @@ jobs:
             regions: 2
             nodes: 2
           - shard: multi-region faults
-            projects: --project fault --grep-invert receipt|retained.receiver
+            projects: --project fault --grep-invert receipt|retained.receiver|commit.point|rollback.keeps|home.move.never|previous.build|planned.move|cannot.serve|regional.writer.role.moves
             regions: 2
             nodes: 2
-          - shard: multi-region receipt handoffs
-            projects: --project fault --grep receipt|retained.receiver
+          - shard: multi-region home moves and receipt handoffs
+            projects: --project fault --grep receipt|retained.receiver|commit.point|rollback.keeps|home.move.never|previous.build|planned.move|cannot.serve|regional.writer.role.moves
             regions: 2
             nodes: 2
     runs-on: ubuntu-24.04
@@ -250,12 +250,12 @@ jobs:
           merge-multiple: true
           path: ${{ runner.temp }}/sdk
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        if: matrix.shard == 'multi-region faults'
+        if: matrix.shard == 'multi-region home moves and receipt handoffs'
         with:
           name: engine-rollback-baseline
           path: ${{ runner.temp }}
       - name: Unpack the base revision's TerraBase for the mixed-version case
-        if: matrix.shard == 'multi-region faults'
+        if: matrix.shard == 'multi-region home moves and receipt handoffs'
         run: |
           mkdir -p "$RUNNER_TEMP/previous"
           tar -xzf "$RUNNER_TEMP/engine-baseline.tar.gz" -C "$RUNNER_TEMP/previous"
