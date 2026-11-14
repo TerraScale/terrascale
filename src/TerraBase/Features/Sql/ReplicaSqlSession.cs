@@ -12,7 +12,6 @@ internal sealed class ReplicaSqlSession(
 {
     private static readonly SqlResult Empty = new([], [], 0, null);
     private static readonly SqlError ReadOnlyWrite = new(SqlErrors.ReadOnlyTransaction, "a READ ONLY transaction cannot write");
-    private static readonly SqlError Expired = new(SqlErrors.QueryCanceled, "the transaction expired: it was open for more than 5 seconds and was rolled back");
     private static readonly SqlError ReadThenWrite = new(SqlErrors.SerializationConflict,
         "the transaction read in this region and then wrote: retry it, and the retry runs at the database's home");
 
@@ -25,11 +24,13 @@ internal sealed class ReplicaSqlSession(
     private bool _conflicted;
     private string? _first;
     private WriteOverride _preference;
-    private bool _expired;
-    private long _opened;
     private long _position = -1;
 
     public bool IsAutocommit => !_readOnlyTransaction && (_home?.IsAutocommit ?? true);
+
+    public SqlTransactionClock TransactionClock { get; set; } = new(transactionTime);
+
+    public TimeSpan? TransactionRemaining => IsAutocommit ? null : TransactionClock.Remaining;
 
     public WriteRoute? LastRoute { get; private set; }
 
@@ -69,7 +70,8 @@ internal sealed class ReplicaSqlSession(
                 return read;
             case SqlStatementKind.Begin when (plan.ReadOnly || _preference != WriteOverride.Home)
                 && await replicas.BeginReadAsync(database, _position, cancellationToken).ConfigureAwait(false) is { } snapshot:
-                (_snapshot, _readOnlyTransaction, _declaredReadOnly, _expired, _opened) = (snapshot, true, plan.ReadOnly, false, transactionTime.GetTimestamp());
+                TransactionClock.Start();
+                (_snapshot, _readOnlyTransaction, _declaredReadOnly) = (snapshot, true, plan.ReadOnly);
                 (_readLocally, _conflicted, _first) = (false, false, null);
                 return Empty;
             case SqlStatementKind.Write when !canWrite:
@@ -113,7 +115,7 @@ internal sealed class ReplicaSqlSession(
             case (_, { } error):
                 return new SqlBatchFailure(error, 0);
             case (HomeSqlSession remote, _):
-                var outcome = await remote.BatchAsync([.. commands.Select(command => command.Command)], cancellationToken).ConfigureAwait(false);
+                var outcome = await remote.BatchAsync(commands, cancellationToken).ConfigureAwait(false);
                 _ = await MarkAsync(Empty).ConfigureAwait(false);
                 return outcome;
             default:
@@ -173,7 +175,7 @@ internal sealed class ReplicaSqlSession(
         if (_readOnlyTransaction)
         {
             return plan.Kind == SqlStatementKind.Write ? (canWrite ? ReadOnlyWrite : SqlErrors.Auth)
-                : _snapshot is { } snapshot ? await DescribeOnAsync(snapshot, plan, cancellationToken).ConfigureAwait(false) : Expired;
+                : _snapshot is { } snapshot ? await DescribeOnAsync(snapshot, plan, cancellationToken).ConfigureAwait(false) : SqlErrors.InFailedTransaction;
         }
 
         if (plan.Kind == SqlStatementKind.Write)
@@ -229,10 +231,10 @@ internal sealed class ReplicaSqlSession(
     {
         if (plan.Kind is SqlStatementKind.Commit or SqlStatementKind.Rollback)
         {
-            var expired = _expired && !_conflicted;
             await DropSnapshotAsync().ConfigureAwait(false);
             (_readOnlyTransaction, _conflicted) = (false, false);
-            return expired && plan.Kind == SqlStatementKind.Commit ? Expired : Empty;
+            TransactionClock.End();
+            return Empty;
         }
 
         if (_conflicted)
@@ -240,16 +242,10 @@ internal sealed class ReplicaSqlSession(
             return SqlErrors.InFailedTransaction;
         }
 
-        if (!_expired && transactionTime.GetElapsedTime(_opened) >= SqlLimits.MaxTransactionTime)
-        {
-            _expired = true;
-            await DropSnapshotAsync().ConfigureAwait(false);
-        }
-
         switch (plan.Kind)
         {
-            case var _ when _expired || _snapshot is null:
-                return Expired;
+            case var _ when _snapshot is null:
+                return SqlErrors.InFailedTransaction;
             case SqlStatementKind.Begin:
                 return SqlErrors.Error("cannot start a transaction within a transaction");
             case SqlStatementKind.Write when !canWrite:
@@ -367,6 +363,7 @@ internal sealed class ReplicaSqlSession(
             && await service.UsePrimaryAsync(database, cancellationToken).ConfigureAwait(false))
         {
             _home ??= local();
+            _home.TransactionClock = TransactionClock;
             _primary = true;
         }
     }
@@ -386,12 +383,14 @@ internal sealed class ReplicaSqlSession(
         if (home == options.Region)
         {
             _home = local();
+            _home.TransactionClock = TransactionClock;
             return (_home, null);
         }
 
         switch (await homes.OpenAsync(database, home, epoch, canWrite, cancellationToken).ConfigureAwait(false))
         {
             case HomeSqlSession session:
+                session.TransactionClock = TransactionClock;
                 session.BeginRequest();
                 _home = session;
                 return (session, null);

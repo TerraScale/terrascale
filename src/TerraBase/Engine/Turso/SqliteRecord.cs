@@ -36,10 +36,10 @@ internal static class SqliteRecord
                 4 => 4,
                 5 => 6,
                 6 or 7 => 8,
-                >= 12 => (int)((type - 12) / 2),
+                >= 12 => checked((int)((type - 12) / 2)),
                 _ => throw new InvalidDataException("a record uses a reserved serial type"),
             };
-            if (size > body.Length)
+            if (size < 0 || size > body.Length)
             {
                 throw new InvalidDataException("a record value runs past its end");
             }
@@ -59,6 +59,10 @@ internal static class SqliteRecord
             });
         }
 
+        if (columns == int.MaxValue && !body.IsEmpty)
+        {
+            throw new InvalidDataException("a record has trailing content");
+        }
         return [.. values];
     }
 

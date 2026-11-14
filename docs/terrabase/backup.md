@@ -182,7 +182,12 @@ transaction. The backup's tap reads that table:
    transaction whose times are missing or go back is logged with a plain commit. When a read appended changes up to the
    newest COMMIT row that existed when it started (not a read stopped at 32 MiB), a read mark follows them with that
    start time: every transaction committed before it is in the log before the mark. Both records are additive: the
-   object format, the bucket layout and older logs (plain commits only) stay readable.
+   object format, the bucket layout and older logs (plain commits only) stay readable. After a read appends changes,
+   the first caught-up read starting after that read's completion second appends one more read mark, even without
+   another change.
+   That witness closes the last transaction's second so every acknowledged write can be restored without a later write.
+   Reopening or rewinding the tap also schedules one witness after the current second. Once caught up and witnessed,
+   an idle tap appends nothing until another change arrives.
 2. Reading advances a cursor without acknowledging it. Only a stored snapshot or segment advances the stored cursor.
    Its generation, schema map, byte offset and capture position are saved immediately with each upload in the node's
    durable backup accounting record in the system database. An intent containing the object key and sealed-content hash
@@ -484,13 +489,204 @@ key objects are ignored during selection; a future-dated key can still decrypt h
 Changing `backup-key-rotation-days` requires a rolling
 restart; use `1` for the next daily rotation when shortening the schedule.
 
-The master key does not rotate yet. Changing `TERRABASE_MASTER_KEY` makes retained backups unreadable, because
-their wrapped data keys no longer unwrap. There is no key versioning yet. Do not delete wrapped keys while their
-backups are still retained; only a database's deletion destroys its keys.
+Configure a versioned keyring with `TERRABASE_MASTER_KEYS_FILE`, a protected JSON file with
+`active` and `keys` properties. The keys object maps ids to base64-encoded 32-byte keys.
+Ids contain 1–63 ASCII letters, digits, underscores or hyphens; at most 32 keys are accepted.
+The active id must exist. Supply either this file or `TERRABASE_MASTER_KEY_FILE`, never both.
+The single-key configuration assigns the id `k0`. When adopting a keyring, `k0` must contain
+exactly the existing master key. Key ids are permanent: never reuse an id for different key material.
 
-This rotation preserves the existing backup bytes, bucket layout and database files. Live database files, WAL files, local
-managed snapshots and restore scratch files still require encryption of the node's storage; TS-702's disk-encryption
-and in-place migration work follows separately.
+While `k0` is active, new wrappers and database/replica sidecars retain their existing unprefixed
+body and version 1 header. Inventory does not rewrite wrappers already using the active key.
+Upgrading with the existing key changes no key files, custody objects or stored credentials,
+including during a rolling release. Rolling back before the first rotation remains supported.
+
+Selecting a different active id starts rotation. New wrappers then use
+`v2.<keyId>.<base64(nonce|ciphertext|tag)>`, with the version and id authenticated as AES-GCM
+associated data, and sidecars use version 2 headers. Unprefixed wrappers use only `k0`.
+Both sidecar versions remain readable. A wrapper selects exactly its named key; unprefixed
+wrappers select only `k0`. An incoming record, backup or snapshot naming an unconfigured id is
+refused and the message names that id. This does not recreate a database or generate a replacement key.
+
+### Local wrappers determine required keys
+
+Before readiness, every node inventories its own persisted wrappers. A zero means **no
+value stored on this node needs the key**. Incomplete inventory is -1 (unknown),
+including `unattributed` when an id cannot be recovered. Unknown means **do not retire**.
+
+| Persisted location | Local inventory |
+| --- | --- |
+| Catalog and storage-intent journal `.db.key` files | Read and authenticate the bounded sidecar. |
+| Tenant and replica `.db.key` files | Read and authenticate the bounded sidecar; tenant rows contain no platform sealed credentials. |
+| Detached `.promote.db.key` and `.promote.db.importing` intents | Count both source and destination wrappers. |
+| Creating, rewriting, migration, key-writing and orphan sidecars | Count readable wrappers; an unauthentic wrapper makes its id unknown; an unidentified wrapper makes every id unknown. |
+| Current project backup destinations and `backup_destination_history/*` in `_tb_records` | Read sealed credential wrappers from a read transaction, without a reference cache. |
+| Both `before` and `after` images for `_tb_records` in each record store's retained change-capture table | Decode the complete row image and count credential wrappers, including deleted and superseded values. Undecodable images make all ids unknown. The catalog and intent journal are both scanned. |
+| Orphan keys retained as `.<id>.<nonce>.retained-key`, including interrupted rewrap files | Count and authenticate their wrappers, refuse startup when their key id is unconfigured, and rewrap them without deleting the retained file. Database and replica cleanup retains key files. |
+| Completed detached imports moved under `.replicas/<organization>/<project>/.retained/<nonce>` before opening a new live replica | Preserve the source, key and publication intent; inventory and rewrap both intent wrappers and the source key. Nonempty archived payloads make counts unknown. Archived imports are not replayed as active recovery intents; permanent erasure removes their data and retains their keys. |
+| Incomplete replica caches retained as `.db.retained.*` with adjacent key and sidecar files | Authenticate and rewrap their key records; nonempty cache payloads make counts unknown. Cache rebuild preserves these files before creating its new key. |
+| Local backup snapshots, frame buffers and sealed upload buffers in `.backup`; import/restore staging in `.import`; exports in `.exports`; native copies in `.tmp/native` and inspection copies in `.tmp/inspection` | Any nonempty payload makes all counts unknown. A native temporary database is excluded only when its physical header proves a single empty schema page with no free pages and its log has no frames (at most the 32-byte header). These copies can embed historical credentials or wrappers; their removal, completion or separate inspection is required before retirement. |
+| Replication/handoff catalog data | Received credentials persist as the above catalog records and retained images. Outbound catalog snapshots are memory-only; there is no separate persisted catalog outbox. |
+| Superseded local databases retained during planned regional handoff in `.handoff` | Sidecar wrappers are counted; any nonempty payload makes counts unknown. Planned handoff closes the old store, releases the creation gate while its native handles drain, then durably moves its files here without overwriting them before importing the certified replica. The closed store stays registered and lifecycle operations stay fenced during drainage. Detached recovery never performs this supersession. Permanent database erasure removes matching retained copies only after validating the catalog's erasure record. |
+| Local holds and home-push queues | Carry tenant SQL transactions, not platform credential records; their enclosing database wrappers are counted. The intent journal stores storage-operation identities, not another credential payload format. |
+| Object-store custody, backups, WAL archives and archived snapshots | Outside this node's inventory. Their wrappers are checked when accessed. Keep every required old key for as long as a backup or archived snapshot may be restored. |
+
+Disabling backups does not release old-key references in unshipped images retained above a
+durable backup floor. Those references remain until the engine actually removes the images
+after acknowledgement or its documented retention handling.
+
+The file walk is proportional to directory entries and wrapper bytes (at most 16 KiB per
+sidecar). The record walk is proportional to live credential bytes plus retained record-image
+bytes, including noncredential images that must be decoded to classify them. It does not
+scan tenant rows. Startup performs a complete walk before readiness. Scrapes run the same
+walk on one worker with a two-second deadline; a timeout returns unknown for that scrape,
+cancels the worker and admits no concurrent recount. Inventories with at least 4,096
+wrappers, records or images, and timed-out inventories, wait five seconds before another
+recount. Every scrape during that interval or an unfinished recount reports unknown.
+No earlier reference number is reused. Retained-file and byte gauges are produced by the
+same bounded walk; they do not start additional synchronous filesystem scans. Scrape response caching is disabled.
+
+A local three-run journey measured 10,000 wrapper files plus 10,000 retained images
+on a busy machine, one process at a time at low priority. These are observations, not
+latency guarantees. Each complete scrape counted 20,004 references; each immediate
+repeat returned unknown during the five-second recount interval.
+
+| Run | Startup (ms) | Complete scrape (ms) | Immediate unknown scrape (ms) |
+| --- | ---: | ---: | ---: |
+| 1 | 3760.84 | 1594.76 | 19.64 |
+| 2 | 3963.89 | 1794.53 | 23.56 |
+| 3 | 3715.78 | 1613.06 | 20.98 |
+
+An access failure while inventorying an installed primary sidecar makes reference counts
+unknown; the engine still applies its normal admission and pending-proof rules. Repaired
+primary material must authenticate before its inventory refusal clears. Refusals for other
+retained artifacts remain recorded independently.
+
+An authoritative wrapper or a readable live or retained credential naming an unconfigured
+id stops startup before readiness and names the missing id. Retained images participate
+because backup replay can need their values after live credentials have been rewrapped.
+Malformed credential records, including missing/null credentials, null/nonstring wrapped
+keys, empty or malformed envelopes, bad base64 and unknown versions, never stop inventory.
+They stay exactly as stored, increment `terrabase.keys.malformed`, produce one bounded
+content-free warning per process, and make the affected id unknown (all ids when unknown).
+The write door validates these shapes and authenticates wrappers before its first mutation;
+an invalid regional import rolls back as a whole.
+
+Configured material that cannot authenticate the catalog's own wrapper stops the node.
+Other authoritative wrappers refuse only their database; other databases continue serving.
+Authority is determined by the exact base-name grammar: `_system.db.key`, `_intents.db.key`
+or `<ULID>.db.key`. Parent directory names containing `.creating`
+have no effect. Creating and artifact names, detached sidecars and key-writing temporaries
+gain no authority merely by ending in `.db.key`. Unreadable tenant import intents refuse only their
+database and make counts unknown. Directory enumeration failures also make all ids unknown.
+
+The mutation paths are current destination save/delete, history capture, credential rewrap,
+project-prefix removal, regional import/handoff/replication and physical catalog restore.
+Their live values and retained images are read from storage; no mutation-maintained count
+can omit a committed import. A stopped node must be inventoried before removing its keys.
+
+Master keys must be generated by a cryptographically secure random generator, for example
+`openssl rand -base64 32`, and stored in a protected secret file. Configuration rejects material
+that is not exactly 32 bytes or duplicates another configured id's material. The previous build
+also required exactly 32 decoded bytes, so wrong-length material could not have encrypted an
+installation through that configuration path. These checks do not verify randomness.
+A repeated-byte active key is refused when no local wrapper references it, covering empty nodes
+and newly added active ids. Existing referenced keys, including installations with unknown counts, remain readable: startup warns once naming
+the id, and `terrabase.keys.weak_in_use{key_id}` is 1 while referenced (or -1 when unknown).
+Rotate away from such an id with the normal procedure below; never replace its material in place. Never reuse an id for different material.
+A fleet using a weak key must rotate to a strong key **before a new or replacement node joins**: an empty node refuses the weak active key.
+A single configured key must have id `k0` and retains the existing wrapper bytes.
+
+### Rotation order
+
+A build must read a format before any build writes it:
+
+1. Run this build on every node with `k0` active.
+2. Add the new id and material to every node's configuration, retaining `k0` as active.
+3. Make the new id active on every node.
+4. Watch each node's per-id local gauge fall as wrappers are rewrapped.
+5. Require a complete zero sample for the old id on every node; unknown never qualifies.
+6. Retain the old key for as long as any backup or archived object-store snapshot needing it
+   may be restored. Node-local zero does not establish that those archives are readable without it.
+7. Remove the old key only after both the local inventory and archive-retention requirements hold. The single-key byte-compatibility rule
+   still applies: a sole configured id must be `k0`, so retiring `k0` requires a multi-key configuration.
+
+Configuration is immutable until restart. This build reads wrappers under any configured id
+and writes non-`k0` wrappers only when the operator makes such an id active. Rolling back to
+the previous build is supported only while `k0` is the only key ever used. Nodes should use the
+same active id to avoid repeatedly rewrapping shared objects to different keys.
+
+With multiple configured keys, maintenance runs after the catalog opens and hourly thereafter.
+It rewraps local key files and detached intent wrappers on every node, conditionally replaces
+shared custody objects using their ETags, and updates current and historical credential wrappers
+inside durable catalog transactions on the catalog writer. The role is captured once per pass.
+`terrabase.keys.wrapped{key_id}` and `terrabase.keys.last_complete` describe that maintenance
+pass; they are not the local retirement gauge. Single-key maintenance is skipped, while the
+startup inventory and local gauge still run.
+
+Each new wrapper is unwrapped and compared with the original plaintext in constant time before
+publication. Atomic wrapper replacement writes a fresh temporary, flushes it, renames over the
+old wrapper and syncs the directory. Interrupted writing temporaries are retained and inventoried.
+List leftovers with `find <data-directory> -type f` and inspect the `.key.tmp`,
+`.key.rewrapping*`, `.creating*` and `.promote.db*` entries. Keep the required keys configured.
+An operator should preserve a copy, establish which file and key are authoritative and recover any
+needed data before separately reviewing reclamation. Do not remove an artifact merely to clear
+a gauge; unknown artifacts must be resolved before retirement. A later atomic replacement owns
+only its own writing temporary; detached recovery does not clean up older artifacts.
+
+### Detached recovery retains files
+
+Promotion records a versioned intent with database id, incarnation, commit position and wrapped
+source key. Before copying, an atomic intent update records the destination key. The new copy
+keeps the source incarnation. Recovery verifies the destination opens under its authenticated
+key, passes an integrity check, and matches the intent's database name, incarnation and minimum
+commit position. These are identity and integrity checks, not content-equivalence claims.
+A runtime import inspects the completed, unpublished temporary database while holding the
+storage creation gate, before renaming it to the destination. It records durable publication
+before releasing that gate. Finalizing this verified import authenticates its wrapper without
+copying its pages again; backup discovery and foreground writers can then open it safely.
+A home move finalizes before publishing placement. Detached import delays its own writable
+initialization as well. Startup recovery performs full inspection of active detached intents before writers open,
+including destinations with durable publication evidence. A truly damaged destination is
+still refused.
+Inspection reserves `8 × copy bytes + 64 MiB` through the node disk budget, preserving its
+foreground headroom; insufficient capacity refuses only that database with the required and
+available bytes, retains every source file, and continues recovery. Copies live only under
+`<data-directory>/.tmp/inspection/<generated-id>`. Startup removes abandoned inspection
+copies only in that dedicated directory (the existing native temporary cleanup still owns
+its own `.tmp/native` area; siblings of both directories are preserved). Fixed path components and link rejection prevent escaping this area.
+Inspection copies the database and its adjacent sidecars into this private scratch directory, opens
+only that copy, then removes only the scratch directory, on both success and failure. The vendored
+driver's managed read-only mode passes native open flags 0; it is not a physical preservation
+guarantee. Inspection therefore never opens the retained original with that driver.
+
+If the destination was published and passes those checks, it serves. The detached database,
+all sidecars and key files remain on disk. Its intent records that publication completed and the
+source is retained. If the destination fails any check, that database is refused and both copies
+remain. Unexpected or malformed states also refuse the database and retain every file.
+
+If the destination was not published, recovery moves the detached database and sidecars back
+without overwriting anything, verifies the restored database opens under its key, and records
+the restoration in the retained intent. Before opening a new live replica, completed published
+or restored intents and their remaining detached files move into a unique `.retained` directory.
+Those archived copies and keys remain inventoried and rewrappable without replaying completed
+recovery against a later replica. Cancelled copies and their temporary files are retained. A normal open or a second import may
+be refused while retained state conflicts with it; recovery never resolves that conflict by deletion.
+Runtime and startup recovery use the same refusal log and
+`terrabase.storage.detached_recovery_failures` counter; runtime recovery still throws.
+
+`terrabase.storage.retained_files` and `terrabase.storage.retained_bytes` gauge retained
+detached files, import intents, abandoned copy files and key files awaiting a separate reclaim
+step. Reclamation is a different change with its own review. This change provides no reclamation
+hook or switch. Customer-requested erasure with a matching durable deletion record still removes
+that database's files.
+
+Preservation here covers detached recovery and its inspection, promotion rollback, pre-import
+handoff, the file audit and general stop-following. It is not a repository-wide deletion guarantee.
+Existing replica/home/settle/demote/pending cleanup paths can still call database deletion when
+catalog ownership or registration disappears, including removing a published destination;
+the existing cancelled-creation cleanup can remove a `.creating*` copy. Those older paths are a
+known limit owned by a separate change and are unchanged here.
 
 ## Bucket layout (version 1)
 
@@ -645,6 +841,7 @@ Guaranteed to restore exactly (`201`), given contiguous segments and timed trans
   when a transaction committed at or after T (or a read mark at or after T) is shipped later in the same generation.
   A quiesced cut is this case: writes stop, T is the next whole second, and a later write is the witness.
 - **The latest durable point**: the second at or before the newest read mark's time, with no later write needed.
+  The closing idle mark advances this past the last acknowledged write once both its changes and witness are stored.
 - **A quiet time closed by a snapshot**: a time up to the generation's next snapshot when no segment follows the
   replayed log before it.
 
@@ -656,9 +853,10 @@ Limits:
   acknowledgement, cannot be detected. A step back between two transactions read after T is refused.
 - Only the transactions downloaded after T are checked for times going back; earlier segments are trusted by their read
   times.
-- A read writes a mark only when it appended changes and reached the newest commit: a read that stops at its byte
-  budget, or an idle database, writes none (an idle database ships nothing). A commit made between a read's start
-  and its query is not covered by that mark; no T at or before the mark needs it.
+- A read writes a mark when it reached the newest commit and either appended changes or owes the closing witness
+  described above. A read that stops at its byte budget writes none. After the closing witness is stored, an idle
+  database ships nothing. A commit made between a read's start and its query is not covered by that mark; no T at or
+  before the mark needs it.
 - A log written before timed commits and read marks restores only at snapshot times and at times its generation's next
   snapshot closes.
 - A read mark rests on the engine showing a commit that returned on the writer's connection to the tap's next autocommit read

@@ -19,10 +19,10 @@ Needs the .NET SDK of `global.json`, Node 24 with npm, Go (`sdk/go/.go-version`)
 (`e2e/sdk/rust/rust-toolchain.toml`), Python 3.12, git, make, curl, openssl, tar, sha256sum, jq, `certutil` (Ubuntu
 `libnss3-tools`; NixOS `nix shell nixpkgs#nss.tools`), `psql` of PostgreSQL 16 or later for `sslrootcert=system`
 (NixOS `nix shell nixpkgs#postgresql`), iproute2 `ip`, procps `pgrep`, util-linux `unshare`, `nsenter`
-and `mount`, a CA bundle at `/etc/ssl/certs/ca-certificates.crt`, and unprivileged user namespaces; Ubuntu 23.10 and
-later restrict those through AppArmor until `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`, the one
-command CI runs with sudo. The `ubuntu-24.04` runner image has all of them; CI installs only the pinned versions of
-the .NET SDK, Node and Go through setup actions and of Rust through rustup. `local.sh start` creates user, network,
+and `mount`, `strace` for the placement commit-I/O fault (NixOS `nix shell nixpkgs#strace`), a CA bundle at
+`/etc/ssl/certs/ca-certificates.crt`, and unprivileged user namespaces; Ubuntu 23.10 and later restrict those through
+AppArmor until `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`. CI installs `strace`, applies that
+sysctl and installs the pinned versions of the .NET SDK, Node and Go through setup actions and of Rust through rustup. `local.sh start` creates user, network,
 mount and PID namespaces. The network has only loopback: the production names resolve to the local edge and every
 other name or address fails to connect, so nothing reaches production. Everything the suite starts runs inside
 through `local.sh exec`. `local.sh stop` asks the namespace's first process to stop the stack in order and exit, kills
@@ -65,7 +65,7 @@ email unverified. Project-tenant sign-ups have their own tenant-scoped budgets; 
 | `journey/invitation.spec.ts` | 1 | 20/hour |
 | `journey/finish.spec.ts` | 1 | 20/hour |
 | `hosted/signup-address-limit.spec.ts` | 20 admitted, attempt 21 refused | 20/hour |
-| Each other spec's own address | 0 | 20/hour |
+| `placement/session-limits.spec.ts` | 3 | 20/hour |\n| Each other spec's own address | 0 | 20/hour |
 
 Teardown prints `signup address <address> <spec>: <stored count>/20 per hour`, reading the limiter's persisted
 counts with the same keyed subject derivation. Ordinary addresses spend at most 6 of 20 slots. Each invocation
@@ -143,6 +143,8 @@ the files are back once gru is added again. R3 also opens SQL sockets with heade
 Other existing projects can run in two-region mode by starting this same stack first and selecting their project
 normally. The placement pair shares one machine and third-party stand-ins, has no network delay and uses
 catalog-sweep replication without NATS; it does not model geographic latency or regional host failure.
+
+The CI session-limits shard selects only `placement/session-limits.spec.ts` with one worker and two cells. It covers input and answer progress, session admission, platform EF traffic, unknown outcomes and native commit completion. Its peer-stream faults retain a live HTTP/2 connection while withholding an answer body.
 
 ## Multi-region fault lane
 
@@ -510,6 +512,19 @@ on a rejoined copy.
 
 The OAuth2 provider at identity.journey.terrascale.tech is served by env/oauth2.mjs behind the same edge. It validates redirect, state, one-use authorization code and PKCE, and supplies verified or unverified email claims through userinfo. Only inside the isolated namespace, 93.184.215.14/32 is assigned to loopback and this hostname resolves to it; every other hostname keeps its existing mapping. This exercises the production public-address SSRF checks without permitting loopback providers or any external route. The browser journey proves email ownership before creating or linking a user, replay refusal, and subsequent subject-based sign-in.
 
+## Keyring recovery lane
+
+The keyring job in the existing journey workflow reuses the TerraBase service artifact and its lifecycle
+driver from the service build. TerraBase changes, the keyring lane's own inputs and changes
+to the journey workflow select it; main runs select it too. It builds a pinned single-key baseline and runs
+`bash e2e/keyring/proof.sh` in an isolated network namespace. The proof selects the keyring
+interaction and promotion specs itself, including process kills before publication and after durable
+publication, reconstructed states at every intermediate detach and publication rename, conflicting
+replicas and destinations, corrupt destinations with valid keys, mid-copy cancellation and put-back,
+local key-removal refusal after restoration, key material changes, record-store
+refusal, reverse credential compatibility and row reads from every persisted database.
+Intermediate states are reconstructed from real detached/published files after a process kill;
+the journey does not claim to inject power failure at every individual system call. The extra lane runs alongside the normal shards.
 ## SQL session lost replies
 
 The SQL sessions case of `journey/finish.spec.ts` runs each SDK's public session through a loopback network proxy

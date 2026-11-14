@@ -5,7 +5,6 @@ using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using TerraBase.Configuration;
-using TerraBase.Engine.Turso;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management;
@@ -393,13 +392,16 @@ internal sealed class HomeMoves(
 
             _ = await kept.KeepAsync(database, KeepReason.MoveTarget, CancellationToken.None).ConfigureAwait(false);
             await imports.ImportDatabaseAsync(database, detached, CancellationToken.None).ConfigureAwait(false);
-            detached = null;
             if (await leases.TakeAsync(database, fromRegion, placement.Version, CancellationToken.None).ConfigureAwait(false) is not { } lease)
             {
                 return await RollBackAsync(database, source).ConfigureAwait(false)
                     ? new Conflict("another region holds the database's home lease; the previous home is still the home", "move_aborted")
                     : Unresolved;
             }
+
+            var completing = detached;
+            detached = null;
+            replicas.CompleteDetach(completing);
 
             if (await tenants.UpdatePlacementAsync(database, placement, CancellationToken.None, name, identity).ConfigureAwait(false) is not PlacementUpdate { Updated: true })
             {
@@ -436,7 +438,7 @@ internal sealed class HomeMoves(
         {
             if (detached is not null)
             {
-                TursoReplicas.DeleteDetached(detached);
+                replicas.CompleteDetach(detached);
             }
         }
 

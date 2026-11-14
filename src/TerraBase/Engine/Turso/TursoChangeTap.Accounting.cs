@@ -16,6 +16,7 @@ internal sealed partial class TursoChangeTap
         }
 
         (_anchor, _schema) = (cursor.Position, cursor.Schema.ToDictionary(item => item.RowId, item => (item.Type, item.Name)));
+        _witnessAfter = _time.GetUtcNow().ToUnixTimeSeconds() + 1;
     }
 
     public async ValueTask<CdcRetained> RetainedAsync(CdcCursor? stored, CancellationToken cancellationToken) =>
@@ -63,6 +64,7 @@ internal sealed partial class TursoChangeTap
             }
 
             _anchor = stored.Position;
+            _witnessAfter = _time.GetUtcNow().ToUnixTimeSeconds() + 1;
             _durableAnchor = stored.Position;
             Volatile.Write(ref _storedAnchor, stored.Position);
             _schema = stored.Schema.ToDictionary(item => item.RowId, item => (item.Type, item.Name));

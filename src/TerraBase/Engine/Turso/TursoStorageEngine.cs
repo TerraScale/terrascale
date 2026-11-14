@@ -9,6 +9,7 @@ using System.Text;
 using TerraBase.Configuration;
 using TerraBase.Engine.Revisions;
 using TerraBase.Features.Backup;
+using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -292,7 +293,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     internal TursoSessionPool Pool { get; }
 
     public TursoStorageEngine(
-    StorageEngineOptions configured, Meter meter, ILogger<TursoStorageEngine> logger, IMasterKey masterKey,
+    StorageEngineOptions configured, Meter meter, ILogger<TursoStorageEngine> logger, IKeyring masterKey,
     DatabaseLifecycleCheckpoint? checkpoint = null, IMemoryBudget? schemaMemory = null,
     INativeTemporaryStorage? nativeTemporaryStorage = null, IDiskBudget? diskBudget = null)
     {
@@ -333,12 +334,27 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         meter.CreateObservableGauge("terrabase.cdc.retained.rows", () => _stores.Values.Sum(store => store.RetainedCdcRows),
             description: "Retained CDC row span across open tenant databases, sampled by retention maintenance.");
         meter.CreateObservableGauge("terrabase.storage.open_writers", () => Pool.OpenWriters, description: "Client databases holding an open writer connection.");
+        meter.CreateObservableCounter("terrabase.storage.detached_recovery_failures", () => Interlocked.Read(ref _detachedRecoveryFailures),
+            description: "Detached database recovery refusals; remaining copies are preserved.");
+        meter.CreateObservableGauge("terrabase.keys.local.wrapped", ObserveLocalKeys,
+            description: "Local persisted wrappers by key id; -1 is unknown and forbids retirement; zero covers this node only; retained remote backups may still require an id.");
+        meter.CreateObservableGauge("terrabase.keys.weak_in_use", ObserveWeakKeys,
+            description: "Weak master key referenced locally by id; 1 means rotate away, -1 means unknown.");
+        meter.CreateObservableCounter("terrabase.keys.malformed", () => Interlocked.Read(ref _malformedKeys),
+            description: "Malformed sealed records or retained images encountered by local inventory; records are preserved.");
+        meter.CreateObservableGauge("terrabase.keys.refused", () => _keyRefusals.Count,
+            description: "Databases refused because a configured key cannot authenticate a local wrapper.");
+        meter.CreateObservableGauge("terrabase.storage.retained_files", () => Volatile.Read(ref _retainedInventory).Files, "{file}",
+            "Files retained after detached recovery, awaiting separate reclamation.");
+        meter.CreateObservableGauge("terrabase.storage.retained_bytes", () => Volatile.Read(ref _retainedInventory).Bytes, "By",
+            "Bytes retained after detached recovery, awaiting separate reclamation.");
         meter.CreateObservableGauge("terrabase.storage.retained_keys", () => _retainedKeys,
             description: "Database key files set aside at the last start because their main file and write-ahead log were absent.");
         _ownership = Own(configured.DataDirectory);
         try
         {
             nativeTemporaryStorage?.Initialize();
+            DetachedImport.CleanScratch(configured.DataDirectory);
             RecoverPublications();
             CheckIntentJournal();
             DeleteRewriteScratch();
@@ -623,6 +639,13 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
 
                         return true;
                     }, CancellationToken.None).ConfigureAwait(false);
+                    var eraseDetached = _system is { } system && await Io.WithAdmissionAsync(async () =>
+                    {
+                        await using var transaction = await system.BeginTransactionAsync(write: false, CancellationToken.None).ConfigureAwait(false);
+                        var erasure = await SystemCatalog.GetAsync(transaction, DatabaseErasure.Kind, key.Database,
+                            ManagementJsonContext.Default.DatabasePurgeRecord, CancellationToken.None).ConfigureAwait(false);
+                        return erasure is { FormatVersion: 1 } && DatabasePurge.SameDatabase(erasure.Database, database);
+                    }).ConfigureAwait(false);
                     await Io.RunAsync(() =>
                     {
                         RejectLink(path);
@@ -636,10 +659,44 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                         SyncExistingDirectory(Path.GetDirectoryName(path)!);
                         _checkpoint("delete.main_file", database);
                         DeleteSidecars(path, keepMarker: true);
+                        if (eraseDetached)
+                        {
+                            TursoReplicas.DeleteDetached(Path.Combine(Path.GetDirectoryName(path)!, key.Database + ".promote.db"));
+                            TursoReplicas.DeleteDetached(Path.Combine(_dataDirectory, TursoReplicas.DirectoryName, key.Organization, key.Project, key.Database + ".promote.db"));
+                            var handoff = Path.Combine(_dataDirectory, ".handoff");
+                            DatabaseKeys.RejectLink(handoff);
+                            if (Directory.Exists(handoff))
+                            {
+                                foreach (var retained in Directory.EnumerateDirectories(handoff))
+                                {
+                                    var previous = Path.Combine(retained, key.Organization, key.Project, key.Database + FileExtension);
+                                    RejectDatabaseLinks(previous);
+                                    var parent = Path.GetDirectoryName(previous)!;
+                                    if (Directory.Exists(parent))
+                                    {
+                                        foreach (var file in Directory.GetFiles(parent, Path.GetFileName(previous) + "*")
+                                            .Where(file => file == previous || file.StartsWith(previous + "-", StringComparison.Ordinal)
+                                                || file.StartsWith(previous + ".", StringComparison.Ordinal)))
+                                        {
+                                            DatabaseKeys.RejectLink(file);
+                                            DeleteFileIfPresent(file);
+                                        }
+                                        DirectorySync(parent);
+                                    }
+                                }
+                            }
+                        }
                         var directory = Path.GetDirectoryName(path)!;
                         if (Directory.Exists(directory))
                         {
-
+                            if (eraseDetached)
+                            {
+                                foreach (var retainedKey in Directory.GetFiles(directory, Path.GetFileName(path) + ".key.rewrapping*"))
+                                {
+                                    DatabaseKeys.RejectLink(retainedKey);
+                                    WrappedKeyFile.Retain(retainedKey);
+                                }
+                            }
                             foreach (var file in Directory.EnumerateFiles(directory, $".{key.Database}.*.creating*")
                                 .Concat(Directory.EnumerateFiles(directory, $".{key.Database}.*.{RewriteSuffix}*")))
                             {
@@ -814,6 +871,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed), this);
         cancellationToken.ThrowIfCancellationRequested();
 
+        ThrowIfDetachedRefused(Place(database).Path);
         if (_stores.TryGetValue(Key(database), out var open))
         {
             await Ledger.SettleAsync(open, cancellationToken).ConfigureAwait(false);
@@ -1195,6 +1253,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     private ((string Organization, string Project, string Database) Key, string Path) Locate(TenantContext database)
     {
         var located = Place(database);
+        ThrowIfDetachedRefused(located.Path);
         RejectDatabaseLinks(located.Path);
         return located;
     }
@@ -1435,7 +1494,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
                 {
                     if (!File.Exists(path) && !File.Exists(path + "-wal"))
                     {
-                        DeleteFileIfPresent(path + DatabaseKeys.Suffix);
+                        RetainKey(Path.GetDirectoryName(path)!, name, path + DatabaseKeys.Suffix);
                         DirectorySync(Path.GetDirectoryName(path)!);
                     }
                 }, CancellationToken.None).ConfigureAwait(false);
@@ -1453,15 +1512,24 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     private void DeleteSidecars(string path, bool keepKey = false, bool keepMarker = false)
     {
         RejectDatabaseLinks(path);
-        foreach (var sidecar in Sidecars.Where(sidecar => (!keepKey || sidecar != DatabaseKeys.Suffix) && (!keepMarker || sidecar != DeletionMarker)))
+        foreach (var sidecar in Sidecars.Where(sidecar => sidecar != DatabaseKeys.Suffix && (!keepMarker || sidecar != DeletionMarker)))
         {
             RejectLink(path + sidecar);
             DeleteFileIfPresent(path + sidecar);
+        }
+        if (!keepKey && !File.Exists(path) && !File.Exists(path + "-wal") && File.Exists(path + DatabaseKeys.Suffix))
+        {
+            RetainKey(Path.GetDirectoryName(path)!, Path.GetFileNameWithoutExtension(path), path + DatabaseKeys.Suffix);
         }
     }
 
     private static void DeleteFileIfPresent(string path)
     {
+        if (WrappedKeyFile.IsKey(Path.GetFileName(path)))
+        {
+            WrappedKeyFile.Retain(path);
+            return;
+        }
         try
         {
             File.Delete(path);
@@ -1570,6 +1638,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
         (string Organization, string Project, string Database) key, string path, CancellationToken cancellationToken, out bool started)
     {
         started = false;
+        ThrowIfDetachedRefused(path);
         if (_stores.TryGetValue(key, out var store))
         {
             return Task.FromResult(store);

@@ -12,6 +12,7 @@ using TerraBase.Engine.Revisions;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Shapes;
+using TerraBase.Features.Management;
 using TerraBase.Features.Sync;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -27,13 +28,16 @@ using TerraBase.Features.Sql;
 namespace TerraBase.Engine.Turso;
 
 internal sealed partial class TursoReplicas(
-    TerraBaseOptions options, [FromKeyedServices(EngineExtensions.DatabaseMasterKey)] IMasterKey master, IMemoryBudget memory, ILogger<TursoReplicas> logger, TimeProvider? time = null)
+    TerraBaseOptions options, [FromKeyedServices(EngineExtensions.DatabaseMasterKey)] IKeyring master, IMemoryBudget memory, ILogger<TursoReplicas> logger, IStorageEngine storage, TimeProvider? time = null)
     : IDatabaseReplicas, IAsyncDisposable
 {
     private readonly TimeProvider _time = time ?? TimeProvider.System;
 
     internal const string DirectoryName = ".replicas";
-    internal const string KeyHeader = "TERRABASE-REPLICA-KEY-1\n";
+    internal const string KeyHeader = "TERRABASE-REPLICA-KEY-2\n";
+    internal const string PreviousKeyHeader = "TERRABASE-REPLICA-KEY-1\n";
+    private static readonly Lock KeyRecords = new();
+    private static readonly HashSet<string> ActiveDetached = new(StringComparer.Ordinal);
     private const int MaxIdleConnections = 4;
     private const int MaxReadRows = 10_000;
 
@@ -101,7 +105,29 @@ internal sealed partial class TursoReplicas(
             }
         }
 
-        return await Task.Run(() => DeleteFiles(PathOf(key)), cancellationToken).ConfigureAwait(false);
+        var system = await storage.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await system.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+        var erasure = await SystemCatalog.GetAsync(transaction, DatabaseErasure.Kind, key.Database,
+            ManagementJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
+        var erased = erasure is { FormatVersion: 1 } && DatabasePurge.SameDatabase(erasure.Database, database);
+        return await Task.Run(() =>
+        {
+            lock (KeyRecords)
+            {
+                var path = PathOf(key);
+                var detached = path[..^3] + ".promote.db";
+                if (!erased && Directory.Exists(Path.GetDirectoryName(path))
+                    && Directory.GetFiles(Path.GetDirectoryName(path)!, Path.GetFileName(detached) + "*").Length != 0)
+                {
+                    return false;
+                }
+                if (erased)
+                {
+                    DeleteArchivedDetached(path);
+                }
+                return DeleteFiles(path, keepDetached: !erased);
+            }
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask<string?> DetachAsync(TenantContext database, CancellationToken cancellationToken)
@@ -127,40 +153,153 @@ internal sealed partial class TursoReplicas(
         var path = PathOf(key);
         if (!pulled)
         {
-            _ = await Task.Run(() => DeleteFiles(path), CancellationToken.None).ConfigureAwait(false);
             return null;
         }
 
         return await Task.Run(() =>
         {
-            var wrapped = DataKeyRecord(path) ?? throw new InvalidDataException("the replica's data key record is missing");
-            var detached = Path.Combine(Path.GetDirectoryName(path)!, key.Database + ".promote.db");
-            DeleteDetached(detached);
-            DatabaseKeys.RejectLink(path);
-            File.Move(path, detached);
-            if (File.Exists(path + "-wal"))
+            lock (KeyRecords)
             {
-                File.Move(path + "-wal", detached + "-wal");
+                var detached = path[..^3] + ".promote.db";
+                TryRecoverDetached(detached, rethrow: true);
+                var wrapped = DataKeyRecord(path) ?? throw new InvalidDataException("the replica's data key record is missing");
+                if (master.NeedsRewrap(wrapped))
+                {
+                    var plain = master.Unwrap(wrapped);
+                    try
+                    {
+                        wrapped = master.Rewrap(plain, path + DatabaseKeys.Suffix);
+                    }
+                    finally
+                    {
+                        CryptographicOperations.ZeroMemory(plain);
+                    }
+                }
+                try
+                {
+                    DatabaseKeys.RejectLink(path);
+                    var sourceKey = master.Unwrap(wrapped);
+                    try
+                    {
+                        var evidence = DetachedImport.Inspect(path, sourceKey, options.DataDirectory, ((TursoStorageEngine)storage).Disk);
+                        new DetachedImport(1, key.Database, evidence.Incarnation, evidence.Position, wrapped, null).Write(detached + ".importing", create: true);
+                    }
+                    finally
+                    {
+                        CryptographicOperations.ZeroMemory(sourceKey);
+                    }
+                    using (var file = new FileStream(detached + DatabaseKeys.Suffix, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                    {
+                        file.Write(Encoding.ASCII.GetBytes((wrapped.StartsWith("v2.", StringComparison.Ordinal) ? DatabaseKeys.Header : DatabaseKeys.PreviousHeader) + wrapped + "\n"));
+                        file.Flush(flushToDisk: true);
+                    }
+                    DirectorySync.Sync(Path.GetDirectoryName(path)!);
+                    File.Move(path, detached);
+                    foreach (var file in Directory.GetFiles(Path.GetDirectoryName(path)!, Path.GetFileName(path) + "-*"))
+                    {
+                        DatabaseKeys.RejectLink(file);
+                        File.Move(file, detached + file[path.Length..]);
+                    }
+                    DirectorySync.Sync(Path.GetDirectoryName(path)!);
+                    ActiveDetached.Add(detached);
+                    return detached;
+                }
+                catch
+                {
+                    TryRecoverDetached(detached, rethrow: true);
+                    throw;
+                }
             }
-
-            using (var file = new FileStream(detached + DatabaseKeys.Suffix, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-            {
-                file.Write(Encoding.ASCII.GetBytes(DatabaseKeys.Header + wrapped + "\n"));
-                file.Flush(flushToDisk: true);
-            }
-
-            _ = DeleteFiles(path);
-            return detached;
         }, cancellationToken).ConfigureAwait(false);
     }
 
     internal static void DeleteDetached(string detached)
     {
-        foreach (var suffix in (string[])["", "-wal", "-shm", DatabaseKeys.Suffix])
+        lock (KeyRecords)
         {
-            DatabaseKeys.RejectLink(detached + suffix);
-            File.Delete(detached + suffix);
+            if (!ActiveDetached.Contains(detached))
+            {
+                DeleteDetachedFiles(detached);
+            }
         }
+    }
+
+    public void CompleteDetach(string detached)
+    {
+        lock (KeyRecords)
+        {
+            ActiveDetached.Remove(detached);
+            TryRecoverDetached(detached, rethrow: true, finalizing: true);
+        }
+    }
+
+    private static void ArchiveCompletedDetached(string detached)
+    {
+        var intentPath = detached + ".importing";
+        if (!File.Exists(intentPath))
+        {
+            return;
+        }
+        var intent = DetachedImport.Read(intentPath, Path.GetFileName(detached)[..^".promote.db".Length]);
+        if (!intent.Published && !intent.Restored)
+        {
+            return;
+        }
+        var directory = Path.GetDirectoryName(detached)!;
+        var root = Path.Combine(directory, ".retained");
+        DatabaseKeys.RejectLink(root);
+        Directory.CreateDirectory(root);
+        DirectorySync.Sync(directory);
+        var archive = Path.Combine(root, EntityIds.New().ToString());
+        Directory.CreateDirectory(archive);
+        DirectorySync.Sync(root);
+        foreach (var file in Directory.GetFiles(directory, Path.GetFileName(detached) + "*")
+            .OrderBy(file => file == intentPath))
+        {
+            DatabaseKeys.RejectLink(file);
+            File.Move(file, Path.Combine(archive, Path.GetFileName(file)), overwrite: false);
+            DirectorySync.Sync(archive);
+            DirectorySync.Sync(directory);
+        }
+    }
+
+    private static void DeleteArchivedDetached(string replica)
+    {
+        var root = Path.Combine(Path.GetDirectoryName(replica)!, ".retained");
+        DatabaseKeys.RejectLink(root);
+        if (!Directory.Exists(root))
+        {
+            return;
+        }
+        foreach (var archive in Directory.GetDirectories(root))
+        {
+            DatabaseKeys.RejectLink(archive);
+            DeleteDetachedFiles(Path.Combine(archive, Path.GetFileName(replica)[..^3] + ".promote.db"));
+        }
+    }
+
+    private static void DeleteDetachedFiles(string detached)
+    {
+        var directory = Path.GetDirectoryName(detached)!;
+        if (!Directory.Exists(directory))
+        {
+            return;
+        }
+        foreach (var file in Directory.GetFiles(directory, Path.GetFileName(detached) + "*").Where(file => file != detached + ".importing"))
+        {
+            DatabaseKeys.RejectLink(file);
+            if (WrappedKeyFile.IsKey(Path.GetFileName(file)))
+            {
+                WrappedKeyFile.Retain(file);
+            }
+            else
+            {
+                File.Delete(file);
+            }
+        }
+        DirectorySync.Sync(directory);
+        File.Delete(detached + ".importing");
+        DirectorySync.Sync(directory);
     }
 
     public bool Holds(TenantContext database) =>
@@ -266,6 +405,16 @@ internal sealed partial class TursoReplicas(
     private async Task<Replica> CreateAsync((string Organization, string Project, string Database) key, Uri source, HttpClient http)
     {
         var path = PathOf(key);
+        if (storage is TursoStorageEngine engine)
+        {
+            engine.ThrowIfDetachedRefused(Path.Combine(options.DataDirectory, Path.GetRelativePath(Root, path)));
+        }
+        lock (KeyRecords)
+        {
+            var detached = path[..^3] + ".promote.db";
+            TryRecoverDetached(detached, rethrow: true);
+            ArchiveCompletedDetached(detached);
+        }
         var hexKey = await Task.Run(() => DataKeyRecord(path)).ConfigureAwait(false) switch
         {
             { } wrapped => await UnwrapAsync(wrapped).ConfigureAwait(false),
@@ -308,11 +457,11 @@ internal sealed partial class TursoReplicas(
             }
             catch (TursoException error)
             {
-                logger.ZLogWarning($"A replica could not be reopened and is started again: {error.GetType().Name:@Error}");
+                logger.ZLogWarning($"A replica could not be reopened; its files are retained before it starts again: {error.GetType().Name:@Error}");
             }
         }
 
-        _ = await Task.Run(() => DeleteFiles(path)).ConfigureAwait(false);
+        await Task.Run(() => RetainReplicaFiles(path)).ConfigureAwait(false);
         hexKey = await NewKeyAsync(path).ConfigureAwait(false);
         var replica = new Replica(this, Tenant(key), await TursoSyncDatabase.CreateAsync(Options(path, hexKey, source, observed)).ConfigureAwait(false), path, observer, observed, logger, _time, pulled: false);
         try
@@ -323,8 +472,28 @@ internal sealed partial class TursoReplicas(
         catch
         {
             await replica.DisposeAsync().ConfigureAwait(false);
-            _ = await Task.Run(() => DeleteFiles(path)).ConfigureAwait(false);
             throw;
+        }
+    }
+
+    private static void RetainReplicaFiles(string path)
+    {
+        lock (KeyRecords)
+        {
+            var directory = Path.GetDirectoryName(path)!;
+            if (!Directory.Exists(directory))
+            {
+                return;
+            }
+            DatabaseKeys.RejectLink(directory);
+            var retained = path + ".retained." + EntityIds.New();
+            foreach (var file in Directory.GetFiles(directory, Path.GetFileName(path) + "*")
+                .Where(file => !file.StartsWith(path + ".retained.", StringComparison.Ordinal)))
+            {
+                DatabaseKeys.RejectLink(file);
+                File.Move(file, retained + file[path.Length..], overwrite: false);
+            }
+            DirectorySync.Sync(directory);
         }
     }
 
@@ -356,22 +525,14 @@ internal sealed partial class TursoReplicas(
 
     private async Task<string?> UnwrapAsync(string wrapped)
     {
+        var key = await master.UnwrapAsync(wrapped, CancellationToken.None).ConfigureAwait(false);
         try
         {
-            var key = await master.UnwrapAsync(wrapped, CancellationToken.None).ConfigureAwait(false);
-            try
-            {
-                return key.Length == 32 ? Convert.ToHexString(key) : null;
-            }
-            finally
-            {
-                CryptographicOperations.ZeroMemory(key);
-            }
+            return key.Length == 32 ? Convert.ToHexString(key) : throw new InvalidDataException("replica data key must contain 256 bits");
         }
-        catch (CryptographicException)
+        finally
         {
-            logger.ZLogWarning($"A replica's data key is not authentic under this node's master key; the replica is started again");
-            return null;
+            CryptographicOperations.ZeroMemory(key);
         }
     }
 
@@ -382,16 +543,20 @@ internal sealed partial class TursoReplicas(
         {
             await Task.Run(() =>
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                DatabaseKeys.RejectLink(path + DatabaseKeys.Suffix);
-                var temporary = path + DatabaseKeys.Suffix + ".tmp";
-                using (var file = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
+                lock (KeyRecords)
                 {
-                    file.Write(Encoding.ASCII.GetBytes(KeyHeader + wrapped + "\n"));
-                    file.Flush(flushToDisk: true);
-                }
+                    Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                    DatabaseKeys.RejectLink(path + DatabaseKeys.Suffix);
+                    var temporary = path + DatabaseKeys.Suffix + ".tmp";
+                    DatabaseKeys.RejectLink(temporary);
+                    using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                    {
+                        file.Write(Encoding.ASCII.GetBytes((wrapped.StartsWith("v2.", StringComparison.Ordinal) ? KeyHeader : PreviousKeyHeader) + wrapped + "\n"));
+                        file.Flush(flushToDisk: true);
+                    }
 
-                File.Move(temporary, path + DatabaseKeys.Suffix, overwrite: true);
+                    File.Move(temporary, path + DatabaseKeys.Suffix, overwrite: false);
+                }
             }).ConfigureAwait(false);
             return Convert.ToHexString(key);
         }
@@ -403,37 +568,69 @@ internal sealed partial class TursoReplicas(
 
     private static string? DataKeyRecord(string path)
     {
-        var file = path + DatabaseKeys.Suffix;
-        DatabaseKeys.RejectLink(file);
-        if (!File.Exists(file) || new FileInfo(file).Length > DatabaseKeys.MaxFileBytes)
+        lock (KeyRecords)
         {
-            return null;
-        }
+            var file = path + DatabaseKeys.Suffix;
+            DatabaseKeys.RejectLink(file);
+            if (!File.Exists(file))
+            {
+                return null;
+            }
 
-        var text = File.ReadAllText(file, Encoding.ASCII);
-        return text.StartsWith(KeyHeader, StringComparison.Ordinal) && text.EndsWith('\n') && text.Length > KeyHeader.Length + 1
-            ? text[KeyHeader.Length..^1]
-            : null;
+            if (new FileInfo(file).Length > DatabaseKeys.MaxFileBytes)
+            {
+                throw new InvalidDataException("the replica wrapped key record is malformed");
+            }
+
+            var text = File.ReadAllText(file, Encoding.ASCII);
+            var current = text.StartsWith(KeyHeader, StringComparison.Ordinal);
+            var previous = text.StartsWith(PreviousKeyHeader, StringComparison.Ordinal);
+            if (!(current || previous) || !text.EndsWith('\n') || text.Length <= KeyHeader.Length + 1)
+            {
+                throw new InvalidDataException("the replica wrapped key record is malformed");
+            }
+
+            var wrapped = text[KeyHeader.Length..^1];
+            if (current && !wrapped.StartsWith("v2.", StringComparison.Ordinal) || previous && wrapped.Contains('.', StringComparison.Ordinal))
+            {
+                throw new InvalidDataException("the replica wrapped key version does not match its header");
+            }
+            return wrapped;
+        }
     }
 
-    private static bool DeleteFiles(string path)
+    private static bool DeleteFiles(string path, bool keepDetached)
     {
-        var directory = Path.GetDirectoryName(path)!;
-        if (!Directory.Exists(directory))
+        lock (KeyRecords)
         {
-            return false;
-        }
+            var directory = Path.GetDirectoryName(path)!;
+            if (!Directory.Exists(directory))
+            {
+                return false;
+            }
 
-        DatabaseKeys.RejectLink(directory);
-        var name = Path.GetFileName(path);
-        var deleted = false;
-        foreach (var file in Directory.EnumerateFiles(directory, name + "*"))
-        {
-            File.Delete(file);
-            deleted = true;
-        }
+            DatabaseKeys.RejectLink(directory);
+            var name = Path.GetFileName(path);
+            var deleted = false;
+            foreach (var file in Directory.EnumerateFiles(directory, name + "*"))
+            {
+                if (WrappedKeyFile.IsKey(Path.GetFileName(file)))
+                {
+                    WrappedKeyFile.Retain(file);
+                }
+                else
+                {
+                    File.Delete(file);
+                }
+                deleted = true;
+            }
 
-        return deleted;
+            if (!keepDetached)
+            {
+                DeleteDetached(Path.Combine(directory, Path.GetFileNameWithoutExtension(path) + ".promote.db"));
+            }
+            return deleted;
+        }
     }
 
     private sealed class PushedAnswer(DatabaseRevision from, DatabaseRevision to, ReadOnlyMemory<byte> answer, IMemoryReservation reservation, long? cdcPosition) : IDisposable

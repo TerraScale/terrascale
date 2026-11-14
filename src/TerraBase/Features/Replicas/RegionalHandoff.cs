@@ -339,7 +339,6 @@ internal sealed partial class RegionalHandoff(
             logger.ZLogInformation($"Regional candidate applied proof: {request.Source:@Source} to {options.MachineId:@Target}, database {position.Database:@Database}, source {position.Revision:@SourceRevision}, target {actual.ToString():@TargetRevision}, epoch {request.Epoch:@Epoch}");
         }
 
-        var engine = services.GetRequiredService<IStorageEngine>();
         foreach (var position in request.Positions.Where(position => position.Home == options.Region))
         {
             var database = Database(position);
@@ -359,13 +358,20 @@ internal sealed partial class RegionalHandoff(
             try
             {
                 _ = await services.GetRequiredService<KeptCopies>().KeepAsync(database, KeepReason.HandoffPrepare, cancellationToken).ConfigureAwait(false);
-                await services.GetRequiredService<IWalBackup>().ImportDatabaseAsync(database, detached, cancellationToken).ConfigureAwait(false);
+                var imports = services.GetRequiredService<IWalBackup>();
+                await imports.PreserveDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
+                await imports.ImportDatabaseAsync(database, detached, cancellationToken).ConfigureAwait(false);
                 _prepared[position.Database] = position.Revision;
             }
-            catch
+            catch (Exception error)
             {
+                logger.ZLogError(error, $"Regional prepared import failed; the detached source and prior local files are retained");
                 replication.Resume(database);
                 throw;
+            }
+            finally
+            {
+                replicas.CompleteDetach(detached);
             }
         }
 

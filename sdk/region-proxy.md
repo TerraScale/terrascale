@@ -33,3 +33,7 @@ Reconnect through the same origin to reach the new writer. The closed session's 
 If the proxy leg drops while a statement or commit is in flight, its outcome may be unknown: REST/WebSocket uses
 `write_outcome_unknown` and PostgreSQL uses SQLSTATE 08007 when the proxy can still answer. Inspect committed
 state before sending another write; the proxy never silently replays an unanswered request.
+A relayed SQL WebSocket or PostgreSQL session takes one receiving-region request admission per busy period: the
+first request sent while no answer is outstanding takes it, and the last answer returns it. A refused request is
+answered `tenant_busy` (SQLSTATE 53300) and never reaches the destination. The relay never cuts a request the
+destination is still serving; it treats the destination as lost when an HTTP/2 keep-alive ping goes unanswered.

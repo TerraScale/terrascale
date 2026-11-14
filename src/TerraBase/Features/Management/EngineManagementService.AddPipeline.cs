@@ -298,7 +298,7 @@ internal sealed partial class EngineManagementService
 
     private async ValueTask<Conflict?> DatabaseLimitAsync(IStorageTransaction transaction, TenantContext tenant, AllowanceCheck allowance, CancellationToken cancellationToken)
     {
-        var allowed = allowance.Limit(tenant.Plan);
+        var allowed = allowance.Limit(tenant);
         if (allowed == long.MaxValue)
         {
             return null;
@@ -333,7 +333,7 @@ internal sealed partial class EngineManagementService
     }
 
 
-    private sealed record AllowanceCheck(Func<PlanTier, long> Limit, IReadOnlyDictionary<string, long> HomeCounts);
+    private sealed record AllowanceCheck(Func<TenantContext, long> Limit, IReadOnlyDictionary<string, long> HomeCounts);
 
     private sealed record AddedDatabase(ManagedDatabase Database, TenantContext Tenant, bool Existing = false);
 

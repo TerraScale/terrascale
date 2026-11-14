@@ -21,7 +21,7 @@ internal sealed record HomeSessionOpen(string Organization, string Project, stri
 
 internal sealed record HomeSessionCall(
     string Op, string Sql, IReadOnlyList<SqlValue> Args, IReadOnlyDictionary<string, SqlValue> Named, IReadOnlyList<HomeSessionCall>? Batch = null,
-    ulong? PushThrough = null);
+    ulong? PushThrough = null, TimeSpan? Remaining = null);
 
 internal sealed record HomeSessionResult(IReadOnlyList<SqlColumn> Columns, IReadOnlyList<IReadOnlyList<SqlValue>> Rows, long RowsAffected, long? LastInsertRowid);
 
@@ -32,10 +32,11 @@ internal static class HomeSessionFrames
 {
     internal const int MaxBytes = 24 * 1024 * 1024;
 
-    public static async ValueTask<T?> ReadAsync<T>(PipeReader input, JsonTypeInfo<T> type, IMemoryBudget memory, TenantContext? tenant, CancellationToken cancellationToken)
+    public static async ValueTask<T?> ReadAsync<T>(PipeReader input, JsonTypeInfo<T> type, IMemoryBudget memory, TenantContext? tenant, SessionMessageDeadline? deadline,
+        CancellationToken cancellationToken)
         where T : class
     {
-        var header = await input.ReadAtLeastAsync(4, cancellationToken).ConfigureAwait(false);
+        var (header, buffered) = await FillAsync(input, 4, 0, deadline, cancellationToken).ConfigureAwait(false);
         if (header.Buffer.Length < 4)
         {
             input.AdvanceTo(header.Buffer.End);
@@ -50,7 +51,7 @@ internal static class HomeSessionFrames
         }
 
         using var reservation = memory.TryReserve(length, tenant) ?? throw new QosMemoryException();
-        var body = await input.ReadAtLeastAsync(length, cancellationToken).ConfigureAwait(false);
+        var (body, _) = await FillAsync(input, length, buffered - 4, deadline, cancellationToken).ConfigureAwait(false);
         if (body.Buffer.Length < length)
         {
             input.AdvanceTo(body.Buffer.End);
@@ -72,7 +73,34 @@ internal static class HomeSessionFrames
         }
     }
 
-    public static async ValueTask WriteAsync<T>(PipeWriter output, T value, JsonTypeInfo<T> type, CancellationToken cancellationToken)
+    private static async ValueTask<(ReadResult Read, long Buffered)> FillAsync(PipeReader input, int minimum, long counted, SessionMessageDeadline? deadline,
+        CancellationToken cancellationToken)
+    {
+        if (deadline is null)
+        {
+            var whole = await input.ReadAtLeastAsync(minimum, cancellationToken).ConfigureAwait(false);
+            return (whole, whole.Buffer.Length);
+        }
+
+        while (true)
+        {
+            var read = await input.ReadAsync(cancellationToken).ConfigureAwait(false);
+            if (read.Buffer.Length > counted)
+            {
+                deadline.Progress((int)(read.Buffer.Length - counted));
+                counted = read.Buffer.Length;
+            }
+
+            if (read.Buffer.Length >= minimum || read.IsCompleted || read.IsCanceled)
+            {
+                return (read, counted);
+            }
+
+            input.AdvanceTo(read.Buffer.Start, read.Buffer.End);
+        }
+    }
+
+    public static async ValueTask WriteAsync<T>(PipeWriter output, T value, JsonTypeInfo<T> type, Action<int>? sending, CancellationToken cancellationToken)
     {
         var json = JsonSerializer.SerializeToUtf8Bytes(value, type);
         if (json.Length > MaxBytes)
@@ -84,6 +112,7 @@ internal static class HomeSessionFrames
         BinaryPrimitives.WriteInt32BigEndian(prefix, json.Length);
         output.Advance(4);
         output.Write(json);
+        sending?.Invoke(json.Length + 4);
         _ = await output.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -102,7 +131,7 @@ internal static class HomeSessionFrames
 }
 
 internal sealed class HomeSessions(
-    TerraBaseOptions options, IReplicaPeers peers, InternalCredential credential, IMemoryBudget memory, HomePush.ILocalWrites local) : IDisposable
+    TerraBaseOptions options, IReplicaPeers peers, InternalCredential credential, IMemoryBudget memory, HomePush.ILocalWrites local, TimeProvider time) : IDisposable
 {
     internal const string Path = "/v1/internal/sql/session";
 
@@ -118,14 +147,18 @@ internal sealed class HomeSessions(
         }
 
         var upstream = new Pipe();
-        var stop = new CancellationTokenSource();
-        var request = new HttpRequestMessage(HttpMethod.Post, new Uri(node.Internal, Path)) { Content = new Upstream(upstream.Reader) };
+        var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var forwarding = new Upstream(upstream.Reader, stop.Token);
+        var request = new HttpRequestMessage(HttpMethod.Post, new Uri(node.Internal, Path)) { Content = forwarding };
         try
         {
             await HomeSessionFrames.WriteAsync(upstream.Writer,
                 new HomeSessionOpen(database.OrganizationId, database.ProjectId!, database.DatabaseId!, options.Region, canWrite, local.LastPushed(database), epoch),
-                ReplicasJsonContext.Default.HomeSessionOpen, cancellationToken).ConfigureAwait(false);
-            var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, stop.Token).WaitAsync(cancellationToken).ConfigureAwait(false);
+                ReplicasJsonContext.Default.HomeSessionOpen, sending: null, cancellationToken).ConfigureAwait(false);
+            using var deadline = new SessionMessageDeadline(time, null, executing: true);
+            deadline.ExpectAnswer(true);
+            using var opening = CancellationTokenSource.CreateLinkedTokenSource(stop.Token, deadline.Token);
+            var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, opening.Token).ConfigureAwait(false);
             if (response.StatusCode != HttpStatusCode.OK)
             {
                 response.Dispose();
@@ -133,8 +166,8 @@ internal sealed class HomeSessions(
             }
 
             var downstream = PipeReader.Create(await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false));
-            var session = new HomeSqlSession(request, response, upstream.Writer, downstream, stop, memory, database, unreachable, local);
-            switch (await session.ReceiveAsync(cancellationToken).ConfigureAwait(false))
+            var session = new HomeSqlSession(request, response, forwarding, upstream.Writer, downstream, stop, memory, database, home, local, time);
+            switch (await session.ReceiveAsync(deadline, opening.Token).ConfigureAwait(false))
             {
                 case HomeSessionAnswer { Error: { } refused }:
                     await session.DisposeAsync().ConfigureAwait(false);
@@ -147,11 +180,13 @@ internal sealed class HomeSessions(
             }
         }
         catch (Exception error) when (error is HttpRequestException or IOException or InvalidDataException
-            || (error is OperationCanceledException && !cancellationToken.IsCancellationRequested))
+            || error is OperationCanceledException)
         {
             await stop.CancelAsync().ConfigureAwait(false);
+            await forwarding.DrainAsync().ConfigureAwait(false);
             request.Dispose();
             stop.Dispose();
+            cancellationToken.ThrowIfCancellationRequested();
             return unreachable;
         }
     }
@@ -168,11 +203,28 @@ internal sealed class HomeSessions(
         return client;
     }
 
-    private sealed class Upstream(PipeReader input) : HttpContent
+    internal sealed class Upstream(PipeReader input, CancellationToken stop) : HttpContent
     {
         protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) => SerializeToStreamAsync(stream, context, CancellationToken.None);
 
-        protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context, CancellationToken cancellationToken)
+        private Task _forwarding = Task.CompletedTask;
+
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context, CancellationToken cancellationToken) =>
+            _forwarding = ForwardAsync(stream, stop);
+
+        internal async Task DrainAsync()
+        {
+            try
+            {
+                await _forwarding.ConfigureAwait(false);
+            }
+            catch (Exception error) when (stop.IsCancellationRequested && error is OperationCanceledException or IOException or HttpRequestException)
+            {
+                return;
+            }
+        }
+
+        private async Task ForwardAsync(Stream stream, CancellationToken cancellationToken)
         {
             while (true)
             {
@@ -203,16 +255,23 @@ internal sealed class HomeSessions(
 internal readonly union HomeSessionOutcome(HomeSqlSession, SqlError);
 
 internal sealed class HomeSqlSession(
-    HttpRequestMessage request, HttpResponseMessage response, PipeWriter upstream, PipeReader downstream, CancellationTokenSource stop,
-    IMemoryBudget memory, TenantContext database, SqlError unreachable, HomePush.ILocalWrites local) : ISqlSession
+    HttpRequestMessage request, HttpResponseMessage response, HomeSessions.Upstream forwarding, PipeWriter upstream, PipeReader downstream, CancellationTokenSource stop,
+    IMemoryBudget memory, TenantContext database, string home, HomePush.ILocalWrites local, TimeProvider time) : ISqlSession
 {
     private static readonly IReadOnlyDictionary<string, SqlValue> NoNamed = new Dictionary<string, SqlValue>();
+    private readonly SqlError _unreachable = HomeSessions.Unreachable(home);
+    private readonly SqlError _unknown = SqlErrors.OutcomeUnknown(home);
     private readonly SemaphoreSlim _gate = new(1, 1);
     private bool _autocommit = true;
+    private long _started;
     private bool _broken;
     private int _disposed;
 
     public bool IsAutocommit => _autocommit;
+
+    public SqlTransactionClock TransactionClock { get; set; } = new(time);
+
+    public TimeSpan? TransactionRemaining => _autocommit ? null : TransactionClock.Remaining;
 
     public bool IsBroken => _broken;
 
@@ -229,7 +288,8 @@ internal sealed class HomeSqlSession(
     public async ValueTask<SqlOutcome> ExecuteAsync(SqlStatementPlan plan, SqlCommand command, Func<SqlResult, SqlError?>? admit, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
-        return await CallAsync(new HomeSessionCall("execute", command.Sql, command.Args, command.Named), cancellationToken).ConfigureAwait(false) switch
+        var commits = plan.Kind == SqlStatementKind.Commit || (_autocommit && plan.Kind == SqlStatementKind.Write);
+        return await CallAsync(new HomeSessionCall("execute", command.Sql, command.Args, command.Named), commits, cancellationToken).ConfigureAwait(false) switch
         {
             { Error: { } error } => error,
             { Result: { } result } => new SqlResult(result.Columns, result.Rows, result.RowsAffected, result.LastInsertRowid) switch
@@ -237,20 +297,21 @@ internal sealed class HomeSqlSession(
                 var answered when admit?.Invoke(answered) is { } refused => refused,
                 var answered => answered,
             },
-            _ => unreachable,
+            _ => _unreachable,
         };
     }
 
-    public async ValueTask<SqlBatchOutcome> BatchAsync(IReadOnlyList<SqlCommand> commands, CancellationToken cancellationToken)
+    public async ValueTask<SqlBatchOutcome> BatchAsync(IReadOnlyList<SqlPlannedCommand> commands, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(commands);
-        var batch = commands.Select(command => new HomeSessionCall("execute", command.Sql, command.Args, command.Named)).ToList();
-        return await CallAsync(new HomeSessionCall("batch", "", [], NoNamed, batch), cancellationToken).ConfigureAwait(false) switch
+        var batch = commands.Select(planned => new HomeSessionCall("execute", planned.Command.Sql, planned.Command.Args, planned.Command.Named)).ToList();
+        var commits = commands.Any(planned => planned.Plan.Kind == SqlStatementKind.Commit || _autocommit && planned.Plan.Kind == SqlStatementKind.Write);
+        return await CallAsync(new HomeSessionCall("batch", "", [], NoNamed, batch), commits, cancellationToken).ConfigureAwait(false) switch
         {
             { Error: { } error } answer => new SqlBatchFailure(error, answer.Statement),
             { Batch: { } results } => new SqlExecuteBody([.. results.Select(result => new SqlStatementBody(
                 [.. result.Columns.Select(column => new SqlColumnBody(column.Name, column.DeclType))], result.Rows, result.RowsAffected, result.LastInsertRowid))]),
-            _ => new SqlBatchFailure(unreachable, 0),
+            _ => new SqlBatchFailure(_unreachable, 0),
         };
     }
 
@@ -276,22 +337,33 @@ internal sealed class HomeSqlSession(
     public async ValueTask<SqlDescribeOutcome> DescribeAsync(SqlStatementPlan plan, SqlCommand command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
-        return await CallAsync(new HomeSessionCall("describe", command.Sql, [], NoNamed), cancellationToken).ConfigureAwait(false) switch
+        return await CallAsync(new HomeSessionCall("describe", command.Sql, [], NoNamed), commits: false, cancellationToken).ConfigureAwait(false) switch
         {
             { Error: { } error } => error,
             { Description: { } description } => description,
-            _ => unreachable,
+            _ => _unreachable,
         };
     }
 
     public ValueTask EndRequestAsync() => ValueTask.CompletedTask;
 
-    internal async ValueTask<HomeSessionAnswer?> ReceiveAsync(CancellationToken cancellationToken)
+    internal async ValueTask<HomeSessionAnswer?> ReceiveAsync(SessionMessageDeadline deadline, CancellationToken cancellationToken)
     {
-        var answer = await HomeSessionFrames.ReadAsync(downstream, ReplicasJsonContext.Default.HomeSessionAnswer, memory, database, cancellationToken).ConfigureAwait(false);
+        using var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+        var answer = await HomeSessionFrames.ReadAsync(downstream, ReplicasJsonContext.Default.HomeSessionAnswer, memory, database, deadline, waiting.Token).ConfigureAwait(false);
+        deadline.Complete();
         if (answer is not null)
         {
+            if (_autocommit && !answer.Autocommit)
+            {
+                TransactionClock.Limit(SqlLimits.MaxTransactionTime - time.GetElapsedTime(_started));
+            }
+
             _autocommit = answer.Autocommit;
+            if (_autocommit)
+            {
+                TransactionClock.End();
+            }
         }
 
         return answer;
@@ -306,6 +378,7 @@ internal sealed class HomeSqlSession(
 
         await upstream.CompleteAsync().ConfigureAwait(false);
         await stop.CancelAsync().ConfigureAwait(false);
+        await forwarding.DrainAsync().ConfigureAwait(false);
         await downstream.CompleteAsync().ConfigureAwait(false);
         response.Dispose();
         request.Dispose();
@@ -313,7 +386,7 @@ internal sealed class HomeSqlSession(
         _gate.Dispose();
     }
 
-    private async ValueTask<HomeSessionAnswer?> CallAsync(HomeSessionCall call, CancellationToken cancellationToken)
+    private async ValueTask<HomeSessionAnswer?> CallAsync(HomeSessionCall call, bool commits, CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -323,25 +396,38 @@ internal sealed class HomeSqlSession(
                 return null;
             }
 
+            var sent = false;
             try
             {
-                using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                bounded.CancelAfter(SqlLimits.ForwardedRequestTime);
-                await HomeSessionFrames.WriteAsync(upstream, call with { PushThrough = local.LastPushed(database) }, ReplicasJsonContext.Default.HomeSessionCall,
-                    bounded.Token).ConfigureAwait(false);
-                var answer = await ReceiveAsync(bounded.Token).ConfigureAwait(false) ?? Break();
+                _started = time.GetTimestamp();
+                using var deadline = new SessionMessageDeadline(time, null, executing: true);
+                deadline.ExpectAnswer(true);
+                using var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+                if (call.Op == "execute" && SqlScript.Classify(call.Sql) is SqlStatementPlan { Kind: SqlStatementKind.Begin })
+                {
+                    TransactionClock.Start();
+                }
+
+                await HomeSessionFrames.WriteAsync(upstream, call with { PushThrough = local.LastPushed(database), Remaining = TransactionClock.Remaining }, ReplicasJsonContext.Default.HomeSessionCall,
+                    _ => sent = true, waiting.Token).ConfigureAwait(false);
+                if (await ReceiveAsync(deadline, waiting.Token).ConfigureAwait(false) is not { } answer)
+                {
+                    return Lost(commits && sent);
+                }
+
                 local.Forwarded(database);
                 return answer;
             }
             catch (Exception error) when (error is IOException or InvalidDataException or HttpRequestException or OperationCanceledException or ObjectDisposedException)
             {
-                Break();
-                if (error is OperationCanceledException && cancellationToken.IsCancellationRequested)
+                await stop.CancelAsync().ConfigureAwait(false);
+                if (error is OperationCanceledException && cancellationToken.IsCancellationRequested && !(commits && sent))
                 {
+                    Break();
                     throw;
                 }
 
-                return null;
+                return Lost(commits && sent);
             }
         }
         finally
@@ -350,9 +436,16 @@ internal sealed class HomeSqlSession(
         }
     }
 
+    private HomeSessionAnswer? Lost(bool sentWrite)
+    {
+        Break();
+        return sentWrite ? new HomeSessionAnswer(true, _unknown) : null;
+    }
+
     private HomeSessionAnswer? Break()
     {
         (_broken, _autocommit) = (true, true);
+        TransactionClock.End();
         return null;
     }
 }

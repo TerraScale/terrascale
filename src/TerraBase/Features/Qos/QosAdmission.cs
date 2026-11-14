@@ -15,7 +15,7 @@ internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQ
     public IDisposable? TryEnter(TenantContext tenant, out int retryAfter)
     {
         ArgumentNullException.ThrowIfNull(tenant);
-        var policy = QosPolicy.For(tenant.Plan);
+        var policy = QosPolicy.For(tenant);
         retryAfter = 1;
         lock (_gate)
         {
@@ -27,7 +27,7 @@ internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQ
                     foreach (var pair in _lanes.ToArray())
                     {
                         var existing = pair.Value;
-                        var existingPolicy = QosPolicy.For(existing.Plan);
+                        var existingPolicy = QosPolicy.For(pair.Key, existing.Plan);
                         var replenished = existing.Tokens + Math.Max(0, time.GetElapsedTime(existing.LastSeen, now).TotalSeconds) * existingPolicy.RequestsPerSecond;
                         if (existing.Active == 0 && (existingPolicy.RequestsPerSecond == 0 || replenished >= existingPolicy.Burst)
                             && (existingPolicy.EngineSeconds == 0 || Engine(existing, existingPolicy, now) >= existingPolicy.EngineBurst))
@@ -98,7 +98,7 @@ internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQ
                 return;
             }
 
-            var policy = QosPolicy.For(lane.Plan);
+            var policy = QosPolicy.For(tenant.OrganizationId, lane.Plan);
             if (policy.EngineSeconds == 0)
             {
                 return;

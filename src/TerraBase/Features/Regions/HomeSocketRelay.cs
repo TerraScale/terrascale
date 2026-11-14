@@ -2,10 +2,11 @@ using System.Buffers;
 using System.Net;
 using System.Net.WebSockets;
 using System.Text.Json;
-using TerraBase.Features.Sql;
-using TerraBase.Tenancy;
 using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Http.Features;
+using TerraBase.Features.Memory;
+using TerraBase.Features.Sql;
+using TerraBase.Tenancy;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Replicas;
 using TerraBase.Features.UserAuth;
@@ -13,7 +14,7 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Features.Regions;
 
-internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredential credential)
+internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredential credential, QosSessions sessions, IQosAdmission admission, TimeProvider time)
 {
     private static readonly TimeSpan KeepAlive = TimeSpan.FromSeconds(20);
     internal sealed record BrowserConnection(WebSocket Socket, long? Id);
@@ -33,6 +34,26 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
             return;
         }
         context.Features.Set(new HomeForwarding.ProxiedRequest());
+        var limited = context.Request.Path.Value?.EndsWith("/sql/ws", StringComparison.Ordinal) == true && !context.User.IsOperator();
+        var tenant = limited ? QosContext.Current ?? throw new InvalidOperationException("a relayed SQL socket must have an admitted organization") : null;
+        using var session = tenant is not null && attempt == 0 ? sessions.TryEnter(tenant, relay: true) : null;
+        if (tenant is not null && attempt == 0 && session is null)
+        {
+            context.ReleaseRequestLease();
+            var refused = accepted ?? await context.WebSockets.AcceptWebSocketAsync(new WebSocketAcceptContext
+            {
+                SubProtocol = context.WebSockets.WebSocketRequestedProtocols.Contains(SqlSocketEndpoint.Protocol, StringComparer.Ordinal) ? SqlSocketEndpoint.Protocol : null,
+                KeepAliveInterval = KeepAlive,
+                KeepAliveTimeout = Timeout.InfiniteTimeSpan,
+            }).ConfigureAwait(false);
+            context.Features.Get<RegionalIngress.Lease>()?.Dispose();
+            await RefuseAsync(context, refused, context.Features.Get<BrowserConnection>()?.Id, SqlErrors.TenantBusy,
+                "organization session limit exceeded", cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        var answers = new SqlSocketInput(time);
+        using var observed = answers.Observe(http.CreateClient(HomeLocator.HttpClientName));
         using var upstream = new ClientWebSocket
         {
             Options =
@@ -70,7 +91,7 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
             var route = new UriBuilder(
                 new Uri(home.Address, context.Request.Path.ToUriComponent() + context.Request.QueryString.ToUriComponent()))
             { Scheme = "ws" }.Uri;
-            await upstream.ConnectAsync(route, http.CreateClient(HomeLocator.HttpClientName), timeout.Token).ConfigureAwait(false);
+            await upstream.ConnectAsync(route, observed, timeout.Token).ConfigureAwait(false);
         }
         catch (WebSocketException) when (upstream.HttpStatusCode is not 0)
         {
@@ -132,7 +153,7 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
         {
             SubProtocol = upstream.SubProtocol,
             KeepAliveInterval = KeepAlive,
-            KeepAliveTimeout = KeepAlive,
+            KeepAliveTimeout = Timeout.InfiniteTimeSpan,
         });
         context.Features.Get<RegionalIngress.Lease>()?.Dispose();
 
@@ -152,6 +173,7 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
                     throw new WebSocketException("the destination auth response exceeds its bound");
                 }
             } while (!reply.EndOfMessage);
+            answers.Complete();
             if (reply.MessageType == WebSocketMessageType.Text
                 && JsonDocument.Parse(buffer.AsMemory(0, length)) is { } authReply)
             {
@@ -175,10 +197,9 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
             await client.SendAsync(buffer.AsMemory(0, length), reply.MessageType, true, authDeadline.Token).ConfigureAwait(false);
         }
 
-        if (context.Request.Path.Value?.EndsWith("/sql/ws", StringComparison.Ordinal) == true && !context.User.IsOperator())
+        if (tenant is not null)
         {
-            await context.RequestServices.GetRequiredService<SocketRequestRelay>()
-                .RunAsync(context, client, upstream, cancellationToken).ConfigureAwait(false);
+            await RelayAsync(context, client, upstream, answers, tenant, home.Region, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -196,6 +217,46 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
             var fresh = await context.RequestServices.GetRequiredService<IHomeLocator>()
                 .RefreshAsync(project, context.Request.RouteValues["database"] as string, deadline.Token).ConfigureAwait(false);
             return fresh?.Region != home.Region ? fresh : null;
+        }
+    }
+
+    private async Task RelayAsync(HttpContext context, WebSocket client, WebSocket upstream, SqlSocketInput answers, TenantContext tenant, string home, CancellationToken cancellationToken)
+    {
+        using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        await using var aborting = shutdown.Token.Register(client.Abort).ConfigureAwait(false);
+        await using var abortUpstream = shutdown.Token.Register(upstream.Abort).ConfigureAwait(false);
+        var closing = 0;
+        using var state = new SessionRelay(time);
+        using var clientSends = new SemaphoreSlim(1, 1);
+
+        var memory = context.RequestServices.GetRequiredService<IMemoryBudget>();
+        var toHome = PumpAsync(client, upstream, BeginClose, state, clientSends, context.Features.GetRequiredFeature<SqlSocketInput>(), answers: null, memory, tenant, home, Admit, shutdown.Token);
+        var toClient = PumpAsync(upstream, client, BeginClose, state, clientSends, input: null, answers, memory, tenant, home, admit: null, shutdown.Token);
+        try
+        {
+            await Task.WhenAny(toHome, toClient).ConfigureAwait(false);
+            BeginClose();
+            await Task.WhenAll(toHome, toClient).ConfigureAwait(false);
+        }
+        finally
+        {
+            client.Abort();
+            upstream.Abort();
+            await Task.WhenAll(toHome, toClient).ConfigureAwait(false);
+        }
+
+        void BeginClose()
+        {
+            if (Interlocked.Exchange(ref closing, 1) == 0)
+            {
+                shutdown.CancelAfter(Shutdown.DrainBudget);
+            }
+        }
+
+        (IDisposable? Lease, int RetryAfter) Admit()
+        {
+            var lease = admission.TryEnter(tenant, out var retryAfter);
+            return (lease, retryAfter);
         }
     }
 
@@ -254,7 +315,7 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
 
                 if (read.MessageType == WebSocketMessageType.Close)
                 {
-                    await CloseAsync(to, read.CloseStatus ?? WebSocketCloseStatus.NormalClosure, read.CloseStatusDescription).ConfigureAwait(false);
+                    await CloseAsync(to, read.CloseStatus ?? WebSocketCloseStatus.NormalClosure, read.CloseStatusDescription, cancellationToken).ConfigureAwait(false);
                     return;
                 }
 
@@ -268,7 +329,7 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
                 }
             }
 
-            await CloseAsync(to, WebSocketCloseStatus.EndpointUnavailable, "the relayed session ended").ConfigureAwait(false);
+            await CloseAsync(to, WebSocketCloseStatus.EndpointUnavailable, "the relayed session ended", cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -276,17 +337,263 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
         }
     }
 
-    private static async Task CloseAsync(WebSocket socket, WebSocketCloseStatus status, string? description)
+    private static async Task ReportAsync(WebSocket client, string code, string message, long? id, CancellationToken cancellationToken)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(Shutdown.DrainBudget);
+        var error = new SqlError(code, message);
+        var reply = new SqlSocketError(id, "error", SqlBatch.Body(new SqlBatchFailure(error, 0), "").Error, false);
+        await client.SendAsync(JsonSerializer.SerializeToUtf8Bytes(reply, SqlJsonContext.Default.SqlSocketError), WebSocketMessageType.Text, true, deadline.Token)
+            .ConfigureAwait(false);
+        await client.CloseOutputAsync(WebSocketCloseStatus.PolicyViolation, code, deadline.Token).ConfigureAwait(false);
+    }
+
+    private static async Task PumpAsync(WebSocket from, WebSocket to, Action beginClose, SessionRelay state, SemaphoreSlim clientSends, SqlSocketInput? input, SqlSocketInput? answers, IMemoryBudget memory, TenantContext tenant, string home, Func<(IDisposable? Lease, int RetryAfter)>? admit, CancellationToken cancellationToken)
+    {
+        var buffer = ArrayPool<byte>.Shared.Rent(16 * 1024);
+        try
+        {
+            while (true)
+            {
+                if (input is not null)
+                {
+                    try
+                    {
+                        await state.RoomAsync(cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        break;
+                    }
+                }
+
+                WebSocketReceiveResult read;
+                bool? answered = null;
+                (long? Id, int RetryAfter, bool Transaction)? refused = null;
+                var deadline = input is null ? state.Answer : state.Wait();
+                var closing = Task.CompletedTask;
+                var expiry = deadline.Token.Register(() => closing = ExpireAsync());
+                if (input is not null)
+                {
+                    input.Progress = (bytes, started) => deadline.Progress(bytes, started);
+                }
+
+                if (answers is not null)
+                {
+                    answers.Progress = (bytes, started) => deadline.Progress(bytes, started);
+                }
+
+                var maxBytes = input is null ? HomeSessionFrames.MaxBytes : SqlBatch.MaxBytes;
+                using var reservation = memory.TryReserve(16 * 1024, tenant) ?? throw new QosMemoryException();
+                using var message = new MemoryStream(16 * 1024);
+                try
+                {
+                    do
+                    {
+                        read = await from.ReceiveAsync(buffer, cancellationToken).ConfigureAwait(false);
+                        if (read.MessageType == WebSocketMessageType.Close)
+                        {
+                            break;
+                        }
+
+                        if (message.Length + read.Count > maxBytes)
+                        {
+                            throw new InvalidDataException("relay message too large");
+                        }
+
+                        if (message.Length + read.Count > message.Capacity)
+                        {
+                            var capacity = Math.Min(maxBytes, Math.Max(message.Capacity * 2, (int)message.Length + read.Count));
+                            if (!memory.TryGrow(reservation, capacity))
+                            {
+                                throw new QosMemoryException();
+                            }
+
+                            var previous = message.Capacity;
+                            message.Capacity = capacity;
+                            memory.Shrink(reservation, previous);
+                        }
+
+                        message.Write(buffer, 0, read.Count);
+                    }
+                    while (!read.EndOfMessage);
+                    deadline.Complete();
+                    input?.Complete();
+                    answers?.Complete();
+                    if (read.MessageType != WebSocketMessageType.Close)
+                    {
+                        if (input is not null)
+                        {
+                            using var call = JsonDocument.Parse(message.GetBuffer().AsMemory(0, (int)message.Length));
+                            var kind = call.RootElement.TryGetProperty("type", out var type) ? type.GetString() : null;
+                            var snapshot = state.State;
+                            var transactionOpen = snapshot.Transaction && !snapshot.Pending;
+                            var commits = kind == "commit";
+                            if (kind == "execute" && call.RootElement.TryGetProperty("statements", out var statements) && statements.ValueKind == JsonValueKind.Array)
+                            {
+                                foreach (var statement in statements.EnumerateArray())
+                                {
+                                    if (statement.TryGetProperty("sql", out var sql) && sql.ValueKind == JsonValueKind.String
+                                        && SqlScript.Classify(sql.GetString()) is SqlStatementPlan plan)
+                                    {
+                                        commits |= plan.Kind == SqlStatementKind.Commit || !transactionOpen && plan.Kind == SqlStatementKind.Write;
+                                        transactionOpen = plan.Kind == SqlStatementKind.Begin || transactionOpen && plan.Kind is not (SqlStatementKind.Rollback or SqlStatementKind.Commit);
+                                    }
+                                }
+                            }
+
+                            long? requestId = call.RootElement.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.Number && id.TryGetInt64(out var number) ? number : null;
+                            if (admit is not null && !state.TryAdmit(admit, out var retryAfter))
+                            {
+                                refused = (requestId, retryAfter, snapshot.Transaction);
+                            }
+                            else
+                            {
+                                state.Sent('R', kind == "begin", commits, requestId);
+                            }
+                        }
+                        else
+                        {
+                            using var answer = JsonDocument.Parse(message.GetBuffer().AsMemory(0, (int)message.Length));
+                            answered = answer.RootElement.TryGetProperty("transaction", out var transaction) && transaction.GetBoolean();
+                        }
+                    }
+                }
+                catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception error) when (error is WebSocketException or OperationCanceledException or ConnectionResetException or ObjectDisposedException or InvalidDataException or JsonException)
+                {
+                    break;
+                }
+                finally
+                {
+                    if (input is not null)
+                    {
+                        input.Progress = null;
+                    }
+
+                    if (answers is not null)
+                    {
+                        answers.Progress = null;
+                    }
+
+                    await expiry.DisposeAsync().ConfigureAwait(false);
+                    await closing.ConfigureAwait(false);
+                    if (input is not null)
+                    {
+                        deadline.Dispose();
+                    }
+                }
+
+                async Task ExpireAsync()
+                {
+                    beginClose();
+                    if (input is not null)
+                    {
+                        try
+                        {
+                            await state.DrainAsync(cancellationToken).ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                        {
+                            var pending = state.Pending;
+                            if (pending.Commits)
+                            {
+                                to.Abort();
+                                await state.EndAsync(() => ReportAsync(from, SqlErrors.WriteOutcomeUnknown, SqlErrors.OutcomeUnknown(home).Message, pending.Id, cancellationToken)).ConfigureAwait(false);
+                            }
+
+                            to.Abort();
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        var pending = state.Pending;
+                        var error = pending.Commits ? SqlErrors.OutcomeUnknown(home) : HomeSessions.Unreachable(home);
+                        from.Abort();
+                        await state.EndAsync(() => ReportAsync(to, error.Code, error.Message, pending.Id, cancellationToken)).ConfigureAwait(false);
+                        return;
+                    }
+
+                    var reason = deadline.IsPartial ? "incomplete message timeout exceeded"
+                        : deadline.IsTransaction ? SqlErrors.TransactionExpired.Message : "session idle timeout exceeded";
+                    await CloseAsync(from, WebSocketCloseStatus.PolicyViolation, reason, cancellationToken).ConfigureAwait(false);
+                    await CloseAsync(to, WebSocketCloseStatus.PolicyViolation, reason, cancellationToken).ConfigureAwait(false);
+                }
+
+                if (read.MessageType == WebSocketMessageType.Close)
+                {
+                    beginClose();
+                    await CloseAsync(to, read.CloseStatus ?? WebSocketCloseStatus.NormalClosure, read.CloseStatusDescription, cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+
+                try
+                {
+                    var client = input is null ? to : from;
+                    await clientSends.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    try
+                    {
+                        if (refused is { } busy)
+                        {
+                            var error = new SqlError(SqlErrors.TenantBusy, $"organization request budget exceeded; retry after {busy.RetryAfter}s");
+                            var reply = new SqlSocketError(busy.Id, "error", SqlBatch.Body(new SqlBatchFailure(error, 0), "").Error, busy.Transaction);
+                            await client.SendAsync(JsonSerializer.SerializeToUtf8Bytes(reply, SqlJsonContext.Default.SqlSocketError), WebSocketMessageType.Text, true, cancellationToken)
+                                .ConfigureAwait(false);
+                            continue;
+                        }
+
+                        await to.SendAsync(message.GetBuffer().AsMemory(0, (int)message.Length), read.MessageType, true, cancellationToken).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        clientSends.Release();
+                    }
+
+                    if (answered is { } transaction)
+                    {
+                        state.Answered('R', transaction);
+                    }
+                }
+                catch (Exception error) when (error is WebSocketException or OperationCanceledException or ConnectionResetException or ObjectDisposedException or InvalidDataException or JsonException)
+                {
+                    break;
+                }
+            }
+
+            beginClose();
+            if (input is null && state.State.Pending && !cancellationToken.IsCancellationRequested)
+            {
+                var pending = state.Pending;
+                var error = pending.Commits ? SqlErrors.OutcomeUnknown(home) : HomeSessions.Unreachable(home);
+                await state.EndAsync(() => ReportAsync(to, error.Code, error.Message, pending.Id, cancellationToken)).ConfigureAwait(false);
+            }
+            else
+            {
+                await CloseAsync(to, WebSocketCloseStatus.EndpointUnavailable, "the relayed session ended", cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
+    private static async Task CloseAsync(WebSocket socket, WebSocketCloseStatus status, string? description, CancellationToken cancellationToken)
     {
         try
         {
             if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
             {
-                await socket.CloseAsync(status, description, CancellationToken.None).ConfigureAwait(false);
+                await socket.CloseOutputAsync(status, description, cancellationToken).ConfigureAwait(false);
             }
         }
         catch (Exception error) when (error is WebSocketException or OperationCanceledException or ObjectDisposedException or ConnectionResetException)
         {
+            socket.Abort();
         }
     }
 }
