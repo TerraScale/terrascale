@@ -61,14 +61,14 @@ email unverified. Project-tenant sign-ups have their own tenant-scoped budgets; 
 | `hosted/project-sign-in.spec.ts` | 2 | 20/hour |
 | `hosted/user-profiles.spec.ts` | 1 | 20/hour |
 | `interactions/auth-organizations.spec.ts` | 1 | 20/hour |
-| `interactions/auth-webhooks.spec.ts` | 6 | 20/hour |
+| `interactions/auth-webhooks.spec.ts` | 7 | 20/hour |
 | `journey/invitation.spec.ts` | 1 | 20/hour |
 | `journey/finish.spec.ts` | 1 | 20/hour |
 | `hosted/signup-address-limit.spec.ts` | 20 admitted, attempt 21 refused | 20/hour |
 | `placement/session-limits.spec.ts` | 3 | 20/hour |\n| Each other spec's own address | 0 | 20/hour |
 
 Teardown prints `signup address <address> <spec>: <stored count>/20 per hour`, reading the limiter's persisted
-counts with the same keyed subject derivation. Ordinary addresses spend at most 6 of 20 slots. Each invocation
+counts with the same keyed subject derivation. Ordinary addresses spend at most 7 of 20 slots. Each invocation
 allocates a fresh address range, so consecutive runs on the same stack do not inherit a previous run's budget.
 Attack protection and sign-in limit specs retain one dedicated address per spec across every browser context and
 API client; the sign-up limit spec alone exhausts its dedicated address.

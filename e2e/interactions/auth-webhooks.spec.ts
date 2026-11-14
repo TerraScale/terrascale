@@ -76,6 +76,7 @@ test('auth webhooks verify invited signup signatures, retry failures and replay 
         expect(first[0]).toMatchObject({ valid: true, code: 500, event: { type: 'user.signed_up', data: { email: userEmail } } });
         const retried = await received(1);
         expect(retried[1]).toMatchObject({ id: first[0].id, valid: true, code: 200 });
+        expect(retried[1].event).toEqual(first[0].event);
         expect(retried[1].receivedAt - first[0].receivedAt).toBeGreaterThanOrEqual(2500);
         await expect.poll(async () => {
           await page.goto(`${dash}/auth/webhooks`);
@@ -85,6 +86,7 @@ test('auth webhooks verify invited signup signatures, retry failures and replay 
         await page.getByRole('button', { name: 'Replay', exact: true }).first().click();
         const replay = await received(2);
         expect(replay[2]).toMatchObject({ id: first[0].id, valid: true, code: 200 });
+        expect(replay[2].event).toEqual(first[0].event);
         await page.goto(`${dash}/auth/webhooks`);
         await page.getByRole('button', { name: 'Send test event', exact: true }).click();
         const tested = await received(3);
@@ -102,24 +104,6 @@ test('auth webhooks verify invited signup signatures, retry failures and replay 
         await expect(page.locator('[data-auth-event]')).toHaveCount(3);
         await expect(page.locator(`[data-auth-event="${firstEvent}"]`)).toHaveCount(0);
         await audit.check('authentication events after cursor');
-        for (const url of ['https://hooks.journey.terrascale.tech/redirect', 'https://127.0.0.1:8029/receive']) {
-          await page.goto(`${dash}/auth/webhooks`);
-          await page.getByRole('button', { name: 'Add webhook endpoint', exact: true }).first().click();
-          await page.locator('#auth-webhook-url').fill(url);
-          await page.locator('input[name=event_types][value="user.signed_up"]').check();
-          await page.locator('#auth-create-webhook button[type=submit]').click();
-          await confirmWithPassword(page, audit, password, 'guarded webhook registration');
-          const signingSecret = page.locator('#auth-webhook-created-secret');
-          await expect(signingSecret).toBeVisible();
-          saveSecret('guarded-webhook-secret', await signingSecret.innerText());
-          await page.goto(`${dash}/auth/webhooks`);
-          await page.locator('tr').filter({ hasText: url }).getByRole('button', { name: 'Send test event', exact: true }).click();
-          await expect.poll(async () => {
-            await page.goto(`${dash}/auth/webhooks`);
-            return page.getByRole('region', { name: `Deliveries to ${url}`, exact: true }).innerText();
-          }).toContain(url.includes('127.0.0.1') ? 'No response' : '302');
-          await audit.check('guarded authentication delivery');
-        }
         const allReceived = await (await fetch(`${receiver}/deliveries`)).json();
         expect(allReceived).toHaveLength(4);
       } finally {
@@ -134,6 +118,55 @@ test('auth webhooks verify invited signup signatures, retry failures and replay 
       await page.waitForURL((url) => url.origin === dash && url.pathname === '/account-deleted');
       await expect(page.getByRole('heading', { level: 1 })).toHaveText('Account deleted');
       await audit.check('webhook owner deleted');
+      await audit.finish();
+    } finally {
+      await saveCookies(context);
+      await context.close();
+    }
+  });
+});
+
+test('auth webhook delivery refuses redirects and private destinations', async ({ browser }, info) => {
+  await onLocalStack(async () => {
+    const owner = journey();
+    const context = await auditedContext(browser, { viewport: desktop, storageState: { cookies: [], origins: [] } });
+    const page = await context.newPage();
+    const audit = new Audit(page, info);
+    const email = await newAddress(`webhook-guards-${randomBytes(4).toString('hex')}`);
+    const password = randomBytes(24).toString('base64url');
+    saveSecret('webhook-guards-owner-password', password);
+    try {
+      await signUp(page, audit, email, password, 'guarded webhook owner');
+      await verify(page, email);
+      await onboard(page, audit, 'Webhook guards owner', `Webhook guards ${owner.runId}`, 'guarded webhook owner');
+      const before = await (await fetch(`${receiver}/deliveries`)).json();
+      for (const url of ['https://hooks.journey.terrascale.tech/redirect', 'https://127.0.0.1:8029/receive']) {
+        await page.goto(`${dash}/auth/webhooks`);
+        await page.getByRole('button', { name: 'Add webhook endpoint', exact: true }).first().click();
+        await page.locator('#auth-webhook-url').fill(url);
+        await page.locator('input[name=event_types][value="user.signed_up"]').check();
+        await page.locator('#auth-create-webhook button[type=submit]').click();
+        await confirmWithPassword(page, audit, password, 'guarded webhook registration');
+        const signingSecret = page.locator('#auth-webhook-created-secret');
+        await expect(signingSecret).toBeVisible();
+        saveSecret('guarded-webhook-secret', await signingSecret.innerText());
+        await page.goto(`${dash}/auth/webhooks`);
+        await page.locator('tr').filter({ hasText: url }).getByRole('button', { name: 'Send test event', exact: true }).click();
+        await expect.poll(async () => {
+          await page.goto(`${dash}/auth/webhooks`);
+          return page.getByRole('region', { name: `Deliveries to ${url}`, exact: true }).innerText();
+        }).toContain(url.includes('127.0.0.1') ? 'No response' : '302');
+        await audit.check('guarded authentication delivery');
+      }
+      expect(await (await fetch(`${receiver}/deliveries`)).json()).toEqual(before);
+      await page.goto(`${dash}/profile?tab=danger`);
+      await page.locator('main').getByRole('button', { name: 'Delete account', exact: true }).click();
+      await page.locator('#delete-account-email').fill(email);
+      await page.locator('#delete-account').getByRole('button', { name: 'Delete account', exact: true }).click();
+      await confirmWithPassword(page, audit, password, 'webhook guards owner cleanup');
+      await page.waitForURL(url => url.origin === dash && url.pathname === '/account-deleted');
+      await expect(page.getByRole('heading', { level: 1 })).toHaveText('Account deleted');
+      await audit.check('webhook guards owner deleted');
       await audit.finish();
     } finally {
       await saveCookies(context);
@@ -176,19 +209,26 @@ test('auth webhook enqueue of 200 in one project allows another project through 
       const fields = await form.locator('input[type=hidden]').evaluateAll(inputs => Object.fromEntries(inputs.map(input => [(input as HTMLInputElement).name, (input as HTMLInputElement).value])));
       expect(action).toBeTruthy();
       return async () => {
-        const response = await target.request.post(new URL(action!, dash).href, { form: fields });
-        expect(response.status()).toBe(200);
+        const response = await target.request.post(new URL(action!, dash).href, { form: fields, maxRedirects: 0 });
+        expect(response.status()).toBe(303);
+        expect(new URL(response.headers().location, dash).pathname).toBe('/auth/webhooks');
       };
     };
     try {
-      await signUp(page, audit, email, password, 'fairness webhook owner');
-      await verify(page, email);
-      await onboard(page, audit, 'Fairness owner', `Fairness ${owner.runId}`, 'fairness webhook owner');
-      const enqueueA = await register(page, audit, pathA, password);
-      await signUp(otherPage, otherAudit, otherEmail, otherPassword, 'fairness healthy owner');
-      await verify(otherPage, otherEmail);
-      await onboard(otherPage, otherAudit, 'Healthy owner', `Healthy ${owner.runId}`, 'fairness healthy owner');
-      const enqueueB = await register(otherPage, otherAudit, pathB, otherPassword);
+      const [enqueueA, enqueueB] = await Promise.all([
+        (async () => {
+          await signUp(page, audit, email, password, 'fairness webhook owner');
+          await verify(page, email);
+          await onboard(page, audit, 'Fairness owner', `Fairness ${owner.runId}`, 'fairness webhook owner');
+          return await register(page, audit, pathA, password);
+        })(),
+        (async () => {
+          await signUp(otherPage, otherAudit, otherEmail, otherPassword, 'fairness healthy owner');
+          await verify(otherPage, otherEmail);
+          await onboard(otherPage, otherAudit, 'Healthy owner', `Healthy ${owner.runId}`, 'fairness healthy owner');
+          return await register(otherPage, otherAudit, pathB, otherPassword);
+        })(),
+      ]);
       await enqueueA();
       await expect.poll(async () => {
         const rows = await (await fetch(`${receiver}/deliveries`)).json() as (Delivery & { path: string })[];
@@ -224,10 +264,10 @@ test('auth webhook enqueue of 200 in one project allows another project through 
       console.log('Webhook fairness: project B delivered with only one A request in flight; all 200 A deliveries drained in order.');
       await otherPage.goto(`${dash}/auth/webhooks`);
       await otherPage.locator('tr').filter({ hasText: pathB }).getByRole('button', { name: 'Delete', exact: true }).click();
-      for (const account of [
+      await Promise.all([
         { page, audit, email, password },
         { page: otherPage, audit: otherAudit, email: otherEmail, password: otherPassword },
-      ]) {
+      ].map(async account => {
         await account.page.goto(`${dash}/profile?tab=danger`);
         await account.page.locator('main').getByRole('button', { name: 'Delete account', exact: true }).click();
         await account.page.locator('#delete-account-email').fill(account.email);
@@ -236,7 +276,7 @@ test('auth webhook enqueue of 200 in one project allows another project through 
         await account.page.waitForURL(url => url.origin === dash && url.pathname === '/account-deleted');
         await expect(account.page.getByRole('heading', { level: 1 })).toHaveText('Account deleted');
         await account.audit.finish();
-      }
+      }));
     } finally {
       await saveCookies(context);
       await saveCookies(other);
@@ -279,8 +319,9 @@ test('auth webhook timeouts release delivery lanes for another project within on
       const fields = await form.locator('input[type=hidden]').evaluateAll(inputs => Object.fromEntries(inputs.map(input => [(input as HTMLInputElement).name, (input as HTMLInputElement).value])));
       expect(action).toBeTruthy();
       return { path, enqueue: async () => {
-        const response = await page.request.post(new URL(action!, dash).href, { form: fields });
-        expect(response.status()).toBe(200);
+        const response = await page.request.post(new URL(action!, dash).href, { form: fields, maxRedirects: 0 });
+        expect(response.status()).toBe(303);
+        expect(new URL(response.headers().location, dash).pathname).toBe('/auth/webhooks');
       } };
     };
     try {
