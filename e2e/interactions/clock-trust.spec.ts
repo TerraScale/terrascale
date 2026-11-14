@@ -7,9 +7,9 @@ test.skip(production, 'clock trust runs only against throwaway nodes');
 test.describe.configure({ mode: 'default' });
 
 const nodes: Record<'a' | 'b' | 'c', Node> = {
-  a: { name: `clock-a-${run}`, region: `gru-${run}`, address: '127.0.0.21', port: 18280 + portOffset, metrics: 19280 + portOffset, postgres: 16280 + portOffset },
-  b: { name: `clock-b-${run}`, region: `fra-${run}`, address: '127.0.0.22', port: 18290 + portOffset, metrics: 19290 + portOffset, postgres: 16290 + portOffset },
-  c: { name: `clock-c-${run}`, region: `sjc-${run}`, address: '127.0.0.23', port: 18300 + portOffset, metrics: 19300 + portOffset, postgres: 16300 + portOffset },
+  a: { name: `clock-a-${run}`, region: `gru-${run}`, address: '127.0.0.21', port: 21280 + portOffset, metrics: 22280 + portOffset, postgres: 19280 + portOffset },
+  b: { name: `clock-b-${run}`, region: `fra-${run}`, address: '127.0.0.22', port: 21290 + portOffset, metrics: 22290 + portOffset, postgres: 19290 + portOffset },
+  c: { name: `clock-c-${run}`, region: `sjc-${run}`, address: '127.0.0.23', port: 21300 + portOffset, metrics: 22300 + portOffset, postgres: 19300 + portOffset },
 };
 
 test('a lone node opens on agreeing peers and a clock step requires two new rounds', async ({ request }, info) => {
@@ -185,7 +185,7 @@ test('clock trust distinguishes unreachable peers, previous builds and disagreei
 });
 
 test('a received write never carries a wrong local clock into the HLC, and a clean restart issues at once', async ({ request }, info) => {
-  const { node: h, first, second } = lone('h', 51, 18330, 'far');
+  const { node: h, first, second } = lone('h', 51, 21330, 'far');
   const { set, metric, allowed, mode, standIn, stop, opens, ready, internal, clockPeer, refused, prepare, database, finish, observations, log } =
     await cluster(request, [h, first, second], 'ahead', true);
   const peer = { offset: 0 as number | null };
@@ -252,7 +252,7 @@ test('a received write never carries a wrong local clock into the HLC, and a cle
 });
 
 test('home writes recover in two agreeing rounds after a step during issuance, including across restart', async ({ request }, info) => {
-  const { node: h, first, second } = lone('w', 61, 18340, 'near');
+  const { node: h, first, second } = lone('w', 61, 21340, 'near');
   const { set, stepAfterKernel, setPeers, metric, allowed, mode, clockState, standIn, start, stop, opens, clockPeer, refused, prepare, database, finish, observations } =
     await cluster(request, [h, first, second], 'issuing');
   const peer = { offset: 0 };
@@ -321,7 +321,7 @@ test('home writes recover in two agreeing rounds after a step during issuance, i
 });
 
 test('an open node that loses every peer keeps stamping; a closed one stays closed', async ({ request }, info) => {
-  const { node: p, first, second } = lone('p', 31, 18310, 'far');
+  const { node: p, first, second } = lone('p', 31, 21310, 'far');
   const { metric, allowed, mode, transitions, standIn, holds, opens, ready, clockPeer, refused, prepare, database, finish, observations } =
     await cluster(request, [p, first, second], 'lost');
   const peer = { offset: 0 as number | null };
@@ -383,7 +383,7 @@ test('an open node that loses every peer keeps stamping; a closed one stays clos
 
 test('a brief unsynchronised kernel does not close an open node; a minute of it does', async ({ request }, info) => {
   test.slow();
-  const { node: k, first, second } = lone('k', 41, 18320, 'near');
+  const { node: k, first, second } = lone('k', 41, 21320, 'near');
   const { set, metric, allowed, mode, standIn, holds, opens, ready, prepare, database, refused, finish, observations, clockPeer } = await cluster(request, [k, first, second], 'kernel');
   const peer = { offset: 0 as number | null };
   try {

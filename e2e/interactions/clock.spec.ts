@@ -5,7 +5,7 @@ import { cluster, id, lone, type Transaction } from '../clock/cluster';
 test.skip(production, 'clock delivery runs only against throwaway nodes');
 
 test('future remote stamps apply once without advancing the local clock beyond its bound', async ({ request }, info) => {
-  const { node, first, second } = lone('d', 71, 18350, 'far');
+  const { node, first, second } = lone('d', 71, 21350, 'far');
   const { metric, standIn, opens, clockPeer, prepare, database, finish, observations } = await cluster(request, [node, first, second], 'delivery', true);
   try {
     await prepare();

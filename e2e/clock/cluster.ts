@@ -16,7 +16,7 @@ export type Answer = { status: number; body: string; retryAfter?: string };
 export type StandIn = { asked: () => number; answeredAt: () => number; close: () => Promise<void> };
 
 export const portOffset = Number(process.env.TEST_PARALLEL_INDEX ?? '0') * 100;
-export const internalPort = 18281 + portOffset;
+export const internalPort = 21281 + portOffset;
 export const run = randomBytes(3).toString('hex');
 export const lone = (letter: string, octet: number, port: number, partners: 'near' | 'far'): Record<'node' | 'first' | 'second', Node> => ({
   node: { name: `clock-${letter}-${run}`, region: `gru${letter}-${run}`, address: `127.0.0.${octet}`, port: port + portOffset, metrics: port + 1000 + portOffset, postgres: port - 2000 + portOffset },
