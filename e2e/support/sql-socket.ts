@@ -50,6 +50,7 @@ export async function rawSqlSocket(url: string, credential?: string) {
       const payload = buffered.subarray(prefix, prefix + length);
       buffered = buffered.subarray(prefix + length);
       if (opcode === 1) events.emit('message', JSON.parse(payload.toString()));
+      if (opcode === 9) socket.write(frame(10, payload));
       if (opcode === 8) {
         const event = { code: payload.readUInt16BE(), reason: payload.subarray(2).toString() };
         closeFrame(event);

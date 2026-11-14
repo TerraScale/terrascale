@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.Connections.Features;
+using TerraBase.Features.Qos;
 using System.Net;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core.Features;
@@ -49,7 +51,8 @@ internal sealed class PostgresRelayEndpoint(PostgresConnectionHandler handler) :
 
         HttpContext.Response.ContentType = "application/octet-stream";
         await HttpContext.Response.StartAsync(cancellationToken).ConfigureAwait(false);
-        await handler.ServeRelayedAsync(HttpContext.Request.BodyReader, HttpContext.Response.BodyWriter, client, ProxyRequestBudget.For(HttpContext), HttpContext.Abort, cancellationToken).ConfigureAwait(false);
+        var output = new SessionOutput(HttpContext.Response.BodyWriter, HttpContext.Features.GetRequiredFeature<IConnectionSocketFeature>().Socket, HttpContext.RequestServices.GetRequiredService<TimeProvider>());
+        await handler.ServeRelayedAsync(HttpContext.Request.BodyReader, output, client, ProxyRequestBudget.For(HttpContext), HttpContext.Abort, cancellationToken).ConfigureAwait(false);
         return Results.Empty;
     }
 }

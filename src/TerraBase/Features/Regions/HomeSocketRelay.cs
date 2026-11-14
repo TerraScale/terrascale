@@ -44,7 +44,7 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
             {
                 SubProtocol = context.WebSockets.WebSocketRequestedProtocols.Contains(SqlSocketEndpoint.Protocol, StringComparer.Ordinal) ? SqlSocketEndpoint.Protocol : null,
                 KeepAliveInterval = KeepAlive,
-                KeepAliveTimeout = KeepAlive,
+                KeepAliveTimeout = Timeout.InfiniteTimeSpan,
             }).ConfigureAwait(false);
             context.Features.Get<RegionalIngress.Lease>()?.Dispose();
             await RefuseAsync(context, refused, context.Features.Get<BrowserConnection>()?.Id, SqlErrors.TenantBusy,
@@ -153,7 +153,7 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
         {
             SubProtocol = upstream.SubProtocol,
             KeepAliveInterval = KeepAlive,
-            KeepAliveTimeout = KeepAlive,
+            KeepAliveTimeout = Timeout.InfiniteTimeSpan,
         });
         context.Features.Get<RegionalIngress.Lease>()?.Dispose();
 
@@ -533,22 +533,20 @@ internal sealed class HomeSocketRelay(IHttpClientFactory http, InternalCredentia
 
                 try
                 {
-                    using var sending = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                    sending.CancelAfter(QosSessions.SendTimeout(message.Length));
                     var client = input is null ? to : from;
-                    await clientSends.WaitAsync(sending.Token).ConfigureAwait(false);
+                    await clientSends.WaitAsync(cancellationToken).ConfigureAwait(false);
                     try
                     {
                         if (refused is { } busy)
                         {
                             var error = new SqlError(SqlErrors.TenantBusy, $"organization request budget exceeded; retry after {busy.RetryAfter}s");
                             var reply = new SqlSocketError(busy.Id, "error", SqlBatch.Body(new SqlBatchFailure(error, 0), "").Error, busy.Transaction);
-                            await client.SendAsync(JsonSerializer.SerializeToUtf8Bytes(reply, SqlJsonContext.Default.SqlSocketError), WebSocketMessageType.Text, true, sending.Token)
+                            await client.SendAsync(JsonSerializer.SerializeToUtf8Bytes(reply, SqlJsonContext.Default.SqlSocketError), WebSocketMessageType.Text, true, cancellationToken)
                                 .ConfigureAwait(false);
                             continue;
                         }
 
-                        await to.SendAsync(message.GetBuffer().AsMemory(0, (int)message.Length), read.MessageType, true, sending.Token).ConfigureAwait(false);
+                        await to.SendAsync(message.GetBuffer().AsMemory(0, (int)message.Length), read.MessageType, true, cancellationToken).ConfigureAwait(false);
                     }
                     finally
                     {

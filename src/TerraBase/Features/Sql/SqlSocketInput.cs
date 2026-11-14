@@ -1,9 +1,13 @@
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.Server.Kestrel.Core.Features;
 using System.Net;
+using System.Net.Sockets;
+using Microsoft.AspNetCore.Connections.Features;
+using TerraBase.Features.Qos;
 
 namespace TerraBase.Features.Sql;
 
-internal sealed class SqlSocketInput(TimeProvider time)
+internal sealed class SqlSocketInput(TimeProvider time, Socket? socket = null)
 {
     private readonly Lock _gate = new();
     private readonly Queue<Message> _messages = new();
@@ -62,7 +66,12 @@ internal sealed class SqlSocketInput(TimeProvider time)
             return;
         }
 
-        var input = new SqlSocketInput(context.RequestServices.GetRequiredService<TimeProvider>());
+        if (context.Features.Get<IHttpMinResponseDataRateFeature>() is { } responseRate)
+        {
+            responseRate.MinDataRate = null;
+        }
+
+        var input = new SqlSocketInput(context.RequestServices.GetRequiredService<TimeProvider>(), context.Features.GetRequiredFeature<IConnectionSocketFeature>().Socket);
         context.Features.Set(input);
         if (upgrade is { IsUpgradableRequest: true })
         {
@@ -274,6 +283,12 @@ internal sealed class SqlSocketInput(TimeProvider time)
         public async ValueTask<Stream> AcceptAsync() => input._transport = new Transport(await inner.AcceptAsync().ConfigureAwait(false), input);
     }
 
+    private async ValueTask WriteAsync(Stream transport, ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken)
+    {
+        using var deadline = socket is { } connection ? new SessionSendDeadline(connection, time, cancellationToken) : null;
+        await transport.WriteAsync(buffer, deadline?.Token ?? cancellationToken).ConfigureAwait(false);
+    }
+
     private sealed class Transport(Stream inner, SqlSocketInput input) : Stream
     {
         public override bool CanRead => inner.CanRead;
@@ -304,8 +319,8 @@ internal sealed class SqlSocketInput(TimeProvider time)
         public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
         public override void SetLength(long value) => inner.SetLength(value);
         public override void Write(byte[] buffer, int offset, int count) => inner.Write(buffer, offset, count);
-        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) => inner.WriteAsync(buffer, cancellationToken);
-        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) => inner.WriteAsync(buffer, offset, count, cancellationToken);
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) => input.WriteAsync(inner, buffer, cancellationToken);
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) => input.WriteAsync(inner, buffer.AsMemory(offset, count), cancellationToken).AsTask();
 
         protected override void Dispose(bool disposing)
         {

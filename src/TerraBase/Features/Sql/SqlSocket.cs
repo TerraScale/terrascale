@@ -673,9 +673,6 @@ internal sealed class SqlSocket(
     private async ValueTask<long> SendAsync<T>(T frame, JsonTypeInfo<T> type, CancellationToken cancellationToken)
     {
         var bytes = JsonSerializer.SerializeToUtf8Bytes(frame, type);
-        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        bounded.CancelAfter(QosSessions.SendTimeout(bytes.Length));
-        cancellationToken = bounded.Token;
         await _send.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {

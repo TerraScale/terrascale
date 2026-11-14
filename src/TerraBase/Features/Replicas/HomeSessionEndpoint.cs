@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core.Features;
 using System.IO.Pipelines;
@@ -58,7 +59,7 @@ internal sealed class HomeSessionEndpoint(
         HttpContext.Response.ContentType = "application/octet-stream";
         await HttpContext.Response.StartAsync(cancellationToken).ConfigureAwait(false);
         var input = HttpContext.Request.BodyReader;
-        var output = HttpContext.Response.BodyWriter;
+        var output = new SessionOutput(HttpContext.Response.BodyWriter, HttpContext.Features.GetRequiredFeature<IConnectionSocketFeature>().Socket, HttpContext.RequestServices.GetRequiredService<TimeProvider>());
         try
         {
             using var opening = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -72,10 +73,10 @@ internal sealed class HomeSessionEndpoint(
             switch (await AdmitAsync(open, cancellationToken).ConfigureAwait(false))
             {
                 case SqlError refused:
-                    await AnswerAsync(output, new HomeSessionAnswer(true, refused), cancellationToken).ConfigureAwait(false);
+                    await HomeSessionFrames.WriteAsync(output, new HomeSessionAnswer(true, refused), ReplicasJsonContext.Default.HomeSessionAnswer, sending: null, cancellationToken).ConfigureAwait(false);
                     return Results.Empty;
                 case TenantContext database when open.PushThrough is { } through && !await local.AppliedAsync(open.Region, database, through, cancellationToken).ConfigureAwait(false):
-                    await AnswerAsync(output, new HomeSessionAnswer(true, Unsettled), cancellationToken).ConfigureAwait(false);
+                    await HomeSessionFrames.WriteAsync(output, new HomeSessionAnswer(true, Unsettled), ReplicasJsonContext.Default.HomeSessionAnswer, sending: null, cancellationToken).ConfigureAwait(false);
                     return Results.Empty;
                 case TenantContext database:
                     await ServeAsync(database, open.Region, open.CanWrite, input, output, cancellationToken).ConfigureAwait(false);
@@ -117,7 +118,7 @@ internal sealed class HomeSessionEndpoint(
         using var lease = sessions.TryEnter(database);
         if (lease is null)
         {
-            await AnswerAsync(output, new HomeSessionAnswer(true, new SqlError(SqlErrors.TenantBusy, "organization session limit exceeded")), cancellationToken)
+            await HomeSessionFrames.WriteAsync(output, new HomeSessionAnswer(true, new SqlError(SqlErrors.TenantBusy, "organization session limit exceeded")), ReplicasJsonContext.Default.HomeSessionAnswer, sending: null, cancellationToken)
                 .ConfigureAwait(false);
             return;
         }
@@ -125,7 +126,7 @@ internal sealed class HomeSessionEndpoint(
         var session = sql.Open(database, canWrite);
         await using (session.ConfigureAwait(false))
         {
-            await AnswerAsync(output, new HomeSessionAnswer(true), cancellationToken).ConfigureAwait(false);
+            await HomeSessionFrames.WriteAsync(output, new HomeSessionAnswer(true), ReplicasJsonContext.Default.HomeSessionAnswer, sending: null, cancellationToken).ConfigureAwait(false);
             while (true)
             {
                 var transaction = session.TransactionRemaining;
@@ -141,7 +142,7 @@ internal sealed class HomeSessionEndpoint(
                     catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                     {
                         using var drain = new CancellationTokenSource(Shutdown.DrainBudget);
-                        await AnswerAsync(output, new HomeSessionAnswer(true, transaction is not null && !deadline.IsPartial ? SqlErrors.TransactionExpired : Idle), drain.Token).ConfigureAwait(false);
+                        await HomeSessionFrames.WriteAsync(output, new HomeSessionAnswer(true, transaction is not null && !deadline.IsPartial ? SqlErrors.TransactionExpired : Idle), ReplicasJsonContext.Default.HomeSessionAnswer, sending: null, drain.Token).ConfigureAwait(false);
                         return;
                     }
                 }
@@ -164,7 +165,7 @@ internal sealed class HomeSessionEndpoint(
                 HomeSessionAnswer answer;
                 if (call.PushThrough is { } through && !await local.AppliedAsync(origin, database, through, lifetime.ApplicationStopping).ConfigureAwait(false))
                 {
-                    await AnswerAsync(output, new HomeSessionAnswer(session.IsAutocommit, Unsettled), lifetime.ApplicationStopping).ConfigureAwait(false);
+                    await HomeSessionFrames.WriteAsync(output, new HomeSessionAnswer(session.IsAutocommit, Unsettled), ReplicasJsonContext.Default.HomeSessionAnswer, sending: null, lifetime.ApplicationStopping).ConfigureAwait(false);
                     continue;
                 }
 
@@ -208,7 +209,7 @@ internal sealed class HomeSessionEndpoint(
                     }
                 }
 
-                await AnswerAsync(output, answer, cancellationToken).ConfigureAwait(false);
+                await HomeSessionFrames.WriteAsync(output, answer, ReplicasJsonContext.Default.HomeSessionAnswer, sending: null, cancellationToken).ConfigureAwait(false);
             }
         }
     }
@@ -263,12 +264,5 @@ internal sealed class HomeSessionEndpoint(
     {
         result.ReadCharge?.Accept();
         return new HomeSessionAnswer(session.IsAutocommit, Result: new HomeSessionResult(result.Columns, result.Rows, result.RowsAffected, result.LastInsertRowid));
-    }
-
-    private static async ValueTask AnswerAsync(PipeWriter output, HomeSessionAnswer answer, CancellationToken cancellationToken)
-    {
-        using var sending = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        await HomeSessionFrames.WriteAsync(output, answer, ReplicasJsonContext.Default.HomeSessionAnswer, bytes => sending.CancelAfter(QosSessions.SendTimeout(bytes)), sending.Token)
-            .ConfigureAwait(false);
     }
 }

@@ -217,27 +217,26 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
             bool? transaction = header[0] == 'Z' && body.Length > 0 ? body[0] != 'I'
                 : header[0] == 'C' && body.AsSpan().SequenceEqual("BEGIN\0"u8) ? true
                 : header[0] == 'C' && (body.AsSpan().SequenceEqual("COMMIT\0"u8) || body.AsSpan().SequenceEqual("ROLLBACK\0"u8)) ? false : null;
-            using var sending = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            sending.CancelAfter(QosSessions.SendTimeout(header.Length + body.Length));
             state.Answer.Pause();
             try
             {
-                await writing.WaitAsync(sending.Token).ConfigureAwait(false);
+                await writing.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    output.Write(header);
-                    output.Write(body);
                     if (header[0] == 'Z' && body.Length > 0)
                     {
                         upstream.Status = body[0];
                     }
 
-                    state.Answered((char)header[0], transaction);
-                    var flushed = await output.FlushAsync(sending.Token).ConfigureAwait(false);
+                    output.Write(header);
+                    output.Write(body);
+                    var flushed = await output.FlushAsync(cancellationToken).ConfigureAwait(false);
                     if (flushed.IsCompleted || flushed.IsCanceled)
                     {
                         return;
                     }
+
+                    state.Answered((char)header[0], transaction);
                 }
                 finally
                 {

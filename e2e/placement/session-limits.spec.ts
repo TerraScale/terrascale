@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { EventEmitter, once } from 'node:events';
-import { connect, type Socket } from 'node:net';
+import { connect } from 'node:net';
 import { expect } from '@playwright/test';
 import { rawSqlSocket, frame, scheduleStatement } from '../support/sql-socket';
 import { holdPeerStream, holdPeerReplies } from '../support/peer-stream-fault';
@@ -802,11 +802,23 @@ async function wire(port: number, db: string, startup = true) {
   return { socket, types, errors, closed, next, opened: (await opened).type };
 }
 
-function slowReader(socket: Socket, bytesPerSecond: number) {
-  socket.on('data', (chunk: Buffer) => {
-    socket.pause();
-    setTimeout(() => socket.resume(), chunk.length * 1000 / bytesPerSecond);
-  });
+async function slowReader(port: number, bytesPerSecond: number) {
+  const proxy = spawn('python3', ['support/slow-reader.py', String(port), String(bytesPerSecond)], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const exited = once(proxy, 'exit');
+  let stderr = '';
+  proxy.stderr.on('data', data => { stderr += data.toString(); });
+  const listening = await Promise.race([
+    once(proxy.stdout, 'data').then(([data]) => Number(data.toString().trim())),
+    exited.then(([code]) => { throw new Error('slow reader exited ' + code + ': ' + stderr); }),
+  ]);
+  return {
+    port: listening,
+    start: () => proxy.stdin.write('pace\n'),
+    stop: async () => {
+      if (proxy.exitCode === null) proxy.kill('SIGTERM');
+      await exited;
+    },
+  };
 }
 
 function insertBatch(count: number, first: number) {
@@ -893,29 +905,108 @@ test('a Postgres client that reads a large answer slowly but steadily keeps its 
   const created = await json<Database>(await cells.post(home + project() + '/databases', {
     data: { name: name('slow-reader'), homeRegion: 'gru', replicaRegions: [] },
   }), 201);
-  const large = 'SELECT hex(zeroblob(1500000))';
+  const large = 'SELECT hex(zeroblob(262144))';
   try {
     const viaPostgres = async (port: number) => {
-      const client = await wire(port, created.id);
-      expect(client.opened).toBe('Z');
-      slowReader(client.socket, 60_000);
-      const began = performance.now();
-      const row = client.next('D', 'E');
-      const ready = client.next('Z');
-      client.socket.write(message('Q', Buffer.from(large + '\0')));
-      const delivered = await row;
-      expect(delivered.type, `Postgres port ${port} after ${Math.round(performance.now() - began)} ms, ${client.socket.bytesRead} bytes: ${client.errors.join(';')}`).toBe('D');
-      expect(delivered.body.readInt32BE(2)).toBe(3_000_000);
-      expect((await ready).type).toBe('Z');
-      const again = client.next('Z');
-      client.socket.write(message('Q', Buffer.from('SELECT 7\0')));
-      expect((await again).type).toBe('Z');
-      expect(client.errors).toEqual([]);
-      client.socket.destroy();
-      await client.closed;
+      const proxy = await slowReader(port, 4096);
+      const client = await wire(proxy.port, created.id);
+      try {
+        expect(client.opened).toBe('Z');
+        proxy.start();
+        const began = performance.now();
+        const row = client.next('D', 'E');
+        const ready = client.next('Z');
+        client.socket.write(message('Q', Buffer.from(large + '\0')));
+        const delivered = await row;
+        expect(delivered.type, `Postgres port ${port} after ${Math.round(performance.now() - began)} ms, ${client.socket.bytesRead} bytes: ${client.errors.join(';')}`).toBe('D');
+        expect(delivered.body.readInt32BE(2)).toBe(524_288);
+        expect((await ready).type).toBe('Z');
+        const again = client.next('Z');
+        client.socket.write(message('Q', Buffer.from('SELECT 7\0')));
+        expect((await again).type).toBe('Z');
+        expect(client.errors).toEqual([]);
+        client.socket.destroy();
+        await client.closed;
+        console.log('Postgres ' + port + ': delivered 524288 bytes and reused session after ' + Math.round(performance.now() - began) + ' ms');
+      } finally {
+        client.socket.destroy();
+        await proxy.stop();
+      }
     };
     await Promise.all([viaPostgres(6432), viaPostgres(6532)]);
   } finally {
+    await removeDatabase(cells, created.id);
+  }
+});
+
+test('a WebSocket client reading an answer slowly keeps its session at the home and through the relay', async ({ cells, request }) => {
+  test.setTimeout(75_000);
+  const created = await json<Database>(await cells.post(home + project() + '/databases', {
+    data: { name: name('ws-slow-reader'), homeRegion: 'gru', replicaRegions: [] },
+  }), 201);
+  try {
+    const token = await credential(request);
+    await Promise.all([8080, 8180].map(async port => {
+      const proxy = await slowReader(port, 12_000);
+      const ws = await rawSqlSocket('http://127.0.0.1:' + proxy.port + database(created.id) + '/sql/ws', token);
+      try {
+        proxy.start();
+        const began = performance.now();
+        const response = once(ws.events, 'message');
+        ws.socket.write(frame(1, Buffer.from(JSON.stringify({ id: 1, type: 'execute', statements: [{ sql: 'SELECT hex(zeroblob(262144))' }] }))));
+        const result = await Promise.race([response.then(([answer]) => answer), ws.closing.then(close => { throw new Error('WebSocket ' + port + ' closed: ' + JSON.stringify(close)); })]);
+        expect(result.type).toBe('result');
+        expect(result.results[0].rows[0][0]).toHaveLength(524288);
+        expect(/^0+$/.test(result.results[0].rows[0][0])).toBe(true);
+        expect((await execute(ws, 'SELECT 7')).results[0].rows).toEqual([[7]]);
+        console.log('WebSocket ' + port + ': delivered 524288 bytes and reused session after ' + Math.round(performance.now() - began) + ' ms');
+      } finally {
+        ws.socket.destroy();
+        await proxy.stop();
+      }
+    }));
+  } finally {
+    await removeDatabase(cells, created.id);
+  }
+});
+
+test('an answer that makes no transport progress closes the Postgres and WebSocket sessions', async ({ cells, request }) => {
+  test.setTimeout(60_000);
+  const created = await json<Database>(await cells.post(home + project() + '/databases', {
+    data: { name: name('stopped-reader'), homeRegion: 'gru', replicaRegions: [] },
+  }), 201);
+  const active = async () => Promise.all([9091, 9191].map(async port => {
+    const response = await request.get('http://127.0.0.1:' + port + '/metrics');
+    expect(response.status()).toBe(200);
+    const metric = (await response.text()).split('\n').find(line => /^terrabase_qos_active_sessions(?:\{| )/.test(line));
+    expect(metric).toBeDefined();
+    return Number(metric!.split(' ').at(-1));
+  }));
+  const proxies: Awaited<ReturnType<typeof slowReader>>[] = [];
+  let pg: Awaited<ReturnType<typeof wire>> | undefined;
+  let ws: Awaited<ReturnType<typeof rawSqlSocket>> | undefined;
+  try {
+    await expect.poll(active).toEqual([0, 0]);
+    const token = await credential(request);
+    const pgProxy = await slowReader(6432, 0);
+    proxies.push(pgProxy);
+    pg = await wire(pgProxy.port, created.id);
+    expect(pg.opened).toBe('Z');
+    const wsProxy = await slowReader(8180, 0);
+    proxies.push(wsProxy);
+    ws = await rawSqlSocket('http://127.0.0.1:' + wsProxy.port + database(created.id) + '/sql/ws', token);
+    await expect.poll(active).toEqual([2, 1]);
+    pgProxy.start();
+    wsProxy.start();
+    const began = performance.now();
+    pg.socket.write(message('Q', Buffer.from('SELECT hex(zeroblob(1500000))\0')));
+    ws.socket.write(frame(1, Buffer.from(JSON.stringify({ id: 1, type: 'execute', statements: [{ sql: 'SELECT hex(zeroblob(1500000))' }] }))));
+    await expect.poll(active, { timeout: 40_000, message: 'a blocked writer releases its session after 30 seconds without progress' }).toEqual([0, 0]);
+    console.log('Stopped readers released sessions after ' + Math.round(performance.now() - began) + ' ms');
+  } finally {
+    pg?.socket.destroy();
+    ws?.socket.destroy();
+    await Promise.all(proxies.map(proxy => proxy.stop()));
     await removeDatabase(cells, created.id);
   }
 });

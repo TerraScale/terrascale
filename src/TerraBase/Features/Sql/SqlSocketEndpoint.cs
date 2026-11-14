@@ -97,7 +97,7 @@ internal sealed class SqlSocketEndpoint(
         {
             SubProtocol = offered ? Protocol : null,
             KeepAliveInterval = KeepAlive,
-            KeepAliveTimeout = KeepAlive,
+            KeepAliveTimeout = Timeout.InfiniteTimeSpan,
         });
         HttpContext.RequestServices.GetRequiredService<SqlConnectionMetrics>().Accepted();
         var accepted = HttpContext.Features.GetRequiredFeature<RegionalIngress.Lease>();
