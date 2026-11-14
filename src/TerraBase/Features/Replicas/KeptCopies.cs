@@ -17,7 +17,7 @@ internal enum KeepReason
 
 internal sealed record KeptCopy(string Id, string OrganizationId, string ProjectId, string DatabaseId, IReadOnlyList<string> Files, long Bytes);
 
-internal sealed class KeptCopies(TerraBaseOptions options, IStorageEngine engine, IWalBackup storage, IDatabaseRevisions revisions, ILogger<KeptCopies> logger)
+internal sealed class KeptCopies(TerraBaseOptions options, IStorageEngine engine, IWalBackup storage, IDatabaseReplicas replicas, IDatabaseRevisions revisions, ILogger<KeptCopies> logger)
 {
     private readonly string _root = Path.Combine(options.DataDirectory, PreservedFiles.Directory);
 
@@ -38,6 +38,7 @@ internal sealed class KeptCopies(TerraBaseOptions options, IStorageEngine engine
         }
 
         var revision = await revisions.CurrentRevisionAsync(database, cancellationToken).ConfigureAwait(false);
+        replicas.ArchiveCompletedImport(database);
         await storage.PreserveDatabaseAsync(database, CancellationToken.None).ConfigureAwait(false);
         logger.ZLogWarning($"Preserved a database copy this node does not serve: database {database.DatabaseId:@Database} at {revision?.ToString() ?? "an unknown position":@Revision}, reason {Wire(reason):@Reason}; it stays in the retained inventory and nothing automatic deletes it");
         return true;

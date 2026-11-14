@@ -38,6 +38,8 @@ internal interface IDatabaseReplicas
 
     void CompleteDetach(string file);
 
+    void ArchiveCompletedImport(TenantContext database);
+
     bool Holds(TenantContext database);
 
     IReadOnlyList<TenantContext> List();

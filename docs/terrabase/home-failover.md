@@ -158,9 +158,9 @@ logged when it is preserved.
   preserved copies, as it removes every other file of that database.
 - A path that needs a database file's place (a planned move to this node, a regional drain's prepare on this node)
   preserves the file and proceeds; it never deletes it and never fails because of it.
-- A promotion completes its detached import before anything preserves the imported file: the detached source and its
-  import record move to the replica's `.retained` archive when the import is published or put back, so a later
-  preservation of the imported file never leaves a published import without its destination.
+- Before a kept copy is preserved, a completed detached import of that database (published or put back) moves with its
+  import record to the replica's `.retained` archive, so preserving the imported file never leaves a published import
+  without its destination.
 - The local key inventory counts every preserved file: `terrabase.storage.retained_files` and
   `terrabase.storage.retained_bytes` measure them, and a non-empty preserved file makes the key-retirement counts
   unknown. `/v1/rollout/status` lists the kept copies (`kept`: `{id, organizationId, projectId, databaseId, files, bytes}`).

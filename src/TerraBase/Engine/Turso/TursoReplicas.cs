@@ -230,7 +230,18 @@ internal sealed partial class TursoReplicas(
         {
             ActiveDetached.Remove(detached);
             TryRecoverDetached(detached, rethrow: true, finalizing: true);
-            ArchiveCompletedDetached(detached);
+        }
+    }
+
+    public void ArchiveCompletedImport(TenantContext database)
+    {
+        var detached = PathOf(Key(database))[..^3] + ".promote.db";
+        lock (KeyRecords)
+        {
+            if (!ActiveDetached.Contains(detached))
+            {
+                ArchiveCompletedDetached(detached);
+            }
         }
     }
 
