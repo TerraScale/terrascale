@@ -3,6 +3,7 @@ using System.Collections.Frozen;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Security;
+using System.Security.Cryptography;
 
 namespace TerraBase.Configuration;
 
@@ -35,7 +36,7 @@ public sealed record TerraBaseOptions
 
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
-        ["port", "internal-port", "metrics-port", "postgres-port", "data-directory", "memory-budget", "auth-issuer", "auth-audience", "query-budget-seconds", "storage-threads", "nats-token", .. BackupSettings.Keys, .. FileStorageSettings.Keys, .. ShapeStorageSettings.Keys]);
+        ["port", "internal-port", "metrics-port", "postgres-port", "data-directory", "memory-budget", "auth-issuer", "auth-audience", "query-budget-seconds", "storage-threads", "nats-token", "atlas-url", "atlas-publish-key-file", .. BackupSettings.Keys, .. FileStorageSettings.Keys, .. ShapeStorageSettings.Keys]);
 
     private static readonly FrozenSet<string> HostArguments = FrozenSet.Create(
         StringComparer.Ordinal, "environment", "applicationName", "contentRoot");
@@ -108,6 +109,12 @@ public sealed record TerraBaseOptions
     public Uri? NatsUrl { get; init; }
 
     public string? NatsToken { get; init; }
+
+    public Uri? AtlasUrl { get; init; }
+
+    public string? AtlasPublishKeyFile { get; init; }
+
+    internal ECDsa? AtlasPublishKey { get; init; }
 
     public static string EnvironmentName(IReadOnlyList<string> args)
     {
@@ -265,7 +272,51 @@ public sealed record TerraBaseOptions
             DatabaseKeyring = KeyringSettings.Parse(values),
             NatsUrl = NatsAddress(),
             NatsToken = values.TryGetValue("nats-token", out var natsToken) ? ParseNatsToken(natsToken) : null,
+            AtlasUrl = ParseAtlasUrl(values, out var atlasKeyFile, out var atlasKey),
+            AtlasPublishKeyFile = atlasKeyFile,
+            AtlasPublishKey = atlasKey,
         };
+    }
+
+    private static Uri? ParseAtlasUrl(IReadOnlyDictionary<string, string> values, out string? keyFile, out ECDsa? key)
+    {
+        var url = values.GetValueOrDefault("atlas-url");
+        keyFile = values.GetValueOrDefault("atlas-publish-key-file");
+        key = null;
+        if (url is null && keyFile is null)
+        {
+            return null;
+        }
+
+        if (url is null || keyFile is null)
+        {
+            throw new TerraBaseConfigurationException("TERRABASE_ATLAS_URL and TERRABASE_ATLAS_PUBLISH_KEY_FILE must be set together");
+        }
+
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var address)
+            || (address.Scheme != Uri.UriSchemeHttps && (address.Scheme != Uri.UriSchemeHttp || !address.IsLoopback))
+            || address.UserInfo.Length > 0 || address.Query.Length > 0 || address.Fragment.Length > 0)
+        {
+            throw new TerraBaseConfigurationException("atlas-url must be an absolute https URL, or http on loopback, without user information, query or fragment");
+        }
+
+        key = ECDsa.Create();
+        try
+        {
+            key.ImportFromPem(File.ReadAllText(keyFile));
+            if (key.ExportParameters(includePrivateParameters: true).Curve.Oid.Value != "1.2.840.10045.3.1.7")
+            {
+                throw new CryptographicException("the Atlas signing key must use P-256");
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or InvalidOperationException or CryptographicException)
+        {
+            key.Dispose();
+            key = null;
+            throw new TerraBaseConfigurationException($"TERRABASE_ATLAS_PUBLISH_KEY_FILE must name a readable PKCS#8 PEM P-256 private key ({error.GetType().Name})");
+        }
+
+        return address;
     }
 
     private static long DefaultMemoryBudget() => Math.Max(MinMemoryBudget, GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / 4);
