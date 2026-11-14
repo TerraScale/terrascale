@@ -1,0 +1,17 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Functions.FunctionSide>
+<div class="ts-stack" id="function-side">
+@if(Model.Page.Selected is { } selected && Model.Page.Shell.Context.CanWriteProjectData){
+<section class="ts-card" aria-labelledby="function-trigger-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="function-trigger-title">Trigger</h2></div></header><div class="ts-card-body">
+<form method="post" action="/api/v1/dashboard/functions/deploy" class="ts-form ts-stack" id="function-trigger-form" data-on:submit="@("@post('/api/v1/dashboard/functions/deploy', {contentType:'form'})")"><input type="hidden" name="_csrf" value="@Model.Page.Shell.CsrfToken" /><input type="hidden" name="databaseId" value="@Model.Page.Database.Id" /><input type="hidden" name="intent" value="trigger" /><input type="hidden" name="source" value="@selected.Source" /><input type="hidden" name="name" value="@selected.Name" /><input type="hidden" name="trigger" value="@Model.Page.LogsTrigger" /><input type="hidden" name="status" value="@Model.Page.LogsStatus" />
+@(await RenderPartialAsync<TerraScale.Dashboard.Features.Functions.FunctionsChipsView,TerraScale.Dashboard.Features.Functions.FunctionTriggerChips>(new(Model.ChipCron)))
+</form>
+</div><footer class="ts-card-foot"><button class="ts-btn ts-btn-primary" type="submit" form="function-trigger-form">Save trigger</button></footer></section>
+}
+@if(Model.Page.Selected is { } chosen){
+<section class="ts-card" aria-labelledby="function-details-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="function-details-title">Details</h2></div></header><div class="ts-card-body">
+<dl class="ts-kv"><div><dt>Endpoint</dt><dd class="ts-functions-endpoint"><span class="ts-mono" id="function-invoke">@Model.Page.InvokeUrl</span><button class="ts-icon-btn" type="button" aria-label="Copy invoke URL" title="Copy invoke URL" data-signals="{_fnUrlCopy: ''}" data-on:click="(navigator.clipboard?.writeText(document.getElementById('function-invoke').textContent) ?? Promise.reject()).then(() => { $_fnUrlCopy = 'Copied'; setTimeout(() => $_fnUrlCopy = '', 2000) }, () => $_fnUrlCopy = 'Copy failed')">@Icons.Render("Copy",14)</button><span class="ts-meta" role="status" data-text="$_fnUrlCopy"></span></dd></div><div><dt>Trigger</dt><dd>@(chosen.Cron is { Length: > 0 } value ? "Cron " + value + " UTC" : "HTTPS calls")</dd></div><div><dt>Created (UTC)</dt><dd>@ValueFormat.UtcDate(chosen.CreatedAt)</dd></div><div><dt>Updated (UTC)</dt><dd>@ValueFormat.UtcDate(chosen.UpdatedAt)</dd></div></dl>
+<a class="ts-link" href="https://docs.terrascale.tech/guides/authentication" @(ExternalLink.Attributes)>Authentication guide@(ExternalLink.Hint)</a>
+</div></section>
+<section class="ts-card" aria-labelledby="function-danger-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="function-danger-title">Danger zone</h2></div><div class="ts-card-actions"><button class="ts-btn ts-btn-danger ts-btn-sm" type="button" command="show-modal" commandfor="delete-function">Delete function</button></div></header></section>
+}
+</div>

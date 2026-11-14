@@ -1,0 +1,9 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Functions.FunctionsPage>
+@using System.Globalization
+<dl class="ts-stats" id="function-stats" aria-label="Function status">
+@if(Model.Selected is { } selected){
+<div class="ts-stat"><dt class="ts-stat-label">Status</dt><dd class="ts-stat-value"><span class="ts-dot" data-tone="success" aria-hidden="true"></span>Deployed</dd><dd class="ts-stat-meta">@(selected.Cron is { Length: > 0 } cron ? "Cron " + cron + " UTC" : "HTTPS calls")</dd></div>
+<div class="ts-stat"><dt class="ts-stat-label">Last deploy</dt><dd class="ts-stat-value">@ValueFormat.UtcDate(selected.UpdatedAt)</dd><dd class="ts-stat-meta">Created @ValueFormat.UtcDate(selected.CreatedAt)</dd></div>
+<div class="ts-stat"><dt class="ts-stat-label">Invocations</dt><dd class="ts-stat-value">@Model.Logs.Count.ToString(CultureInfo.InvariantCulture)</dd><dd class="ts-stat-meta">@(Model.Logs.Count > 0 ? "Latest " + Model.Logs[0].At.UtcDateTime.ToString("MMM d HH:mm 'UTC'", CultureInfo.InvariantCulture) : "No runs yet")</dd></div>
+}
+</dl>
