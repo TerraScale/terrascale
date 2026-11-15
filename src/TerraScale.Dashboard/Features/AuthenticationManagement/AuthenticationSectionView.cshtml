@@ -1,4 +1,6 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.AuthenticationManagement.AuthenticationPage>
+@using System.Globalization
+@using System.Text.RegularExpressions
 @using TerraScale.Dashboard.Features.AuthenticationManagement
 @{
     var current = Model.Section; var settings = Model.Settings; var manage = Model.Context.CanManageProject;
@@ -19,15 +21,15 @@
         ["danger", var family] when manage && dangers.Any(danger => danger.Family == family && danger.Items.Length > 0) => "danger-" + family + "-dialog",
         _ => ""
     } : "";
-    string Date(DateTimeOffset value) => value.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture);
+    string Date(DateTimeOffset value) => value.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture);
     string Draft(string dialog, string name, string? saved) => failed == dialog ? Model.Draft![name].ToString() : saved ?? "";
     string Open(string dialog) => failed == dialog ? "el.showModal()" : "void 0";
     void MachineFields(string id, IReadOnlyList<string>? scopes = null, IReadOnlyList<string>? audiences = null, int? minutes = null) {
         <div class="ts-field"><label class="ts-label" for="@(id + "-scopes")">Allowed scopes</label><textarea class="ts-input ts-mono" id="@(id + "-scopes")" name="allowed_scopes" rows="2" required placeholder="invoices:read&#10;invoices:write">@Draft(id, "allowed_scopes", string.Join("\n", scopes ?? []))</textarea></div>
         <div class="ts-field"><label class="ts-label" for="@(id + "-audiences")">Allowed audiences</label><textarea class="ts-input ts-mono" id="@(id + "-audiences")" name="allowed_audiences" rows="2" placeholder="https://api.example.com">@Draft(id, "allowed_audiences", string.Join("\n", audiences ?? []))</textarea></div>
-        <div class="ts-field"><label class="ts-label" for="@(id + "-lifetime")">Token lifetime in minutes</label><input class="ts-input" id="@(id + "-lifetime")" name="token_lifetime_minutes" type="number" min="5" max="60" required value="@Draft(id, "token_lifetime_minutes", (minutes ?? 15).ToString(System.Globalization.CultureInfo.InvariantCulture))" /></div>
+        <div class="ts-field"><label class="ts-label" for="@(id + "-lifetime")">Token lifetime in minutes</label><input class="ts-input" id="@(id + "-lifetime")" name="token_lifetime_minutes" type="number" min="5" max="60" required value="@Draft(id, "token_lifetime_minutes", (minutes ?? 15).ToString(CultureInfo.InvariantCulture))" /></div>
     }
-    void CardHead(string title, string id) { <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="@id">@title</h2></div></header> }
+    void CardHead(string title, string id) { <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="@id">@title</h2></div><div class="ts-card-actions"></div></header> }
     void DialogHead(string id, string title) { <header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="@(id + "-title")">@title</h2></div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="@id">@Icons.Render("X", 18)</button></header> }
     void DialogError(string id) { if (failed == id) { <div class="ts-alert ts-alert-danger" role="alert" id="@(id + "-error")"><p class="ts-alert-body">@Model.Error</p></div> } }
     void DialogFooter(string id, string label, string tone = "ts-btn-primary") { <div class="ts-dialog-footer"><button class="ts-btn ts-btn-ghost" type="button" command="close" commandfor="@id">Cancel</button><button class="ts-btn @tone" type="submit">@label</button></div> }
@@ -82,18 +84,37 @@
 @if (Model.RotatedWebhook is { } rotatedSecret) {
 <section class="ts-alert ts-alert-success" id="auth-webhook-rotated" data-init="history.replaceState(null, '', '/auth/webhooks')"><h2 class="ts-alert-title">Rotated signing secret</h2>@{ Secret("Signing secret", "auth-webhook-rotated-secret", rotatedSecret.Secret, "signing secret", Previous(rotatedSecret.PreviousSecretExpiresAt)); }</section>
 }
-<section class="@(current.Key switch { "branding" when settings is not null => "ts-idp-branding", "danger" => "ts-card ts-card-boxed ts-idp-danger", _ => "ts-card" })" id="@("auth-" + current.Key)" aria-labelledby="@("auth-" + current.Key + "-title")">
+<section class="@(current.Key switch { "users" when Model.SelectedUser is not null => "ts-stack-lg", "overview" or "branding" or "restrictions" or "configuration" or "mfa-sessions" or "webhooks" or "organizations" => "ts-stack-lg", "danger" => "ts-card ts-card-boxed ts-card-flush ts-idp-panel ts-idp-danger", _ => "ts-card ts-card-boxed ts-card-flush ts-idp-panel" })" id="@("auth-" + current.Key)" aria-labelledby="@("auth-" + current.Key + "-title")">
 @if (current.Key == "overview") {
-CardHead("Project authentication", "auth-overview-title");
-<div class="ts-card-body">@if (settings is null) { Empty("Authentication details are unavailable."); } else {
-<dl class="ts-stats" aria-label="Identity totals"><div class="ts-stat"><dt class="ts-stat-label">Users</dt><dd class="ts-stat-value" id="auth-count-users">@settings.Counts.Users</dd></div><div class="ts-stat"><dt class="ts-stat-label">OAuth applications</dt><dd class="ts-stat-value" id="auth-count-clients">@settings.Counts.Clients</dd></div></dl>
-<dl class="ts-kv ts-idp-kv"><dt>Project</dt><dd class="ts-strong">@projectName</dd><dt>Issuer</dt><dd>@{ CopyValue("auth-issuer", settings.Issuer, "issuer"); }</dd><dt>Discovery</dt><dd>@{ CopyValue("auth-discovery", settings.DiscoveryUrl, "discovery URL"); }</dd><dt>Hosted sign-in</dt><dd>@{ CopyValue("auth-sign-in-url", settings.SignInUrl, "hosted sign-in URL", link: true); }</dd></dl> }</div>
+@if (settings is null) { <section class="ts-card ts-card-boxed ts-card-flush">@{ CardHead("Project authentication", "auth-overview-title"); }<div class="ts-card-body">@{ Empty("Authentication details are unavailable."); }</div></section> } else {
+<dl class="ts-stats" aria-label="Identity totals">
+<div class="ts-stat"><dt class="ts-stat-label">Users</dt><dd class="ts-stat-value" id="auth-count-users">@settings.Counts.Users</dd></div>
+<div class="ts-stat"><dt class="ts-stat-label">OAuth applications</dt><dd class="ts-stat-value" id="auth-count-clients">@settings.Counts.Clients</dd></div>
+<div class="ts-stat"><dt class="ts-stat-label">Sign-up mode</dt><dd class="ts-stat-value">@(settings.Methods.SignUpMode switch { "restricted" => "Invitation only", "waitlist" => "Waitlist", _ => "Public" })</dd></div>
+<div class="ts-stat"><dt class="ts-stat-label">Social providers</dt><dd class="ts-stat-value">@settings.Providers.Count(provider => provider.Configured)</dd></div>
+</dl>
+<div class="ts-columns">
+<div class="ts-columns-main">
+<section class="ts-card ts-card-boxed ts-card-flush ts-idp-settings">@{ CardHead("Project authentication", "auth-overview-title"); }
+<div class="ts-card-body"><dl class="ts-kv ts-idp-kv"><dt>Project</dt><dd class="ts-strong">@projectName</dd><dt>Issuer</dt><dd>@{ CopyValue("auth-issuer", settings.Issuer, "issuer"); }</dd><dt>Discovery</dt><dd>@{ CopyValue("auth-discovery", settings.DiscoveryUrl, "discovery URL"); }</dd><dt>Hosted sign-in</dt><dd>@{ CopyValue("auth-sign-in-url", settings.SignInUrl, "hosted sign-in URL", link: true); }</dd></dl></div>
+</section>
+</div>
+<div class="ts-columns-side">
+<section class="ts-card ts-card-boxed ts-card-flush ts-idp-settings"><header class="ts-card-head ts-card-head-title-actions"><div class="ts-card-heading"><h2 class="ts-card-title">Sign-in methods</h2></div><div class="ts-card-actions"><a class="ts-btn ts-btn-secondary ts-btn-sm" href="/auth/sign-in">Configure</a></div></header>
+<div class="ts-card-body"><dl class="ts-kv"><div><dt>Email passcode</dt><dd>@(settings.Methods.Passcode ? "Allowed" : "Off")</dd></div><div><dt>Password</dt><dd>@(settings.Methods.Password ? "Allowed" : "Off")</dd></div><div><dt>Magic links</dt><dd>@(settings.Methods.MagicLink ? "Allowed" : "Off")</dd></div><div><dt>Username sign-in</dt><dd>@(settings.Methods.Username ? "Allowed" : "Off")</dd></div></dl></div>
+</section>
+<section class="ts-card ts-card-boxed ts-card-flush ts-idp-settings"><header class="ts-card-head ts-card-head-title-actions"><div class="ts-card-heading"><h2 class="ts-card-title">Security</h2></div><div class="ts-card-actions"><a class="ts-btn ts-btn-secondary ts-btn-sm" href="/auth/mfa-sessions">Configure</a></div></header>
+<div class="ts-card-body"><dl class="ts-kv"><div><dt>MFA</dt><dd>@(settings.Configuration?.RequireMfa == true ? "Required" : "Optional")</dd></div><div><dt>Sessions per user</dt><dd>@(settings.Configuration?.SingleSession == true ? "One" : "Multiple")</dd></div></dl></div>
+</section>
+</div>
+</div>
+}
 }
 else if (current.Key == "users" && Model.SelectedUser is { } selectedUser) {
-CardHead(selectedUser.Email, "auth-users-title");
+<section class="ts-card ts-card-boxed ts-card-flush ts-idp-settings">@{ CardHead(selectedUser.Email, "auth-users-title"); }
+<form class="ts-form" method="post" action="@("/api/v1/auth-management/users/" + selectedUser.Id + "/profile")" id="auth-user-profile">@{ Csrf(); }
 <div class="ts-card-body">
 <a class="ts-btn ts-btn-ghost" href="/auth/users">Users</a>
-<form class="ts-form" method="post" action="@("/api/v1/auth-management/users/" + selectedUser.Id + "/profile")" id="auth-user-profile">@{ Csrf(); }
 <div class="ts-field"><label class="ts-label" for="user-first-name">First name</label><input class="ts-input" id="user-first-name" name="first_name" maxlength="255" value="@selectedUser.FirstName" readonly="@(!manage)" /></div>
 <div class="ts-field"><label class="ts-label" for="user-last-name">Last name</label><input class="ts-input" id="user-last-name" name="last_name" maxlength="255" value="@selectedUser.LastName" readonly="@(!manage)" /></div>
 <div class="ts-field"><label class="ts-label" for="user-image-url">Avatar URL</label><input class="ts-input" id="user-image-url" name="image_url" type="url" maxlength="2048" value="@selectedUser.ImageUrl" readonly="@(!manage)" /></div>
@@ -101,8 +122,9 @@ CardHead(selectedUser.Email, "auth-users-title");
 @foreach (var (name, label, value) in new[] { ("public_metadata", "Public metadata", selectedUser.PublicMetadata), ("private_metadata", "Private metadata", selectedUser.PrivateMetadata), ("unsafe_metadata", "Unsafe metadata", selectedUser.UnsafeMetadata) }) {
 <div class="ts-field"><label class="ts-label" for="@("user-" + name)">@label</label><textarea class="ts-input ts-mono" id="@("user-" + name)" name="@name" rows="5" maxlength="8192" required readonly="@(!manage)" spellcheck="false">@value.GetRawText()</textarea></div>
 }
+</div>
 @if (manage) { <footer class="ts-card-foot"><button class="ts-btn ts-btn-primary" type="submit">Save</button></footer> }
-</form></div>
+</form></section>
 @if (Model.UserApiKeys is not null) { @(await RenderPartialAsync<UserApiKeyList, AuthenticationPage>(Model)) }
 }
 else if (current.Key == "users") {
@@ -149,9 +171,10 @@ else {
 else if (current.Key == "organizations") { @(await RenderPartialAsync<AuthenticationOrganizations, AuthenticationPage>(Model)) }
 else if (current.Key == "logs") { @(await RenderPartialAsync<AuthenticationLogs, AuthenticationPage>(Model)) }
 else if (current.Key == "webhooks") {
-CardHead("Webhooks", "auth-webhooks-title");
+<section class="ts-card ts-card-boxed ts-card-flush">@{ CardHead("Webhooks", "auth-webhooks-title"); }
 <div class="ts-card-body">@if (Model.Webhooks is not { Count: > 0 } hooks) { if (manage) { Empty("No webhook endpoints yet.", label: "Add webhook", dialog: "auth-create-webhook-dialog"); } else { Empty("Webhook endpoints are unavailable."); } } else {
 <div class="ts-table-wrap" tabindex="0" role="region" aria-label="Webhook endpoints"><table class="ts-table ts-table-stacked"><thead><tr><th scope="col">URL</th><th scope="col">Events</th><th scope="col">Created</th><th scope="col"><span class="ts-sr-only">Actions</span></th></tr></thead><tbody>@foreach (var hook in hooks) { <tr><td class="ts-table-strong ts-break">@hook.Url @if (hook.DisabledAt is not null) { <span class="ts-badge ts-badge-danger">Disabled</span> }</td><td><div class="ts-idp-events">@foreach (var name in hook.EventTypes) { <span class="ts-badge ts-badge-neutral ts-mono">@name</span> }</div></td><td class="ts-idp-nowrap" data-label="Created">@Date(hook.CreatedAt)</td><td class="ts-table-actions">@if (manage) { <div class="ts-row">@{ Action("webhooks/" + hook.Id + "/test", "Send test event", patch: true); }@{ Action("webhooks/" + hook.Id + "/rotate", "Rotate secret"); }@{ Action("webhooks/" + hook.Id + "/delete", "Delete", "Delete this webhook endpoint? It receives no further events.", patch: true); }</div> }</td></tr> }</tbody></table></div> }</div>
+</section>
 @(await RenderPartialAsync<AuthenticationWebhookDeliveries, AuthenticationPage>(Model))
 @if (manage) { HashSet<string> chosen = failed == "auth-create-webhook-dialog" ? [.. Model.Draft!["event_types"].Select(value => value ?? "")] : [];
 <dialog id="auth-create-webhook-dialog" class="ts-dialog" closedby="any" aria-labelledby="auth-create-webhook-dialog-title" data-init="@Open("auth-create-webhook-dialog")"><div class="ts-dialog-content">@{ DialogHead("auth-create-webhook-dialog", "Add a webhook endpoint"); }
@@ -171,19 +194,21 @@ else if (current.Key == "restrictions") {
 }
 else if (current.Key == "sign-in") {
 CardHead("Sign-in methods", "auth-sign-in-title");
-<div class="ts-card-body">@if (settings is null) { Empty("Sign-in methods are unavailable."); } else {
-<form method="post" action="/api/v1/auth-management/settings" id="auth-sign-in-form" data-on:submit="@PatchExpression">@{ Csrf(); }<ul class="ts-list">@foreach (var (name, label, on) in new[] { ("passcode", "Email passcode", settings.Methods.Passcode), ("password", "Password", settings.Methods.Password), ("magic_link", "Magic links", settings.Methods.MagicLink), ("username", "Username sign-in", settings.Methods.Username) }) { <li class="ts-list-item"><label class="ts-list-main ts-strong" for="@("auth-method-" + name)">@label</label><input class="ts-switch" type="checkbox" role="switch" id="@("auth-method-" + name)" name="@name" checked="@on" disabled="@(!manage)" /></li> }</ul><input type="hidden" name="sign_up_mode" value="@settings.Methods.SignUpMode" />
-@if (manage) { <footer class="ts-card-foot"><button class="ts-btn ts-btn-primary" type="submit">Save sign-in methods</button></footer> }</form> }</div>
+@if (settings is null) { <div class="ts-card-body">@{ Empty("Sign-in methods are unavailable."); }</div> } else {
+<form method="post" action="/api/v1/auth-management/settings" id="auth-sign-in-form" data-on:submit="@PatchExpression">@{ Csrf(); }<div class="ts-card-body"><ul class="ts-rows">@foreach (var (name, label, on) in new[] { ("passcode", "Email passcode", settings.Methods.Passcode), ("password", "Password", settings.Methods.Password), ("magic_link", "Magic links", settings.Methods.MagicLink), ("username", "Username sign-in", settings.Methods.Username) }) { <li><label class="ts-list-main ts-strong" for="@("auth-method-" + name)">@label</label><input class="ts-switch" type="checkbox" role="switch" id="@("auth-method-" + name)" name="@name" checked="@on" disabled="@(!manage)" /></li> }</ul><input type="hidden" name="sign_up_mode" value="@settings.Methods.SignUpMode" />
+</div>
+@if (manage) { <footer class="ts-card-foot"><button class="ts-btn ts-btn-primary" type="submit">Save sign-in methods</button></footer> }
+</form> }
 }
 else if (current.Key == "social") {
 CardHead("Social sign-in", "auth-social-title");
 @if (settings is null) { Empty("Social sign-in is unavailable."); } else {
 <ul class="ts-grid ts-idp-providers">@foreach (var provider in settings.Providers) { if (AuthenticationProvider.Find(provider.Provider) is not { } info) { continue; } var id = "auth-provider-" + info.Key; var apple = info.Key == "apple"; var dialog = id + "-dialog";
-<li class="ts-card ts-card-boxed ts-idp-provider" id="@id">
+<li class="ts-card ts-card-boxed ts-card-flush ts-idp-settings ts-idp-provider" id="@id">
 <header class="ts-card-head ts-card-head-title-actions"><div class="ts-card-heading"><h3 class="ts-section-title">@info.Name</h3></div><span class="@(provider.Configured ? "ts-badge ts-badge-success" : "ts-badge ts-badge-neutral")">@(provider.Configured ? "Configured" : "Not configured")</span></header>
-<dl class="ts-kv ts-idp-kv">@if (provider.Configured) { <dt>@info.ClientIdLabel</dt><dd class="ts-mono">@provider.ClientId</dd>@if (provider.Issuer is not null) { <dt>Issuer</dt><dd class="ts-mono">@provider.Issuer</dd> }@if (provider.TeamId is not null) { <dt>Team ID</dt><dd class="ts-mono">@provider.TeamId</dd><dt>Key ID</dt><dd class="ts-mono">@provider.KeyId</dd> } }<dt>Callback URL</dt><dd>@{ CopyValue(id + "-callback", provider.CallbackUrl, "callback URL for " + info.Name); }</dd></dl>
-<div class="ts-row-between ts-idp-provider-foot">@if (info.ConsoleUrl.Length > 0) { <a class="ts-link" href="@info.ConsoleUrl" @(ExternalLink.Attributes)>@info.ConsoleName@(ExternalLink.Hint)</a> } else { <span></span> }
-@if (manage) { <div class="ts-row">@if (provider.Configured) { Action("providers/" + info.Key + "/delete", "Remove", "Remove " + info.Name + " sign-in? Its users can no longer continue with it.", patch: true); }<button class="ts-btn @(provider.Configured ? "ts-btn-secondary" : "ts-btn-primary") ts-btn-sm" type="button" command="show-modal" commandfor="@dialog">@(provider.Configured ? "Update" : "Configure")</button></div> }</div>
+<div class="ts-card-body"><dl class="ts-kv ts-idp-kv">@if (provider.Configured) { <dt>@info.ClientIdLabel</dt><dd class="ts-mono">@provider.ClientId</dd>@if (provider.Issuer is not null) { <dt>Issuer</dt><dd class="ts-mono">@provider.Issuer</dd> }@if (provider.TeamId is not null) { <dt>Team ID</dt><dd class="ts-mono">@provider.TeamId</dd><dt>Key ID</dt><dd class="ts-mono">@provider.KeyId</dd> } }<dt>Callback URL</dt><dd>@{ CopyValue(id + "-callback", provider.CallbackUrl, "callback URL for " + info.Name); }</dd></dl></div>
+<footer class="ts-card-foot ts-row-between ts-idp-provider-foot">@if (info.ConsoleUrl.Length > 0) { <a class="ts-link" href="@info.ConsoleUrl" @(ExternalLink.Attributes)>@info.ConsoleName@(ExternalLink.Hint)</a> } else { <span></span> }
+@if (manage) { <div class="ts-row">@if (provider.Configured) { Action("providers/" + info.Key + "/delete", "Remove", "Remove " + info.Name + " sign-in? Its users can no longer continue with it.", patch: true); }<button class="ts-btn @(provider.Configured ? "ts-btn-secondary" : "ts-btn-primary") ts-btn-sm" type="button" command="show-modal" commandfor="@dialog">@(provider.Configured ? "Update" : "Configure")</button></div> }</footer>
 @if (manage) {
 <dialog id="@dialog" class="ts-dialog" closedby="any" aria-labelledby="@(dialog + "-title")" data-init="@Open(dialog)"><div class="ts-dialog-content">@{ DialogHead(dialog, (provider.Configured ? "Update " : "Configure ") + info.Name + " sign-in"); }
 <form class="ts-form" method="post" action="@("/api/v1/auth-management/providers/" + info.Key)">@{ Csrf(); DialogError(dialog); }
@@ -200,15 +225,19 @@ else if (current.Key == "attack-protection") {
 @(await RenderPartialAsync<AttackProtectionEditor, AuthenticationPage>(Model))
 }
 else if (current.Key == "configuration") {
-CardHead("Configuration", "auth-configuration-title");
-<div class="ts-card-body">@if (settings is null) { Empty("Configuration is unavailable."); } else {
+@if (settings is null) { <section class="ts-card ts-card-boxed ts-card-flush">@{ CardHead("Configuration", "auth-configuration-title"); }<div class="ts-card-body">@{ Empty("Configuration is unavailable."); }</div></section> } else {
 var config = settings.Configuration;
 string Field(string name, string saved) => Model.Draft is { } draft ? draft[name].ToString() : saved;
 <form class="ts-form" method="post" action="/api/v1/auth-management/configuration" id="auth-configuration-form" data-on:submit="@PatchExpression">@{ Csrf(); }<fieldset class="ts-form" disabled="@(!manage)">
-<div class="ts-field"><label class="ts-label" for="auth-redirects">Allowed redirect URLs</label><textarea class="ts-input ts-mono" id="auth-redirects" name="redirect_urls" rows="5" maxlength="204899" spellcheck="false" autocomplete="off" placeholder="https://app.example.com/callback (one per line, up to 100)">@Field("redirect_urls", string.Join("\n", config?.RedirectUrls ?? []))</textarea></div>
-<div class="ts-field ts-idp-short"><label class="ts-label" for="auth-lifetime">Session lifetime (seconds)</label><input class="ts-input" id="auth-lifetime" name="session_lifetime_seconds" type="number" inputmode="numeric" required min="300" max="2592000" step="1" value="@Field("session_lifetime_seconds", (config?.SessionLifetimeSeconds ?? 1209600).ToString(System.Globalization.CultureInfo.InvariantCulture))" /></div>
+<section class="ts-card ts-card-boxed ts-card-flush ts-idp-settings">@{ CardHead("Configuration", "auth-configuration-title"); }
+<div class="ts-card-body"><div class="ts-field"><label class="ts-label" for="auth-redirects">Allowed redirect URLs</label><textarea class="ts-input ts-mono" id="auth-redirects" name="redirect_urls" rows="5" maxlength="204899" spellcheck="false" autocomplete="off" placeholder="https://app.example.com/callback (one per line, up to 100)">@Field("redirect_urls", string.Join("\n", config?.RedirectUrls ?? []))</textarea></div></div>
+</section>
+<section class="ts-card ts-card-boxed ts-card-flush ts-idp-settings"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title">Session lifetime</h2></div><div class="ts-card-actions"></div></header>
+<div class="ts-card-body"><div class="ts-field ts-idp-short"><label class="ts-label" for="auth-lifetime">Session lifetime (seconds)</label><input class="ts-input" id="auth-lifetime" name="session_lifetime_seconds" type="number" inputmode="numeric" required min="300" max="2592000" step="1" value="@Field("session_lifetime_seconds", (config?.SessionLifetimeSeconds ?? 1209600).ToString(CultureInfo.InvariantCulture))" /></div></div>
 @if (manage) { <footer class="ts-card-foot"><button class="ts-btn ts-btn-primary" type="submit">Save configuration</button></footer> }
-</fieldset></form> }</div>
+</section>
+</fieldset></form> }
+
 }
 else if (current.Key == "settings") {
 @(await RenderPartialAsync<TerraScale.Dashboard.Features.AuthenticationManagement.SignInSettingsView, AuthenticationPage>(Model))
@@ -232,7 +261,7 @@ else if (manage) { <button class="ts-btn ts-btn-danger" type="button" command="s
 </div>
 }
 else {
-@if (settings is null) { CardHead("Branding", "auth-branding-title"); Empty("Branding is unavailable."); } else {
+@if (settings is null) { <section class="ts-card ts-card-boxed ts-card-flush">@{ CardHead("Branding", "auth-branding-title"); }<div class="ts-card-body">@{ Empty("Branding is unavailable."); }</div></section> } else {
 @(await RenderPartialAsync<TerraScale.Dashboard.Features.AuthenticationManagement.BrandingEditor, AuthenticationPage>(Model))
 }
 }
@@ -245,7 +274,7 @@ else {
 </section>
 </div>
 @functions {
-private static string Literal(string value) => System.Text.RegularExpressions.Regex.Replace(value, @"[\\^$.*+?()\[\]{}|/]", @"\$&");
+private static string Literal(string value) => Regex.Replace(value, @"[\\^$.*+?()\[\]{}|/]", @"\$&");
 private const string PatchExpression = "@post(el.action, {contentType:'form'})";
 private const string CopyExpression = @"(async () => {
         if (el.getAttribute('aria-disabled') === 'true') return;

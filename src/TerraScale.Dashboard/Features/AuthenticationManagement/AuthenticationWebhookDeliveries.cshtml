@@ -1,7 +1,7 @@
 @using TerraScale.Dashboard.Features.AuthenticationManagement
 @inherits RazorSlice<AuthenticationPage>
 @foreach (var hook in Model.Webhooks ?? []) {
-<section class="ts-card" aria-label="@("Deliveries to " + hook.Url)"><header class="ts-card-head"><div class="ts-card-heading"><h3 class="ts-card-title ts-break">@hook.Url</h3></div></header><div class="ts-card-body">
+<section class="ts-card ts-card-boxed ts-card-flush" aria-label="@("Deliveries to " + hook.Url)"><header class="ts-card-head"><div class="ts-card-heading"><h3 class="ts-card-title ts-break">@hook.Url</h3></div></header><div class="ts-card-body">
 @if (!Model.Deliveries.TryGetValue(hook.Id, out var deliveries) || deliveries.Count == 0) { <div class="ts-empty" role="status"><p class="ts-empty-title">No deliveries yet.</p></div> }
 else { <div class="ts-table-wrap" tabindex="0" role="region" aria-label="Recent deliveries"><table class="ts-table ts-table-stacked"><thead><tr><th scope="col">Event</th><th scope="col">Status</th><th scope="col">Attempts</th><th scope="col">Response</th><th scope="col"><span class="ts-sr-only">Actions</span></th></tr></thead><tbody>
 @foreach (var delivery in deliveries) { var attempt = delivery.RecentAttempts.FirstOrDefault();

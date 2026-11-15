@@ -69,7 +69,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                         Revealed = revealed,
                         Rotated = rotated
                     };
-                    if (http.Request.Headers["Datastar-Request"] == "true")
+                    if (http.Request.IsDatastarRequest)
                     {
                         await DatastarEvents.PatchElementsAsync(http, ApiKeyDetailsContent.Create(details));
                         return Results.Empty;
@@ -81,7 +81,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                 }
             }
             var page = new ApiKeysPage(ShellModel.For(http, context, "API keys"), keys, http.Request.Query["q"].ToString(), http.Request.Query["databaseId"].ToString(), error, create.Length > 0 ? create : http.Request.Query["create"].ToString(), name, revealed, http.Request.Query["status"].ToString(), draftScopes.Length > 0 ? draftScopes : http.Request.Query["scopes"].ToString(), draftDatabaseId, DraftExpiresInDays: draftExpiresInDays, DraftAllowedCidrs: draftAllowedCidrs, Now: now, Cursor: cursor, HasMore: hasMore) { Warning = warning, ViewerOnly = viewerOnly, Reopen = reopen, DraftGrace = grace, Rotated = rotated };
-            if (http.Request.Headers["Datastar-Request"] == "true")
+            if (http.Request.IsDatastarRequest)
             {
                 await DatastarEvents.PatchElementsAsync(http, ApiKeysContent.Create(page));
                 return Results.Empty;
@@ -103,13 +103,13 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             }
             if (key is null)
             {
-                return http.Request.Headers["Datastar-Request"] == "true"
+                return http.Request.IsDatastarRequest
                     ? RequestError.Response(http, StatusCodes.Status503ServiceUnavailable, IssuerUnavailable)
                     : NotFoundEndpoints.Page(http, context);
             }
 
             var page = new ApiKeyDetailsPage(ShellModel.For(http, context, key.Name), key, http.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow());
-            if (http.Request.Headers["Datastar-Request"] == "true")
+            if (http.Request.IsDatastarRequest)
             {
                 await DatastarEvents.PatchElementsAsync(http, ApiKeyDetailsContent.Create(page));
                 return Results.Empty;
@@ -273,7 +273,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
     {
         public static async Task<IResult> RevokedAsync(HttpContext http, AccountContext context, ApiKeyService keys, DatabaseService databases)
         {
-            if (http.Request.Headers["Datastar-Request"] == "true")
+            if (http.Request.IsDatastarRequest)
             {
                 await ApiKeyPages.PageAsync(http, context, keys, databases);
                 return Results.Empty;

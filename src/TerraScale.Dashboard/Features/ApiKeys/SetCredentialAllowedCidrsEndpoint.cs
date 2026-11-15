@@ -1,3 +1,4 @@
+using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Common.UI;
@@ -36,7 +37,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             }
             catch (Exception error) when (DatabaseEndpoints.KnownFailure(error) || error is HttpRequestException)
             { return DatabaseEndpoints.WantsHtml(http) ? await ApiKeyPages.PageAsync(http, context, keys, databases, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error), draftKeyCidrs: keyId, draftAllowedCidrs: form["allowedCidrs"].ToString()) : DatabaseEndpoints.Failure(error); }
-            if (http.Request.Headers["Datastar-Request"] == "true")
+            if (http.Request.IsDatastarRequest)
             {
                 await ApiKeyPages.DetailsAsync(http, context, keys, databases, keyId);
                 return Results.Empty;

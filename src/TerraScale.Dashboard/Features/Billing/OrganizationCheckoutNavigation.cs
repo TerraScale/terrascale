@@ -1,3 +1,4 @@
+using TerraScale.Dashboard.Platform.Datastar;
 using System.Net;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Cryptography;
@@ -16,7 +17,7 @@ internal static class OrganizationCheckoutNavigation
     public static bool IsNavigation(HttpContext http) =>
         HttpMethods.IsGet(http.Request.Method) && !http.Request.Path.StartsWithSegments("/api")
         && !http.Request.Path.StartsWithSegments("/mcp") && http.Request.Path != "/billing/checkout/return"
-        && http.Request.Headers["Datastar-Request"] != "true"
+        && !http.Request.IsDatastarRequest
         && http.Request.Headers.Accept.Any(value => value?.Contains("text/html", StringComparison.OrdinalIgnoreCase) == true)
         && (!http.Request.Headers.TryGetValue("Sec-Fetch-Dest", out var destination) || destination == "document");
 

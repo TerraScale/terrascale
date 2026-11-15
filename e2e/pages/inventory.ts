@@ -603,6 +603,12 @@ export const dashboardStates: readonly PageState[] = [
       const grant = page.locator('main tr[data-project-grant-user]');
       await expect(grant).toHaveCount(1);
       await expect(grant).toContainText(journey.email);
+      await grant.getByRole('button', { name: 'Change role', exact: true }).click();
+      await page.locator('dialog[open]').getByRole('button', { name: 'Save role', exact: true }).click();
+      await expect(page.locator('dialog[open]')).toHaveCount(0);
+      await grant.getByRole('button', { name: 'Change role', exact: true }).click();
+      await page.locator('dialog[open]').getByRole('button', { name: 'Cancel', exact: true }).click();
+      await expect(grant).toContainText(journey.email);
     },
   },
   {

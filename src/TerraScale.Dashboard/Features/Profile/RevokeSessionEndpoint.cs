@@ -25,7 +25,7 @@ namespace TerraScale.Dashboard.Features.Profile
             }
 
             await sessions.RevokeAsync(http, context.Session, http.Request.RouteValues["id"]?.ToString() ?? "");
-            if (http.Request.Headers["Datastar-Request"] == "true")
+            if (http.Request.IsDatastarRequest)
             {
                 await DatastarEvents.PatchElementsAsync(http, ProfilePatch.Create(new(ShellModel.For(http, context, "Profile"), "sessions", Status: "Session revoked.", Sessions: await sessions.ListAsync(http, context.Session))));
                 return Results.Empty;

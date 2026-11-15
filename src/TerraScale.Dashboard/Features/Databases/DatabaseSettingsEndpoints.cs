@@ -36,7 +36,7 @@ namespace TerraScale.Dashboard.Features.Databases
             try
             {
                 var database = await databases.RenameAsync(context, id, form["name"].ToString(), form["confirmName"].ToString(), http.RequestAborted);
-                if (http.Request.Headers["Datastar-Request"] == "true")
+                if (http.Request.IsDatastarRequest)
                 {
                     return await PageAsync(http, await databases.CurrentAsync(context, http.RequestAborted), id, renamed: true);
                 }
@@ -45,7 +45,7 @@ namespace TerraScale.Dashboard.Features.Databases
             catch (Exception error) when (!http.RequestAborted.IsCancellationRequested && (DatabaseResults.KnownFailure(error) || error is HttpRequestException or IOException or System.Text.Json.JsonException or OperationCanceledException))
             {
                 var message = DatabaseResults.Status(error) >= 500 ? "The rename result could not be confirmed. Reload Settings to check the current name before retrying." : DatabaseResults.Message(error);
-                return (DatabaseResults.WantsHtml(http) || http.Request.Headers["Datastar-Request"] == "true") && DatabaseResults.Status(error) != 404
+                return (DatabaseResults.WantsHtml(http) || http.Request.IsDatastarRequest) && DatabaseResults.Status(error) != 404
                     ? await PageAsync(http, context, id, message, form["name"].ToString(), form["confirmName"].ToString(), DatabaseResults.Status(error))
                     : DatabaseResults.PageFailure(http, context, error);
             }
@@ -61,7 +61,7 @@ namespace TerraScale.Dashboard.Features.Databases
                     : "");
                 var model = new DatabaseSettingsPage(ShellModel.For(http, context, database.Name + " · Settings"), database, error,
                     name.Length == 0 && error.Length == 0 ? database.Name : name, confirmation, renamed || http.Request.Query["renamed"] == "1", hours, expiryError, expirySaved);
-                if (http.Request.Headers["Datastar-Request"] == "true")
+                if (http.Request.IsDatastarRequest)
                 {
                     await DatastarEvents.PatchElementsAsync(http, DatabaseSettingsSection.Create(model));
                     return Results.Empty;

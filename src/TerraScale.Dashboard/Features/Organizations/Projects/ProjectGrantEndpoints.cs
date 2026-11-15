@@ -55,7 +55,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
             var role = form["role"].ToString();
             async Task<IResult> Error(string message, int status)
             {
-                if (http.Request.Headers["Datastar-Request"] == "true")
+                if (http.Request.IsDatastarRequest)
                 {
                     http.Response.Headers.CacheControl = "no-store";
                     var errorShell = ShellModel.For(http, context, "Project grants") with { ReturnUrl = WorkspaceUrl.For(context, "/project/members", replace: true) };
@@ -92,7 +92,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
                     throw new AccountAccessException("Choose grant/change or remove explicit grant.", 422);
                 }
 
-                if (http.Request.Headers["Datastar-Request"] == "true")
+                if (http.Request.IsDatastarRequest)
                 {
                     return await PatchAsync(http, context, grants, notice: "Explicit project grant updated.");
                 }

@@ -65,7 +65,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 catch (Exception error) when (error is IOException or HttpRequestException or Stripe.StripeException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
                 { return Notice(http, context, "billing", "Billing information could not be loaded. Your organization and projects are still available.", 503); }
             }
-            if (http.Request.Headers["Datastar-Request"] == "true" && page.Tab is "members" or "invitations")
+            if (http.Request.IsDatastarRequest && page.Tab is "members" or "invitations")
             {
                 await DatastarEvents.PatchElementsAsync(http, OrganizationAccessPage.Create(page));
                 return Results.Empty;

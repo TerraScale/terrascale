@@ -236,7 +236,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
 
         private static async Task<IResult> SectionResultAsync(HttpContext http, AccountContext context, ITsAuthProjects projects, string key, string error = "", int status = 200)
         {
-            if (http.Request.Headers["Datastar-Request"] == "true")
+            if (http.Request.IsDatastarRequest)
             {
                 var page = await PageModelAsync(http, context, projects, key, error, status);
                 await DatastarEvents.PatchElementsAsync(http, AuthenticationSectionView.Create(page));
