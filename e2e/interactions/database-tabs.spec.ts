@@ -18,12 +18,14 @@ test('database settings, grants and filters save without navigating', async ({ p
   await expect(page).toHaveURL(settingsUrl);
   await expect(page.locator('html')).toHaveAttribute('data-in-place', 'settings');
   const expiry = page.locator('#database-expiry');
-  await expiry.getByRole('radio', { name: '1 day', exact: true }).check();
+  await expiry.locator('label.ts-chip').filter({ hasText: /^1 day$/ }).click();
+  await expect(expiry.getByRole('radio', { name: '1 day', exact: true })).toBeChecked();
   await expiry.getByRole('button', { name: 'Save expiry', exact: true }).click();
   await expect(expiry.getByRole('radio', { name: '1 day', exact: true })).toBeChecked();
   await expect(page.locator('#expiry-saved')).toBeVisible();
   await expect(page).toHaveURL(settingsUrl);
-  await expiry.getByRole('radio', { name: 'Never', exact: true }).check();
+  await expiry.locator('label.ts-chip').filter({ hasText: /^Never$/ }).click();
+  await expect(expiry.getByRole('radio', { name: 'Never', exact: true })).toBeChecked();
   await expiry.getByRole('button', { name: 'Save expiry', exact: true }).click();
   await expect(page.locator('#expiry-current')).toHaveText('Never');
   await expect(page).toHaveURL(settingsUrl);
