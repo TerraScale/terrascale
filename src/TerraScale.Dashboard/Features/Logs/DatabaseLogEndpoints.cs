@@ -1,5 +1,6 @@
 using System.Text.Json;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.TerraBase.Contracts.Logs;
 
 namespace TerraScale.Dashboard.Features.Logs
@@ -91,7 +92,13 @@ namespace TerraScale.Dashboard.Features.Logs
                 code = error is AccountAccessException { StatusCode: 400 } ? 400 : 503;
                 message = code == 400 ? "Choose a valid status filter." : "Request logs for " + database.Name + " are unavailable.";
             }
-            var page = DatabaseLogView.Create(new(ShellModel.For(http, context, database.Name + " · Logs"), database, status, logs, message, drain, drainError));
+            var model = new DatabaseLogPage(ShellModel.For(http, context, database.Name + " · Logs"), database, status, logs, message, drain, drainError);
+            if (http.Request.Headers["Datastar-Request"] == "true")
+            {
+                await DatastarEvents.PatchElementsAsync(http, DatabaseLogSection.Create(model));
+                return Results.Empty;
+            }
+            var page = DatabaseLogView.Create(model);
             page.StatusCode = drainStatus != 200 ? drainStatus : code;
             return (IResult)page;
         }

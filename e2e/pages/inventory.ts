@@ -101,8 +101,8 @@ const databaseTabs: [string, string, Identity][] = [
   ['logs', 'Logs', title('Request logs', 2)],
   ['backups', 'Backups', title('Restore to a point in time', 2)],
   ['branches', 'Forks', title('Forks', 2)],
-  ['settings', 'Settings', title('Settings', 2)],
-  ['danger', 'Danger zone', title('Danger zone', 2)],
+  ['settings', 'Settings', title('Settings')],
+  ['danger', 'Danger zone', title('Delete database', 2)],
 ];
 
 const tabStates: Record<string, PagePattern['query']> = {
@@ -252,7 +252,7 @@ export const dashboardStates: readonly PageState[] = [
     heading: title('Connect', 2),
     data: async (page, journey) => {
       await databaseHeader(page, journey);
-      await expect(page.locator('#grants, #backup-policy, #danger-zone-title')).toHaveCount(0);
+      await expect(page.locator('#grants, #backup-schedule, #danger-zone-title')).toHaveCount(0);
       await connectCard(page, journey);
     },
   },
@@ -263,7 +263,7 @@ export const dashboardStates: readonly PageState[] = [
     heading: title('Connect', 2),
     data: async (page, journey) => {
       await databaseHeader(page, journey);
-      await expect(page.locator('#grants, #backup-policy, #danger-zone-title')).toHaveCount(0);
+      await expect(page.locator('#grants, #backup-schedule, #danger-zone-title')).toHaveCount(0);
     },
   },
   ...databaseTabs.map(
@@ -292,6 +292,26 @@ export const dashboardStates: readonly PageState[] = [
       },
     }),
   ),
+  {
+    name: 'database conflicts filtered by table',
+    url: (journey) => `${database(journey)}/conflicts?table=records`,
+    covers: { path: databasePath('conflicts'), query: { table: /^records$/, since: /^$/, until: /^$/ } },
+    heading: title('Conflicts', 2),
+    data: async (page) => {
+      await expect(page.locator('#conflict-table')).toHaveValue('records');
+      await expect(page.locator('#conflicts')).toContainText('No conflicts match these filters.');
+    },
+  },
+  {
+    name: 'database logs filtered by server errors',
+    url: (journey) => `${database(journey)}/logs?status=5xx`,
+    covers: { path: databasePath('logs'), query: { status: /^5xx$/ } },
+    heading: title('Request logs', 2),
+    data: async (page) => {
+      await expect(page.locator('#request-status')).toHaveValue('5xx');
+      await expect(page.locator('#request-logs')).toContainText('No recorded requests match this filter');
+    },
+  },
   {
     name: 'fork dialog',
     url: (journey) => `${database(journey)}/branches?fork=1`,

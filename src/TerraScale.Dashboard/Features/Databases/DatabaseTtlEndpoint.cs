@@ -29,12 +29,16 @@ namespace TerraScale.Dashboard.Features.Databases
                     throw new AccountAccessException("Enter a TTL in hours.", 422);
                 }
                 var database = await databases.SetTtlAsync(context, id, clear ? null : DatabaseTtl.Hours(form["ttlHours"].ToString()), http.RequestAborted);
+                if (http.Request.Headers["Datastar-Request"] == "true")
+                {
+                    return await DatabaseSettingsEndpoints.PageAsync(http, await databases.CurrentAsync(context, http.RequestAborted), id, ttlHours: clear ? "" : form["ttlHours"].ToString(), expirySaved: true);
+                }
                 return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "settings")) : Results.Json(database, DatabaseTtlJson.Default.DatabaseRecord);
             }
             catch (Exception error) when (!http.RequestAborted.IsCancellationRequested && (DatabaseResults.KnownFailure(error) || error is HttpRequestException or IOException or System.Text.Json.JsonException or OperationCanceledException))
             {
-                return DatabaseResults.WantsHtml(http) && DatabaseResults.Status(error) != 404
-                    ? DatabaseSettingsEndpoints.Page(http, context, id, DatabaseResults.Status(error) >= 500 ? "The expiry could not be confirmed. Reload Settings before retrying." : DatabaseResults.Message(error), status: DatabaseResults.Status(error))
+                return (DatabaseResults.WantsHtml(http) || http.Request.Headers["Datastar-Request"] == "true") && DatabaseResults.Status(error) != 404
+                    ? await DatabaseSettingsEndpoints.PageAsync(http, context, id, status: DatabaseResults.Status(error), ttlHours: form["ttlHours"].ToString(), expiryError: DatabaseResults.Status(error) >= 500 ? "The expiry could not be confirmed. Reload Settings before retrying." : DatabaseResults.Message(error))
                     : DatabaseResults.PageFailure(http, context, error);
             }
         }
