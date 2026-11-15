@@ -183,6 +183,12 @@ namespace TerraScale.Dashboard.Features.Notifications
                 !await ChangesDueAsync(snapshot, projectId, organization, project, units, cancellationToken)) { return; }
             await jobs.RunAsync(id, TimeSpan.Zero, async (claim, token) =>
             {
+                if (!await claim.Database.AlertRules.AsNoTracking().AnyAsync(row => row.ProjectId == projectId && row.OrganizationId == organizationId, token))
+                {
+                    claim.Database.BackgroundJobs.Remove(claim.State);
+                    await claim.Database.SaveChangesAsync(token);
+                    return;
+                }
                 await EvaluateAsync(projectId, organization, project, units, claim, token);
                 await DeliverAsync(projectId, organizationId, claim, token);
             }, cancellationToken, fence: state?.State.Checkpoint ?? "");

@@ -77,6 +77,12 @@ namespace TerraScale.Dashboard.Platform.Persistence
                 if (state is not null && !Due(state.State, plan, state.Now)) { return; }
                 await jobs.RunAsync(id, TimeSpan.Zero, async (claim, token) =>
                 {
+                    if (!await claim.Database.Organizations.AsNoTracking().AnyAsync(row => row.Id == organization.Id && row.ErasureId == null, token))
+                    {
+                        claim.Database.BackgroundJobs.Remove(claim.State);
+                        await claim.Database.SaveChangesAsync(token);
+                        return;
+                    }
                     var row = claim.State;
                     row.Failures = row.Cursor == plan || row.Cursor == plan + "/projects" ? row.Failures + 1 : 1;
                     row.Cursor = plan;
