@@ -76,15 +76,15 @@ const test = base.extend<{}, { promotion: Promotion }>({
       children.delete(child);
     }
 
-    async function shipping(): Promise<void> {
+    async function shipping(database: unknown): Promise<void> {
+      const id = '/' + String(database) + '/nodes/';
       await expect.poll(async () => {
         try {
-          const text = await (await fetch('http://127.0.0.1:' + promotionPorts.metricsGru + '/metrics')).text();
-          const value = (name: string) => Number(text.match(new RegExp('^' + name + '(?:\\{[^}]*\\})? (\\d+(?:\\.\\d+)?)', 'm'))?.[1] ?? '0');
-          const files = value('terrabase_backup_files');
-          return files > 0 && value('terrabase_backup_generations_total') >= files;
+          const status = await request(home, 'GET', '/v1/backup', undefined, false);
+          const files = status.files as { file?: string; generation?: string | null }[] | undefined;
+          return files?.some(file => file.file?.includes(id) && file.generation) ?? false;
         } catch { return false; }
-      }, { message: 'the home has started shipping', intervals: [500] }).toBe(true);
+      }, { message: 'the home has started shipping this database' }).toBe(true);
     }
 
     async function ready(port: number, clock = true): Promise<void> {
@@ -184,16 +184,7 @@ const test = base.extend<{}, { promotion: Promotion }>({
           statements: [{ sql: 'CREATE TABLE keyring_rows(value INTEGER)' }, { sql: 'INSERT INTO keyring_rows VALUES(' + ([one, two].includes(database) ? '42' : '0') + ')' }],
         }, false);
       }
-      await request(home, 'POST', projectPath + '/databases/' + String(failed.id) + '/sql/execute', {
-        statements: [{ sql: 'CREATE TABLE copy_payload(value BLOB)' }],
-      }, false);
-      for (let batch = 0; batch < 8; batch++) {
-        await request(home, 'POST', projectPath + '/databases/' + String(failed.id) + '/sql/execute', {
-          statements: [{ sql: 'WITH RECURSIVE numbers(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM numbers WHERE n<64) INSERT INTO copy_payload SELECT zeroblob(4096) FROM numbers' }],
-        }, false);
-      }
       const sql = { statements: [{ sql: 'SELECT value FROM keyring_rows' }] };
-      const oneShipped = shipping();
       await expect.poll(() => existsSync(replicaKey(one.id)) && existsSync(replicaKey(two.id))).toBe(true);
       await request(replica, 'POST', syncPath(one.id) + '/catch-up', undefined, false);
       await expect.poll(async () => {
@@ -217,7 +208,7 @@ const test = base.extend<{}, { promotion: Promotion }>({
       const firstPlacement = await request(home, 'GET', syncPath(one.id) + '/placement', undefined, false);
       const firstObserved = observePromotion(organization.id, project.id, one.id);
       await request(replica, 'POST', syncPath(one.id) + '/catch-up', undefined, false);
-      await oneShipped;
+      await shipping(one.id);
       await request(replica, 'POST', syncPath(one.id) + '/promote', {
         moveId: '01J00000000000000000000001', fromRegion: 'gru', version: Number(firstPlacement.placementVersion) + 1,
         replicaRegions: ['gru'], allRegions: false, name: firstPlacement.name, identity: firstPlacement.identity,
@@ -235,7 +226,6 @@ const test = base.extend<{}, { promotion: Promotion }>({
       second = start('fra', 'k1');
       await ready(promotionPorts.gru);
       await ready(promotionPorts.fra);
-      const twoShipped = shipping();
       await expect.poll(async () => (await (await fetch('http://127.0.0.1:' + promotionPorts.metricsFra + '/metrics')).text())
         .match(/terrabase_keys_last_complete[^\n]* (\d+)/)?.[1] ?? '0').not.toBe('0');
       expect(readFileSync(replicaKey(two.id), 'ascii').startsWith('TERRABASE-REPLICA-KEY-2\nv2.k1.')).toBe(true);
@@ -249,7 +239,7 @@ const test = base.extend<{}, { promotion: Promotion }>({
       const secondPlacement = await request(home, 'GET', syncPath(two.id) + '/placement', undefined, false);
       const secondObserved = observePromotion(organization.id, project.id, two.id);
       await request(replica, 'POST', syncPath(two.id) + '/catch-up', undefined, false);
-      await twoShipped;
+      await shipping(two.id);
       let promoting = true;
       let concurrentWrites = 0;
       let writesBeforeReply = 0;
@@ -289,6 +279,22 @@ const test = base.extend<{}, { promotion: Promotion }>({
       expect((await request(replica, 'POST', projectPath + '/databases/' + String(two.id) + '/sql/execute', sql, false)).results).toMatchObject([{ rows: [[42]] }]);
       console.log('two keys promotion: replica scan and old-key promotion both rewrapped; verified destination opens; source retained');
       console.log('verification refusal: no reachable wrap-corruption input without a product switch; helper failure paths checked by code reading');
+      await request(home, 'POST', projectPath + '/databases/' + String(failed.id) + '/sql/execute', {
+        statements: [{ sql: 'CREATE TABLE copy_payload(value BLOB)' }],
+      }, false);
+      for (let batch = 0; batch < 8; batch++) {
+        await request(home, 'POST', projectPath + '/databases/' + String(failed.id) + '/sql/execute', {
+          statements: [{ sql: 'WITH RECURSIVE numbers(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM numbers WHERE n<64) INSERT INTO copy_payload SELECT zeroblob(4096) FROM numbers' }],
+        }, false);
+      }
+      await request(replica, 'POST', syncPath(failed.id) + '/catch-up', undefined, false);
+      await expect.poll(async () => {
+        try {
+          return (await request(replica, 'POST', projectPath + '/databases/' + String(failed.id) + '/sql/execute', {
+            statements: [{ sql: 'SELECT count(*) FROM copy_payload' }],
+          }, false)).results;
+        } catch (error) { return { error: error instanceof Error ? error.message : 'request failed' }; }
+      }).toMatchObject([{ rows: [[512]] }]);
       expect(process.env.E2E_KEYRING_DRIVER, 'lifecycle driver is required').toBeTruthy();
       {
         await stop(second);
