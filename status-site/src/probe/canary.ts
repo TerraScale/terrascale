@@ -335,8 +335,6 @@ const TOKEN_MARGIN_MS = 4 * CANARY_TIMEOUT_MS;
 /** Exchanges in flight, shared by concurrent probes of the same key and scope. */
 const exchanges = new WeakMap<typeof fetch, Map<string, Promise<string>>>();
 
-/** Drop every cached token for this fetcher. A dev round does this so it
-    exchanges the key it is measuring; the minute cron keeps its cache. */
 export function forgetTokens(fetcher: typeof fetch = fetch): void {
   tokens.get(fetcher)?.clear();
   exchanges.get(fetcher)?.clear();
