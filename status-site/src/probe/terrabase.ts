@@ -7,8 +7,8 @@ import { logEvent } from "../log";
 import { NOT_CONFIGURED } from "../domain/status";
 import {
   CANARY_VANTAGE,
+  canaryFailure,
   CanaryError,
-  CanaryMonitorError,
   canaryJson,
   CANARY_TABLE,
   credentialExpiry,
@@ -198,11 +198,6 @@ export async function runTerraBase(
   } catch (error) {
     if (!(error instanceof CanaryError)) throw error;
     if (probe === SQL_PROBE) forgetToken(config as CanaryConfig, fetcher);
-    return {
-      ok: error instanceof CanaryMonitorError ? null : false,
-      latencyMs: null,
-      error: error.message,
-      credentialExpiresAt,
-    };
+    return canaryFailure(error, credentialExpiresAt);
   }
 }

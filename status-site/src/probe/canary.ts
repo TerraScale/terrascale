@@ -389,6 +389,21 @@ function tokenError(error: unknown): never {
   throw error;
 }
 
+export function canaryFailure(error: CanaryError, credentialExpiresAt?: string | null): CanaryResult {
+  const rejected =
+    !(error instanceof CanaryMonitorError) && error.code !== undefined && CREDENTIAL_ERRORS.has(error.code);
+  return {
+    ok: error instanceof CanaryMonitorError || rejected ? null : false,
+    latencyMs: null,
+    error: rejected
+      ? error.code === "key_expired"
+        ? CANARY_CREDENTIAL_EXPIRED
+        : CANARY_CREDENTIAL_INVALID
+      : error.message,
+    ...(credentialExpiresAt ? { credentialExpiresAt } : {}),
+  };
+}
+
 async function exchangeToken(
   config: Pick<CanaryConfig, "issuer" | "project" | "key">,
   fetcher: typeof fetch,
@@ -468,7 +483,7 @@ export async function runTokenProbe(config: CanaryConfig, fetcher: typeof fetch 
     };
   } catch (error) {
     if (!(error instanceof CanaryError)) throw error;
-    return { ok: error instanceof CanaryMonitorError ? null : false, latencyMs: null, error: error.message };
+    return canaryFailure(error);
   }
 }
 
@@ -523,7 +538,7 @@ export async function runCanary(
   } catch (error) {
     if (!(error instanceof CanaryError)) throw error;
     forgetToken(config, fetcher);
-    return { ok: error instanceof CanaryMonitorError ? null : false, latencyMs: null, error: error.message };
+    return canaryFailure(error);
   }
 }
 

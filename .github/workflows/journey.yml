@@ -260,6 +260,16 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('e2e/package-lock.json') }}
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        id: status-npm
+        if: contains(matrix.projects, 'interactions')
+        with:
+          path: status-site/node_modules
+          key: status-npm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('status-site/package-lock.json') }}
+      - name: Install the status site
+        if: contains(matrix.projects, 'interactions')
+        working-directory: status-site
+        run: if [ "${{ steps.status-npm.outputs.cache-hit }}" != true ]; then npm ci --no-audit --no-fund; fi
       - name: Install the suite, its browser and the runners
         working-directory: e2e
         run: |

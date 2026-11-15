@@ -17,7 +17,7 @@
     },
   ],
   // Cloudflare Email Sending for subscription mail (src/notify/outbox.ts).
-  "send_email": [{ "name": "EMAIL", "remote": true }],
+  "send_email": [{ "name": "EMAIL" }],
   // The coordinator runs a probe round every 30 seconds (src/probe/coordinator.ts)
   // and asks every vantage point (src/vantage/point.ts) to probe.
   "durable_objects": {

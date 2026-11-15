@@ -20,7 +20,7 @@ export class Coordinator extends DurableObject<Env> {
   /** Schedules the next round unless one is already scheduled. */
   async arm(): Promise<void> {
     if ((await this.ctx.storage.getAlarm()) === null) {
-      await this.ctx.storage.setAlarm(roundOf(Date.now()) + ROUND_MS);
+      await this.ctx.storage.setAlarm(Date.now());
     }
   }
 
