@@ -41,7 +41,7 @@ namespace TerraScale.Dashboard.Features.Usage
 
         private static async Task<IResult> SavedAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, UsageService usage, string saved)
         {
-            if (http.Request.Headers["Datastar-Request"] != "true")
+            if (!http.Request.IsDatastarRequest)
             {
                 return HttpRedirects.SeeOther("/usage?tab=settings&saved=" + saved);
             }

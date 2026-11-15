@@ -107,7 +107,7 @@ namespace TerraScale.Dashboard.Features.Profile
                 {
                     await ProfileChanges.SaveAsync(accounts, context.Session, form["name"].ToString(), form["phoneNumber"].ToString(), http.RequestAborted);
                 }
-                if (http.Request.Headers["Datastar-Request"] == "true")
+                if (http.Request.IsDatastarRequest)
                 {
                     context = await accounts.GetContextAsync(context.Session, http.RequestAborted);
                     await DatastarEvents.PatchElementsAsync(http, ProfilePatch.Create(new(ShellModel.For(http, context, "Profile"), "profile", Status: language ? "Language preference saved." : "Profile saved.", Sessions: await sessions.ListAsync(http, context.Session))));
@@ -117,7 +117,7 @@ namespace TerraScale.Dashboard.Features.Profile
             }
             catch (AccountAccessException error)
             {
-                if (http.Request.Headers["Datastar-Request"] == "true")
+                if (http.Request.IsDatastarRequest)
                 {
                     await DatastarEvents.PatchElementsAsync(http, ProfilePatch.Create(new(ShellModel.For(http, context, "Profile"), "profile", Error: error.Message, Sessions: await sessions.ListAsync(http, context.Session))
                     {

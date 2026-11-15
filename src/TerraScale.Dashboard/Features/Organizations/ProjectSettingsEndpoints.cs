@@ -43,7 +43,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             try
             {
                 await operations.UpdateProjectAsync(context, name, null, http.RequestAborted);
-                if (http.Request.Headers["Datastar-Request"] == "true")
+                if (http.Request.IsDatastarRequest)
                 {
                     context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, reload: true);
                     await DatastarEvents.PatchElementsAsync(http, Projects.ProjectSettingsPatch.Create(new(ShellModel.For(http, context, "Project settings"), name)));
@@ -53,7 +53,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             }
             catch (AccountAccessException error)
             {
-                if (http.Request.Headers["Datastar-Request"] == "true")
+                if (http.Request.IsDatastarRequest)
                 {
                     await DatastarEvents.PatchElementsAsync(http, Projects.ProjectSettingsPatch.Create(new(ShellModel.For(http, context, "Project settings"), name, error.Message)));
                     return Results.Empty;
@@ -62,7 +62,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             }
             catch (Exception error) when (error is IOException or HttpRequestException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
             {
-                if (http.Request.Headers["Datastar-Request"] == "true")
+                if (http.Request.IsDatastarRequest)
                 {
                     await DatastarEvents.PatchElementsAsync(http, Projects.ProjectSettingsPatch.Create(new(ShellModel.For(http, context, "Project settings"), name, "The rename could not be confirmed. Reload project settings to check its current name, then retry if needed.")));
                     return Results.Empty;

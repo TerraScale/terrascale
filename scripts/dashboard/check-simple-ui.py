@@ -6,6 +6,7 @@ Also reject a Datastar attribute, in single or double quotes, whose Razor value 
 null, null!, null as T, default, default(T) or default!, also in a conditional nested in a branch, a lambda body or a
 switch arm: Razor renders that branch as an empty value and Datastar throws on it. That check skips Razor and HTML comments.
 """
+import html
 import re
 import sys
 from pathlib import Path
@@ -196,8 +197,42 @@ def null_datastar_values(text):
             yield text.count('\n', 0, match.start(1)) + 1, match.group(1)
 
 
+def attribute(tag, name):
+    match = re.search(rf'\s{re.escape(name)}\s*=\s*(["\'])(.*?)\1', tag, re.DOTALL | re.IGNORECASE)
+    return match.group(2) if match else ''
+
+
+def form_policy(text):
+    text = COMMENT.sub(lambda match: re.sub(r'[^\n]', ' ', match.group()), text)
+    for match in re.finditer(r'\sstyle\s*=\s*["\']', text, re.IGNORECASE):
+        yield text.count('\n', 0, match.start() + match.group().lower().index('style')) + 1, 'no-inline-style: use classes, hidden or CSSOM'
+    for form in re.finditer(r'<form\b[^>]*>.*?</form\s*>', text, re.DOTALL | re.IGNORECASE):
+        body = form.group()
+        tag = body[:body.index('>') + 1]
+        classes = attribute(tag, 'class').split()
+        line = text.count('\n', 0, form.start()) + 1
+        if 'ts-row' in classes and attribute(tag, 'method').lower() in ('', 'get'):
+            yield line, 'filter-form-layout: use ts-filters instead of ts-row'
+        if (
+            re.search(r'<(?:input|button|select|textarea)\b[^>]*\sname\s*=\s*(["\'])action\1', body, re.IGNORECASE)
+            and re.search(r'@@?post\s*\(\s*el\.action\b', body)
+        ):
+            yield line, "form-action-shadow: use el.getAttribute('action') when a field is named action"
+        if 'ts-filters' in classes:
+            for button in re.finditer(r'<button\b([^>]*)>(.*?)</button\s*>|<input\b([^>]*)>', body, re.DOTALL | re.IGNORECASE):
+                attrs = ' ' + (button.group(1) if button.group(1) is not None else button.group(3))
+                kind = attribute(attrs, 'type').lower()
+                if kind != 'submit' and (kind or button.group(3) is not None):
+                    continue
+                label = attribute(attrs, 'aria-label') or button.group(2) or attribute(attrs, 'value')
+                label = html.unescape(re.sub(r'<[^>]+>|@Icons\.Render\([^)]*\)', '', label)).strip()
+                if re.match(r'^(apply|filter|search)\b', label, re.IGNORECASE):
+                    yield text.count('\n', 0, form.start() + button.start()) + 1, 'filters-on-change: remove the submit button and apply filters on change'
+
+
 failures = []
 datastar = []
+forms = []
 for source in SOURCES:
     for path in source.rglob('*'):
         if path.suffix not in SUFFIXES or any(part in SKIP for part in path.relative_to(ROOT).parts):
@@ -207,6 +242,8 @@ for source in SOURCES:
             if match := BANNED.search(line):
                 failures.append(f'{path.relative_to(ROOT)}:{number}: {match.group(0)}')
         if path.suffix == '.cshtml':
+            if path.is_relative_to(ROOT / 'src/TerraScale.Dashboard/Features'):
+                forms.extend(f'{path.relative_to(ROOT)}:{number}: {rule}' for number, rule in form_policy(text))
             datastar.extend(f'{path.relative_to(ROOT)}:{number}: {name}' for number, name in null_datastar_values(text))
 
 if failures:
@@ -216,5 +253,7 @@ if datastar:
     print('A Datastar attribute that needs a value gets null from a C# conditional;', file=sys.stderr)
     print('Razor renders that branch as an empty value and Datastar throws on it:', file=sys.stderr)
     print('\n'.join(datastar), file=sys.stderr)
-if failures or datastar:
+if forms:
+    print('\n'.join(forms), file=sys.stderr)
+if failures or datastar or forms:
     sys.exit(1)

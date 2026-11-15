@@ -21,7 +21,7 @@ namespace TerraScale.Dashboard.Features.Backups
                 var (limit, after) = CursorPaging.Read(http.Request);
                 var id = http.Request.Query["databaseId"].ToString();
                 var before = http.Request.Query["before"].ToString();
-                if (http.Request.Headers["Datastar-Request"] == "true")
+                if (http.Request.IsDatastarRequest)
                 {
                     var listing = await backups.ListAsync(context, id, http.RequestAborted);
                     var database = DatabaseService.Database(context, id);

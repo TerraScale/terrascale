@@ -108,13 +108,36 @@ async function move(cells: Cells, id: string, label: string, timeout: number, st
   expect((await progress(cells, id, replica, projectId)).regions.map(row => row.region)).toEqual(['fra']);
 }
 
-test('R1 create two regions, read across listeners and observe a pull', async ({ cells }) => {
+test('R1 create two regions, read across listeners and observe a pull', async ({ cells, browser }, info) => {
   const created = await create(cells, ['gru', 'fra']);
   try {
     expect(created.regions).toEqual(['fra', 'gru']);
     await seed(cells, created.id);
     await replicated(cells, replica, created.id, 3);
     await observed(cells, created.id);
+    const context = await auditedContext(browser, { storageState: ownerSession() });
+    const page = await context.newPage();
+    const audit = new Audit(page, info);
+    await page.goto(`${dash}/databases/${created.id}/backups`);
+    await page.locator('button[commandfor=bucket-dialog][command=show-modal]').click();
+    const [accessKeyId, secretKey] = readFileSync(join(stateDir, 'r2'), 'utf8').trim().split('\n');
+    await page.locator('#bucket-endpoint').fill('https://journey.backups.terrascale.tech');
+    await page.locator('#bucket-region').fill('auto');
+    await page.locator('#bucket-name').fill('journey-backups');
+    await page.locator('#bucket-key').fill(accessKeyId);
+    await page.locator('#bucket-secret').fill(secretKey);
+    await page.locator('#bucket-dialog').getByRole('button', { name: 'Save bucket', exact: true }).click();
+    await expect(page.locator('#bucket-dialog')).not.toBeVisible();
+    await expect(page.locator('#backup-page')).toContainText('journey-backups');
+    await page.locator('button[commandfor=bucket-dialog][command=show-modal]').click();
+    await page.locator('#bucket-dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+    await audit.check('backup destination saved and page remains interactive');
+    await page.locator('button[commandfor=remove-backup-bucket][command=show-modal]').first().click();
+    await page.locator('#remove-backup-bucket').first().getByRole('button', { name: 'Remove bucket', exact: true }).click();
+    await expect(page.locator('button[commandfor=remove-backup-bucket][command=show-modal]')).toHaveCount(0);
+    await audit.finish();
+    await saveCookies(context);
+    await context.close();
   } finally {
     await removeDatabase(cells, created.id);
   }

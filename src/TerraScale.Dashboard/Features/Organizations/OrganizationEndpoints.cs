@@ -142,7 +142,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                     var tab = http.Request.Query["tab"] == "invitations" ? "invitations" : "members";
                     var model = new OrganizationPage(ShellModel.For(http, context, "Organization"), tab, [], Access: view,
                         InvitationLink: $"{http.Request.Scheme}://{http.Request.Host}/invitations/{Uri.EscapeDataString(created.Token)}");
-                    if (http.Request.Headers["Datastar-Request"] == "true")
+                    if (http.Request.IsDatastarRequest)
                     {
                         await DatastarEvents.PatchElementsAsync(http, Members.OrganizationAccessPage.Create(model));
                         return Results.Empty;
@@ -182,7 +182,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                         _ => "cancel"
                     }, id ?? form["userID"].ToString(), form["role"].ToString(), http.RequestAborted, proof);
                 }
-                if (http.Request.Headers["Datastar-Request"] == "true")
+                if (http.Request.IsDatastarRequest)
                 {
                     context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, reload: true);
                     await PatchAsync(http, context, placement, tab: operation.StartsWith("ownership", StringComparison.Ordinal) ? "danger"
@@ -200,7 +200,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             }
             catch (AccountAccessException error)
             {
-                if (http.Request.Headers["Datastar-Request"] == "true")
+                if (http.Request.IsDatastarRequest)
                 {
                     await PatchAsync(http, context, placement, error.Message, operation.StartsWith("ownership", StringComparison.Ordinal) ? "danger"
                         : http.Request.Query["tab"] == "invitations" ? "invitations" : "members");
@@ -291,7 +291,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 if (operation == "rename")
                 {
                     await operations.RenameAsync(context, name, http.RequestAborted);
-                    if (http.Request.Headers["Datastar-Request"] == "true")
+                    if (http.Request.IsDatastarRequest)
                     {
                         context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, reload: true);
                         await DatastarEvents.PatchElementsAsync(http, OrganizationPatch.Create(await PageModelAsync(http, context, placement)));
@@ -322,7 +322,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             {
                 if (operation is not ("projects" or "rename-project"))
                 {
-                    if (http.Request.Headers["Datastar-Request"] == "true")
+                    if (http.Request.IsDatastarRequest)
                     {
                         await PatchAsync(http, context, placement, error.Message);
                         return Results.Empty;

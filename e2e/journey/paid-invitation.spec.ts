@@ -123,6 +123,19 @@ test('the Pro owner invites a second user, who signs up through the emailed link
   await expect(rows.filter({ hasText: owner.email })).toContainText('Organization Owner');
   await expect(ownerPage.locator('#team-invitations tr').filter({ hasText: email })).toContainText('Accepted');
   await ownerAudit.check('Pro members with the invited user');
+  const memberId = (await memberRow.locator('td[data-label="User ID"] code').textContent())!.trim();
+  await ownerPage.goto(`${dash}/project/members?organizationId=${owner.organizationId}&projectId=${owner.projectId}`);
+  await ownerPage.locator('#grant-user-id').fill(memberId);
+  await ownerPage.getByRole('button', { name: 'Grant or change explicit role', exact: true }).click();
+  const explicitGrant = ownerPage.locator(`tr[data-project-grant-user="${memberId}"]`);
+  await expect(explicitGrant).toContainText(email);
+  await explicitGrant.getByRole('button', { name: 'Remove explicit grant', exact: true }).click();
+  await ownerPage.locator('dialog[open]').getByRole('button', { name: 'Remove only this grant', exact: true }).click();
+  await expect(explicitGrant).toHaveCount(0);
+  await ownerPage.locator('.ts-context-trigger').click();
+  await ownerPage.locator('.ts-context-trigger').click();
+  await ownerAudit.check('explicit grant removed and page remains interactive');
+  await ownerPage.goto(`${dash}/organization?tab=members`);
   await memberRow.getByRole('button', { name: 'Remove access', exact: true }).click();
   const remove = ownerPage.locator('dialog[open]');
   await expect(remove).toBeVisible();
@@ -131,6 +144,8 @@ test('the Pro owner invites a second user, who signs up through the emailed link
   await expect(ownerPage).toHaveURL(url => url.pathname === '/organization' && url.searchParams.get('tab') === 'members');
   await expect(rows).toHaveCount(1);
   await expect(rows).toContainText(owner.email);
+  await ownerPage.locator('button[commandfor=team-invite][command=show-modal]').first().click();
+  await ownerPage.locator('#team-invite').getByRole('button', { name: 'Cancel', exact: true }).click();
   await ownerAudit.check('Pro members after the removal');
   await ownerAudit.finish();
   await saveCookies(ownerContext);

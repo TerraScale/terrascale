@@ -9,8 +9,8 @@
     <p class="ts-meta"><a class="ts-link" href="https://docs.terrascale.tech/guides/organization-access" @(ExternalLink.Attributes)>Organization roles, invitations and access@(ExternalLink.Hint)</a></p>
     <div class="ts-toolbar ts-access-toolbar">
         <form id="access-filter-form" method="get" action="/organization" class="ts-filters ts-access-filters" role="search" aria-label="Filter members" data-on:submit="@@get('/organization', {contentType:'form'})">
-            <input type="hidden" name="tab" value="members" /><button class="ts-sr-only" type="submit">Apply filters</button>
-            <div class="ts-filter-field ts-access-search"><label class="ts-sr-only" for="member-search">Filter members</label><input class="ts-input" id="member-search" name="q" type="search" placeholder="Search members" value="@Model.Filter.Query" /></div>
+            <input type="hidden" name="tab" value="members" />
+            <div class="ts-filter-field ts-access-search"><label class="ts-sr-only" for="member-search">Filter members</label><input class="ts-input" id="member-search" name="q" data-on:change="el.form.requestSubmit()" type="search" placeholder="Search members" value="@Model.Filter.Query" /></div>
             <div class="ts-filter-field"><label class="ts-sr-only" for="member-role-filter">Organization role</label><select class="ts-select" id="member-role-filter" name="role" data-on:change="el.form.requestSubmit()">@foreach (var role in new[] { "all", "owner", "admin", "member", "viewer" }) { <option value="@(role == "all" ? "" : role)" selected="@(Model.Filter.Role == role)">@OrganizationPage.RoleFilterLabel(role)</option> }</select></div>
             @if (Model.Filter.Query.Length > 0 || Model.Filter.Role != "all") { <a class="ts-btn ts-btn-ghost ts-btn-sm" href="/organization?tab=members">Clear</a> }
         </form>
