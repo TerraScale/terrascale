@@ -15,7 +15,7 @@ function respond(response, status, body) {
 }
 
 createServer(async (request, response) => {
-  const url = new URL(request.url, 'http://127.0.0.1:8029');
+  const url = new URL(request.url, 'http://127.0.0.1:' + port('hooks'));
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
   const body = Buffer.concat(chunks);

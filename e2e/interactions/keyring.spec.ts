@@ -4,11 +4,15 @@ import { once } from 'node:events';
 import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { test, expect } from '@playwright/test';
+import { holdSync } from '../support/ports';
 import { production, stateDir } from '../support/stack';
 import { saveSecret } from '../support/state';
 
 test.skip(production, 'key rotation requires restarting a throwaway node');
 test.describe.configure({ mode: 'default' });
+const keyringPorts = holdSync({ client: 18380, internal: 18381, postgres: 18382, metrics: 18383 }, 'block').ports;
+const readyzUrl = 'http://127.0.0.1:' + keyringPorts.client + '/readyz';
+const metricsUrl = 'http://127.0.0.1:' + keyringPorts.metrics + '/metrics';
 
 test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining wrappers', async () => {
   mkdirSync(stateDir, { recursive: true });
@@ -55,10 +59,11 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
         TERRABASE_DATA_DIRECTORY: dataDirectory,
         TERRABASE_MEMORY_BUDGET: '67108864',
         TERRABASE_STORAGE_THREADS: '1',
-        TERRABASE_PORT: '18380',
-        TERRABASE_INTERNAL_PORT: '18381',
-        TERRABASE_POSTGRES_PORT: '18382',
-        TERRABASE_METRICS_PORT: '18383',
+        TERRABASE_PORT: String(keyringPorts.client),
+        TERRABASE_INTERNAL_PORT: String(keyringPorts.internal),
+        TERRABASE_POSTGRES_PORT: String(keyringPorts.postgres),
+        TERRABASE_METRICS_PORT: String(keyringPorts.metrics),
+        E2E_KEYRING_METRICS_URL: metricsUrl,
       },
       stdio: [operation ? 'pipe' : 'ignore', output, output],
     });
@@ -70,7 +75,7 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     await expect.poll(async () => {
       expect(child?.exitCode, 'the throwaway node remains running').toBeNull();
       try {
-        return (await fetch('http://127.0.0.1:18380/readyz')).status;
+        return (await fetch(readyzUrl)).status;
       } catch {
         return 0;
       }
@@ -98,12 +103,12 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
   async function rotated(expected: number, credentials = 0): Promise<void> {
     await ready();
     await expect.poll(async () => {
-      const metrics = await (await fetch('http://127.0.0.1:18383/metrics')).text();
+      const metrics = await (await fetch(metricsUrl)).text();
       return metrics.match(/terrabase_keys_local_wrapped(?:_\w+)?\{[^\n]*key_id="k0"[^\n]*\} (\d+)/)?.[1];
     }).toBe('0');
     for (const path of files(data)) expect(readFileSync(path, 'ascii').startsWith('TERRABASE-DB-KEY-2\nv2.k1.')).toBe(true);
     expect(files(data)).toHaveLength(expected);
-    const metrics = await (await fetch('http://127.0.0.1:18383/metrics')).text();
+    const metrics = await (await fetch(metricsUrl)).text();
     expect(metrics).toMatch(new RegExp(`terrabase_keys_local_wrapped(?:_\\w+)?\\{[^\\n]*key_id="k1"[^\\n]*\\} ${expected + credentials}(?:\\n|$)`));
   }
 
@@ -124,7 +129,8 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
         env: { ...environment, DOTNET_ENVIRONMENT: 'Development', DOTNET_PROCESSOR_COUNT: '4',
           TERRABASE_MASTER_KEY: k0.toString('base64'), TERRABASE_PEER_SECRET: peer, TERRABASE_DATA_DIRECTORY: data,
           TERRABASE_MEMORY_BUDGET: '67108864', TERRABASE_STORAGE_THREADS: '1',
-          TERRABASE_PORT: '18380', TERRABASE_INTERNAL_PORT: '18381', TERRABASE_POSTGRES_PORT: '18382', TERRABASE_METRICS_PORT: '18383' },
+          TERRABASE_PORT: String(keyringPorts.client), TERRABASE_INTERNAL_PORT: String(keyringPorts.internal), TERRABASE_POSTGRES_PORT: String(keyringPorts.postgres), TERRABASE_METRICS_PORT: String(keyringPorts.metrics),
+          E2E_KEYRING_METRICS_URL: metricsUrl, },
         stdio: ['ignore', output, output],
       });
       closeSync(output);
@@ -143,7 +149,7 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     const originalBytes = paths.map(path => readFileSync(path));
     await start('k0', { k0: k0.toString('base64') });
     await ready();
-    const initial = await (await fetch('http://127.0.0.1:18383/metrics')).text();
+    const initial = await (await fetch(metricsUrl)).text();
     expect(initial).toMatch(new RegExp('terrabase_keys_local_wrapped[^\\n]*key_id="k0"[^\\n]*} ' + paths.length + '(?:\\n|$)'));
     await stop();
     for (const [index, path] of paths.entries()) expect(readFileSync(path).equals(originalBytes[index])).toBe(true);
@@ -267,7 +273,7 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     await stop();
     await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') });
     await ready();
-    await expect.poll(async () => (await (await fetch('http://127.0.0.1:18383/metrics')).text())
+    await expect.poll(async () => (await (await fetch(metricsUrl)).text())
       .match(/terrabase_keys_last_complete[^\n]* ([1-9]\d*)/)?.[1]).toBeTruthy();
     await stop();
     await start('k1', { k0: k0.toString('base64'), k1: k1.toString('base64') }, candidate, 'inventory-trim');
@@ -309,7 +315,7 @@ test('a node opens k0 sidecars, resumes rotation and proves k0 has no remaining 
     for (const path of files(data)) wrap(path, 'k0');
     await start('k0', { k0: k0.toString('base64'), k1: k1.toString('base64') });
     await ready();
-    const weakMetrics = await (await fetch('http://127.0.0.1:18383/metrics')).text();
+    const weakMetrics = await (await fetch(metricsUrl)).text();
     expect(weakMetrics).toMatch(/terrabase_keys_weak_in_use[^\n]*key_id="k0"[^\n]* 1(?:\n|$)/);
     expect(readFileSync(log, 'utf8').split('Weak master key in use').length - 1).toBe(1);
     expect(readFileSync(log, 'utf8')).toContain('k0');
@@ -375,7 +381,8 @@ for (const mode of ['retained', 'missing-key', 'image', 'missing', 'null', 'numb
         env: { ...environment, DOTNET_PROCESSOR_COUNT: '4', DOTNET_ENVIRONMENT: 'Development',
           TERRABASE_MASTER_KEYS_FILE: ring, TERRABASE_PEER_SECRET: peer, TERRABASE_DATA_DIRECTORY: data,
           TERRABASE_MEMORY_BUDGET: '67108864', TERRABASE_STORAGE_THREADS: '1',
-          TERRABASE_PORT: '18380', TERRABASE_INTERNAL_PORT: '18381', TERRABASE_POSTGRES_PORT: '18382', TERRABASE_METRICS_PORT: '18383' },
+          TERRABASE_PORT: String(keyringPorts.client), TERRABASE_INTERNAL_PORT: String(keyringPorts.internal), TERRABASE_POSTGRES_PORT: String(keyringPorts.postgres), TERRABASE_METRICS_PORT: String(keyringPorts.metrics),
+          E2E_KEYRING_METRICS_URL: metricsUrl, },
         stdio: ['ignore', output, output],
       });
       closeSync(output);
@@ -383,7 +390,7 @@ for (const mode of ['retained', 'missing-key', 'image', 'missing', 'null', 'numb
     async function ready(): Promise<void> {
       await expect.poll(async () => {
         expect(child?.exitCode, log + '\n' + readFileSync(log, 'utf8').slice(-1500)).toBeNull();
-        try { return (await fetch('http://127.0.0.1:18380/readyz')).status; } catch { return 0; }
+        try { return (await fetch(readyzUrl)).status; } catch { return 0; }
       }).toBe(200);
     }
     try {
@@ -434,7 +441,7 @@ for (const mode of ['retained', 'missing-key', 'image', 'missing', 'null', 'numb
         expect(readFileSync(log, 'utf8')).toContain("unconfigured key id 'k0'");
       } else {
         await ready();
-        const metrics = await (await fetch('http://127.0.0.1:18383/metrics')).text();
+        const metrics = await (await fetch(metricsUrl)).text();
         if (mode === 'retained-key' || mode === 'orphan-key') {
           const parent = join(data, '01J00000000000000000000071', '01J00000000000000000000072');
           const retained = readdirSync(parent).filter(name => name.endsWith('.retained-key'));
@@ -457,16 +464,16 @@ for (const mode of ['retained', 'missing-key', 'image', 'missing', 'null', 'numb
           expect(readFileSync(join(data, 'outside-inspection'), 'utf8')).toBe('keep');
           expect(readFileSync(join(data, '.tmp/outside-inspection'), 'utf8')).toBe('keep sibling');
         } else if (mode === 'retained') {
-          await expect.poll(async () => (await fetch('http://127.0.0.1:18383/metrics')).text()).toMatch(/terrabase_keys_local_wrapped[^\n]*key_id="k0"[^\n]*\} [1-9]\d*(?:\n|$)/);
+          await expect.poll(async () => (await fetch(metricsUrl)).text()).toMatch(/terrabase_keys_local_wrapped[^\n]*key_id="k0"[^\n]*\} [1-9]\d*(?:\n|$)/);
           expect(readFileSync(log, 'utf8')).toContain('keyring-driver:seed-stored retained');
-          expect(await (await fetch('http://127.0.0.1:18383/metrics')).text()).toMatch(/terrabase_keys_local_wrapped[^\n]*key_id="k0"[^\n]*\} [1-9]\d*(?:\n|$)/);
+          expect(await (await fetch(metricsUrl)).text()).toMatch(/terrabase_keys_local_wrapped[^\n]*key_id="k0"[^\n]*\} [1-9]\d*(?:\n|$)/);
           await stop();
           start('trim');
           await expect.poll(() => child?.exitCode).toBe(0);
           await stop();
           start();
           await ready();
-          const trimmed = await (await fetch('http://127.0.0.1:18383/metrics')).text();
+          const trimmed = await (await fetch(metricsUrl)).text();
           expect(trimmed).toMatch(/terrabase_keys_local_wrapped[^\n]*key_id="k0"[^\n]*\} 0(?:\n|$)/);
         } else {
           expect(metrics).toMatch(/terrabase_keys_local_wrapped[^\n]*key_id="k0"[^\n]*\} -1(?:\n|$)/);

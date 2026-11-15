@@ -58,6 +58,7 @@ const test = base.extend<{}, { promotion: Promotion }>({
           TERRABASE_INTERNAL_PORT: String(promotionPorts.internal), TERRABASE_PORT: String(region === 'gru' ? promotionPorts.gru : promotionPorts.fra),
           TERRABASE_POSTGRES_PORT: String(region === 'gru' ? promotionPorts.pgGru : promotionPorts.pgFra), TERRABASE_METRICS_PORT: String(region === 'gru' ? promotionPorts.metricsGru : promotionPorts.metricsFra),
           E2E_KEYRING_SYNC_URL: 'http://127.0.0.1:' + promotionPorts.internal,
+          E2E_KEYRING_METRICS_URL: 'http://127.0.0.1:' + (region === 'gru' ? promotionPorts.metricsGru : promotionPorts.metricsFra),
         }, stdio: [requestFile ? 'pipe' : 'ignore', output, output],
       });
       closeSync(output);
@@ -81,7 +82,8 @@ const test = base.extend<{}, { promotion: Promotion }>({
         try { return (await fetch('http://127.0.0.1:' + port + '/readyz')).status; } catch { return 0; }
       }).toBe(200);
       if (clock) {
-        await expect.poll(async () => (await (await fetch('http://127.0.0.1:' + (port + 3) + '/metrics')).text())
+        const metrics = port === promotionPorts.fra ? promotionPorts.metricsFra : promotionPorts.metricsGru;
+        await expect.poll(async () => (await (await fetch('http://127.0.0.1:' + metrics + '/metrics')).text())
           .match(/^terrabase_clock_local_writes_allowed(?:\{[^\n]*\})? (\d+)$/m)?.[1]).toBe('1');
       }
     }

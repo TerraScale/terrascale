@@ -17,7 +17,7 @@ createServer((client) => {
     client.write('S');
     const secure = new TLSSocket(client, { isServer: true, ...credentials, ALPNProtocols: ['postgresql'] });
     secure.once('secure', () => {
-      const terrabase = connect(6432, '127.0.0.1');
+      const terrabase = connect(port('postgres'), '127.0.0.1');
       secure.pipe(terrabase).pipe(secure);
       terrabase.on('error', () => secure.destroy());
       secure.on('close', () => terrabase.destroy());

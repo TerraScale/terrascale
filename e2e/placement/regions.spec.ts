@@ -1161,7 +1161,7 @@ test('R19 an unprimed non-writer in the home region cannot confirm deletion', as
       ...environment,
       TS_NODE: 'journey-unprimed',
       TS_PEERS_FILE: join(directory, 'peers'),
-      TS_NATS_URL: 'nats://127.0.0.3:4222',
+      TS_NATS_URL: 'nats://127.0.0.3:' + JSON.parse(readFileSync(join(stateDir, 'ports.json'), 'utf8')).nats,
       TERRABASE_NATS_TOKEN_FILE: join(directory, 'nats-token'),
       TERRABASE_DATA_DIRECTORY: join(directory, 'data'),
       TERRABASE_PORT: String(held.ports.client),

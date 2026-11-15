@@ -207,7 +207,7 @@ try {
   let broker = start('frontier-nats', resolve(process.env.E2E_TOOLS, 'nats-server'), ['-c', state + '/nats.conf']);
   await logged(broker, 'Server is ready');
   await relay.listen();
-  nats = new Nats(token);
+  nats = new Nats(token, P.nats);
   await nats.connect();
   const previousLayout = await nats.request('$JS.API.STREAM.CREATE.TERRABASE_PUSH_PARK_GRU', { name: 'TERRABASE_PUSH_PARK_GRU', subjects: ['terrabase.push-park.gru.>'],
     storage: 'file', retention: 'limits', discard: 'new', max_bytes: 1 << 30, duplicate_window: 600_000_000_000, num_replicas: 1 });
@@ -906,7 +906,7 @@ try {
       const mark = readFileSync(broker.log, 'utf8').length;
       broker = start('frontier-nats', resolve(process.env.E2E_TOOLS, 'nats-server'), ['-c', state + '/nats.conf']);
       await logged(broker, 'Server is ready', {}, mark);
-      nats = new Nats(token);
+      nats = new Nats(token, P.nats);
       await nats.connect();
     };
   };

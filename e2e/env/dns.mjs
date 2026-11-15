@@ -6,7 +6,7 @@ const queries = [];
 const statuses = new Map();
 
 createServer(async (request, response) => {
-  const url = new URL(request.url, 'http://127.0.0.1:8032');
+  const url = new URL(request.url, 'http://127.0.0.1:' + port('dns'));
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
   response.setHeader('content-type', 'application/json');

@@ -1,6 +1,5 @@
 import { createCipheriv, createHash, createHmac, hkdfSync, randomBytes } from 'node:crypto';
-import { once } from 'node:events';
-import { createConnection } from 'node:net';
+import { Socket } from 'node:net';
 
 export class Nats {
   buffer = Buffer.alloc(0);
@@ -8,12 +7,22 @@ export class Nats {
   next = 1;
   persistent = new Set();
   deadlines = new Set();
-  constructor(token, port = 4222) {
+  constructor(token, port) {
+    if (!Number.isInteger(port)) throw new TypeError('NATS port is the one the port registry allocated');
     this.token = token;
-    this.socket = createConnection({ port, host: '127.0.0.1' });
+    this.socket = new Socket();
+    this.opened = new Promise((resolveOpen, rejectOpen) => {
+      const fail = error => rejectOpen(error);
+      this.socket.once('connect', () => {
+        this.socket.removeListener('error', fail);
+        resolveOpen();
+      });
+      this.socket.once('error', fail);
+    });
     this.socket.on('error', error => {
       for (const finish of this.pending.values()) finish({ error: { description: error.message } });
     });
+    this.socket.connect({ port, host: '127.0.0.1' });
     this.socket.on('data', chunk => {
       this.buffer = Buffer.concat([this.buffer, chunk]);
       while (true) {
@@ -41,7 +50,7 @@ export class Nats {
     });
   }
   async connect() {
-    await once(this.socket, 'connect');
+    await this.opened;
     this.socket.write('CONNECT ' + JSON.stringify({ auth_token: this.token, headers: true }) + '\r\n');
   }
   event(subject, matches = value => Boolean(value)) {

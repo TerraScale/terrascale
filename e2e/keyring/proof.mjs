@@ -11,10 +11,12 @@ import { setInterval } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { internal, project } from './operations.mjs';
 
-holdSync({ proxy: 443 }, 'exact');
-const keyringPorts = holdSync({ client: 18380, internal: 18381, postgres: 18382, metrics: 18383 }, 'block').ports;
 const root = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const profile = process.env.E2E_STATE;
+const proxyHold = holdSync({ proxy: 443 }, 'exact');
+const keyringHold = holdSync({ client: 18380, internal: 18381, postgres: 18382, metrics: 18383, r2: 8028 }, 'block');
+const keyringPorts = keyringHold.ports;
+writeFileSync(join(profile, 'ports.json'), JSON.stringify({ ...keyringPorts, proxy: proxyHold.ports.proxy }), { mode: 0o600 });
 const baseline = resolve(process.env.E2E_KEYRING_BASELINE);
 const candidate = join(process.env.E2E_BUILD, 'terrabase', 'terrabase.dll');
 const data = join(profile, 'data');
@@ -46,7 +48,9 @@ async function stop(child) {
   }
   children.delete(child);
 }
-let standin = startProcess('node', [join(root, 'e2e/env/r2.mjs')], 'object-store', { ...clean, E2E_REGIONS: '2' });
+let standin = startProcess('node', [join(root, 'e2e/env/r2.mjs')], 'object-store', {
+  ...clean, E2E_REGIONS: '2', E2E_STATE: profile, E2E_PORTS_FILE: join(profile, 'ports.json'),
+});
 const requests = [];
 let stalledUploads = false;
 let refusedUploads = 0;
@@ -59,14 +63,14 @@ const proxy = createServer({ key: readFileSync(join(profile, 'tls.key')), cert: 
     response.end('<Error><Code>ServiceUnavailable</Code></Error>');
     return;
   }
-  const upstream = httpRequest({ hostname: '127.0.0.1', port: 8028, method: request.method, path: request.url, headers: request.headers }, answer => {
+  const upstream = httpRequest({ hostname: '127.0.0.1', port: keyringPorts.r2, method: request.method, path: request.url, headers: request.headers }, answer => {
     response.writeHead(answer.statusCode, answer.headers);
     answer.pipe(response);
   });
   upstream.on('error', () => { response.writeHead(502); response.end(); });
   request.pipe(upstream);
 });
-proxy.listen(443, '0.0.0.0');
+proxy.listen(proxyHold.ports.proxy, '0.0.0.0');
 await once(proxy, 'listening');
 const sha = body => createHash('sha256').update(body).digest('hex');
 const hmac = (key, value) => createHmac('sha256', key).update(value).digest();
@@ -147,6 +151,9 @@ const value = (text, name, label = '') => {
 };
 try {
   let child = node(baseline, 'k0');
+  await until('object store', standin, async () => {
+    try { return (await fetch('http://127.0.0.1:' + keyringPorts.r2 + '/log')).status === 200; } catch { return false; }
+  });
   await ready(child);
   await until('origin custody and snapshots', child, async () =>
     (await objects('ts-terrabase-shapes-prod', 'v1/keys/')).length > 0 && (await objects('journey-backups', 'v1/')).some(key => key.includes('/snapshots/')));
@@ -317,7 +324,7 @@ try {
     assert.deepEqual(rotated, { ...original, KeyId: 'k1' }, 'reopened credential plaintext and ciphertext match for ' + original.Id);
   }
   console.log('startup read row=42 from every database; reopened both current and historical credentials, compared plaintext and unchanged ciphertext');
-  const firstLog = await (await fetch('http://127.0.0.1:8028/log')).json();
+  const firstLog = await (await fetch('http://127.0.0.1:' + keyringPorts.r2 + '/log')).json();
   assert.deepEqual(firstLog.unexpected, [], 'first scenario had no unexpected object-store requests');
   await stop(standin);
   standin = startProcess('node', [join(root, 'e2e/env/r2.mjs')], 'object-store-promotion', { ...clean, E2E_REGIONS: '2' });
@@ -334,7 +341,7 @@ try {
   const [code] = await once(journey, 'exit');
   children.delete(journey);
   assert.equal(code, 0, 'rotation journey');
-  const log = await (await fetch('http://127.0.0.1:8028/log')).json();
+  const log = await (await fetch('http://127.0.0.1:' + keyringPorts.r2 + '/log')).json();
   assert.deepEqual(log.unexpected, [], 'object-store stand-in rejected no unexpected calls');
 } finally {
   for (const child of children) await stop(child);
