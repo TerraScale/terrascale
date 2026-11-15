@@ -2,7 +2,8 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { EventEmitter, once } from 'node:events';
-import { connect } from 'node:net';
+import { connect, type Socket } from 'node:net';
+import { connect as tlsConnect } from 'node:tls';
 import { expect } from '@playwright/test';
 import { rawSqlSocket, frame, scheduleStatement } from '../support/sql-socket';
 import { holdPeerStream, holdPeerReplies } from '../support/peer-stream-fault';
@@ -1130,3 +1131,184 @@ test('a busy organization is refused only between Postgres batches, never inside
     await removeDatabase(cells, created.id);
   }
 });
+
+test('thirty-two idle or slow sockets cannot close the postgres port', async ({ cells }) => {
+  const created = await json<Database>(await cells.post(home + project() + '/databases', {
+    data: { name: name('idle-sockets'), homeRegion: 'gru', replicaRegions: [] },
+  }), 201);
+  const live = await postgres(6432, created.id);
+  try {
+    expect(await live.connected).toBe(true);
+    expect(await live.query()).toBe('42');
+    for (const open of [
+      () => silentSockets(6432, '127.0.0.1'),
+      () => startupSilence(6432, '127.0.0.1', created.id),
+      () => silentSockets(5432, 'pg.terrascale.tech'),
+      () => stalledTls(),
+      () => startupSilence(5432, 'pg.terrascale.tech', created.id, true),
+    ]) {
+      const sockets = await open();
+      try {
+        expect(sockets).toHaveLength(32);
+        expect(sockets.every(socket => !socket.destroyed)).toBe(true);
+        expect(await live.query()).toBe('42');
+        const fresh = await postgres(6432, created.id);
+        try {
+          expect(await fresh.connected).toBe(true);
+          expect(await fresh.query()).toBe('42');
+        } finally {
+          fresh.socket.destroy();
+          await fresh.closed;
+        }
+        expect(await publicRow(created.id)).toBe('42');
+      } finally {
+        for (const socket of sockets) socket.destroy();
+      }
+    }
+  } finally {
+    live.socket.destroy();
+    await live.closed;
+    await removeDatabase(cells, created.id);
+  }
+});
+
+const handshakeSlots = 32;
+const sslRequest = Buffer.from([0, 0, 0, 8, 4, 210, 22, 47]);
+
+function startupPacket(databaseId: string): Buffer {
+  const parameters = Buffer.from(`user\0any\0database\0${journey().projectId}/${databaseId}\0\0`);
+  const prefix = Buffer.alloc(8);
+  prefix.writeInt32BE(parameters.length + 8);
+  prefix.writeInt32BE(196608, 4);
+  return Buffer.concat([prefix, parameters]);
+}
+
+async function openMany(open: () => Promise<Socket>): Promise<Socket[]> {
+  const opened = await Promise.allSettled(Array.from({ length: handshakeSlots }, () => open()));
+  const sockets = opened.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
+  const rejected = opened.find(result => result.status === 'rejected');
+  if (rejected?.status === 'rejected') {
+    for (const socket of sockets) socket.destroy();
+    throw rejected.reason;
+  }
+  return sockets;
+}
+
+async function silentSockets(port: number, host: string): Promise<Socket[]> {
+  return openMany(async () => {
+    const socket = connect(port, host);
+    socket.on('error', () => {});
+    await once(socket, 'connect');
+    return socket;
+  });
+}
+
+async function startupSilence(port: number, host: string, databaseId: string, tls = false): Promise<Socket[]> {
+  return openMany(async () => {
+    const socket = tls ? await edgeSocket() : await plainSocket(port, host);
+    await untilPassword(socket, startupPacket(databaseId));
+    return socket;
+  });
+}
+
+async function stalledTls(): Promise<Socket[]> {
+  return openMany(async () => {
+    const socket = connect(5432, 'pg.terrascale.tech');
+    socket.on('error', () => {});
+    await once(socket, 'connect');
+    const answered = once(socket, 'data');
+    socket.write(sslRequest);
+    const [chunk] = await answered as [Buffer];
+    expect(chunk.toString()).toBe('S');
+    return socket;
+  });
+}
+
+async function plainSocket(port: number, host: string): Promise<Socket> {
+  const socket = connect(port, host);
+  socket.on('error', () => {});
+  await once(socket, 'connect');
+  return socket;
+}
+
+async function edgeSocket(): Promise<Socket> {
+  const raw = await plainSocket(5432, 'pg.terrascale.tech');
+  const answered = once(raw, 'data');
+  raw.write(sslRequest);
+  const [chunk] = await answered as [Buffer];
+  expect(chunk.toString()).toBe('S');
+  const secure = tlsConnect({
+    socket: raw,
+    servername: 'pg.terrascale.tech',
+    ca: readFileSync(join(stateDir, 'pki', 'ca.pem')),
+    ALPNProtocols: ['postgresql'],
+  });
+  secure.on('error', () => {});
+  await once(secure, 'secureConnect');
+  return secure;
+}
+
+async function untilPassword(socket: Socket, startup: Buffer): Promise<void> {
+  let buffered = Buffer.alloc(0);
+  const asked = new Promise<void>((resolve, reject) => {
+    const fail = (error: Error) => {
+      socket.off('data', onData);
+      reject(error);
+    };
+    const onData = (chunk: Buffer) => {
+      buffered = Buffer.concat([buffered, chunk]);
+      while (buffered.length >= 5 && buffered.length >= 1 + buffered.readInt32BE(1)) {
+        const length = buffered.readInt32BE(1);
+        const type = String.fromCharCode(buffered[0]);
+        const body = buffered.subarray(5, length + 1);
+        buffered = buffered.subarray(length + 1);
+        if (type === 'E') {
+          fail(new Error(body.toString().split('\0').filter(Boolean).join(' | ')));
+          return;
+        }
+        if (type === 'R' && body.length >= 4 && body.readInt32BE() === 3) {
+          socket.off('data', onData);
+          socket.pause();
+          resolve();
+          return;
+        }
+      }
+    };
+    socket.on('data', onData);
+    socket.once('close', () => fail(new Error('closed before the password request')));
+  });
+  socket.write(startup);
+  await asked;
+}
+
+async function publicRow(databaseId: string): Promise<string> {
+  const socket = await edgeSocket();
+  const current = journey();
+  let buffered = Buffer.alloc(0);
+  let ready = false;
+  const row = new Promise<string>((resolve, reject) => {
+    socket.on('data', (chunk: Buffer) => {
+      buffered = Buffer.concat([buffered, chunk]);
+      while (buffered.length >= 5 && buffered.length >= 1 + buffered.readInt32BE(1)) {
+        const length = buffered.readInt32BE(1);
+        const type = String.fromCharCode(buffered[0]);
+        const body = buffered.subarray(5, length + 1);
+        buffered = buffered.subarray(length + 1);
+        if (type === 'R' && body.readInt32BE() === 3) socket.write(message('p', Buffer.from(current.apiKey + '\0')));
+        if (type === 'Z' && !ready) {
+          ready = true;
+          socket.write(message('Q', Buffer.from('SELECT 42\0')));
+        }
+        if (type === 'D' && ready) resolve(body.subarray(6).toString());
+        if (type === 'E') reject(new Error(body.toString().split('\0').filter(Boolean).join(' | ')));
+      }
+    });
+    socket.once('close', () => reject(new Error('public postgres closed before a row')));
+  });
+  socket.write(startupPacket(databaseId));
+  try {
+    return await row;
+  } finally {
+    socket.destroy();
+  }
+}
