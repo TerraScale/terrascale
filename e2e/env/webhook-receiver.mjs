@@ -73,4 +73,4 @@ createServer(async (request, response) => {
     respond(response, code, { received: valid, body: 'x'.repeat(2048) });
     for (const notify of waiters) notify();
   } else respond(response, 404, {});
-}).listen(port('webhook'), '127.0.0.1');
+}).listen(port('hooks'), '127.0.0.1');

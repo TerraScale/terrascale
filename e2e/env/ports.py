@@ -17,7 +17,7 @@ JOURNEY = {
     "cloudflare": 8026,
     "stripe": 8027,
     "r2": 8028,
-    "webhook": 8029,
+    "hooks": 8029,
     "attack": 8030,
     "oauth": 8031,
     "dns": 8032,

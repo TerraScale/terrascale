@@ -72,7 +72,7 @@ https://journey.backups.terrascale.tech, https://6cd3f3639e928077593d9b470765efe
 
 https://hooks.journey.terrascale.tech {
 	import edge
-	reverse_proxy 127.0.0.1:{$E2E_PORT_webhook}
+	reverse_proxy 127.0.0.1:{$E2E_PORT_hooks}
 }
 
 https://api.pwnedpasswords.com, https://challenges.cloudflare.com {
