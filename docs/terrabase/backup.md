@@ -999,6 +999,9 @@ must be expanded there before this constitutes three-region operational coverage
 failed drill, recovery-point age over the recovery target (including infinity), and a missing successful drill
 for each required region after the nightly deadline. The missing-night check must seed gru, sjc and fra
 independently of observed series, so a missing scrape or an entirely absent region cannot count as success.
+The fault journey verifies the same recovery-position and row-digest evidence in gru and fra,
+then uses the existing region launcher to verify sjc with the same assertions. Its bucket-outage
+scenario checks that recovery-point age continues rising before recovery.
 No production monitoring installation or actual page delivery is claimed by this runtime change.
 
 ## Records in TerraBase

@@ -9,6 +9,8 @@ import { auth, dash, e2eRoot, stateDir } from '../support/stack';
 import { keyId } from '../support/api-key';
 import { journey, ownerSession, saveSecret } from '../support/state';
 import { receiptHandoff } from './receipt-handoff';
+import { verifyRestoreDrill } from './restore-drill';
+import { extendPeers, startRegion } from '../placement/fleet';
 import { backupPuts, backupStore, continuity, crashWrite, endpoint, faultId, holeRecords, Ledger, metric, nodeHoles, nodes, nodeRequest, nodeStatus, plantHole, probe, regions, restartAfterKill, systemContinuity, scrape, tokenReady, topology } from './support';
 
 test.beforeEach(async () => {
@@ -59,31 +61,18 @@ test('a writer killed during a write restarts without losing acknowledged rows i
 });
 
 test('each regional writer records a restore drill with matching row content and exact recovery position', async () => {
-  type Drill = {
-    at: string; passed: boolean; region: string; member: string; destination: string; recoveryPointAt: string;
-    generation: string; targetPosition: number; reachedPosition: number; expectedDigest: string; restoredDigest: string;
-  };
-  for (const writer of await topology()) {
-    let drill: Drill | undefined;
-    await expect.poll(async () => {
-      const response = await nodeRequest(writer, '/v1/backup');
-      expect(response.status, response.body).toBe(200);
-      const files = (JSON.parse(response.body) as { files: { file: string; lastDrill: Drill | null }[] }).files;
-      drill = files.find(file => file.file === `v1/_system/nodes/${writer.name}`)?.lastDrill ?? undefined;
-      return drill?.passed;
-    }, { message: `the ${writer.region} writer restores its catalog from its own production-format backup namespace` }).toBe(true);
-    expect(drill).toMatchObject({ region: writer.region, member: writer.name, passed: true });
-    expect(drill!.destination).toBe('platform');
-    expect(drill!.generation).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
-    expect(drill!.reachedPosition).toBe(drill!.targetPosition);
-    expect(drill!.expectedDigest).toMatch(/^[0-9A-F]{64}$/);
-    expect(drill!.restoredDigest).toBe(drill!.expectedDigest);
-    expect(Date.parse(drill!.recoveryPointAt)).toBeLessThanOrEqual(Date.parse(drill!.at));
-    await expect.poll(() => metric(writer, 'terrabase_backup_drill_last_success_seconds'),
-      { message: 'every platform file has a recorded successful latest drill' }).toBeGreaterThan(0);
-    expect(await metric(writer, 'terrabase_backup_drill_failed_files')).toBe(0);
-    expect(Number.isFinite(await metric(writer, 'terrabase_backup_recovery_point_age_seconds'))).toBe(true);
-    console.log(`restore drill ${writer.region}/${writer.name}: ${drill!.at}, recovery ${drill!.recoveryPointAt}, position ${drill!.reachedPosition}, SHA256 ${drill!.restoredDigest}`);
+  for (const writer of await topology()) await verifyRestoreDrill(writer);
+});
+
+test('sjc automatically records the same verified restore evidence as the other regions', async () => {
+  const restorePeers = extendPeers(['sjc']);
+  let region: Awaited<ReturnType<typeof startRegion>> | undefined;
+  try {
+    region = await startRegion('sjc', 0);
+    await verifyRestoreDrill({ name: 'journey-extra-sjc', region: 'sjc', address: '10.228.0.2', port: 8380 });
+  } finally {
+    if (region) await region.stop();
+    restorePeers();
   }
 });
 
