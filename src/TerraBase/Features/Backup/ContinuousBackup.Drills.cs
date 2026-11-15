@@ -1,5 +1,6 @@
 using System.Diagnostics.Metrics;
 using System.Text.Json;
+using ZLogger;
 
 namespace TerraBase.Features.Backup;
 
@@ -32,10 +33,17 @@ internal sealed partial class ContinuousBackup
 
     private async Task ObserveRestartRecoveryPointAsync(CancellationToken cancellationToken)
     {
-        if (await ReadAccountAsync(BackupLayout.File(null, _node), cancellationToken).ConfigureAwait(false) is
-            { Destination: BackupDestinationNames.Platform, Stored.PlatformAt: { } at })
+        try
         {
-            _restartRecoveryPoint = Observation(at);
+            if (await ReadAccountAsync(BackupLayout.File(null, _node), cancellationToken).ConfigureAwait(false) is
+                { Destination: BackupDestinationNames.Platform, Stored.PlatformAt: { } at })
+            {
+                _restartRecoveryPoint = Observation(at);
+            }
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested && !_jobCancellation.IsCancellationRequested)
+        {
+            _logger.ZLogWarning(error, $"The catalog backup account could not be read at start; the recovery-point age reports unknown until the files load");
         }
     }
 
