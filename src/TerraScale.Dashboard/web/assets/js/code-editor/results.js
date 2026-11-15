@@ -1,14 +1,23 @@
-// Raw cell JSON preserves integer precision and the ordered, possibly duplicate column names.
 const pageSize = 200;
 const isText = raw => raw.startsWith('"');
 const text = raw => isText(raw) ? JSON.parse(raw) : raw;
 const csvText = value => `"${(/^[\s\uFEFF]*[=+\-@]/.test(value) ? "'" + value : value).replaceAll('"', '""')}"`;
 
-for (const host of document.querySelectorAll('[data-sql-result]')) {
+const mounted = new WeakMap();
+
+function mount(host) {
+  const data = host.querySelector('[data-sql-result-data]')?.textContent;
+  const run = host.dataset.runUrl;
+  const previous = mounted.get(host);
+  if (previous?.data === data && previous?.run === run) return;
+  previous?.controller.abort();
+  const controller = new AbortController();
+  const { signal } = controller;
+  mounted.set(host, { data, run, controller });
   const feedback = host.querySelector('[data-sql-feedback]');
-  if (!feedback) continue;
+  if (!feedback) return;
   try {
-    const { columns, rows } = JSON.parse(host.querySelector('[data-sql-result-data]').textContent);
+    const { columns, rows } = JSON.parse(data);
     const pages = host.querySelector('[data-sql-pages]');
     const buttons = [...pages.querySelectorAll('button')];
     const last = Math.max(0, Math.ceil(rows.length / pageSize) - 1);
@@ -36,14 +45,14 @@ for (const host of document.querySelectorAll('[data-sql-result]')) {
     pages.addEventListener('click', event => {
       const button = event.target.closest('button[data-page]');
       if (button) show(page + Number(button.dataset.page));
-    });
+    }, { signal });
     pages.addEventListener('keydown', event => {
       if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
       const target = { ArrowLeft: page - 1, ArrowRight: page + 1, Home: 0, End: last }[event.key];
       if (target === undefined) return;
       event.preventDefault();
       show(target);
-    });
+    }, { signal });
     const json = () => `{"columns":${JSON.stringify(columns)},"rows":[${rows.map(row => `[${row.join(',')}]`).join(',')}]}`;
     const csv = () => [columns.map(column => csvText(column.name)).join(','), ...rows.map(row => row.map(raw => raw === 'null' ? '\\N' : isText(raw) ? csvText(text(raw)) : raw).join(','))].join('\r\n') + '\r\n';
     host.querySelector('[data-sql-exports]').addEventListener('click', async event => {
@@ -70,7 +79,7 @@ for (const host of document.querySelectorAll('[data-sql-result]')) {
         link.remove();
         if (url) setTimeout(() => URL.revokeObjectURL(url), 1000);
       }
-    });
+    }, { signal });
     show(0);
     pages.hidden = last === 0;
     host.querySelector('[data-sql-exports]').hidden = false;
@@ -79,3 +88,8 @@ for (const host of document.querySelectorAll('[data-sql-result]')) {
     feedback.textContent = 'Full results could not be opened. The first 200 rows remain available.';
   }
 }
+
+
+const update = () => document.querySelectorAll('[data-sql-result]').forEach(mount);
+update();
+new MutationObserver(update).observe(document.querySelector('.ts-data-sql'), { childList: true, subtree: true });

@@ -95,7 +95,7 @@ export function attach(api, editor, textarea, host) {
     timer = setTimeout(check, checkDelay);
   }));
 
-  const format = context.form.querySelector('[data-sql-format]');
+  const format = context.form.id === 'sql-query-form' ? host.querySelector('[data-sql-format]') : null;
   if (format) {
     const run = () => editor.getAction('editor.action.formatDocument')?.run();
     format.addEventListener('click', run);
@@ -107,10 +107,7 @@ export function attach(api, editor, textarea, host) {
       },
     });
   }
-  const history = context.form.querySelector('select[data-sql-history]');
-  if (history) {
-    disposables.push(runHistory(editor, history));
-  }
+  if (context.form.id === 'sql-query-form') disposables.push(runHistory(editor, host));
 
   return () => {
     clearTimeout(timer);
@@ -385,10 +382,10 @@ function formatSQL(text, keywords) {
   return out;
 }
 
-// runHistory loads a statement from the console's run history, which the
-// server renders and the form posts back, into the editor.
-function runHistory(editor, select) {
-  const onChange = () => {
+function runHistory(editor, host) {
+  const onChange = event => {
+    const select = event.target.closest('select[data-sql-history]');
+    if (!select) return;
     const model = editor.getModel();
     if (select.value && model) {
       editor.executeEdits('history', [{ range: model.getFullModelRange(), text: select.value }]);
@@ -396,12 +393,10 @@ function runHistory(editor, select) {
     }
     select.value = '';
   };
-  select.addEventListener('change', onChange);
-  select.hidden = false;
+  host.addEventListener('change', onChange);
   return {
     dispose: () => {
-      select.removeEventListener('change', onChange);
-      select.hidden = true;
+      host.removeEventListener('change', onChange);
     },
   };
 }

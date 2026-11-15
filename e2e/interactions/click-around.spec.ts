@@ -19,8 +19,20 @@ async function runSql(page: Page, sql: string): Promise<void> {
   }, sql);
   await expect(page.locator('#sql')).toHaveValue(sql);
   expect((await checked).status(), 'the editor checked the statement').toBe(200);
-  await page.locator('form[action^="/api/v1/dashboard/data/sql"]').getByRole('button', { name: 'Run query', exact: true }).click();
-  await page.waitForLoadState('load');
+  const editor = await page.locator('#sql-editor ts-code-editor').elementHandle();
+  expect(editor).not.toBeNull();
+  const monaco = await editor!.evaluateHandle(element => (element as HTMLElement & { editor: unknown }).editor);
+  const before = page.url();
+  const completed = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/dashboard/data/sql');
+  await page.locator('#sql-editor').getByRole('button', { name: 'Run query', exact: true }).click();
+  const response = await completed;
+  expect(response.request().headers()['datastar-request']).toBe('true');
+  await expect(page).toHaveURL(url => url.searchParams.has('result') && url.href !== before);
+  expect(await editor!.evaluate(element => element.isConnected && element === document.querySelector('#sql-editor ts-code-editor'))).toBe(true);
+  expect(await editor!.evaluate((element, instance) => (element as HTMLElement & { editor: unknown }).editor === instance, monaco)).toBe(true);
+  await expect(page.locator('#sql')).toHaveValue(sql);
+  await monaco.dispose();
+  await editor!.dispose();
 }
 
 test.describe('SQL workspace draft', () => {
@@ -33,8 +45,14 @@ test('SQL editor creates a table, inserts and selects; a saved query reopens; th
   await page.goto(`/databases/${current.databaseId}/sql`);
   await shell(page, current);
   await audit.check('SQL editor');
+  await runSql(page, 'SELECT * FROM missing_' + table);
+  await expect(page.locator('#sql-output [role="alert"]')).toContainText('missing_' + table);
+  await expect(page.locator('#sql-result')).toHaveCount(0);
   await runSql(page, `CREATE TABLE ${table} (id INTEGER PRIMARY KEY, name TEXT, score INTEGER)`);
   await runSql(page, `INSERT INTO ${table} (name, score) VALUES ('Ada', 7), ('Grace', 9)`);
+  await runSql(page, 'WITH RECURSIVE seq(value) AS (SELECT 1 UNION ALL SELECT value + 1 FROM seq WHERE value < 250) SELECT value FROM seq');
+  await page.getByRole('button', { name: 'Next rows', exact: true }).click();
+  await expect(page.locator('[data-sql-range]')).toHaveText('Rows 201–250 of 250');
   const select = `SELECT name, score FROM ${table} ORDER BY name`;
   await runSql(page, select);
   const results = page.locator('main table').last();
@@ -42,20 +60,46 @@ test('SQL editor creates a table, inserts and selects; a saved query reopens; th
   await expect(results.locator('tbody tr').first()).toContainText('Ada');
   await expect(results.locator('tbody tr').last()).toContainText('Grace');
   await audit.check('SQL editor results');
+  const receiptUrl = page.url();
+  await page.reload();
+  await expect(page).toHaveURL(receiptUrl);
+  await expect(results.locator('tbody tr')).toHaveCount(2);
+  await expect(page.locator('#sql')).toHaveValue(select);
 
-  await page.getByRole('button', { name: 'Save query', exact: true }).click();
+  await page.getByRole('button', { name: 'Save query', exact: true }).first().click();
   const dialog = page.locator('#save-query');
   await expect(dialog).toBeVisible();
   await dialog.locator('#query-name').fill(queryName);
   await expect(dialog.locator('#saved-sql')).toHaveValue(select);
   await audit.check('save query dialog');
+  const runUrl = page.url();
+  const editor = await page.locator('#sql-editor ts-code-editor').elementHandle();
   await dialog.locator('form[action^="/api/v1/dashboard/data/saved-queries"]').locator('button[type=submit]').click();
-  await page.waitForLoadState('load');
+  await expect(dialog).not.toBeVisible();
+  await expect(page).toHaveURL(runUrl);
+  expect(await editor!.evaluate(element => element.isConnected)).toBe(true);
   const saved = page.getByRole('region', { name: 'Saved queries' }).getByRole('link').filter({ hasText: queryName });
   await expect(saved).toBeVisible();
+  await page.getByRole('button', { name: 'Save query', exact: true }).first().click();
+  await dialog.locator('#query-name').fill(queryName);
+  await dialog.getByRole('button', { name: 'Save query', exact: true }).click();
+  await expect(dialog.locator('[role="alert"]')).toContainText('already exists');
+  await expect(dialog).toBeVisible();
+  await expect(page).toHaveURL(runUrl);
+  expect(await editor!.evaluate(element => element.isConnected)).toBe(true);
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
   await saved.click();
   await expect(page.locator('#sql')).toHaveValue(select);
   await audit.check('saved query reopened');
+  const savedUrl = page.url();
+  await page.getByRole('button', { name: 'Delete ' + queryName, exact: true }).click();
+  const deletion = page.locator('dialog[open]');
+  await deletion.getByRole('button', { name: 'Delete query', exact: true }).click();
+  await expect(saved).toHaveCount(0);
+  await expect(page.locator('dialog[open]')).toHaveCount(0);
+  await expect(page).toHaveURL(savedUrl);
+  await expect(page.locator('#sql')).toHaveValue(select);
+  await audit.check('saved query deleted in place');
 
   await page.goto(`/databases/${current.databaseId}/tables`);
   const link = page.getByRole('navigation', { name: 'Tables' }).getByRole('link').filter({ hasText: table });

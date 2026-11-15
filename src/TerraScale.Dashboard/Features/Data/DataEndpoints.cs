@@ -1,7 +1,9 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.WebUtilities;
 using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Features.Databases;
+using TerraScale.Dashboard.Platform.Datastar;
 
 namespace TerraScale.Dashboard.Features.Data
 {
@@ -51,7 +53,7 @@ namespace TerraScale.Dashboard.Features.Data
 
                     if (action == "sql")
                     {
-                        if (DatabaseResults.WantsHtml(http))
+                        if (DatabaseResults.WantsHtml(http) || http.Request.Headers["Datastar-Request"] == "true")
                         {
                             return await RunAsync(http, context, id, form, data, saved);
                         }
@@ -60,17 +62,25 @@ namespace TerraScale.Dashboard.Features.Data
                         return Results.Json(new { columns = result.Columns, rows = result.Rows, rowsAffected = result.RowsAffected, lastInsertRowId = result.LastInsertRowId });
                     }
                     var query = await saved.SaveAsync(context, id, form["name"].ToString(), form["sql"].ToString(), http.RequestAborted);
+                    if (http.Request.Headers["Datastar-Request"] == "true")
+                    {
+                        return await PageAsync(http, context, id, data, saved);
+                    }
                     return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "sql") + "?savedQueryId=" + Uri.EscapeDataString(query.Id)) : Results.Json(PublicSavedQuery(query), statusCode: 201);
                 }
                 if (action == "saved-queries/delete")
                 {
                     await saved.DeleteAsync(context, id, form["id"].ToString(), http.RequestAborted);
+                    if (http.Request.Headers["Datastar-Request"] == "true")
+                    {
+                        return await PageAsync(http, context, id, data, saved);
+                    }
                 }
                 return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "sql")) : Results.NoContent();
             }
             catch (Exception error) when (DatabaseResults.KnownFailure(error))
             {
-                if (!DatabaseResults.WantsHtml(http) || DatabaseResults.Status(error) == 404)
+                if ((!DatabaseResults.WantsHtml(http) && http.Request.Headers["Datastar-Request"] != "true") || DatabaseResults.Status(error) == 404)
                 {
                     return DatabaseResults.PageFailure(http, context, error);
                 }
@@ -80,8 +90,6 @@ namespace TerraScale.Dashboard.Features.Data
             }
         }
 
-        // A browser run answers 303 to a GET of its stored receipt, never a page rendered from the POST: refresh and back
-        // cannot resend the statement, including a write whose outcome is unknown. Failures keep the draft and their reason.
         private static async Task<IResult> RunAsync(HttpContext http, AccountContext context, string id, IFormCollection form, DataService data, SavedQueryService saved)
         {
             var sql = form["sql"].ToString();
@@ -103,18 +111,23 @@ namespace TerraScale.Dashboard.Features.Data
             {
                 var receipt = await http.RequestServices.GetRequiredService<SqlRuns>().SaveAsync(context, id, sql,
                     SqlHistory.Run(SqlHistory.Read(form["history"].ToString()), sql), result, message, status, http.RequestAborted);
-                return HttpRedirects.SeeOther(DatabaseService.Path(id, "sql") + "?result=" + Uri.EscapeDataString(receipt));
+                var url = DatabaseService.Path(id, "sql") + "?result=" + Uri.EscapeDataString(receipt.Id);
+                return http.Request.Headers["Datastar-Request"] == "true"
+                    ? await PageAsync(http, context, id, data, saved, receipt.Error, sql: sql, sqlResult: receipt.Result, sqlNotice: RunNotice(receipt), runUrl: url)
+                    : HttpRedirects.SeeOther(url);
             }
             catch (Exception error) when (SqlWorkspace.Unavailable(error) && !http.RequestAborted.IsCancellationRequested)
             {
-                // Without a stored receipt the outcome renders once from the POST; say so rather than invite a resend.
                 return await PageAsync(http, context, id, data, saved, message, sql: sql, sqlResult: result, status: status,
-                    sqlNotice: "This outcome could not be saved for later viewing. Refreshing this page would send the statement again.");
+                    sqlNotice: http.Request.Headers["Datastar-Request"] == "true"
+                        ? "This outcome could not be saved for later viewing. The statement was not run again."
+                        : "This outcome could not be saved for later viewing. Refreshing this page would send the statement again.",
+                    runUrl: DatabaseService.Path(id, "sql"));
             }
         }
 
         internal static async Task<IResult> PageAsync(HttpContext http, AccountContext context, string id, DataService data, SavedQueryService saved,
-            string formError = "", string dialog = "", string sql = "", DatabaseSqlResult? sqlResult = null, string queryName = "", int status = 200, bool sqlChecked = false, string sqlNotice = "")
+            string formError = "", string dialog = "", string sql = "", DatabaseSqlResult? sqlResult = null, string queryName = "", int status = 200, bool sqlChecked = false, string sqlNotice = "", string runUrl = "")
         {
             DatabaseRecord database;
             try { database = DatabaseService.Database(context, id); }
@@ -166,10 +179,7 @@ namespace TerraScale.Dashboard.Features.Data
                         if (await http.RequestServices.GetRequiredService<SqlRuns>().ReadAsync(context, id, receiptId, http.RequestAborted) is { Receipt: { } run } workspace)
                         {
                             (sql, history, sqlResult, formError, status) = (workspace.Draft, workspace.History, run.Result, run.Error, run.Status);
-                            if (run.Result is { } kept && kept.Rows.Count < run.ReturnedRows)
-                            {
-                                sqlNotice = $"The statement returned {run.ReturnedRows:N0} rows; this page keeps the first {kept.Rows.Count:N0}. Add a LIMIT or narrower columns to see the rest.";
-                            }
+                            sqlNotice = RunNotice(run);
                         }
                         else
                         {
@@ -197,11 +207,45 @@ namespace TerraScale.Dashboard.Features.Data
                     return DatabaseResults.PageFailure(http, context, error);
                 }
             }
-            var result = DataView.Create(new(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title("sql")), database, errorMessage, formError, dialog,
-                sql, sqlResult, queries, queryName, catalog, history, sqlChecked, catalogError, sqlNotice));
+            if (http.Request.Headers["Datastar-Request"] == "true" && runUrl.Length > 0)
+            {
+                var scope = DatabaseService.Scope(context);
+                runUrl = QueryHelpers.AddQueryString(QueryHelpers.AddQueryString(runUrl, "organizationId", scope.OrganizationId), "projectId", scope.ProjectId);
+            }
+            var page = new DataPage(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title("sql")), database, errorMessage, formError, dialog,
+                sql, sqlResult, queries, queryName, catalog, history, sqlChecked, catalogError, sqlNotice, runUrl);
+            if (http.Request.Headers["Datastar-Request"] == "true")
+            {
+                if (http.Request.Path.StartsWithSegments("/api/v1/dashboard/data/saved-queries"))
+                {
+                    http.Response.Headers["datastar-mode"] = "replace";
+                    if (dialog == "save-query")
+                    {
+                        await DatastarEvents.PatchElementsAsync(http, SaveQueryDialog.Create(page));
+                    }
+                    else if (dialog.StartsWith("delete-query-", StringComparison.Ordinal) && queries.FirstOrDefault(query => dialog == "delete-query-" + query.Id) is { } query)
+                    {
+                        await DatastarEvents.PatchElementsAsync(http, QueryDeleteDialog.Create(new(page, query)));
+                    }
+                    else
+                    {
+                        await DatastarEvents.PatchElementsAsync(http, SavedQueriesView.Create(page));
+                    }
+                }
+                else
+                {
+                    await DatastarEvents.PatchElementsAsync(http, SqlRunPatch.Create(page));
+                }
+                return Results.Empty;
+            }
+            var result = DataView.Create(page);
             result.StatusCode = status;
             return result;
         }
+
+        private static string RunNotice(SqlRunReceipt run) => run.Result is { } kept && kept.Rows.Count < run.ReturnedRows
+            ? $"The statement returned {run.ReturnedRows:N0} rows; this page keeps the first {kept.Rows.Count:N0}. Add a LIMIT or narrower columns to see the rest."
+            : "";
 
         internal static McpSavedQuery PublicSavedQuery(SavedQuery query)
         {
