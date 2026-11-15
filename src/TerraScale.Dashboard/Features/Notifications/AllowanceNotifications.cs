@@ -40,7 +40,7 @@ namespace TerraScale.Dashboard.Features.Notifications
         Task<string> SendAsync(AllowanceAlert alert, CancellationToken cancellationToken);
     }
 
-    public sealed class AllowanceNotifications(IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, IAllowanceNotificationBackend backend, TimeProvider clock, ILogger<AllowanceNotifications> logger)
+    public sealed class AllowanceNotifications(IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, IAllowanceNotificationBackend backend, TimeProvider clock, ILogger<AllowanceNotifications> logger, BackgroundJobs jobs)
     {
         public const string OperationsContract = "write-units-4kib-global-v2";
         public const string StorageContract = "stored-byte-hours-global-v1";
@@ -154,14 +154,17 @@ namespace TerraScale.Dashboard.Features.Notifications
                 .OrderBy(alert => alert.Id).ToListAsync(cancellationToken);
             foreach (var alert in pending)
             {
-                var outcome = await backend.SendAsync(Alert(alert), cancellationToken);
-                if (outcome == "retryable")
+                await jobs.RunAsync("allowance/" + alert.Id, TimeSpan.Zero, async (claim, token) =>
                 {
-                    continue;
-                }
-
-                await db.AllowanceAlerts.Where(row => row.Id == alert.Id && row.EmailStatus == "pending")
-                    .ExecuteUpdateAsync(row => row.SetProperty(saved => saved.EmailStatus, outcome), cancellationToken);
+                    var current = await claim.Database.AllowanceAlerts.SingleOrDefaultAsync(row => row.Id == alert.Id && row.EmailStatus == "pending", token);
+                    if (current is null) { return; }
+                    var outcome = await backend.SendAsync(Alert(current), token);
+                    if (outcome != "retryable")
+                    {
+                        current.EmailStatus = outcome;
+                        await claim.SaveAsync(token);
+                    }
+                }, cancellationToken);
             }
         }
 

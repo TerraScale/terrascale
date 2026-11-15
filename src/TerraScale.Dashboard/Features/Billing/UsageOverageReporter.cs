@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Globalization;
 using System.Numerics;
 using System.Text.Json;
@@ -18,13 +17,12 @@ namespace TerraScale.Dashboard.Features.Billing
         Settled
     }
 
-    public sealed class UsageOverageReporter(IDbContextFactory<DashboardDbContext> storage, IAllowanceNotificationBackend usage, StripeBilling billing, BillingSchemaGate gate, TimeProvider clock, ILogger<UsageOverageReporter> logger)
+    public sealed class UsageOverageReporter(IDbContextFactory<DashboardDbContext> storage, IAllowanceNotificationBackend usage, StripeBilling billing, BillingSchemaGate gate, TimeProvider clock, ILogger<UsageOverageReporter> logger, BackgroundJobs jobs)
     {
         private const int MonthsPerPass = 3;
         private const int UsagePagesPerPass = 200;
         private const int DispatchesPerPass = 500;
         private const int PageSize = 200;
-        private readonly ConcurrentDictionary<DateTimeOffset, string> resume = new();
 
         public async Task<long> OperationUnitOverageAsync(BillingBinding binding, CancellationToken cancellationToken)
         {
@@ -53,8 +51,11 @@ namespace TerraScale.Dashboard.Features.Billing
         public async Task RunOnceAsync(CancellationToken cancellationToken)
         {
             if (!await gate.AllowsAsync(cancellationToken)) { return; }
-            await SettleMonthsAsync(cancellationToken);
-            await DispatchPendingAsync(cancellationToken);
+            await jobs.RunAsync("usage-settlement", TimeSpan.FromHours(1), async (claim, token) =>
+            {
+                await SettleMonthsAsync(claim, token);
+                await DispatchPendingAsync(token);
+            }, cancellationToken);
         }
 
         private async Task DispatchPendingAsync(CancellationToken cancellationToken)
@@ -83,7 +84,7 @@ namespace TerraScale.Dashboard.Features.Billing
             }
         }
 
-        private async Task SettleMonthsAsync(CancellationToken cancellationToken)
+        private async Task SettleMonthsAsync(BackgroundJobs.Claim claim, CancellationToken cancellationToken)
         {
             var current = MonthOf(clock.GetUtcNow());
             List<DateTimeOffset> months;
@@ -97,7 +98,8 @@ namespace TerraScale.Dashboard.Features.Billing
             DateTimeOffset? oldest = null;
             foreach (var month in months)
             {
-                string? after = resume.TryGetValue(month, out var resumed) ? resumed : null;
+                var prefix = month.ToString("yyyy-MM/", CultureInfo.InvariantCulture);
+                string? after = claim.State.Cursor is { } resumed && resumed.StartsWith(prefix, StringComparison.Ordinal) ? resumed[prefix.Length..] : null;
                 while (pages < UsagePagesPerPass)
                 {
                     AllowanceUsagePage page;
@@ -147,12 +149,9 @@ namespace TerraScale.Dashboard.Features.Billing
                         organizationAfter = bindings[^1].OrganizationId;
                     }
                     after = page.Next;
-                    if (after is null)
-                    {
-                        resume.TryRemove(month, out _);
-                        break;
-                    }
-                    resume[month] = after;
+                    claim.State.Cursor = after is null ? null : prefix + after;
+                    await claim.SaveAsync(cancellationToken);
+                    if (after is null) { break; }
                 }
             }
             billing.RecordWaitingOverageMonths(waiting, oldest);

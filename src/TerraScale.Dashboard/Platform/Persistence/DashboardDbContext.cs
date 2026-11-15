@@ -14,6 +14,8 @@ namespace TerraScale.Dashboard.Platform.Persistence;
 
 public sealed class DashboardDbContext(DbContextOptions<DashboardDbContext> options) : DbContext(options)
 {
+    public DbSet<BackgroundJobRow> BackgroundJobs => Set<BackgroundJobRow>();
+
     public DbSet<AuthFlowRow> AuthFlows => Set<AuthFlowRow>();
 
     public DbSet<SessionRow> Sessions => Set<SessionRow>();
@@ -81,6 +83,7 @@ public sealed class DashboardDbContext(DbContextOptions<DashboardDbContext> opti
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.ApplyConfiguration(new BackgroundJobRow.Configuration());
         modelBuilder.ApplyConfiguration(new AuthFlowRow.Configuration());
         modelBuilder.ApplyConfiguration(new SessionRow.Configuration());
         modelBuilder.ApplyConfiguration(new AccessTokenRow.Configuration());

@@ -15,9 +15,9 @@ namespace TerraScale.Dashboard.Features.Logs
     }
 
     public sealed partial class LogDrains(IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, ILogDrainSource source, ICustomerDelivery delivery, IDashboardIdentity identity,
-        TimeProvider clock, ILogger<LogDrains> logger)
+        TimeProvider clock, ILogger<LogDrains> logger, BackgroundJobs jobs)
     {
-        private static readonly string[] ReservedHeaders = ["host", "content-length", "content-type", "transfer-encoding", "connection", "te", "upgrade", "expect", "cookie"];
+        private static readonly string[] ReservedHeaders = ["host", "content-length", "content-type", "transfer-encoding", "connection", "te", "upgrade", "expect", "cookie", "idempotency-key", "x-terrascale-delivery"];
 
         public async Task<LogDrain?> ReadAsync(string projectId, CancellationToken cancellationToken)
         {
@@ -94,6 +94,8 @@ namespace TerraScale.Dashboard.Features.Logs
             var (organization, project) = Owner(context);
             await using var db = await storage.CreateDbContextAsync(cancellationToken);
             await db.LogDrains.Where(row => row.ProjectId == project.Id && row.OrganizationId == organization.Id).ExecuteDeleteAsync(cancellationToken);
+            var prefix = "log-drain/" + project.Id + "/";
+            await db.BackgroundJobs.Where(row => row.Id.StartsWith(prefix)).ExecuteDeleteAsync(cancellationToken);
         }
 
         public async Task RunOnceAsync(CancellationToken cancellationToken)
@@ -135,66 +137,57 @@ namespace TerraScale.Dashboard.Features.Logs
                 headers.Add(new(name, new SealedSecret(nonce, ciphertext, tag).Open((await identity.ReadAsync(cancellationToken)).SessionEncryptionKey, "log-drain/" + drain.ProjectId)));
             }
 
-            var advanced = false;
-            int? failure = null;
-            var gap = false;
             foreach (var database in project.Databases.Values)
             {
-                var saved = drain.Cursors.FirstOrDefault(row => row.DatabaseId == database.Id);
-                var cursor = saved?.Cursor ?? Start(Utc(drain.CreatedAt));
-                var batch = await source.ReadAsync(drain.ProjectId, database.Id, cursor, cancellationToken);
-                gap |= batch.Gap;
-                if (batch.Items.Count > 0)
+                await jobs.RunAsync("log-drain/" + drain.ProjectId + "/" + drain.Revision + "/" + database.Id, TimeSpan.Zero, async (claim, token) =>
                 {
-                    int status;
-                    try { status = await delivery.PostAsync(new Uri(drain.Url), Otlp(drain.ProjectId, database, batch.Items), headers, cancellationToken); }
-                    catch (Exception error) when (error is HttpRequestException or ArgumentException or IOException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested) { status = 0; }
+                    var current = await claim.Database.LogDrains.Include(row => row.Cursors)
+                        .SingleOrDefaultAsync(row => row.Id == id && row.Revision == drain.Revision, token);
+                    if (current is null) { return; }
+                    var saved = current.Cursors.FirstOrDefault(row => row.DatabaseId == database.Id);
+                    var cursor = saved?.Cursor ?? Start(Utc(current.CreatedAt));
+                    var state = claim.State;
+                    if (state.Payload is null)
+                    {
+                        var batch = await source.ReadAsync(current.ProjectId, database.Id, cursor, token);
+                        if (batch.Gap) { current.LastGapAt = clock.GetUtcNow().UtcDateTime; }
+                        if (batch.NextCursor == cursor) { return; }
+                        state.NextCursor = batch.NextCursor ?? throw new IOException("Log source returned no next cursor.");
+                        state.Payload = Otlp(current.ProjectId, database, batch.Items);
+                        state.DeliveryId = AccountService.NewId();
+                        await claim.SaveAsync(token);
+                    }
+
+                    var nextCursor = state.NextCursor ?? throw new IOException("The claimed log batch has no next cursor.");
+                    var deliveryId = state.DeliveryId ?? throw new IOException("The claimed log batch has no delivery identity.");
+                    var status = await delivery.PostAsync(new Uri(current.Url), state.Payload,
+                        [.. headers, new("Idempotency-Key", deliveryId), new("X-TerraScale-Delivery", deliveryId)], token);
                     if (status is < 200 or > 299)
                     {
-                        failure = status;
-                        continue;
+                        current.LastErrorAt = clock.GetUtcNow().UtcDateTime;
+                        current.LastErrorStatus = status;
+                        await claim.SaveAsync(token);
+                        return;
                     }
-                }
-                else if (batch.NextCursor == cursor)
-                {
-                    continue;
-                }
-
-                advanced = true;
-                if (saved is null)
-                {
-                    db.LogDrainCursors.Add(new LogDrainCursorRow { Id = AccountService.NewId(), DrainId = drain.Id, DatabaseId = database.Id, Cursor = batch.NextCursor! });
-                }
-                else
-                {
-                    saved.Cursor = batch.NextCursor!;
-                }
+                    if (saved is null)
+                    {
+                        claim.Database.LogDrainCursors.Add(new LogDrainCursorRow
+                        {
+                            Id = AccountService.NewId(),
+                            DrainId = id,
+                            DatabaseId = database.Id,
+                            Cursor = nextCursor
+                        });
+                    }
+                    else { saved.Cursor = nextCursor; }
+                    current.LastSuccessAt = clock.GetUtcNow().UtcDateTime;
+                    state.Cursor = state.NextCursor;
+                    state.Payload = null;
+                    state.NextCursor = null;
+                    state.DeliveryId = null;
+                    await claim.SaveAsync(token);
+                }, cancellationToken);
             }
-
-            if (!advanced && failure is null && !gap)
-            {
-                return;
-            }
-
-            var now = clock.GetUtcNow().UtcDateTime;
-            if (advanced)
-            {
-                drain.LastSuccessAt = now;
-            }
-
-            if (failure is { } code)
-            {
-                drain.LastErrorAt = now;
-                drain.LastErrorStatus = code;
-            }
-
-            if (gap)
-            {
-                drain.LastGapAt = now;
-            }
-
-            try { await db.SaveChangesAsync(cancellationToken); }
-            catch (DbUpdateConcurrencyException) { }
         }
 
         public static byte[] Otlp(string projectId, DatabaseRecord database, IReadOnlyList<DatabaseLogEntry> entries)
@@ -219,7 +212,7 @@ namespace TerraScale.Dashboard.Features.Logs
                                 body = new { stringValue = string.Create(CultureInfo.InvariantCulture, $"{entry.Method} {entry.Route} {entry.Status} {entry.LatencyMs:0.##}ms") },
                                 attributes = new object[]
                                 {
-                                    Text("http.request.method", entry.Method), Text("http.route", entry.Route), Integer("http.response.status_code", entry.Status),
+                                    Text("terrascale.log_id", entry.Id), Text("http.request.method", entry.Method), Text("http.route", entry.Route), Integer("http.response.status_code", entry.Status),
                                     new { key = "terrascale.latency_ms", value = new { doubleValue = entry.LatencyMs } }, Integer("terrascale.operations", entry.Operations),
                                     Text("terrascale.request_id", entry.RequestId ?? ""), Text("terrascale.region", entry.Region), new { key = "terrascale.is_query", value = new { boolValue = entry.IsQuery } }
                                 }

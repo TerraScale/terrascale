@@ -125,6 +125,15 @@ test('a new owner onboards on Free, upgrades to Pro through Stripe Checkout, and
   });
 });
 
+test('dashboard background work is claimed across instances and recovers accepted log deliveries', async () => {
+  const build = process.env.E2E_BUILD;
+  if (!build) throw new Error('E2E_BUILD is required for background delivery proof');
+  const result = await promisify(execFile)('dotnet', [join(build, 'billing', 'BillingJourney.dll'), 'background', join(stateDir, 'paid.journey.json')], { env: process.env });
+  const lines = result.stdout.split('\n').filter(line => line.startsWith('background journey:'));
+  expect(lines).toHaveLength(2);
+  console.log(lines.join('\n'));
+});
+
 test('paid owner billing recovery, UTC deadline and subscription tax policy', async ({ page, context, audit }) => {
   await context.addCookies(JSON.parse(readFileSync(ownerSession(), 'utf8')).cookies);
   const saved = journey<PaidJourney>();

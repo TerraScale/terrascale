@@ -31,16 +31,9 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
     private readonly int regionIndex = Array.IndexOf(Regions, region) is var index && index >= 0
         ? index : throw new ArgumentException("The auth region must be gru, sjc or fra.", nameof(region));
 
-    private readonly LocalAttemptStore local = new(clock);
-
     private static readonly Meter Meter = new(AuthMetrics.MeterName);
 
-    private static readonly Counter<long> Fallbacks = Meter.CreateCounter<long>("ts_auth.rate_limit_fallback", description: "Rate-limit checks served from this replica's memory because storage failed.");
-
     private static readonly Counter<long> Refusals = Meter.CreateCounter<long>("ts_auth.rate_limit_refused", description: "Attempts refused because their budget was used up.");
-
-    // Fallback warnings are sampled to one a minute; the counter records every one.
-    private long warnedAt = long.MinValue;
 
     // Bucket ids are keyed, so storage never reveals (or lets anyone test guesses of) the subject.
     private readonly byte[] idKey = HKDF.DeriveKey(HashAlgorithmName.SHA256, options.MasterKey, 32, info: "ts-auth rate-limit bucket ids"u8.ToArray());
@@ -106,7 +99,7 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
     /// fixed windows or cooldowns; attacker-chosen subjects must be folded.
     /// </summary>
     public Task<TimeSpan?> AcquireTokenAsync(string instanceId, string purpose, string subject, int burst, TimeSpan interval, CancellationToken cancellationToken) =>
-        this.WithFallbackAsync(source => this.AcquireTokenAsync(source, instanceId, purpose, subject, burst, interval, cancellationToken), purpose, cancellationToken);
+        this.AcquireTokenAsync(store, instanceId, purpose, subject, burst, interval, cancellationToken);
 
     private async Task<TimeSpan?> AcquireTokenAsync(IAttemptStore source, string instanceId, string purpose, string subject, int burst, TimeSpan interval, CancellationToken cancellationToken)
     {
@@ -210,12 +203,12 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
     }
 
     public async Task<AttemptRejection?> CheckAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, CancellationToken cancellationToken) =>
-        (await this.WithFallbackAsync(source => this.AcquireAsync(source, instanceId, purpose, subject, maximum, window, false, false, cancellationToken), purpose, cancellationToken)).Rejection;
+        (await this.AcquireAsync(store, instanceId, purpose, subject, maximum, window, false, false, cancellationToken)).Rejection;
 
     public async Task<(Reservation? Reservation, AttemptRejection? Rejection)> ReserveAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, CancellationToken cancellationToken)
     {
-        var (admission, source) = await this.WithFallbackAsync(async source =>
-            (await this.AcquireAsync(source, instanceId, purpose, subject, maximum, window, false, true, cancellationToken), source), purpose, cancellationToken);
+        var admission = await this.AcquireAsync(store, instanceId, purpose, subject, maximum, window, false, true, cancellationToken);
+        var source = store;
         return admission.Rejection is { } rejection ? (null, rejection) : (new Reservation(this, source, instanceId, purpose, admission), null);
     }
 
@@ -282,41 +275,7 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
     }
 
     private async Task<AttemptRejection?> AcquireAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, bool cooldown, CancellationToken cancellationToken) =>
-        (await this.WithFallbackAsync(source => this.AcquireAsync(source, instanceId, purpose, subject, maximum, window, cooldown, true, cancellationToken), purpose, cancellationToken)).Rejection;
-
-    // Runs a check on TerraBase; when that storage fails (not when the caller gave up), runs it on this replica's memory.
-    private async Task<T> WithFallbackAsync<T>(Func<IAttemptStore, Task<T>> check, string purpose, CancellationToken cancellationToken)
-    {
-        try
-        {
-            return await check(store).ConfigureAwait(false);
-        }
-        catch (ApiException failure) when (failure.Status == StatusCodes.Status503ServiceUnavailable && !cancellationToken.IsCancellationRequested
-            && Transient(failure.InnerException))
-        {
-            Fallbacks.Add(1, new KeyValuePair<string, object?>("purpose", purpose));
-            var now = clock.GetTimestamp();
-            var last = Interlocked.Read(ref this.warnedAt);
-            if ((last == long.MinValue || clock.GetElapsedTime(last, now) >= TimeSpan.FromMinutes(1))
-                && Interlocked.CompareExchange(ref this.warnedAt, now, last) == last)
-            {
-                logger?.ZLogWarning(failure.InnerException ?? failure, $"Rate-limit storage failed; {purpose:@Purpose} and other budgets run on this replica's memory");
-            }
-
-            return await check(this.local).ConfigureAwait(false);
-        }
-    }
-
-    // Storage that is down, slow or overloaded. A rejected credential, a missing table, persistent contention or a
-    // damaged bucket still fails closed: those are faults to fix, not outages to ride out.
-    private static bool Transient(Exception? failure) => failure switch
-    {
-        TimeoutException => true,
-        HttpRequestException { StatusCode: null } => true,
-        HttpRequestException { StatusCode: { } status } => (int)status >= 500 || status is System.Net.HttpStatusCode.TooManyRequests or System.Net.HttpStatusCode.MisdirectedRequest,
-        ApiException { Status: StatusCodes.Status503ServiceUnavailable } inner => Transient(inner.InnerException),
-        _ => false,
-    };
+        (await this.AcquireAsync(store, instanceId, purpose, subject, maximum, window, cooldown, true, cancellationToken)).Rejection;
 
     private async Task<Admission> AcquireAsync(IAttemptStore source, string instanceId, string purpose, string subject, int maximum, TimeSpan window, bool cooldown, bool charge, CancellationToken cancellationToken)
     {

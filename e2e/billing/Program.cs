@@ -25,6 +25,16 @@ Environment.SetEnvironmentVariable("TS_AUTH_DASHBOARD_CLIENT_SECRET", secrets[5]
 Environment.SetEnvironmentVariable("STRIPE_SECRET_KEY", secrets[6]);
 Environment.SetEnvironmentVariable("STRIPE_WEBHOOK_SECRET", secrets[7]);
 Environment.SetEnvironmentVariable("TS_DASHBOARD_TERRABASE_URL", "http://127.0.0.1:8081");
+if (args is ["background", var journeyPath])
+{
+    await BackgroundJourney.RunAsync(journeyPath, cancellationToken);
+    return;
+}
+if (args is ["background-worker", var kind, var at])
+{
+    await BackgroundJourney.WorkAsync(kind, DateTimeOffset.Parse(at, CultureInfo.InvariantCulture), cancellationToken);
+    return;
+}
 using var control = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:8027") };
 var clock = new BillingClock();
 await using var application = DashboardApplication.Build(["--environment", "Development", "--contentRoot", Environment.GetEnvironmentVariable("E2E_BUILD") + "/dashboard"],

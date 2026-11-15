@@ -7,7 +7,7 @@ namespace TerraScale.Dashboard.Features.Billing
 {
     // Converges TerraBase to every organization's entitled plan every 30 seconds, whatever was missed: a TerraBase wipe or
     // re-seed, an enrollment after the last billing change, a failed publish, or a paid checkout whose webhook never came.
-    public sealed class PlanReconciler(IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, StripeBilling billing, BillingSchemaGate gate, TerraBasePlanSync plans, TimeProvider clock, ILogger<PlanReconciler> logger) : BackgroundService
+    public sealed class PlanReconciler(IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, StripeBilling billing, BillingSchemaGate gate, TerraBasePlanSync plans, TimeProvider clock, ILogger<PlanReconciler> logger, BackgroundJobs jobs) : BackgroundService
     {
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
@@ -26,34 +26,37 @@ namespace TerraScale.Dashboard.Features.Billing
         public async Task RunOnceAsync(CancellationToken cancellationToken)
         {
             if (!await gate.AllowsAsync(cancellationToken)) { return; }
-            await billing.RecoverEventReceiptsAsync(cancellationToken);
-            List<BillingBinding> pending;
-            await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+            await jobs.RunAsync("plan-reconciliation", TimeSpan.FromSeconds(30), async (claim, token) =>
             {
-                pending = await db.Billing.AsNoTracking().Where(row => row.ErasureId == null && row.Kind == "stripe" && row.CheckoutId != "" && row.SubscriptionId == "" && row.Status == "pending")
-                    .ToListAsync(cancellationToken);
-            }
+                await billing.RecoverEventReceiptsAsync(token);
+                List<BillingBinding> pending;
+                await using (var db = await storage.CreateDbContextAsync(token))
+                {
+                    pending = await db.Billing.AsNoTracking().Where(row => row.ErasureId == null && row.Kind == "stripe" && row.CheckoutId != "" && row.SubscriptionId == "" && row.Status == "pending")
+                        .ToListAsync(token);
+                }
 
-            foreach (var binding in pending)
-            {
-                try
+                foreach (var binding in pending)
                 {
-                    await billing.ReconcilePendingCheckoutAsync(binding, cancellationToken);
+                    try
+                    {
+                        await billing.ReconcilePendingCheckoutAsync(binding, token);
+                    }
+                    catch (Exception error) when (error is DbUpdateException or TimeoutException or TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or Stripe.StripeException)
+                    {
+                        logger.APendingCheckoutDidNotReconcile(error.GetType().Name);
+                    }
                 }
-                catch (Exception error) when (error is DbUpdateException or TimeoutException or TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or Stripe.StripeException)
+                foreach (var organization in await organizations.ListAsync(token))
                 {
-                    logger.APendingCheckoutDidNotReconcile(error.GetType().Name);
+                    var current = organization;
+                    if (organization.BillingStatus == "active" && organization.PaymentGraceUntil is { } deadline && deadline <= clock.GetUtcNow())
+                    {
+                        current = await billing.ResolveExpiredGraceAsync(organization.Id, token);
+                    }
+                    await plans.PublishAsync(current, reconcile: true, token);
                 }
-            }
-            foreach (var organization in await organizations.ListAsync(cancellationToken))
-            {
-                var current = organization;
-                if (organization.BillingStatus == "active" && organization.PaymentGraceUntil is { } deadline && deadline <= clock.GetUtcNow())
-                {
-                    current = await billing.ResolveExpiredGraceAsync(organization.Id, cancellationToken);
-                }
-                await plans.PublishAsync(current, reconcile: true, cancellationToken);
-            }
+            }, cancellationToken);
         }
     }
 }

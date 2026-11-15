@@ -22,9 +22,13 @@ namespace TerraScale.Dashboard.Features.Profile
             await accounts.RemoveNotificationsAsync(organizationId, null, cancellationToken);
         }
 
-        public Task CleanProjectAsync(string organizationId, string projectId, CancellationToken cancellationToken)
+        public async Task CleanProjectAsync(string organizationId, string projectId, CancellationToken cancellationToken)
         {
-            return accounts.RemoveNotificationsAsync(organizationId, projectId, cancellationToken);
+            await using var db = await storage.CreateDbContextAsync(cancellationToken);
+            var prefix = "log-drain/" + projectId + "/";
+            var alerts = "alerts/" + projectId;
+            await db.BackgroundJobs.Where(row => row.Id.StartsWith(prefix) || row.Id == alerts).ExecuteDeleteAsync(cancellationToken);
+            await accounts.RemoveNotificationsAsync(organizationId, projectId, cancellationToken);
         }
     }
 }
