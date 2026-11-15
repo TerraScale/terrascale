@@ -20,6 +20,8 @@ internal static class BackgroundHost
     {
         var builder = Host.CreateApplicationBuilder();
         builder.Logging.ClearProviders();
+        builder.Logging.AddConsole(options => options.LogToStandardErrorThreshold = LogLevel.Trace);
+        builder.Logging.SetMinimumLevel(LogLevel.Warning);
         builder.Services.AddSingleton(clock ?? TimeProvider.System);
         builder.Services.AddSingleton<IDashboardIdentity, DashboardIdentity>();
         builder.Services.AddDashboardStorage();

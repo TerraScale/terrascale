@@ -7,6 +7,7 @@ using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using NUlid;
 using TerraScale.Dashboard.Common.Accounts;
 using TerraScale.Dashboard.Features.Logs;
 using TerraScale.Dashboard.Features.Notifications;
@@ -247,7 +248,7 @@ internal static partial class BackgroundJourney
             OrganizationId = owner.OrganizationId,
             Revision = AccountService.NewId(),
             Url = "https://hooks.journey.terrascale.tech/dashboard-drain/" + AccountService.NewId(),
-            CreatedAt = TimeProvider.System.GetUtcNow().AddMinutes(-5).UtcDateTime
+            CreatedAt = Ulid.Parse(owner.DatabaseId).Time.UtcDateTime
         };
         db.LogDrains.Add(drain);
         await db.SaveChangesAsync(cancellationToken);

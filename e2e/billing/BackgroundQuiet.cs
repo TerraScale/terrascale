@@ -84,7 +84,7 @@ internal static partial class BackgroundJourney
         await using (var db = await storage.CreateDbContextAsync(cancellationToken))
         {
             var drain = await db.LogDrains.AsNoTracking().SingleAsync(row => row.Id == quiet.DrainId, cancellationToken);
-            Require(drain.LastSuccessAt is not null, "The quiet gap delayed the next available batch.");
+            Require(drain.LastSuccessAt is not null, $"The quiet gap delayed the next available batch: last error status={drain.LastErrorStatus}, at={drain.LastErrorAt:O}.");
             var cursor = await db.LogDrainCursors.AsNoTracking().SingleAsync(row => row.DrainId == quiet.DrainId && row.DatabaseId == quiet.DatabaseId, cancellationToken);
             var state = await db.BackgroundJobs.AsNoTracking().Where(row => row.Id == id).Select(row => new { State = row, Now = DateTime.UtcNow }).SingleAsync(cancellationToken);
             Require(cursor.Cursor != "00000000000000000000000000" && state.State.Payload is null && state.State.LeaseUntil <= state.Now, "The next batch failed cursor commit or retained its lease.");
