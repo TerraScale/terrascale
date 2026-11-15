@@ -1,0 +1,52 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.FileStorage.BucketSideModel>
+@using TerraScale.Dashboard.Features.FileStorage
+@{
+    var canWrite = Model.Page.Shell.Context.CanWriteProjectData;
+    var csrf = Model.Page.Shell.CsrfToken;
+    var bucketId = Model.Page.Listing!.BucketId!;
+    var selected = Model.Page.Listing.Buckets.Items.FirstOrDefault(bucket => bucket.Id == bucketId)!;
+    var draft = Model.Page.Draft;
+}
+<div class="ts-columns-side" id="bucket-side">
+    @if (canWrite)
+    {
+        var rulesDraft = draft?.Dialog == "";
+        var rules = rulesDraft ? draft!.Rules with { Owner = selected.Rules.Owner } : selected.Rules;
+        <section class="ts-card ts-card-boxed" aria-labelledby="bucket-rules-title">
+            <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="bucket-rules-title">Access</h2></div></header>
+            <form method="post" action="/api/v1/dashboard/storage/rules" class="ts-form ts-files-form" data-submit-once data-on:submit="@("@post('/api/v1/dashboard/storage/rules', {contentType:'form'})")">
+                <input type="hidden" name="_csrf" value="@csrf" /><input type="hidden" name="bucket" value="@bucketId" />@if (Model.Page.Prefix.Length > 0) { <input type="hidden" name="prefix" value="@Model.Page.Prefix" /> }
+                @if (rulesDraft && draft!.Error is { } rulesError) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@rulesError</p></div> }
+                @(await RenderPartialAsync<FileRulesForm, FileRulesFormModel>(new("existing-bucket", rules, true)))
+                <footer class="ts-card-foot"><button class="ts-btn ts-btn-primary" type="submit">Save</button></footer>
+            </form>
+        </section>
+    }
+    else
+    {
+        <section class="ts-card ts-card-boxed" aria-labelledby="bucket-rules-title">
+            <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="bucket-rules-title">Access</h2></div></header>
+            <div class="ts-card-body">@(await RenderPartialAsync<FileRulesForm, FileRulesFormModel>(new("existing-bucket", selected.Rules, true)))</div>
+        </section>
+    }
+    <section class="ts-card ts-card-boxed" aria-labelledby="bucket-settings-title">
+        <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="bucket-settings-title">Settings</h2></div></header>
+        <div class="ts-card-body"><dl class="ts-kv">
+            <div><dt>Name</dt><dd class="ts-mono">@selected.Name</dd></div>
+            <div><dt>Region</dt><dd><span class="ts-badge ts-badge-neutral ts-mono">@selected.Region</span></dd></div>
+            <div><dt>Created</dt><dd>@FileStorageFormat.Time(FileStorageFormat.Created(selected.Id), Model.Page.Now)</dd></div>
+            <div><dt>Bucket ID</dt><dd class="ts-mono ts-break">@selected.Id</dd></div>
+        </dl></div>
+    </section>
+    @if (canWrite)
+    {
+        <section class="ts-card ts-card-boxed ts-files-danger" aria-labelledby="delete-bucket-heading">
+            <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="delete-bucket-heading">Delete bucket</h2></div></header>
+            <div class="ts-card-body ts-files-danger-body">
+                <p>This permanently deletes the bucket. It must have no files.</p>
+                <button class="ts-btn ts-btn-danger ts-btn-sm" type="button" command="show-modal" commandfor="delete-bucket">Delete bucket</button>
+            </div>
+        </section>
+        @(await RenderPartialAsync<FileConfirmDialog, FileConfirmDialogModel>(new("delete-bucket", "/api/v1/dashboard/storage/delete-bucket", "Delete bucket: " + selected.Name, "This permanently deletes the bucket. It must have no files.", "Delete bucket", csrf, new Dictionary<string, string> { ["bucket"] = bucketId }, draft?.Dialog == "delete-bucket" ? draft.Error : null)))
+    }
+</div>

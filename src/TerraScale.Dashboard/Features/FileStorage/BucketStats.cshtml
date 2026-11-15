@@ -1,0 +1,12 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.FileStorage.BucketSideModel>
+@using System.Globalization
+@using TerraScale.Dashboard.Features.FileStorage
+@{
+    var selected = Model.Page.Listing!.Buckets.Items.FirstOrDefault(bucket => bucket.Id == Model.Page.Listing.BucketId)!;
+}
+<dl class="ts-stats" id="bucket-stats" aria-label="Bucket summary">
+    <div class="ts-stat"><dt class="ts-stat-label">Files</dt><dd class="ts-stat-value">@(Model.Files is null ? "—" : Model.Files.Count.ToString(CultureInfo.InvariantCulture))</dd>@if (Model.Next is not null) { <dd class="ts-stat-meta">first @(Model.Files!.Count.ToString(CultureInfo.InvariantCulture)) shown</dd> }</div>
+    <div class="ts-stat"><dt class="ts-stat-label">Size</dt><dd class="ts-stat-value">@(Model.Files is null ? "—" : MetricFormat.Bytes(Model.Files.Sum(file => file.Size)))</dd>@if (Model.Next is not null) { <dd class="ts-stat-meta">of shown files</dd> }</div>
+    <div class="ts-stat"><dt class="ts-stat-label">Visibility</dt><dd class="ts-stat-value">@(selected.Rules.Read.Public ? "Public read" : "Private")</dd></div>
+    <div class="ts-stat"><dt class="ts-stat-label">Region</dt><dd class="ts-stat-value"><span class="ts-badge ts-badge-neutral ts-mono">@selected.Region</span></dd></div>
+</dl>

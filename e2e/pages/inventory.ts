@@ -294,7 +294,7 @@ export const dashboardStates: readonly PageState[] = [
     name: 'file storage',
     url: () => '/storage',
     covers: { path: /^\/storage$/ },
-    heading: title('Files'),
+    heading: title('File storage'),
     data: async (page, journey) => {
       await expect(page.locator('main.ts-files')).toHaveAttribute('data-project-id', journey.projectId);
       await expect(page.getByText('No buckets yet.', { exact: true })).toBeVisible();
