@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { Page } from '@playwright/test';
+import { waitForCreatedDatabase } from '../support/database';
 import { test, expect } from '../support/audit';
 import { cloudflareSendCount, newAddress, nextMail } from '../support/inbox';
 import { saveJourney, saveSecret, saveSession } from '../support/state';
@@ -179,9 +180,11 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
   await expect(picked).toHaveCount(1);
   await expect(regions.getByRole('status')).toHaveText('A database needs one region.');
   await page.locator('#database-name').fill(databaseName);
+  const databasesUrl = page.url();
   await page.locator('#create-database form').getByRole('button', { name: 'Create database', exact: true }).click();
-  await page.waitForURL(/\/databases\/[0-9A-HJKMNP-TV-Z]{26}(\?|$)/);
-  const databaseId = new URL(page.url()).pathname.split('/')[2];
+  const { id: databaseId, link } = await waitForCreatedDatabase(page, databaseName, databasesUrl);
+  await link.click();
+  await page.waitForURL(url => url.pathname === `/databases/${databaseId}`);
   await expect(page.locator('.ts-db-title')).toHaveText(databaseName);
   await expect(page.locator('main').getByText('ready', { exact: true }).first()).toBeVisible();
   await expect(page.locator('main').getByText(new RegExp(`^${region}$`, 'i')).first()).toBeVisible();

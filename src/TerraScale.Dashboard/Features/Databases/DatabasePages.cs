@@ -10,6 +10,7 @@ namespace TerraScale.Dashboard.Features.Databases
         string Search = "", string Error = "", bool OpenCreate = false, string Name = "", string RegionsError = "")
     {
         public string Notice { get; init; } = "";
+        public string CreatedName { get; init; } = "";
         public AccountContext Context => Shell.Context;
         public IReadOnlyList<DatabaseRecord> All => Context.Project?.Databases.Values.OrderBy(database => database.Name, StringComparer.Ordinal).ToArray() ?? [];
         public int Ready => All.Count(database => database.Status == "ready");

@@ -50,7 +50,7 @@ namespace TerraScale.Dashboard.Features.Notifications
             }
             catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
             context = await NotificationCommands.RefreshAsync(accounts, context, http.RequestAborted, reload: true);
-            var page = NotificationPage.For(ShellModel.For(http, context, "Notifications"), form["status"], form["page"], true);
+            var page = NotificationPage.For(ShellModel.For(http, context, "Notifications"), form["status"], form["page"], form["dialog"] == "1");
             if (http.Request.IsDatastarRequest)
             {
                 await DatastarEvents.PatchElementsAsync(http, NotificationPatch.Create(page));

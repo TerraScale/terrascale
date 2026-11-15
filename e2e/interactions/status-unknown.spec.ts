@@ -1,5 +1,6 @@
 import { createServer, type Server } from 'node:http';
 import { expect, test, type APIRequestContext, type APIResponse, type Page } from '@playwright/test';
+import { waitForCreatedDatabase } from '../support/database';
 import { keyId } from '../support/api-key';
 import { signInToken } from '../support/auth-management';
 import { createDedicatedProjectOwner } from '../support/project-owner';
@@ -90,9 +91,10 @@ async function createOwnedDatabase(page: Page, name: string): Promise<{ id: stri
   const picked = page.locator('#create-database-regions input[name="regions"]:checked');
   const region = (await picked.inputValue()).toLowerCase();
   await page.locator('#database-name').fill(name);
+  const databasesUrl = page.url();
   await page.locator('#create-database form').getByRole('button', { name: 'Create database', exact: true }).click();
-  await page.waitForURL(/\/databases\/[0-9A-HJKMNP-TV-Z]{26}(\?|$)/);
-  return { id: new URL(page.url()).pathname.split('/')[2] ?? '', region };
+  const { id } = await waitForCreatedDatabase(page, name, databasesUrl);
+  return { id, region };
 }
 
 async function sql(context: APIRequestContext, token: string, projectId: string, databaseId: string, statements: { sql: string }[]): Promise<void> {
