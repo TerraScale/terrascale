@@ -1,5 +1,7 @@
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Common.Accounts;
 using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard.Features.Organizations
@@ -32,9 +34,23 @@ namespace TerraScale.Dashboard.Features.Organizations
             {
                 var organization = context.Organization ?? throw new AccountAccessException("Select an organization.");
                 await mfa.SetRequireMfaAsync(context.Session, organization.Id, form["requireMfa"] == "true", http.RequestAborted);
+                if (http.Request.Headers["Datastar-Request"] == "true")
+                {
+                    context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, reload: true);
+                    await DatastarEvents.PatchElementsAsync(http, TerraScale.Dashboard.Features.Organizations.OrganizationPageView.Create(await OrganizationEndpoints.PageModelAsync(http, context, placement)));
+                    return Results.Empty;
+                }
                 return HttpRedirects.SeeOther("/organization");
             }
-            catch (AccountAccessException error) { return await OrganizationEndpoints.PageAsync(http, context, placement, error.Message, error.StatusCode, "organization"); }
+            catch (AccountAccessException error)
+            {
+                if (http.Request.Headers["Datastar-Request"] == "true")
+                {
+                    await OrganizationEndpoints.PatchAsync(http, context, placement, error.Message, "organization");
+                    return Results.Empty;
+                }
+                return await OrganizationEndpoints.PageAsync(http, context, placement, error.Message, error.StatusCode, "organization");
+            }
         }
     }
 }

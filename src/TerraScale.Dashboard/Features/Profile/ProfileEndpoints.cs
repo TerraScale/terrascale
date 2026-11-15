@@ -1,5 +1,6 @@
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Platform.Datastar;
 
 namespace TerraScale.Dashboard.Features.Profile
 {
@@ -106,10 +107,33 @@ namespace TerraScale.Dashboard.Features.Profile
                 {
                     await ProfileChanges.SaveAsync(accounts, context.Session, form["name"].ToString(), form["phoneNumber"].ToString(), http.RequestAborted);
                 }
+                if (http.Request.Headers["Datastar-Request"] == "true")
+                {
+                    context = await accounts.GetContextAsync(context.Session, http.RequestAborted);
+                    await DatastarEvents.PatchElementsAsync(http, ProfilePatch.Create(new(ShellModel.For(http, context, "Profile"), "profile", Status: language ? "Language preference saved." : "Profile saved.", Sessions: await sessions.ListAsync(http, context.Session))));
+                    return Results.Empty;
+                }
                 return HttpRedirects.SeeOther("/profile?tab=profile&status=" + (language ? "language-saved" : "profile-saved"));
             }
             catch (AccountAccessException error)
             {
+                if (http.Request.Headers["Datastar-Request"] == "true")
+                {
+                    await DatastarEvents.PatchElementsAsync(http, ProfilePatch.Create(new(ShellModel.For(http, context, "Profile"), "profile", Error: error.Message, Sessions: await sessions.ListAsync(http, context.Session))
+                    {
+                        Providers = await http.RequestServices.GetRequiredService<ITsAuthProviders>().ListProvidersAsync(context.Session, http.RequestAborted),
+                        InvalidField = error.Code switch
+                        {
+                            "invalid_profile_name" => "displayName",
+                            "invalid_profile_phone" => "phoneNumber",
+                            "invalid_profile_locale" => "interfaceLanguage",
+                            _ => null
+                        },
+                        DraftName = language ? null : form["name"].ToString(),
+                        DraftPhone = language ? null : form["phoneNumber"].ToString()
+                    }));
+                    return Results.Empty;
+                }
                 var slice = ProfileView.Create(new(ShellModel.For(http, context, "Profile"), Error: error.Message, Sessions: await sessions.ListAsync(http, context.Session))
                 {
                     Providers = await http.RequestServices.GetRequiredService<ITsAuthProviders>().ListProvidersAsync(context.Session, http.RequestAborted),

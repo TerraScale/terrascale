@@ -196,8 +196,11 @@ test.describe('teardown', () => {
     const name = `Renamed ${current.runId}`;
     await page.goto('/profile');
     await page.locator('#displayName').fill(name);
+    const before = page.url();
     await page.locator('form[action^="/api/v1/dashboard/profile"]').getByRole('button', { name: 'Save profile', exact: true }).click();
-    await page.waitForLoadState('load');
+    await expect(page.locator('#displayName')).toHaveValue(name);
+    await expect(page).toHaveURL(before);
+    await expect(page.locator('h1.ts-profile-name')).toHaveText(name);
     await shell(page, { ...current, displayName: name });
     await audit.check('profile renamed');
   });

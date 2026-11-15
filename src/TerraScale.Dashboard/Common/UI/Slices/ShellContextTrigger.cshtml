@@ -1,0 +1,7 @@
+@inherits RazorSlice<ShellModel>
+<button type="button" id="ts-context-trigger" popovertarget="ts-context-menu" class="ts-context-trigger" aria-label="Switch organization or project, current: @(Model.Context.Organization?.Name ?? "none") / @(Model.Context.Project?.Name ?? "none")">
+    <span class="ts-context-icon" data-tone="@ShellModel.Tone(Model.Context.Organization?.Name ?? "")" aria-hidden="true">@ShellModel.Initial(Model.Context.Organization?.Name ?? "")</span>
+    <span class="ts-context-text"><span class="ts-context-kind">@(Model.Context.Organization?.Name ?? "Choose organization")</span><span class="ts-context-name"><span class="ts-context-dot" data-tone="@ShellModel.Tone(Model.Context.Project?.Name ?? "")" aria-hidden="true"></span><span class="ts-truncate">@(Model.Context.Project?.Name ?? "Choose project")</span></span></span><span class="ts-context-chevron" aria-hidden="true">@ShellIcons.Svg("arrow-up-down", 14)</span>
+    @if (Model.Context.Organization is { } current) { <span class="ts-sr-only" data-active-organization-id="@current.Id">Current organization: @current.Name</span> }
+    @if (Model.Context.Project is { } activeProject) { <span class="ts-sr-only" data-active-project-id="@activeProject.Id">Current project: @activeProject.Name</span> }
+</button>

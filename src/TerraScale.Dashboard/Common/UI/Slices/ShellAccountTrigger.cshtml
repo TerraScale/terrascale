@@ -1,0 +1,2 @@
+@inherits RazorSlice<ShellModel>
+<button type="button" id="ts-account-trigger" popovertarget="ts-account-menu" class="ts-account-trigger"><span class="ts-account-avatar" aria-hidden="true">@Model.Initials</span><span class="ts-sr-only">Account menu for </span><span class="ts-account-meta"><span class="ts-account-name">@Model.Context.Account.Name</span><span class="ts-account-email">@Model.Context.Account.Email</span></span><span class="ts-account-chevron" aria-hidden="true">@ShellIcons.Svg("chevron-up", 14)</span></button>

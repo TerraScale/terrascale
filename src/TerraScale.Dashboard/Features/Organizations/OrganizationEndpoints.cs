@@ -44,6 +44,14 @@ namespace TerraScale.Dashboard.Features.Organizations
             return slice;
         }
 
+        internal static async Task PatchAsync(HttpContext http, AccountContext context, IWorkspacePlacement placement, string error = "", string? tab = null)
+        {
+            var page = await PageModelAsync(http, context, placement, error, tab);
+            await DatastarEvents.PatchElementsAsync(http, page.Tab is "members" or "invitations"
+                ? Members.OrganizationAccessPage.Create(page)
+                : OrganizationPageView.Create(page));
+        }
+
         internal static async Task<OrganizationPage> PageModelAsync(HttpContext http, AccountContext context, IWorkspacePlacement placement, string error = "", string? tabOverride = null, bool openCreateProject = false, string? wizardOverride = null)
         {
             if (context.Organization is not null && context.Role.Length == 0)
@@ -131,8 +139,15 @@ namespace TerraScale.Dashboard.Features.Organizations
                     var view = await access.ReadAsync(context, http.RequestAborted);
                     http.Response.Headers.CacheControl = "no-store";
                     http.Response.Headers["Referrer-Policy"] = "strict-origin";
-                    return OrganizationView.Create(new(ShellModel.For(http, context, "Organization"), http.Request.Query["tab"] == "invitations" ? "invitations" : "members", [], Access: view,
-                        InvitationLink: $"{http.Request.Scheme}://{http.Request.Host}/invitations/{Uri.EscapeDataString(created.Token)}"));
+                    var tab = http.Request.Query["tab"] == "invitations" ? "invitations" : "members";
+                    var model = new OrganizationPage(ShellModel.For(http, context, "Organization"), tab, [], Access: view,
+                        InvitationLink: $"{http.Request.Scheme}://{http.Request.Host}/invitations/{Uri.EscapeDataString(created.Token)}");
+                    if (http.Request.Headers["Datastar-Request"] == "true")
+                    {
+                        await DatastarEvents.PatchElementsAsync(http, Members.OrganizationAccessPage.Create(model));
+                        return Results.Empty;
+                    }
+                    return OrganizationView.Create(model);
                 }
                 if (operation == "revoke-invitation")
                 {
@@ -167,6 +182,13 @@ namespace TerraScale.Dashboard.Features.Organizations
                         _ => "cancel"
                     }, id ?? form["userID"].ToString(), form["role"].ToString(), http.RequestAborted, proof);
                 }
+                if (http.Request.Headers["Datastar-Request"] == "true")
+                {
+                    context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, reload: true);
+                    await PatchAsync(http, context, placement, tab: operation.StartsWith("ownership", StringComparison.Ordinal) ? "danger"
+                        : http.Request.Query["tab"] == "invitations" ? "invitations" : "members");
+                    return Results.Empty;
+                }
                 return HttpRedirects.SeeOther(operation.StartsWith("ownership", StringComparison.Ordinal) ? "/organization?tab=danger" : "/organization?tab=members");
             }
             catch (AccountAccessException error) when (operation == "invite")
@@ -176,7 +198,16 @@ namespace TerraScale.Dashboard.Features.Organizations
                 slice.StatusCode = error.StatusCode;
                 return slice;
             }
-            catch (AccountAccessException error) { return await PageAsync(http, context, placement, error.Message, error.StatusCode, operation.StartsWith("ownership", StringComparison.Ordinal) ? "danger" : null); }
+            catch (AccountAccessException error)
+            {
+                if (http.Request.Headers["Datastar-Request"] == "true")
+                {
+                    await PatchAsync(http, context, placement, error.Message, operation.StartsWith("ownership", StringComparison.Ordinal) ? "danger"
+                        : http.Request.Query["tab"] == "invitations" ? "invitations" : "members");
+                    return Results.Empty;
+                }
+                return await PageAsync(http, context, placement, error.Message, error.StatusCode, operation.StartsWith("ownership", StringComparison.Ordinal) ? "danger" : null);
+            }
         }
 
         internal static async Task<IResult> LifecycleAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, OrganizationLifecycleService lifecycle, IWorkspacePlacement placement, string operation, string? projectId = null)
@@ -260,6 +291,12 @@ namespace TerraScale.Dashboard.Features.Organizations
                 if (operation == "rename")
                 {
                     await operations.RenameAsync(context, name, http.RequestAborted);
+                    if (http.Request.Headers["Datastar-Request"] == "true")
+                    {
+                        context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, reload: true);
+                        await DatastarEvents.PatchElementsAsync(http, OrganizationPatch.Create(await PageModelAsync(http, context, placement)));
+                        return Results.Empty;
+                    }
                     return HttpRedirects.SeeOther("/organization");
                 }
                 var regions = form["regions"].Select(item => item ?? "").Where(item => item.Length > 0).ToArray();
@@ -285,6 +322,11 @@ namespace TerraScale.Dashboard.Features.Organizations
             {
                 if (operation is not ("projects" or "rename-project"))
                 {
+                    if (http.Request.Headers["Datastar-Request"] == "true")
+                    {
+                        await PatchAsync(http, context, placement, error.Message);
+                        return Results.Empty;
+                    }
                     return await PageAsync(http, context, placement, error.Message, error.StatusCode);
                 }
 
