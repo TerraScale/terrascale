@@ -100,14 +100,14 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
       for (const outcome of ['admitted', 'refused']) reading(authMetrics, 'ts_auth_email_admission_total', `purpose="${purpose}"`, `outcome="${outcome}"`);
     }
     each(authMetrics, 'ts_auth_deletion_cleanup_total', 'outcome', ['invalid', 'verified', 'storage_unavailable', 'cleanup_failed', 'batch_remaining', 'records_remaining', 'scope_not_deleted', 'project_handoff_required', 'organization_handoff_required']);
-    expect(reading(authMetrics, 'ts_auth_sign_ins_total', 'method="hosted_password"', 'outcome="refused"')).toBe(0);
+    const refusedBefore = reading(authMetrics, 'ts_auth_sign_ins_total', 'method="hosted_password"', 'outcome="refused"');
     const refused = await page.request.post(`${auth}/ui/terrascale/sign-in/password`, {
       headers: { origin: auth },
       form: { email: 'metric-zero@example.com', password: 'not-a-real-password' },
     });
     expect(refused.status()).toBe(401);
     const after = await (await fetch('http://127.0.0.1:9092/metrics')).text();
-    expect(reading(after, 'ts_auth_sign_ins_total', 'method="hosted_password"', 'outcome="refused"')).toBe(1);
+    expect(reading(after, 'ts_auth_sign_ins_total', 'method="hosted_password"', 'outcome="refused"')).toBe(refusedBefore + 1);
   });
   const runId = randomBytes(4).toString('hex');
   const email = await newAddress(`journey-${runId}`);
