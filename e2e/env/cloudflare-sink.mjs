@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { port } from './ports.mjs';
 
 const messages = [];
 const send = /^\/client\/v4\/accounts\/[^/]+\/email\/sending\/send$/;
@@ -22,4 +23,4 @@ createServer((request, response) => {
   }
   if (request.method === 'GET' && url.pathname === '/messages') return reply(response, 200, messages);
   reply(response, 404, { success: false });
-}).listen(8026, '127.0.0.1');
+}).listen(port('cloudflare'), '127.0.0.1');

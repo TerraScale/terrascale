@@ -4,6 +4,7 @@ import { closeSync, mkdtempSync, openSync, readFileSync, readlinkSync, writeFile
 import { join } from 'node:path';
 import { expect } from '@playwright/test';
 import { nodeRequest } from '../fault/support';
+import { holdSync } from '../support/ports';
 import { stateDir } from '../support/stack';
 
 export type RegionProcess = { region: string; endpoint: string; stop(): Promise<void> };
@@ -15,7 +16,12 @@ export async function startRegion(region: string, index: number): Promise<Region
     return [value.slice(0, split), value.slice(split + 1)];
   }));
   const directory = mkdtempSync(join(stateDir, `region-${region}-`));
-  const port = 8380 + index * 100;
+  const held = holdSync({
+    client: 8380 + index * 100,
+    metrics: 9391 + index * 100,
+    postgres: 6732 + index * 100,
+  });
+  const port = held.ports.client;
   const address = `10.228.${index}.2`;
   const endpoint = `http://${address}:${port}`;
   const parent = `region${index}`;
@@ -29,20 +35,23 @@ export async function startRegion(region: string, index: number): Promise<Region
     env: {
       ...environment, TS_REGION: region, TS_NODE: `journey-extra-${region}`,
       TERRABASE_DATA_DIRECTORY: join(stateDir, 'namespace', `region-data-${region}`),
-      TERRABASE_PORT: String(port), TERRABASE_METRICS_PORT: String(9391 + index * 100),
-      TERRABASE_POSTGRES_PORT: String(6732 + index * 100),
+      TERRABASE_PORT: String(port), TERRABASE_METRICS_PORT: String(held.ports.metrics),
+      TERRABASE_POSTGRES_PORT: String(held.ports.postgres),
     },
     stdio: ['ignore', output, output],
   });
   closeSync(output);
   const exited = once(node, 'exit');
   const stop = async () => {
+    held.stop();
     if (node.exitCode === null) node.kill('SIGTERM');
     await exited;
+    try { execFileSync('ip', ['link', 'del', parent], { stdio: 'pipe' }); } catch { }
   };
   try {
     await expect.poll(() => readlinkSync(`/proc/${node.pid}/ns/net`) !== readlinkSync('/proc/self/ns/net'),
       { message: `${region} has a distinct network namespace` }).toBe(true);
+    try { execFileSync('ip', ['link', 'del', parent], { stdio: 'pipe' }); } catch { }
     execFileSync('ip', ['link', 'add', parent, 'type', 'veth', 'peer', 'name', child]);
     execFileSync('ip', ['link', 'set', child, 'netns', String(node.pid)]);
     execFileSync('ip', ['address', 'add', `10.228.${index}.1/30`, 'dev', parent]);

@@ -1,6 +1,7 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { port } from './ports.mjs';
 
 const platformBuckets = new Set(['journey-backups', 'journey-shapes', 'ts-terrabase-shapes-prod']);
 const platformObject = /^\/(journey-backups|journey-shapes|ts-terrabase-shapes-prod)\/((?:v1|catalog-anchor)\/[^?]+)$/;
@@ -227,4 +228,4 @@ createServer((request, response) => {
     });
     response.end(request.method === 'HEAD' ? undefined : stored.body);
   });
-}).listen(8028, '127.0.0.1');
+}).listen(port('r2'), '127.0.0.1');

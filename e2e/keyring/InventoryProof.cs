@@ -202,12 +202,12 @@ internal static class InventoryProof
         await SeedStoredAsync("cost", cancellationToken);
         using var client = new HttpClient();
         var timer = Stopwatch.StartNew();
-        var text = await client.GetStringAsync("http://127.0.0.1:18383/metrics", cancellationToken);
+        var text = await client.GetStringAsync(Environment.GetEnvironmentVariable("E2E_KEYRING_METRICS_URL") ?? throw new InvalidOperationException("E2E_KEYRING_METRICS_URL"), cancellationToken);
         var scrape = timer.Elapsed.TotalMilliseconds;
         var firstReference = Gauge(text, "terrabase_keys_local_wrapped", "k0");
         Require(firstReference >= 10_000 || firstReference == -1, "synthetic wrappers missing");
         timer.Restart();
-        var repeated = await client.GetStringAsync("http://127.0.0.1:18383/metrics", cancellationToken);
+        var repeated = await client.GetStringAsync(Environment.GetEnvironmentVariable("E2E_KEYRING_METRICS_URL") ?? throw new InvalidOperationException("E2E_KEYRING_METRICS_URL"), cancellationToken);
         var repeat = timer.Elapsed.TotalMilliseconds;
         Require(Gauge(repeated, "terrabase_keys_local_wrapped", "k0") == -1, "bounded recount must report unknown instead of a cached count");
         Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
@@ -302,14 +302,14 @@ internal static class InventoryProof
                 "refused import changed catalog tables");
         }
         using var client = new HttpClient();
-        var before = Gauge(await client.GetStringAsync("http://127.0.0.1:18383/metrics", cancellationToken),
+        var before = Gauge(await client.GetStringAsync(Environment.GetEnvironmentVariable("E2E_KEYRING_METRICS_URL") ?? throw new InvalidOperationException("E2E_KEYRING_METRICS_URL"), cancellationToken),
             "terrabase_keys_local_wrapped", "k0");
         Require(before == 0, "old wrappers were not drained before import");
         await using var tap = await services.GetRequiredService<IWalBackup>().OpenTapAsync(null, cancellationToken)
             ?? throw new InvalidOperationException("catalog backup tap is missing");
         incoming = await CredentialAsync(old, "old");
         await RegionalCatalog.ImportAsync(engine, snapshot with { Records = [.. snapshot.Records, incoming] }, receipts, cancellationToken);
-        var current = Gauge(await client.GetStringAsync("http://127.0.0.1:18383/metrics", cancellationToken),
+        var current = Gauge(await client.GetStringAsync(Environment.GetEnvironmentVariable("E2E_KEYRING_METRICS_URL") ?? throw new InvalidOperationException("E2E_KEYRING_METRICS_URL"), cancellationToken),
             "terrabase_keys_local_wrapped", "k0");
         Require(current == 2, "imported old credential missing from immediate local gauge: " + current.ToString(CultureInfo.InvariantCulture));
         Console.WriteLine("keyring-driver:import absent=whole-refusal k0=0->2");

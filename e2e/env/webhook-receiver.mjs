@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { port } from './ports.mjs';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 let secret;
@@ -14,7 +15,7 @@ function respond(response, status, body) {
 }
 
 createServer(async (request, response) => {
-  const url = new URL(request.url, 'http://127.0.0.1:8029');
+  const url = new URL(request.url, 'http://127.0.0.1:' + port('hooks'));
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
   const body = Buffer.concat(chunks);
@@ -72,4 +73,4 @@ createServer(async (request, response) => {
     respond(response, code, { received: valid, body: 'x'.repeat(2048) });
     for (const notify of waiters) notify();
   } else respond(response, 404, {});
-}).listen(8029, '127.0.0.1');
+}).listen(port('hooks'), '127.0.0.1');

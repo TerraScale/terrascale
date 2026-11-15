@@ -1,4 +1,5 @@
 import { createServer, request as forward } from 'node:http';
+import { port } from './ports.mjs';
 import { connect } from 'node:net';
 import { readFileSync } from 'node:fs';
 
@@ -40,4 +41,4 @@ server.on('connect', (request, socket, head) => {
   socket.on('error', () => upstream.destroy());
   socket.on('close', () => upstream.destroy());
 });
-server.listen(8089, '0.0.0.0');
+server.listen(port('client_proxy'), '0.0.0.0');

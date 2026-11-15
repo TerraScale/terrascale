@@ -1,11 +1,12 @@
 import { createServer } from 'node:http';
+import { port } from './ports.mjs';
 
 const records = new Map();
 const queries = [];
 const statuses = new Map();
 
 createServer(async (request, response) => {
-  const url = new URL(request.url, 'http://127.0.0.1:8032');
+  const url = new URL(request.url, 'http://127.0.0.1:' + port('dns'));
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
   response.setHeader('content-type', 'application/json');
@@ -26,4 +27,4 @@ createServer(async (request, response) => {
     response.statusCode = 404;
     response.end('{}');
   }
-}).listen(8032, '127.0.0.1');
+}).listen(port('dns'), '127.0.0.1');

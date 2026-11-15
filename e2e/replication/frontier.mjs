@@ -9,6 +9,7 @@ import { createConnection, createServer } from 'node:net';
 import { setPriority } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { holdSync } from '../env/ports.mjs';
 
 const journeyState = process.env.E2E_STATE;
 assert(journeyState, 'E2E_STATE names the isolated local journey namespace');
@@ -16,6 +17,10 @@ assert(process.env.E2E_BUILD, 'E2E_BUILD holds the TerraBase build');
 assert(process.env.E2E_TOOLS, 'E2E_TOOLS holds nats-server');
 assert(process.env.DOTNET_ROOT, 'DOTNET_ROOT holds the .NET runtime');
 assert.equal(process.env.E2E_REGIONS, '2');
+const P = holdSync({
+  nats: 4222, relay: 4223, internal: 8081, gru: 8080, fra: 8180, extra: 8280,
+  metrics: 9091, metricsFra: 9191, metricsExtra: 9291, pg: 6432, pgFra: 6532, pgExtra: 6632,
+}, 'block').ports;
 const state = resolve(journeyState, 'replication-' + randomBytes(6).toString('hex'));
 mkdirSync(state + '/logs', { recursive: true, mode: 0o700 });
 console.log('local state: ' + state);
@@ -100,7 +105,7 @@ class Relay {
   trap = null;
   constructor() {
     this.server = createServer(client => {
-      const upstream = createConnection({ port: 4222, host: '127.0.0.1' });
+      const upstream = createConnection({ port: P.nats, host: '127.0.0.1' });
       const link = { client, upstream, held: Buffer.alloc(0) };
       this.links.add(link);
       const close = () => {
@@ -133,7 +138,7 @@ class Relay {
     });
   }
   async listen() {
-    this.server.listen(4223, '127.0.0.1');
+    this.server.listen(P.relay, '127.0.0.1');
     await once(this.server, 'listening');
   }
   drop(subject) {
@@ -147,19 +152,19 @@ class Relay {
     this.server.close();
   }
 }
-const home = 'http://127.0.0.1:8081';
+const home = 'http://127.0.0.1:' + P.internal;
 function cell(region, second = false) {
   const gru = region === 'gru';
   return start('frontier-' + region + (second ? '-b' : ''), resolve(process.env.DOTNET_ROOT, 'dotnet'), [resolve(process.env.E2E_BUILD, 'terrabase/terrabase.dll')], {
     DOTNET_ENVIRONMENT: 'Production', TS_REGION: region, TS_NODE: second ? 'journey-3' : gru ? 'journey-1' : 'journey-2', TS_PEERS_FILE: state + '/peers',
-    TERRABASE_DATA_DIRECTORY: state + '/frontier-' + region + (second ? '-b' : ''), TERRABASE_PORT: second ? '8280' : gru ? '8080' : '8180',
-    TERRABASE_INTERNAL_PORT: '8081', TERRABASE_METRICS_PORT: second ? '9291' : gru ? '9091' : '9191', TERRABASE_POSTGRES_PORT: second ? '6632' : gru ? '6432' : '6532',
+    TERRABASE_DATA_DIRECTORY: state + '/frontier-' + region + (second ? '-b' : ''), TERRABASE_PORT: String(second ? P.extra : gru ? P.gru : P.fra),
+    TERRABASE_INTERNAL_PORT: String(P.internal), TERRABASE_METRICS_PORT: String(second ? P.metricsExtra : gru ? P.metrics : P.metricsFra), TERRABASE_POSTGRES_PORT: String(second ? P.pgExtra : gru ? P.pg : P.pgFra),
     TERRABASE_AUTH_ISSUER: 'https://auth.terrascale.tech/terrascale', TERRABASE_AUTH_AUDIENCE: 'https://api.terrascale.tech',
     TERRABASE_PEER_SECRET: peer, TERRABASE_MASTER_KEY: master.toString('base64'),
     AWS_ENDPOINT_URL_S3: 'https://journey.backups.terrascale.tech/', AWS_REGION: 'auto', BUCKET_NAME: 'journey-backups',
     AWS_ACCESS_KEY_ID: access, AWS_SECRET_ACCESS_KEY: secret,
     TERRABASE_SHAPES_ACCESS_KEY_ID: access, TERRABASE_SHAPES_SECRET_ACCESS_KEY: secret, TERRABASE_SHAPES_CDN_API_TOKEN: randomBytes(24).toString('hex'),
-    TS_NATS_URL: gru && !second ? 'nats://127.0.0.1:4223' : 'nats://127.0.0.1:4222', TERRABASE_NATS_TOKEN: token,
+    TS_NATS_URL: 'nats://127.0.0.1:' + (gru && !second ? P.relay : P.nats), TERRABASE_NATS_TOKEN: token,
     ...(gru && !second ? {
       ENGINE_INTEGRITY_PROXY: resolve(state, 'integrity.so'),
       ENGINE_INTEGRITY_CONTROL: resolve(state, 'integrity-control'),
@@ -198,11 +203,11 @@ try {
   compileIntegrity();
   writeFileSync(journeyState + '/r2', access + '\n' + secret + '\n', { mode: 0o600 });
   writeFileSync(state + '/peers', 'journey-1 gru 127.0.0.1\njourney-2 fra 127.0.0.2\njourney-3 gru 127.0.0.3\n');
-  writeFileSync(state + '/nats.conf', JSON.stringify({ host: '127.0.0.1', port: 4222, authorization: { token }, jetstream: { store_dir: state + '/nats' } }), { mode: 0o600 });
+  writeFileSync(state + '/nats.conf', JSON.stringify({ host: '127.0.0.1', port: P.nats, authorization: { token }, jetstream: { store_dir: state + '/nats' } }), { mode: 0o600 });
   let broker = start('frontier-nats', resolve(process.env.E2E_TOOLS, 'nats-server'), ['-c', state + '/nats.conf']);
   await logged(broker, 'Server is ready');
   await relay.listen();
-  nats = new Nats(token);
+  nats = new Nats(token, P.nats);
   await nats.connect();
   const previousLayout = await nats.request('$JS.API.STREAM.CREATE.TERRABASE_PUSH_PARK_GRU', { name: 'TERRABASE_PUSH_PARK_GRU', subjects: ['terrabase.push-park.gru.>'],
     storage: 'file', retention: 'limits', discard: 'new', max_bytes: 1 << 30, duplicate_window: 600_000_000_000, num_replicas: 1 });
@@ -216,7 +221,7 @@ try {
   await consuming;
   await logged(gru, 'Application started');
   await logged(gru, 'This node holds a new home lease session');
-  await trusted(9091);
+  await trusted(P.metrics);
   const user = id();
   const org = await request(home, '/v1/management/organizations', { name: 'Frontier' }, user, 'POST', 201);
   await request(home, '/v1/management/organizations/' + org.id + '/plan', { plan: 'pro' }, user, 'PUT');
@@ -274,7 +279,7 @@ try {
   await stop(gru);
   gru = cell('gru');
   await logged(gru, 'Application started');
-  await trusted(9091);
+  await trusted(P.metrics);
   await applied(first, transaction([effect(9)]));
   assert.equal(unknownOutcome, null);
   console.log('expired reverted result: its redelivery publishes no notice and the next message applies');
@@ -348,7 +353,7 @@ try {
     block(db, key);
     return key;
   };
-  const scrape = async (pattern, port = 9091) => {
+  const scrape = async (pattern, port = P.metrics) => {
     const lines = (await (await fetch('http://127.0.0.1:' + port + '/metrics')).text()).split('\n').filter(line => pattern.test(line));
     return lines.reduce((sum, line) => sum + Number(line.split(' ').at(-1)), 0);
   };
@@ -537,7 +542,7 @@ try {
   await sql(relocated, 'CREATE TABLE applications (tx TEXT PRIMARY KEY, value INTEGER)');
   await sql(relocated, 'INSERT INTO pairs VALUES (1, 0, 0)');
   await putSealedKey({ master, access, secret }, scope(relocated), keyId, dataKey);
-  const onFra = async statement => (await request('http://127.0.0.2:8081', '/v1/projects/' + project.id + '/databases/' + relocated.id + '/sql/execute', { statements: [{ sql: statement }] })).results[0].rows;
+  const onFra = async statement => (await request('http://127.0.0.2:' + P.internal, '/v1/projects/' + project.id + '/databases/' + relocated.id + '/sql/execute', { statements: [{ sql: statement }] })).results[0].rows;
   const columnA = audited(transaction([{ op: 'update', table: 'pairs', key: { id: 1 }, values: { a: 1 } }]));
   const columnB = audited(transaction([{ op: 'update', table: 'pairs', key: { id: 1 }, values: { b: 2 } }]));
   columnB.hlc = { ...columnA.hlc, logical: 1 };
@@ -621,7 +626,7 @@ try {
   assert.equal(Buffer.from(record.payload, 'base64').toString(), deletedPayload.toString());
   const replacement = await nats.request('$JS.API.STREAM.INFO.TERRABASE_PUSH_FRA');
   assert.equal(Date.parse(record.source.split('/')[1]), Date.parse(replacement.created));
-  const metrics = (await (await fetch('http://127.0.0.1:9091/metrics')).text()).split('\n');
+  const metrics = (await (await fetch('http://127.0.0.1:' + P.metrics + '/metrics')).text()).split('\n');
   for (const reason of ['deleted_database', 'empty']) {
     assert(metrics.some(line => line.startsWith('terrabase_push_parked_total{') && line.includes('reason="' + reason + '"') && line.endsWith(' 1')));
   }
@@ -645,7 +650,7 @@ try {
     const renewed = nats.event('$KV.terrabase-region-writers.gru', () => ++renewals >= 3);
     gru.kill('SIGCONT');
     await renewed;
-    await trusted(9091);
+    await trusted(P.metrics);
   };
   const flip = async node => {
     const stored = await nats.request('$JS.API.STREAM.MSG.GET.KV_terrabase-region-owners', { last_by_subj: '$KV.terrabase-region-owners.gru' });
@@ -901,7 +906,7 @@ try {
       const mark = readFileSync(broker.log, 'utf8').length;
       broker = start('frontier-nats', resolve(process.env.E2E_TOOLS, 'nats-server'), ['-c', state + '/nats.conf']);
       await logged(broker, 'Server is ready', {}, mark);
-      nats = new Nats(token);
+      nats = new Nats(token, P.nats);
       await nats.connect();
     };
   };

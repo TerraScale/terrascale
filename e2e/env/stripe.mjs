@@ -1,6 +1,7 @@
 import { createHmac, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { port } from './ports.mjs';
 
 const apiVersion = '2026-09-30.endive';
 const endpoint = 'https://dash.terrascale.tech/api/v1/billing/stripe/webhook';
@@ -197,7 +198,7 @@ function unexpected(response, request, url, reason, status = 404, error = { type
 async function handle(request, response, body) {
   const url = new URL(request.url, `https://${request.headers.host}`);
   if (url.hostname === 'auth.terrascale.tech' && request.method === 'POST' && url.pathname === '/v1/terrascale/organizations') {
-    const result = await fetch('http://127.0.0.1:8090' + url.pathname, {
+    const result = await fetch('http://127.0.0.1:' + port('auth') + url.pathname, {
       method: 'POST', headers: { authorization: request.headers.authorization, 'content-type': 'application/json' }, body,
     });
     const answer = await result.json();
@@ -377,4 +378,4 @@ createServer((request, response) => {
       reply(response, 500, { error: { type: 'api_error', message: 'The Stripe stand-in failed on this request.' } });
     }),
   );
-}).listen(8027, '127.0.0.1');
+}).listen(port('stripe'), '127.0.0.1');

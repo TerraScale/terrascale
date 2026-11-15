@@ -5,6 +5,7 @@ import { closeSync, existsSync, linkSync, mkdtempSync, openSync, readFileSync, r
 import { connect } from 'node:http2';
 import { join } from 'node:path';
 import { test as base, expect } from '@playwright/test';
+import { holdSync } from '../support/ports';
 import { stateDir } from '../support/stack';
 import { saveSecret } from '../support/state';
 
@@ -30,8 +31,11 @@ const test = base.extend<{}, { promotion: Promotion }>({
     saveSecret('promotion-store-secret', secret);
     const children = new Set<ChildProcess>();
     const observers = new Set<ReturnType<typeof watch>>();
-    const home = 'http://127.0.0.1:18481';
-    const replica = 'http://127.0.0.2:18481';
+    const promotionPorts = holdSync({
+      internal: 18481, gru: 18480, fra: 18490, pgGru: 18482, pgFra: 18492, metricsGru: 18483, metricsFra: 18493,
+    }, 'block').ports;
+    const home = 'http://127.0.0.1:' + promotionPorts.internal;
+    const replica = 'http://127.0.0.2:' + promotionPorts.internal;
     const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) =>
       !name.startsWith('TERRABASE_') && !name.startsWith('TS_') && !name.startsWith('AWS_') && name !== 'BUCKET_NAME'));
 
@@ -51,8 +55,10 @@ const test = base.extend<{}, { promotion: Promotion }>({
           ...(binary === process.env.E2E_KEYRING_BASELINE ? { TERRABASE_MASTER_KEY: k0.toString('base64') } : { TERRABASE_MASTER_KEYS_FILE: ring }), TERRABASE_PEER_SECRET: peer,
           TERRABASE_DATA_DIRECTORY: join(directory, region), TERRABASE_MEMORY_BUDGET: '67108864', TERRABASE_STORAGE_THREADS: '1',
           TS_REGION: region, TS_NODE: region === 'gru' ? 'keyring-home' : 'keyring-replica', TS_PEERS_FILE: peers,
-          TERRABASE_INTERNAL_PORT: '18481', TERRABASE_PORT: region === 'gru' ? '18480' : '18490',
-          TERRABASE_POSTGRES_PORT: region === 'gru' ? '18482' : '18492', TERRABASE_METRICS_PORT: region === 'gru' ? '18483' : '18493',
+          TERRABASE_INTERNAL_PORT: String(promotionPorts.internal), TERRABASE_PORT: String(region === 'gru' ? promotionPorts.gru : promotionPorts.fra),
+          TERRABASE_POSTGRES_PORT: String(region === 'gru' ? promotionPorts.pgGru : promotionPorts.pgFra), TERRABASE_METRICS_PORT: String(region === 'gru' ? promotionPorts.metricsGru : promotionPorts.metricsFra),
+          E2E_KEYRING_SYNC_URL: 'http://127.0.0.1:' + promotionPorts.internal,
+          E2E_KEYRING_METRICS_URL: 'http://127.0.0.1:' + (region === 'gru' ? promotionPorts.metricsGru : promotionPorts.metricsFra),
         }, stdio: [requestFile ? 'pipe' : 'ignore', output, output],
       });
       closeSync(output);
@@ -76,7 +82,8 @@ const test = base.extend<{}, { promotion: Promotion }>({
         try { return (await fetch('http://127.0.0.1:' + port + '/readyz')).status; } catch { return 0; }
       }).toBe(200);
       if (clock) {
-        await expect.poll(async () => (await (await fetch('http://127.0.0.1:' + (port + 3) + '/metrics')).text())
+        const metrics = port === promotionPorts.fra ? promotionPorts.metricsFra : promotionPorts.metricsGru;
+        await expect.poll(async () => (await (await fetch('http://127.0.0.1:' + metrics + '/metrics')).text())
           .match(/^terrabase_clock_local_writes_allowed(?:\{[^\n]*\})? (\d+)$/m)?.[1]).toBe('1');
       }
     }
@@ -134,8 +141,8 @@ const test = base.extend<{}, { promotion: Promotion }>({
     try {
       let first = start('gru', 'k0');
       let second = start('fra', 'k0');
-      await ready(18480);
-      await ready(18490);
+      await ready(promotionPorts.gru);
+      await ready(promotionPorts.fra);
       const organization = await request(home, 'POST', '/v1/management/organizations', { name: 'keyring-promotion' });
       const project = await request(home, 'POST', '/v1/management/organizations/' + String(organization.id) + '/projects', { name: 'promotion' });
       await request(home, 'PUT', '/admin/projects/' + String(project.id) + '/enrollment', { organization: organization.id }, false);
@@ -150,7 +157,7 @@ const test = base.extend<{}, { promotion: Promotion }>({
       const failed = await request(home, 'POST', projectPath + '/databases', { name: 'failed', homeRegion: 'gru', replicaRegions: ['fra'] });
       await stop(second);
       second = start('fra', 'k0');
-      await ready(18490);
+      await ready(promotionPorts.fra);
       const replicaKey = (id: unknown) => join(directory, 'fra', '.replicas', String(organization.id), String(project.id), String(id) + '.db.key');
       const promotedKey = (id: unknown) => join(directory, 'fra', String(organization.id), String(project.id), String(id) + '.db.key');
       const retainedSource = (id: unknown) => {
@@ -186,14 +193,14 @@ const test = base.extend<{}, { promotion: Promotion }>({
       if (process.env.E2E_KEYRING_BASELINE) {
         await stop(second);
         second = start('fra', 'k0', process.env.E2E_KEYRING_BASELINE);
-        await ready(18490, false);
+        await ready(promotionPorts.fra, false);
         await request(replica, 'POST', syncPath(one.id) + '/catch-up', undefined, false);
         expect((await request(replica, 'POST', projectPath + '/databases/' + String(one.id) + '/sql/execute', sql, false)).results).toMatchObject([{ rows: [[42]] }]);
         expect(readFileSync(replicaKey(two.id)).equals(oldRecord)).toBe(true);
         console.log('one key creation: origin/main opened new replica records unchanged and read row=42');
         await stop(second);
         second = start('fra', 'k0');
-        await ready(18490);
+        await ready(promotionPorts.fra);
       }
       const firstPlacement = await request(home, 'GET', syncPath(one.id) + '/placement', undefined, false);
       const firstObserved = observePromotion(organization.id, project.id, one.id);
@@ -213,9 +220,9 @@ const test = base.extend<{}, { promotion: Promotion }>({
       await stop(first);
       first = start('gru', 'k1');
       second = start('fra', 'k1');
-      await ready(18480);
-      await ready(18490);
-      await expect.poll(async () => (await (await fetch('http://127.0.0.1:18493/metrics')).text())
+      await ready(promotionPorts.gru);
+      await ready(promotionPorts.fra);
+      await expect.poll(async () => (await (await fetch('http://127.0.0.1:' + promotionPorts.metricsFra + '/metrics')).text())
         .match(/terrabase_keys_last_complete[^\n]* (\d+)/)?.[1] ?? '0').not.toBe('0');
       expect(readFileSync(replicaKey(two.id), 'ascii').startsWith('TERRABASE-REPLICA-KEY-2\nv2.k1.')).toBe(true);
       writeFileSync(replicaKey(two.id) + '.retained', oldRecord, { mode: 0o600 });
@@ -421,7 +428,7 @@ const test = base.extend<{}, { promotion: Promotion }>({
           writeFileSync(driverRequest, JSON.stringify({ organization: organization.id, project: project.id, database: published.id, mode: 'published' }), { mode: 0o600 });
           second = start('fra', 'k1', process.env.E2E_KEYRING_DRIVER!, driverRequest);
           await checkpoint('keyring-driver:audit-ready');
-          await expect.poll(async () => (await (await fetch('http://127.0.0.1:18493/metrics')).text())
+          await expect.poll(async () => (await (await fetch('http://127.0.0.1:' + promotionPorts.metricsFra + '/metrics')).text())
             .match(/terrabase_keys_last_complete[^\n]* (\d+)/)?.[1] ?? '0').not.toBe('0');
           second.stdin!.write('audit\n');
           await checkpoint('keyring-driver:unregistered-survived row=42');
