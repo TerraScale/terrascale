@@ -4,7 +4,7 @@ import { connect } from 'node:http2';
 import { join } from 'node:path';
 import { expect } from '@playwright/test';
 import { extendPeers, startRegion, type RegionProcess } from './fleet';
-import { production, stateDir } from '../support/stack';
+import { localPort, production, stateDir } from '../support/stack';
 import { journey } from '../support/state';
 import { test, home, replica, project, database, name, json, sql, removeDatabase, type Cells } from './support';
 
@@ -120,7 +120,7 @@ async function remove(cells: Cells, endpoint: string, id: string, followHome: bo
 
 async function publish(plan: string) {
   const credential = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
-  const session = connect('http://127.0.0.1:8081');
+  const session = connect('http://127.0.0.1:' + localPort('internal', 8081));
   const stream = session.request({
     ':method': 'PUT', ':path': `/admin/organizations/${journey().organizationId}/plan`,
     'x-terrabase-peer-credential': credential, 'content-type': 'application/json',

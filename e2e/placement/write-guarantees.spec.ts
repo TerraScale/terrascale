@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { expect, type APIRequestContext, type APIResponse } from '@playwright/test';
 import { frame, rawSqlSocket } from '../support/sql-socket';
-import { production } from '../support/stack';
+import { localPort, production } from '../support/stack';
 import { journey, saveSecret } from '../support/state';
 import { test, home, replica, project, database, name, json, sql, removeDatabase, type Cells } from './support';
 
@@ -10,6 +10,10 @@ test.skip(production || process.env.E2E_REGIONS !== '2' || process.env.E2E_NODES
   'one node in each of two regions');
 
 const insert = "INSERT INTO notes (value) VALUES ('a')";
+const fraClient = localPort('terrabase_fra', 8180);
+const homeMetrics = localPort('metrics', 9091);
+const fraMetrics = localPort('metrics_fra', 9191);
+const fraPostgres = localPort('postgres_fra', 6532);
 
 test('a write-preference override cannot force an unsafe local commit', async ({ cells, request }) => {
   const created = await json<{ id: string }>(await cells.post(`${home}${project()}/databases`, {
@@ -38,7 +42,7 @@ test('a write-preference override cannot force an unsafe local commit', async ({
     expect(shown(plain)).not.toContain('commit=local');
 
     const token = await credential(request);
-    const socketUrl = 'http://127.0.0.1:8180' + database(created.id) + '/sql/ws';
+    const socketUrl = 'http://127.0.0.1:' + fraClient + database(created.id) + '/sql/ws';
     const before = await routes(request);
     const open = await answered(socketUrl, token);
     const middle = await routes(request);
@@ -65,15 +69,15 @@ test('one node never acknowledges a write locally', async ({ cells, request }) =
     data: { name: name('one-replica'), regions: ['gru', 'fra'] },
   }), 201);
   try {
-    expect(await gauge(request, 9091)).toBe(0);
-    expect(await gauge(request, 9191)).toBe(0);
+    expect(await gauge(request, homeMetrics)).toBe(0);
+    expect(await gauge(request, fraMetrics)).toBe(0);
     await sql(cells, home, alone.id, 'CREATE TABLE notes (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
     const homeWrite = await cells.post(`${home}${database(alone.id)}/sql/execute`, {
       data: { statements: [{ sql: insert }] },
     });
     expect(homeWrite.status()).toBe(200);
     expect(homeWrite.headers()['terrascale-write-route'] ?? '').not.toContain('commit=local');
-    expect(await gauge(request, 9091)).toBe(0);
+    expect(await gauge(request, homeMetrics)).toBe(0);
     await sql(cells, home, copied.id, 'CREATE TABLE notes (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
     await sql(cells, home, copied.id, "INSERT INTO notes (id, value) VALUES (1, 'a')");
     await held(cells, copied.id, 'SELECT value FROM notes');
@@ -82,8 +86,8 @@ test('one node never acknowledges a write locally', async ({ cells, request }) =
     });
     expect(updated.status()).toBe(200);
     expect(updated.headers()['terrascale-write-route']).toBe('route=local; reason=update_by_key; commit=home');
-    expect(await gauge(request, 9091)).toBe(0);
-    expect(await gauge(request, 9191)).toBe(0);
+    expect(await gauge(request, homeMetrics)).toBe(0);
+    expect(await gauge(request, fraMetrics)).toBe(0);
     console.log('one node: home write has no commit=local; fra update-by-key commit=home; terrabase_localwrites_available 0');
   } finally {
     await removeDatabase(cells, copied.id);
@@ -113,7 +117,7 @@ function route(response: APIResponse) {
 async function postgres(id: string, statements: string) {
   const current = journey();
   const child = spawn('psql', ['-X', '-v', 'ON_ERROR_STOP=1', '-A', '-t',
-    `postgresql://any@127.0.0.1:6532/${current.projectId}/${id}?sslmode=disable`], {
+    `postgresql://any@127.0.0.1:${fraPostgres}/${current.projectId}/${id}?sslmode=disable`], {
     env: { PATH: process.env.PATH, PGPASSWORD: current.apiKey },
   });
   let out = '';
@@ -166,7 +170,7 @@ async function answered(url: string, token: string, headers?: Record<string, str
 }
 
 async function routes(request: APIRequestContext) {
-  const response = await request.get('http://127.0.0.1:9191/metrics');
+  const response = await request.get('http://127.0.0.1:' + fraMetrics + '/metrics');
   expect(response.status()).toBe(200);
   const counts = new Map<string, number>();
   for (const line of (await response.text()).split('\n')) {

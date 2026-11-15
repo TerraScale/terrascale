@@ -8,7 +8,7 @@ export const production = target === 'production';
 export const e2eRoot = join(__dirname, '..');
 export const stateDir = process.env.E2E_STATE ?? join(e2eRoot, '.state');
 
-function localPort(name: string, canonical: number): number {
+export function localPort(name: string, canonical: number): number {
   try {
     const parsed = JSON.parse(readFileSync(join(stateDir, 'ports.json'), 'utf8')) as Record<string, number>;
     const value = parsed[name];
