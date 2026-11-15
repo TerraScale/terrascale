@@ -60,6 +60,10 @@ test('SQL editor creates a table, inserts and selects; a saved query reopens; th
   await expect(results.locator('tbody tr').first()).toContainText('Ada');
   await expect(results.locator('tbody tr').last()).toContainText('Grace');
   await audit.check('SQL editor results');
+  const checks: string[] = [];
+  page.on('request', request => {
+    if (new URL(request.url()).pathname === '/api/v1/dashboard/data/sql/check') checks.push(request.postData() ?? '');
+  });
   const receiptUrl = page.url();
   await page.reload();
   await expect(page).toHaveURL(receiptUrl);
@@ -91,6 +95,7 @@ test('SQL editor creates a table, inserts and selects; a saved query reopens; th
   await saved.click();
   await expect(page.locator('#sql')).toHaveValue(select);
   await audit.check('saved query reopened');
+  expect(checks, 'loading and saving unchanged SQL reuses its diagnostics').toEqual([]);
   const savedUrl = page.url();
   await page.getByRole('button', { name: 'Delete ' + queryName, exact: true }).click();
   const deletion = page.locator('dialog[open]');

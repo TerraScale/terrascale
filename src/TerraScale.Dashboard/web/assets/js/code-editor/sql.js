@@ -18,6 +18,7 @@ const tokenizeCode = text => tokenize(text).filter(token => !isComment(token));
 
 // Per model: the catalog, the form, and a refresh of its markers.
 const contexts = new WeakMap();
+const checks = new WeakMap();
 let registered = false;
 
 export function attach(api, editor, textarea, host) {
@@ -33,6 +34,12 @@ export function attach(api, editor, textarea, host) {
     keywords: new Set(catalog.keywords.flatMap(keyword => keyword.split(' '))),
   };
   contexts.set(model, context);
+  let checked = checks.get(host);
+  if (!checked) {
+    const initial = readJSON(host.dataset.sqlDiagnostics);
+    checked = new Map(initial ? [[initial.sql, initial.diagnostics]] : []);
+    checks.set(host, checked);
+  }
   register(api);
   editor.updateOptions({ wordBasedSuggestions: 'off', snippetSuggestions: 'top', quickSuggestions: { other: true, comments: false, strings: false } });
 
@@ -54,13 +61,19 @@ export function attach(api, editor, textarea, host) {
     }));
   };
   const check = async () => {
+    const sql = model.getValue();
+    const known = checked.get(sql) ?? (sql.trim().length === 0 ? [] : null);
+    if (known) {
+      mark(known);
+      return;
+    }
     request?.abort();
     const current = (request = new AbortController());
     const version = model.getVersionId();
     const fresh = () => request === current && !model.isDisposed() && model.getVersionId() === version;
     // URL-encoded, as the CSRF check reads the token from a parsed form.
     const body = new URLSearchParams(new FormData(context.form));
-    body.set('sql', model.getValue());
+    body.set('sql', sql);
     // A check that could not run says so instead of looking clean.
     const failed = reason => [{ severity: 'warning', message: `The input check did not run: ${reason}`, from: 0, to: model.getValueLength() }];
     let response;
@@ -75,6 +88,7 @@ export function attach(api, editor, textarea, host) {
     let diagnostics;
     try {
       diagnostics = response.ok ? await response.json() : failed((await response.text()).trim() || `HTTP ${response.status}`);
+      if (response.ok) checked.set(sql, diagnostics);
     } catch {
       diagnostics = failed('the dashboard answered with an unreadable result.');
     }
@@ -82,14 +96,7 @@ export function attach(api, editor, textarea, host) {
       mark(diagnostics);
     }
   };
-  // The page carries the server's check of the SQL it rendered; text edited
-  // before this module loaded is checked now, later edits once typing pauses.
-  const initial = readJSON(host.dataset.sqlDiagnostics);
-  if (initial?.sql === model.getValue()) {
-    mark(initial.diagnostics);
-  } else {
-    check();
-  }
+  check();
   disposables.push(model.onDidChangeContent(() => {
     clearTimeout(timer);
     timer = setTimeout(check, checkDelay);
