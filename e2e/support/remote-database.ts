@@ -64,10 +64,9 @@ async function manageRemoteDatabase(page: Page, request: APIRequestContext, audi
     const answer = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname === path);
     await click();
     const response = await answer;
-    if (action === 'create') id = /\/databases\/([0-9A-HJKMNP-TV-Z]{26})/.exec(response.headers().location ?? '')?.[1] ?? '';
     await answered(response);
-    expect(response.status(), action + ' answers after saving').toBe(action === 'rename' ? 200 : 303);
-    if (action !== 'rename') await page.waitForLoadState('load');
+    expect(response.status(), action + ' answers after saving').toBe(action === 'delete' ? 303 : 200);
+    if (action === 'delete') await page.waitForLoadState('load');
     if (failures.length) await answered(failures[0]);
   }
 
@@ -139,7 +138,15 @@ async function manageRemoteDatabase(page: Page, request: APIRequestContext, audi
         await removeThroughApi();
       }
     });
+    const databasesUrl = page.url();
     await submit('create', () => page.locator('#create-database form').getByRole('button', { name: 'Create database', exact: true }).click());
+    const createdRow = page.locator('#project-databases tbody tr').filter({ hasText: name });
+    await expect(createdRow).toBeVisible();
+    await expect(page.locator('#create-database')).not.toBeVisible();
+    await expect(page).toHaveURL(databasesUrl);
+    const link = createdRow.getByRole('link');
+    id = /\/databases\/([0-9A-HJKMNP-TV-Z]{26})/.exec(await link.getAttribute('href') ?? '')?.[1] ?? '';
+    await link.click();
     expect(id, 'creation returns the remote database id').toBeTruthy();
     await page.waitForURL(url => url.pathname === '/databases/' + id);
     await expect(page.locator('.ts-db-head .ts-db-title')).toHaveText(name);

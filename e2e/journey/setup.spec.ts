@@ -179,7 +179,15 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
   await expect(picked).toHaveCount(1);
   await expect(regions.getByRole('status')).toHaveText('A database needs one region.');
   await page.locator('#database-name').fill(databaseName);
+  const databasesUrl = page.url();
   await page.locator('#create-database form').getByRole('button', { name: 'Create database', exact: true }).click();
+  const createdRow = page.locator('#project-databases tbody tr').filter({ hasText: databaseName });
+  await expect(createdRow).toBeVisible();
+  await expect(createdRow.locator('.ts-badge')).toContainText(/ready|provisioning|accepted|pending/);
+  await expect(page.locator('#create-database')).not.toBeVisible();
+  await expect(page).toHaveURL(databasesUrl);
+  await expect(page.locator('#database-create-result')).toContainText(databaseName);
+  await createdRow.getByRole('link').click();
   await page.waitForURL(/\/databases\/[0-9A-HJKMNP-TV-Z]{26}(\?|$)/);
   const databaseId = new URL(page.url()).pathname.split('/')[2];
   await expect(page.locator('.ts-db-title')).toHaveText(databaseName);

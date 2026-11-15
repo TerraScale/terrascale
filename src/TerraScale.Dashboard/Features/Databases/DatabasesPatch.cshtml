@@ -1,0 +1,7 @@
+@inherits RazorSlice<DatabasesPage>
+@using TerraScale.Dashboard.Features.Databases
+@if (!Model.OpenCreate)
+{
+    @(await RenderPartialAsync<DatabasesList, DatabasesPage>(Model))
+}
+@(await RenderPartialAsync<CreateDatabaseDialog, DatabasesPage>(Model))

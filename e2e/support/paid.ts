@@ -37,7 +37,15 @@ export async function createDatabase(page: Page, audit: Audit, name: string, reg
   await expect(page.locator('#create-database[open]')).toBeVisible();
   await audit.check(`${label} dialog`);
   await page.locator('#database-name').fill(name);
+  const databasesUrl = page.url();
   await page.locator('#create-database form').getByRole('button', { name: 'Create database', exact: true }).click();
+  const createdRow = page.locator('#project-databases tbody tr').filter({ hasText: name });
+  await expect(createdRow).toBeVisible();
+  await expect(createdRow.locator('.ts-badge')).toContainText(/ready|provisioning|accepted|pending/);
+  await expect(page.locator('#create-database')).not.toBeVisible();
+  await expect(page).toHaveURL(databasesUrl);
+  await expect(page.locator('#database-create-result')).toContainText(name);
+  await createdRow.getByRole('link').click();
   await page.waitForURL(/\/databases\/[0-9A-HJKMNP-TV-Z]{26}(\?|$)/);
   await expect(page.locator('.ts-db-title')).toHaveText(name);
   await expect(page.locator('main').getByText('ready', { exact: true }).first()).toBeVisible();
