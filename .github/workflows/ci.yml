@@ -927,6 +927,10 @@ jobs:
           npm run check
           npm run lint
           npm run build
+          if grep -n ROUND_NOW wrangler.jsonc dist/*/wrangler.json; then
+            echo "ROUND_NOW is not a production binding" >&2
+            exit 1
+          fi
 
   journey:
     needs: changes

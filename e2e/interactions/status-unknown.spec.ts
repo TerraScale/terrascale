@@ -36,11 +36,10 @@ function badge(html: string, name: string): string {
 }
 
 async function view(origin: string): Promise<{ api: StatusBody; page: string; summary: Summary }> {
-  const headers = { 'cache-control': 'no-cache' };
   const [apiResponse, pageResponse, summaryResponse] = await Promise.all([
-    fetch(`${origin}/api/v1/status`, { headers }),
-    fetch(`${origin}/`, { headers }),
-    fetch(`${origin}/api/v1/summary.json`, { headers }),
+    fetch(`${origin}/api/v1/status`),
+    fetch(`${origin}/`),
+    fetch(`${origin}/api/v1/summary.json`),
   ]);
   expect(apiResponse.status).toBe(200);
   expect(pageResponse.status).toBe(200);

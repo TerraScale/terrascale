@@ -6,10 +6,9 @@ export async function edgeCached(
   ctx: ExecutionContext,
   origin: () => Promise<Response>,
   query?: QuerySpec,
+  direct = false,
 ): Promise<Response> {
-  if (request.method !== "GET" && request.method !== "HEAD") return origin();
-  const refresh = request.headers.get("cache-control");
-  if (refresh?.includes("no-cache") || refresh?.includes("no-store")) return origin();
+  if ((request.method !== "GET" && request.method !== "HEAD") || direct) return origin();
   const url = new URL(request.url);
   const fragment = url.searchParams.get("fragment") === "main";
   const key = new Request(cacheKey(url, readQuery(url, query), fragment));
