@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using TerraBase.Engine;
 using TerraBase.Features.Callers;
 using TerraBase.Features.Clock;
@@ -13,44 +12,39 @@ using TerraBase.Features.Stats;
 
 namespace TerraBase.Hosting;
 
-internal sealed class CounterPublication(
-    IStorageEngine engine,
-    QosSessions sessions,
-    CallerAdmission callers,
-    PostgresRelay relay,
-    SqlConnectionMetrics sql,
-    WriteRouter routes) : IHostedService
+internal sealed class CounterPublication(IServiceProvider services) : IHostedService
 {
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        (engine as ICounterSource ?? throw new UnreachableException()).PublishSeries();
-        sessions.PublishSeries();
-        callers.PublishSeries();
-        relay.PublishSeries();
-        sql.PublishSeries();
-        routes.PublishSeries();
+        if (services.GetService<IStorageEngine>() is ICounterSource engine)
+        {
+            engine.PublishSeries();
+        }
+
+        Publish<QosSessions>(sessions => sessions.PublishSeries());
+        Publish<CallerAdmission>(callers => callers.PublishSeries());
+        Publish<PostgresRelay>(relay => relay.PublishSeries());
+        Publish<SqlConnectionMetrics>(sql => sql.PublishSeries());
+        Publish<WriteRouter>(routes => routes.PublishSeries());
+        if (services.GetService<IRequestLogs>() is RequestLogRecorder logs)
+        {
+            logs.PublishSeries();
+        }
+
+        Publish<UsageMeter>(usage => usage.PublishSeries());
+        Publish<DatabaseStats>(stats => stats.PublishSeries());
+        Publish<ClosureFaults>(closures => closures.PublishSeries());
+        Publish<NodeHlcClock>(clock => clock.PublishSeries());
         return Task.CompletedTask;
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-}
 
-internal sealed class CounterPublicationRest(
-    RequestLogRecorder logs,
-    UsageMeter usage,
-    DatabaseStats stats,
-    ClosureFaults closures,
-    NodeHlcClock clock) : IHostedService
-{
-    public Task StartAsync(CancellationToken cancellationToken)
+    private void Publish<T>(Action<T> publish) where T : class
     {
-        logs.PublishSeries();
-        usage.PublishSeries();
-        stats.PublishSeries();
-        closures.PublishSeries();
-        clock.PublishSeries();
-        return Task.CompletedTask;
+        if (services.GetService<T>() is { } service)
+        {
+            publish(service);
+        }
     }
-
-    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }

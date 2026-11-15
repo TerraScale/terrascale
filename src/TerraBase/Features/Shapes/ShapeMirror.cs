@@ -1,5 +1,4 @@
 using System.Buffers;
-using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Runtime.InteropServices;
@@ -479,7 +478,10 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        (_metrics as ShapeMetrics ?? throw new UnreachableException()).PublishSeries();
+        if (_metrics is ShapeMetrics series)
+        {
+            series.PublishSeries();
+        }
         var sweep = SweepAsync(stoppingToken);
         var trims = TrimQueueAsync(stoppingToken);
         try

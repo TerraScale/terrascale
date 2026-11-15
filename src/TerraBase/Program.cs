@@ -127,7 +127,6 @@ builder.Services.AddTerraBaseAtlas(options);
 builder.Services.AddTerraBaseCatalog();
 builder.Services.AddTerraBaseRpc();
 builder.Services.AddHostedService<CounterPublication>();
-builder.Services.AddHostedService<CounterPublicationRest>();
 
 try
 {
