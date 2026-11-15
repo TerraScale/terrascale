@@ -29,6 +29,18 @@ test('a short request ID shows inline validation and blocks submission without l
     const before = page.url();
     const requestId = await page.locator('input[name="requestId"]').inputValue();
     const main = await page.locator('main').elementHandle();
+    await page.locator('#support-message').fill('   ');
+    const rejected = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/dashboard/support' && response.request().method() === 'POST');
+    await button.click();
+    expect((await rejected).status()).toBe(200);
+    await expect(page.getByRole('alert')).toContainText('Describe the problem in at most 8000 characters.');
+    await expect(page.locator('#support-subject')).toHaveValue('Validation request');
+    await expect(page.locator('#support-message')).toHaveValue('   ');
+    await expect(field).toHaveValue('01JBX8Y3Z4N5P6Q7R8S9T0V1W2');
+    await expect(page.locator('input[name="requestId"]')).toHaveValue(requestId);
+    await audit.check('support request error keeps the draft');
+    await page.locator('#support-message').fill('Please check the request ID.');
+    await page.locator('#support-severity').selectOption('high');
     const sent = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/dashboard/support' && response.request().method() === 'POST');
     await button.click();
     const response = await sent;
@@ -38,6 +50,9 @@ test('a short request ID shows inline validation and blocks submission without l
     await expect(page).toHaveURL(before);
     expect(await main!.evaluate(element => element.isConnected)).toBe(true);
     await expect(page.locator('#support-subject')).toHaveValue('');
+    await expect(page.locator('#support-message')).toHaveValue('');
+    await expect(page.locator('#support-related-request')).toHaveValue('');
+    await expect(page.locator('#support-severity')).toHaveValue('normal');
     await expect(page.locator('input[name="requestId"]')).not.toHaveValue(requestId);
     await audit.check('support request sent in place');
     await main!.dispose();
@@ -65,7 +80,7 @@ test('validated dialog errors keep drafts and expired forms reject drafts', asyn
   await create.getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect(page.locator('dialog:modal')).toHaveCount(0);
   await page.locator('#project-databases tbody tr').filter({ hasText: journey().databaseName }).getByRole('link').click();
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText(journey().databaseName);
+  await expect(page.locator('.ts-db-title')).toHaveText(journey().databaseName);
 
   await page.goto('/profile?tab=danger');
   await page.getByRole('button', { name: 'Delete account', exact: true }).click();
