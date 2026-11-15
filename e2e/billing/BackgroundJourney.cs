@@ -69,6 +69,21 @@ internal static partial class BackgroundJourney
         var clock = new BackgroundClock(TimeProvider.System.GetUtcNow());
         using var application = BackgroundHost.Build(owner, commands, clock);
         var services = application.Services;
+        if (kind == "source")
+        {
+            using var client = new HttpClient(TerraBaseHttp.CreateHandler());
+            var sql = new TerraBaseSqlClient(client, new() { ApiKey = owner.ApiKey, Region = owner.DatabaseRegion.ToLowerInvariant() }).Database(owner.ProjectId, owner.DatabaseName);
+            await sql.ExecuteAsync("SELECT 121", cancellationToken: cancellationToken);
+            await sql.ExecuteAsync("SELECT 122", cancellationToken: cancellationToken);
+            Console.WriteLine("background case: source");
+            return;
+        }
+        if (kind == "source-ready")
+        {
+            var batch = await services.GetRequiredService<ILogDrainSource>().ReadAsync(owner.ProjectId, owner.DatabaseId, owner.DatabaseId, cancellationToken);
+            Console.WriteLine(batch.Items.Count >= 2 ? "ready" : "pending");
+            return;
+        }
         if (kind == "quiet-ready")
         {
             Console.WriteLine(await QuietReadyAsync(services, path, cancellationToken) ? "ready" : "pending");
@@ -105,10 +120,6 @@ internal static partial class BackgroundJourney
 
     private static async Task CrashAsync(IServiceProvider services, BackgroundOwner owner, string path, CancellationToken cancellationToken)
     {
-        using var client = new HttpClient(TerraBaseHttp.CreateHandler());
-        var sql = new TerraBaseSqlClient(client, new() { ApiKey = owner.ApiKey, Region = owner.DatabaseRegion.ToLowerInvariant() }).Database(owner.ProjectId, owner.DatabaseName);
-        await sql.ExecuteAsync("SELECT 121", cancellationToken: cancellationToken);
-        await sql.ExecuteAsync("SELECT 122", cancellationToken: cancellationToken);
         var storage = services.GetRequiredService<IDbContextFactory<DashboardDbContext>>();
         using var receiver = Receiver();
         var drain = await DrainAsync(storage, owner, cancellationToken);

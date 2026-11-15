@@ -123,6 +123,7 @@ test('a new owner onboards on Free, upgrades to Pro through Stripe Checkout, and
     runId, email, password, displayName, organizationId, organizationName, projectId, projectName,
     databaseId, databaseName, databaseRegion: region, apiKeyName, apiKey, secondDatabaseId, secondDatabaseName, checkoutSessionId: session,
   });
+  expect((await backgroundCase('source')).split('\n')).toContain('background case: source');
 });
 
 async function backgroundCase(kind: string) {
@@ -133,17 +134,20 @@ async function backgroundCase(kind: string) {
 }
 
 for (const [kind, name] of [
-  ['crash', 'persisted log payload replays after a crash following receiver acceptance'],
   ['alert', 'one alert sends one signed delivery and one owner notification across dashboards'],
-  ['quiet', 'an old quiet drain records its unchanged-cursor gap once without idle claim writes'],
   ['contention', 'dashboard claim contention skips a live owner and releases callbacks without saves'],
   ['stale', 'a stale dashboard owner fails its real checkpoint save after database-clock expiry'],
   ['skew', 'forward and backward dashboard clocks cannot steal or extend database-clock leases'],
   ['renewal', 'a lost renewal reply preserves work inside the last proven lease'],
   ['plans', 'settled plan requests and idle reconciliation passes write no claims'],
   ['gate', 'an unknown dashboard schema idles nonbilling background workers'],
+  ['crash', 'persisted log payload replays after a crash following receiver acceptance'],
+  ['quiet', 'an old quiet drain records its unchanged-cursor gap once without idle claim writes'],
 ]) {
   test(`dashboard background: ${name}`, async () => {
+    if (kind === 'crash') {
+      await expect.poll(async () => (await backgroundCase('source-ready')).trim(), { message: 'the production request-log source exposes at least two settled SQL events' }).toBe('ready');
+    }
     const output = await backgroundCase(kind);
     expect(output.split('\n')).toContain(`background case: ${kind}`);
     console.log(output.split('\n').filter(line => line.startsWith('background ')).join('\n'));
