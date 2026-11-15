@@ -329,6 +329,12 @@ export default {
   async fetch(request, env, ctx): Promise<Response> {
     const url = new URL(request.url);
     const now = Date.now();
+    if (url.pathname === "/dev/round" && env.ROUND_NOW === "1") {
+      if (request.method !== "POST") {
+        return secure(new Response("Method not allowed", { status: 405, headers: { allow: "POST" } }), false);
+      }
+      return secure(Response.json({ at: await coordinator(env).runNow() }), false);
+    }
     if (url.pathname === "/api/v1/deployments") {
       if (request.method !== "GET") {
         return secure(new Response("Method not allowed", { status: 405, headers: { allow: "GET" } }), false);

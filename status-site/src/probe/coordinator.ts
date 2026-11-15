@@ -8,6 +8,7 @@ import { bootstrap } from "../db/bootstrap";
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../env";
 import { logEvent } from "../log";
+import { forgetTokens } from "./canary";
 import { ROUND_MS, roundOf, runRound, type RoundState } from "./round";
 import { discoverRegionalHosts } from "./regional-hosts";
 
@@ -22,6 +23,22 @@ export class Coordinator extends DurableObject<Env> {
     if ((await this.ctx.storage.getAlarm()) === null) {
       await this.ctx.storage.setAlarm(Date.now());
     }
+  }
+
+  async runNow(): Promise<number> {
+    forgetTokens();
+    const state = (await this.ctx.storage.get<State>("state")) ?? {};
+    const at = Math.max(Date.now(), (state.round ?? 0) + 1000);
+    await bootstrap(this.env);
+    const result = await runRound(this.env, at, {
+      streaks: state.streaks ?? {},
+      colos: state.colos ?? {},
+      versions: state.versions ?? {},
+      trackers: state.trackers ?? {},
+      ...(state.email ? { email: state.email } : {}),
+    });
+    await this.ctx.storage.put<State>("state", { round: at, ...result });
+    return at;
   }
 
   override async alarm(): Promise<void> {

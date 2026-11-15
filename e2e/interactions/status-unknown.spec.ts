@@ -36,10 +36,11 @@ function badge(html: string, name: string): string {
 }
 
 async function view(origin: string): Promise<{ api: StatusBody; page: string; summary: Summary }> {
+  const headers = { 'cache-control': 'no-cache' };
   const [apiResponse, pageResponse, summaryResponse] = await Promise.all([
-    fetch(`${origin}/api/v1/status`),
-    fetch(`${origin}/`),
-    fetch(`${origin}/api/v1/summary.json`),
+    fetch(`${origin}/api/v1/status`, { headers }),
+    fetch(`${origin}/`, { headers }),
+    fetch(`${origin}/api/v1/summary.json`, { headers }),
   ]);
   expect(apiResponse.status).toBe(200);
   expect(pageResponse.status).toBe(200);
@@ -54,6 +55,12 @@ async function view(origin: string): Promise<{ api: StatusBody; page: string; su
 function endpoint(id: string, componentId: string, url: string, kind: 'http' | 'canary', live: boolean): string {
   const since = live ? "datetime('now', '-1 day')" : 'NULL';
   return `INSERT INTO endpoints (id, component_id, cluster, provider, url, headers, expect_status, assertions, extract, indirect, kind, live_since) VALUES ('${id}', '${componentId}', 'journey', 'other', '${url}', '{}', '200', '[]', '{}', 0, '${kind}', ${since});`;
+}
+
+async function round(origin: string): Promise<void> {
+  const response = await fetch(`${origin}/dev/round`, { method: 'POST' });
+  const text = await response.text();
+  expect(response.status, text).toBe(200);
 }
 
 async function answered(response: APIResponse, expected: number): Promise<void> {
@@ -135,100 +142,110 @@ const healthyState = {
   operationalHeadline: false,
 };
 
+type CanaryFixture = {
+  origin: string;
+  site: StatusSite;
+  account: Awaited<ReturnType<typeof createDedicatedProjectOwner>>;
+  canaryKeyId: string;
+  token: string;
+};
+
+let canary: CanaryFixture | undefined;
+
 test.describe('canary credential', () => {
-  test('a revoked canary credential is unknown and an unreachable component is unknown', async ({ browser }, info) => {
-    test.skip(production, 'the status worker runs against the local stack');
+  test.beforeAll(async ({ browser }, info) => {
+    if (production) return;
     const account = await createDedicatedProjectOwner(browser, info, 'Status canary');
     const current = account.current;
     const context = account.page.request;
-    let local: StatusSite | undefined;
-    try {
-      const writer = await writeToken(context, current.apiKey, current.projectId);
-      const name = `canary-${current.runId}`;
-      const database = await createOwnedDatabase(account.page, name);
-      const token = await signInToken(context, `status-canary-${current.runId}`);
-      const created = await context.post(`${auth}/v1/terrascale/organizations/${current.organizationId}/projects/${current.projectId}/api-keys`, {
-        headers: { Authorization: `Bearer ${token}` },
-        data: {
-          name: `status canary ${current.runId}`,
-          scopes: ['sql:read'],
-          database: database.id,
-          expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-        },
-      });
-      await answered(created, 201);
-      const body = await created.json();
-      const secret = body.key as string;
-      const canaryKeyId = body.api_key.id as string;
-      saveSecret('status-canary-key', secret);
-      await sql(context, writer, current.projectId, database.id, [
-        { sql: 'CREATE TABLE IF NOT EXISTS canary (id TEXT PRIMARY KEY)' },
-        { sql: "INSERT OR IGNORE INTO canary (id) VALUES ('00000000000000000000000007')" },
-      ]);
-      const group = ulid();
-      const canaryComponent = ulid();
-      const closedComponent = ulid();
-      const canaryEndpoint = ulid();
-      const catalog = [
-        `INSERT INTO component_groups (id, name) VALUES ('${group}', 'Journey');`,
-        `INSERT INTO components (id, group_id, name) VALUES ('${canaryComponent}', '${group}', 'Canary');`,
-        `INSERT INTO components (id, group_id, name) VALUES ('${closedComponent}', '${group}', 'Closed port');`,
-        endpoint(canaryEndpoint, canaryComponent, 'https://api.terrascale.tech/canary', 'canary', false),
-        endpoint(ulid(), closedComponent, 'http://127.0.0.1:1/', 'http', true),
-      ].join('\n');
-      local = await startStatusSite(catalog, {
-        DATA_API_CANARY: JSON.stringify({
-          [canaryEndpoint]: {
-            origin: 'https://api.terrascale.tech',
-            region: database.region,
-            project: current.projectId,
-            database: name,
-            issuer: 'https://auth.terrascale.tech/terrascale',
-            key: secret,
-          },
-        }),
-      }, 8900 + (parseInt(current.runId.slice(0, 2), 16) % 100));
-      const origin = local.origin;
-      await expect.poll(async () => healthy(await view(origin)), { timeout: 45_000 }).toEqual(healthyState);
-
-      const revoked = await context.delete(`${auth}/v1/terrascale/organizations/${current.organizationId}/projects/${current.projectId}/api-keys/${canaryKeyId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      await answered(revoked, 204);
-
-    await expect.poll(async () => {
-      const seen = await view(origin);
-      const canaryBadge = badge(seen.page, 'Canary');
-      return {
-        status: seen.api.status,
-        canary: component(seen.api, 'Canary')?.status ?? '',
-        closed: component(seen.api, 'Closed port')?.status ?? '',
-        summaryCanary: summaryStatus(seen.summary, 'Canary'),
-        summaryClosed: summaryStatus(seen.summary, 'Closed port'),
-        headline: seen.page.includes('Component status unknown'),
-        issue: seen.api.monitoringIssues.some((item) => item.note === 'Canary credential invalid'),
-        pageIssue: seen.page.includes('Canary credential invalid'),
-        operational: canaryBadge.includes('Operational'),
-        closedBadge: badge(seen.page, 'Closed port').includes('Unknown'),
-        operationalHeadline: seen.page.includes('All systems operational'),
-      };
-    }, { timeout: 50_000 }).toEqual({
-      status: 'unknown',
-      canary: 'none',
-      closed: 'none',
-      summaryCanary: 'unknown',
-      summaryClosed: 'unknown',
-      headline: true,
-      issue: true,
-      pageIssue: true,
-      operational: false,
-      closedBadge: true,
-      operationalHeadline: false,
+    const writer = await writeToken(context, current.apiKey, current.projectId);
+    const name = `canary-${current.runId}`;
+    const database = await createOwnedDatabase(account.page, name);
+    const token = await signInToken(context, `status-canary-${current.runId}`);
+    const created = await context.post(`${auth}/v1/terrascale/organizations/${current.organizationId}/projects/${current.projectId}/api-keys`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: {
+        name: `status canary ${current.runId}`,
+        scopes: ['sql:read'],
+        database: database.id,
+        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      },
     });
-    } finally {
-      await local?.stop();
-      await account.remove();
-    }
+    await answered(created, 201);
+    const body = await created.json();
+    const secret = body.key as string;
+    saveSecret('status-canary-key', secret);
+    await sql(context, writer, current.projectId, database.id, [
+      { sql: 'CREATE TABLE IF NOT EXISTS canary (id TEXT PRIMARY KEY)' },
+      { sql: "INSERT OR IGNORE INTO canary (id) VALUES ('00000000000000000000000007')" },
+    ]);
+    const group = ulid();
+    const canaryComponent = ulid();
+    const closedComponent = ulid();
+    const canaryEndpoint = ulid();
+    const catalog = [
+      `INSERT INTO component_groups (id, name) VALUES ('${group}', 'Journey');`,
+      `INSERT INTO components (id, group_id, name) VALUES ('${canaryComponent}', '${group}', 'Canary');`,
+      `INSERT INTO components (id, group_id, name) VALUES ('${closedComponent}', '${group}', 'Closed port');`,
+      endpoint(canaryEndpoint, canaryComponent, 'https://api.terrascale.tech/canary', 'canary', false),
+      endpoint(ulid(), closedComponent, 'http://127.0.0.1:1/', 'http', true),
+    ].join('\n');
+    const started = await startStatusSite(catalog, {
+      ROUND_NOW: '1',
+      DATA_API_CANARY: JSON.stringify({
+        [canaryEndpoint]: {
+          origin: 'https://api.terrascale.tech',
+          region: database.region,
+          project: current.projectId,
+          database: name,
+          issuer: 'https://auth.terrascale.tech/terrascale',
+          key: secret,
+        },
+      }),
+    });
+    await round(started.origin);
+    canary = { origin: started.origin, site: started, account, canaryKeyId: body.api_key.id as string, token };
+  });
+
+  test.afterAll(async () => {
+    const current = canary;
+    canary = undefined;
+    await current?.site.stop();
+    await current?.account.remove();
+  });
+
+  test('a measured canary is operational and its credential expiry is warned', async () => {
+    test.skip(production, 'the status worker runs against the local stack');
+    expect(healthy(await view(canary?.origin ?? ''))).toEqual(healthyState);
+  });
+
+  test('an unreachable component is unknown', async () => {
+    test.skip(production, 'the status worker runs against the local stack');
+    const seen = await view(canary?.origin ?? '');
+    expect(component(seen.api, 'Closed port')?.status).toBe('none');
+    expect(summaryStatus(seen.summary, 'Closed port')).toBe('unknown');
+    expect(badge(seen.page, 'Closed port')).toContain('Unknown');
+    expect(seen.page).toContain('Component status unknown');
+    expect(seen.page).not.toContain('All systems operational');
+  });
+
+  test('a revoked canary credential is unknown', async () => {
+    test.skip(production, 'the status worker runs against the local stack');
+    const current = canary;
+    if (!current) throw new Error('canary fixture missing');
+    const revoked = await current.account.page.request.delete(`${auth}/v1/terrascale/organizations/${current.account.current.organizationId}/projects/${current.account.current.projectId}/api-keys/${current.canaryKeyId}`, {
+      headers: { Authorization: `Bearer ${current.token}` },
+    });
+    await answered(revoked, 204);
+    await round(current.origin);
+    const seen = await view(current.origin);
+    expect(seen.api.status).toBe('unknown');
+    expect(component(seen.api, 'Canary')?.status).toBe('none');
+    expect(summaryStatus(seen.summary, 'Canary')).toBe('unknown');
+    expect(seen.api.monitoringIssues.some((item) => item.note === 'Canary credential invalid')).toBe(true);
+    expect(seen.page).toContain('Canary credential invalid');
+    expect(badge(seen.page, 'Canary')).not.toContain('Operational');
+    expect(seen.page).not.toContain('All systems operational');
   });
 });
 
@@ -249,7 +266,9 @@ test.describe('http 500', () => {
       `INSERT INTO components (id, group_id, name) VALUES ('${componentId}', '${group}', 'Failing check');`,
       endpoint(ulid(), componentId, `http://127.0.0.1:${address.port}/`, 'http', true),
     ].join('\n');
-    site = await startStatusSite(catalog, {});
+    site = await startStatusSite(catalog, { ROUND_NOW: '1' }, 8792);
+    await round(site.origin);
+    await round(site.origin);
   });
 
   test.afterAll(async () => {
@@ -263,24 +282,14 @@ test.describe('http 500', () => {
 
   test('an HTTP 500 stays an outage', async () => {
     test.skip(production, 'the status worker runs against the local stack');
-    await expect.poll(async () => {
-      const seen = await view(site?.origin ?? '');
-      const mark = badge(seen.page, 'Failing check');
-      return {
-        status: seen.api.status,
-        component: component(seen.api, 'Failing check')?.status ?? '',
-        summary: summaryStatus(seen.summary, 'Failing check'),
-        headline: seen.page.includes('Major system outage') && seen.page.includes('data-state="major_outage"'),
-        outage: mark.includes('Major outage'),
-        unknown: mark.includes('Unknown'),
-      };
-    }, { timeout: 75_000 }).toEqual({
-      status: 'major_outage',
-      component: 'major_outage',
-      summary: 'major_outage',
-      headline: true,
-      outage: true,
-      unknown: false,
-    });
+    const seen = await view(site?.origin ?? '');
+    const mark = badge(seen.page, 'Failing check');
+    expect(seen.api.status).toBe('major_outage');
+    expect(component(seen.api, 'Failing check')?.status).toBe('major_outage');
+    expect(summaryStatus(seen.summary, 'Failing check')).toBe('major_outage');
+    expect(seen.page).toContain('Major system outage');
+    expect(seen.page).toContain('data-state="major_outage"');
+    expect(mark).toContain('Major outage');
+    expect(mark).not.toContain('Unknown');
   });
 });

@@ -78,8 +78,10 @@ export async function startStatusSite(sql: string, vars: Record<string, string>,
         throw error;
       }
     }, { timeout: 60_000 }).toBe(200);
-    const armed = await fetch(`${origin}/cdn-cgi/handler/scheduled`);
-    if (!armed.ok) throw new Error(`arm ${armed.status} ${await armed.text()}\n${readFileSync(log, 'utf8').slice(-2000)}`);
+    if (vars.ROUND_NOW !== '1') {
+      const armed = await fetch(`${origin}/cdn-cgi/handler/scheduled`);
+      if (!armed.ok) throw new Error(`arm ${armed.status} ${await armed.text()}\n${readFileSync(log, 'utf8').slice(-2000)}`);
+    }
   } catch (error) {
     await stop();
     throw error;
