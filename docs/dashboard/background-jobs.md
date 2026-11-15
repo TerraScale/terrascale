@@ -1,43 +1,50 @@
 # Dashboard background jobs across instances
 
-All regions run the same workers. The background_jobs table in the dashboard's TerraBase
-database owns renewable claims. Acquiring an expired claim changes its owner with a
-compare-and-set on the owner and checkpoint. A live owner renews every 20 seconds for a
-two-minute lease; failed renewal cancels its work. Every checkpoint save also updates
-the claim row in the same EF Core transaction as the job's state changes. A successor's
-owner fences a stale checkpoint. Shutdown releases the claim; process failure leaves
-it recoverable after expiry. Dashboard SQL uses the existing authoritative storage
-routing, regardless of which region acquired the work.
+Every region runs the same workers. The dashboard stores claims in background_jobs
+in its TerraBase database. Acquisition is one conditional upsert: the database clock
+must show both the lease and the next-run deadline expired. A new owner and checkpoint
+fence the previous owner. Renewal is one conditional update requiring the current
+owner and an unexpired lease. Both operations calculate the two-minute lease in SQL.
+Completion calculates the next run in SQL, bounded to one day from database time;
+checkpoint saves ignore regional lease/deadline values. Wall-clock skew in a dashboard
+process cannot take a live claim or extend its lease or schedule.
 
-| Job | Previous risk | Current coordination |
+Renewal runs every 20 seconds. A transient storage error retains the last proven
+lease, logs the failure, and leaves current work running. Monotonic elapsed time and
+a bounded renewal request budget ensure work is canceled before that proof expires.
+A changed owner cancels work immediately. Every checkpoint updates its concurrency
+token in the same EF Core transaction as the corresponding business changes.
+
+| Job | Previous risk | Coordination |
 | --- | --- | --- |
-| Log drains | Multiple instances sent a range before saving its cursor; a crash replayed a changing batch without a delivery identity. | A claim per drain revision and database stores batch bytes, next cursor and a stable delivery ULID before sending. Idempotency-Key and X-TerraScale-Delivery carry that ULID. The cursor advances and the payload clears in one fenced transaction. OTLP attributes include each log ID. |
-| Alert evaluation and delivery | Instances read the same pending events and sent them without a claim; completion conflicts were ignored. | A project claim covers evaluation and delivery. Webhook bytes are stored before sending, with the event ID as Idempotency-Key and X-TerraScale-Delivery. Each event commits under the owner fence. Pending events are retained until delivery completes rather than pruned at ten events. |
-| Allowance emails | Multiple instances sent a pending allowance before conditionally changing its status. | A claim per allowance serializes sending and completion. Auth's existing owner-delivery key also deduplicates the organization, month, metric and threshold. |
-| Plan reconciliation | Each instance ran reconciliation and kept its own publication cache. | One recurring reconciliation claim; per-organization publication claims and stored plan, attempt and success times replace the local cache. Plan setters remain idempotent desired-state operations. |
-| Stripe binding refresh | Every instance refreshed all bindings on its own daily schedule. | One recurring daily claim, renewable throughout pagination. |
-| Usage settlement and reporting | Every instance scanned months with its own in-memory resume cursor. | One recurring settlement claim with a persisted page cursor; the existing unique frozen-charge ledger, charge owner/expiry and Stripe idempotency keys protect dispatch, including direct report calls. |
-| Deletion reconciliation | Instances replayed the same cleanup journal and cancellation concurrently. | One renewable cleanup claim. Existing erasure fences, deletion proofs, acknowledgements and cancellation state remain idempotent recovery records. Project cleanup removes retained drain payloads. |
-| Expired storage rows and browser sessions | Instances swept the same rows and revoked the same expired sessions. | One recurring sweep claim covers storage deletion and auth revocation. Expiry predicates, conditional deletes and token revocation remain idempotent during recovery. |
-| Storage initialization | Instances can start migrations together. | The existing EF migration lock serializes schema application. |
+| Log drains | Instances sent a range before saving a cursor; interrupted sends had no stable identity. | Read the source first; empty ranges do not claim or write. A claim stores source bytes, delivery ID and next cursor before sending. Idempotency-Key and X-TerraScale-Delivery preserve that ID. Cursor and completion commit together. Transport/URL errors record No response with status zero. Old revisions and deleted projects remove retained claims. |
+| Alerts | Instances evaluated and delivered the same pending events. | Read-only evaluation identifies changes or pending events before claiming the project. Checkpoint observations fence stale evaluations. Stored webhook bytes and event IDs survive interrupted delivery. Keep ten events per rule, including a currently claimed event. |
+| Allowance notifications | Instances sent the same pending allowance before changing its status. | Claim each pending allowance before sending and fence completion. Auth retains its existing owner-delivery deduplication key. Removed allowances also remove their claims. |
+| Plan reconciliation | Each instance reconciled and cached publication attempts independently. | A read-only pass checks receipts, checkouts, grace deadlines and persisted publication state before claiming work. Publication reads persisted state before claiming, stores failure counts and exponential backoff, and writes nothing on a settled view. Claim failures use the optional publisher error boundary. Onboarding uses the existing idempotent organization setter without failing on claim contention. |
+| Stripe binding refresh | Every instance independently refreshed all bindings. | A recurring daily claim covers pagination. |
+| Usage settlement/reporting | Each instance scanned with a local resume cursor. | A shared recurring claim and persisted cursor cover settlement. The worker records a completed pass only after acquiring its claim. Existing frozen charges, charge claims, provider recovery and Stripe idempotency keys protect dispatch. |
+| Deletion cleanup | Instances replayed cleanup and cancellation concurrently. | A renewable cleanup claim covers existing erasure journals, proofs and idempotent cancellation. Claim-lifecycle outages are logged at the worker boundary. Organization cleanup deletes publication and allowance claims. |
+| Storage/session sweep | Instances deleted the same expired rows and revoked the same sessions. | A recurring claim covers existing conditional deletion and idempotent revocation. |
+| Storage initialization | Instances can migrate concurrently. | The existing EF migration lock serializes schema application. |
 
-The auth attempt limiter always uses its persisted store and fails closed on storage
-failure. It grants no memory-only fallback budget. Auth webhook delivery already
-claims endpoint and delivery versions, stores a two-minute lease and attempt before
-sending, and completes against those claimed versions. Its webhook-id remains the
-event ID on recovery.
+Auth admission is unchanged by this PR. Transient storage failures retain the existing
+bounded per-replica fallback. Auth webhook delivery already persists endpoint and
+delivery version claims before sending, completes against those versions, and retains
+the same webhook-id on recovery.
 
-External exactly-once effects require receiver cooperation. A receiver must retain
-delivery IDs and reject conflicting bytes for the same ID. HTTP can repeat after
-acceptance when the sender dies before committing; these repetitions use the same
-key and payload. Arbitrary OTLP endpoints and SMTP do not promise durable idempotency.
-The owner email service preserves its existing unknown-outcome semantics rather than
-pretending that an SMTP acceptance and a TerraBase commit are atomic.
+External exactly-once effects require receiver deduplication. A receiver must retain
+delivery IDs and reject conflicting bytes for the same ID. A crash after acceptance
+can repeat an HTTP send with the same key and bytes. Arbitrary OTLP endpoints and
+SMTP do not promise durable idempotency; owner email keeps its existing unknown-outcome
+semantics.
 
-The billing journey includes provider acceptance before lost completion, charge
-contention and report races. The background journey starts independent dashboard
-application processes against the same real stack, holds an idempotent receiver
-after acceptance, kills the sender, advances the journey clock past its lease and
-checks one receiver effect from two byte-identical attempts. Another case holds an
-alert while a rival runs and checks one webhook, one owner email and an empty pending
-queue. No production switches, test hooks, sleeps, retries or larger timeouts are added.
+The journey starts independent dashboard application processes against real TerraBase
+state isolated from the stack's scheduled dashboard worker. SQL activity feeds the
+production log source; the worker persists its range before sending. The journey kills
+that sender after receiver acceptance and proves identical recovery, a real stale
+Claim.SaveAsync refusal, skewed-clock bounds, a lost real renewal reply, read-only idle
+passes, one alert webhook and one owner email. It adds no production hooks, sleeps,
+retries, raised timeouts or weakened assertions.
+
+Rolling back leaves billing jobs idle through BillingSchemaGate until roll-forward.
+During a mixed-version deployment, old instances still run background work unclaimed.

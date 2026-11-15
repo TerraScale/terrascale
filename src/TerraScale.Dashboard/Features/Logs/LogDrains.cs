@@ -43,6 +43,7 @@ namespace TerraScale.Dashboard.Features.Logs
             for (var attempt = 0; ; attempt++)
             {
                 var row = await db.LogDrains.SingleOrDefaultAsync(drain => drain.ProjectId == project.Id && drain.OrganizationId == organization.Id, cancellationToken);
+                var previousRevision = row?.Revision;
                 var keep = header is null && name is not null && row?.HeaderName == name;
                 if (name is not null && header is null && !keep)
                 {
@@ -77,6 +78,11 @@ namespace TerraScale.Dashboard.Features.Logs
                 row.LastErrorAt = null;
                 row.LastErrorStatus = null;
                 row.LastGapAt = null;
+                if (previousRevision is not null)
+                {
+                    var prefix = "log-drain/" + project.Id + "/" + previousRevision + "/";
+                    db.BackgroundJobs.RemoveRange(await db.BackgroundJobs.Where(job => job.Id.StartsWith(prefix)).ToListAsync(cancellationToken));
+                }
                 try
                 {
                     await db.SaveChangesAsync(cancellationToken);
@@ -109,7 +115,7 @@ namespace TerraScale.Dashboard.Features.Logs
             foreach (var id in drains)
             {
                 try { await ShipAsync(id, cancellationToken); }
-                catch (Exception error) when (error is HttpRequestException or IOException or JsonException or InvalidOperationException or DbUpdateException ||
+                catch (Exception error) when (error is HttpRequestException or IOException or JsonException or InvalidOperationException or DbUpdateException or ArgumentException or FormatException ||
                     error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
                 {
                     logger.AProjectLogDrainCouldNot(error.GetType().Name);
@@ -139,17 +145,29 @@ namespace TerraScale.Dashboard.Features.Logs
 
             foreach (var database in project.Databases.Values)
             {
-                await jobs.RunAsync("log-drain/" + drain.ProjectId + "/" + drain.Revision + "/" + database.Id, TimeSpan.Zero, async (claim, token) =>
+                var jobId = "log-drain/" + drain.ProjectId + "/" + drain.Revision + "/" + database.Id;
+                var snapshot = await db.BackgroundJobs.AsNoTracking().Where(row => row.Id == jobId)
+                    .Select(row => new { State = row, Now = DateTime.UtcNow }).SingleOrDefaultAsync(cancellationToken);
+                if (snapshot is not null && snapshot.State.LeaseUntil > snapshot.Now) { continue; }
+                var preparedCursor = drain.Cursors.FirstOrDefault(row => row.DatabaseId == database.Id)?.Cursor ?? Start(Utc(drain.CreatedAt));
+                var batch = snapshot?.State.Payload is null ? await source.ReadAsync(drain.ProjectId, database.Id, preparedCursor, cancellationToken) : null;
+                if (batch is { Items.Count: 0, Gap: false }) { continue; }
+                await jobs.RunAsync(jobId, TimeSpan.Zero, async (claim, token) =>
                 {
                     var current = await claim.Database.LogDrains.Include(row => row.Cursors)
                         .SingleOrDefaultAsync(row => row.Id == id && row.Revision == drain.Revision, token);
-                    if (current is null) { return; }
+                    if (current is null)
+                    {
+                        claim.Database.BackgroundJobs.Remove(claim.State);
+                        await claim.Database.SaveChangesAsync(token);
+                        return;
+                    }
                     var saved = current.Cursors.FirstOrDefault(row => row.DatabaseId == database.Id);
                     var cursor = saved?.Cursor ?? Start(Utc(current.CreatedAt));
                     var state = claim.State;
                     if (state.Payload is null)
                     {
-                        var batch = await source.ReadAsync(current.ProjectId, database.Id, cursor, token);
+                        if (cursor != preparedCursor || batch is null) { return; }
                         if (batch.Gap) { current.LastGapAt = clock.GetUtcNow().UtcDateTime; }
                         if (batch.NextCursor == cursor) { return; }
                         state.NextCursor = batch.NextCursor ?? throw new IOException("Log source returned no next cursor.");
@@ -160,8 +178,17 @@ namespace TerraScale.Dashboard.Features.Logs
 
                     var nextCursor = state.NextCursor ?? throw new IOException("The claimed log batch has no next cursor.");
                     var deliveryId = state.DeliveryId ?? throw new IOException("The claimed log batch has no delivery identity.");
-                    var status = await delivery.PostAsync(new Uri(current.Url), state.Payload,
-                        [.. headers, new("Idempotency-Key", deliveryId), new("X-TerraScale-Delivery", deliveryId)], token);
+                    var status = 0;
+                    try
+                    {
+                        status = await delivery.PostAsync(new Uri(current.Url), state.Payload,
+                            [.. headers, new("Idempotency-Key", deliveryId), new("X-TerraScale-Delivery", deliveryId)], token);
+                    }
+                    catch (Exception error) when (error is HttpRequestException or IOException or ArgumentException or FormatException ||
+                        error is OperationCanceledException && !token.IsCancellationRequested)
+                    {
+                        logger.AProjectLogDrainCouldNot(error.GetType().Name);
+                    }
                     if (status is < 200 or > 299)
                     {
                         current.LastErrorAt = clock.GetUtcNow().UtcDateTime;
@@ -186,7 +213,7 @@ namespace TerraScale.Dashboard.Features.Logs
                     state.NextCursor = null;
                     state.DeliveryId = null;
                     await claim.SaveAsync(token);
-                }, cancellationToken);
+                }, cancellationToken, fence: snapshot?.State.Checkpoint ?? "");
             }
         }
 

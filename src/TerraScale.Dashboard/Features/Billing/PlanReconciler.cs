@@ -26,6 +26,13 @@ namespace TerraScale.Dashboard.Features.Billing
         public async Task RunOnceAsync(CancellationToken cancellationToken)
         {
             if (!await gate.AllowsAsync(cancellationToken)) { return; }
+            var candidates = await organizations.ListAsync(cancellationToken);
+            await using var snapshot = await storage.CreateDbContextAsync(cancellationToken);
+            var now = clock.GetUtcNow();
+            var checkoutDue = await snapshot.Billing.AsNoTracking().AnyAsync(row => row.ErasureId == null && row.Kind == "stripe" && row.CheckoutId != "" && row.SubscriptionId == "" && row.Status == "pending", cancellationToken);
+            var receiptDue = await snapshot.StripeEventReceipts.AsNoTracking().AnyAsync(row => row.CompletedAt == null && row.ProcessingUntil <= now, cancellationToken);
+            if (!checkoutDue && !receiptDue && !candidates.Any(row => row.BillingStatus == "active" && row.PaymentGraceUntil <= now) &&
+                !await plans.AnyDueAsync(candidates, cancellationToken)) { return; }
             await jobs.RunAsync("plan-reconciliation", TimeSpan.FromSeconds(30), async (claim, token) =>
             {
                 await billing.RecoverEventReceiptsAsync(token);

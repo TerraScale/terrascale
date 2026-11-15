@@ -16,6 +16,10 @@ namespace TerraScale.Dashboard.Features.Profile
             {
                 await db.InternalBilling.Where(row => row.OrganizationId == organizationId).ExecuteDeleteAsync(cancellationToken);
                 await db.BillingChanges.Where(row => row.OrganizationId == organizationId).ExecuteDeleteAsync(cancellationToken);
+                var allowances = await db.AllowanceAlerts.AsNoTracking().Where(row => row.OrganizationId == organizationId)
+                    .Select(row => "allowance/" + row.Id).ToListAsync(cancellationToken);
+                var plan = "plan/" + organizationId;
+                await db.BackgroundJobs.Where(row => row.Id == plan || allowances.Contains(row.Id)).ExecuteDeleteAsync(cancellationToken);
                 await db.AllowanceAlerts.Where(row => row.OrganizationId == organizationId).ExecuteDeleteAsync(cancellationToken);
             }
 

@@ -2396,6 +2396,10 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("delivery_id");
 
+                    b.Property<int>("Failures")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("failures");
+
                     b.Property<DateTime>("LeaseUntil")
                         .HasColumnType("TEXT")
                         .HasColumnName("lease_until");

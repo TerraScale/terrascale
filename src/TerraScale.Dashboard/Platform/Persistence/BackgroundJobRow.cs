@@ -10,6 +10,7 @@ public sealed class BackgroundJobRow
     public required string Checkpoint { get; set; }
     public DateTime AvailableAt { get; set; }
     public DateTime LeaseUntil { get; set; }
+    public int Failures { get; set; }
     public DateTime? AttemptedAt { get; set; }
     public DateTime? SucceededAt { get; set; }
     public string? Cursor { get; set; }

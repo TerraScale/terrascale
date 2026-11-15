@@ -1,12 +1,14 @@
-using System;
+﻿using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
 namespace TerraScale.Dashboard.Platform.Persistence.Migrations
 {
+    /// <inheritdoc />
     public partial class CreateBackgroundJobs : Migration
     {
+        /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.CreateTable(
@@ -18,6 +20,7 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                     checkpoint = table.Column<string>(type: "TEXT", nullable: false),
                     available_at = table.Column<DateTime>(type: "TEXT", nullable: false),
                     lease_until = table.Column<DateTime>(type: "TEXT", nullable: false),
+                    failures = table.Column<int>(type: "INTEGER", nullable: false),
                     attempted_at = table.Column<DateTime>(type: "TEXT", nullable: true),
                     succeeded_at = table.Column<DateTime>(type: "TEXT", nullable: true),
                     cursor = table.Column<string>(type: "TEXT", nullable: true),
@@ -33,6 +36,7 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                 });
         }
 
+        /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropTable(

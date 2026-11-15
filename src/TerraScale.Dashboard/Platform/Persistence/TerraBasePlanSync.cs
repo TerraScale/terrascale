@@ -7,10 +7,11 @@ using TerraScale.TerraBase.Contracts.Platform;
 
 namespace TerraScale.Dashboard.Platform.Persistence
 {
-    public sealed class TerraBasePlanSync(TerraBaseRpcClient rpc, TimeProvider time, ILogger<TerraBasePlanSync> logger, BackgroundJobs jobs,
+    public sealed class TerraBasePlanSync(TerraBaseRpcClient rpc, ILogger<TerraBasePlanSync> logger, BackgroundJobs jobs,
         IDbContextFactory<DashboardDbContext> storage)
     {
         private static readonly TimeSpan Fresh = TimeSpan.FromSeconds(30);
+        private static readonly TimeSpan RetryAfter = TimeSpan.FromSeconds(30);
         private static readonly TimeSpan ViewBudget = TimeSpan.FromSeconds(2);
         public static readonly TimeSpan Refresh = TimeSpan.FromMinutes(5);
 
@@ -37,26 +38,87 @@ namespace TerraScale.Dashboard.Platform.Persistence
         {
             using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             budget.CancelAfter(TimeSpan.FromSeconds(10));
-            var completed = await PublishClaimedAsync(organization, true, true, budget.Token);
-            if (!completed)
-            {
-                await using var db = await storage.CreateDbContextAsync(cancellationToken);
-                var id = "plan/" + organization.Id;
-                var plan = PlanFor(organization);
-                if (!await db.BackgroundJobs.AnyAsync(row => row.Id == id && row.Cursor == plan && row.SucceededAt != null, cancellationToken))
-                {
-                    throw new DbUpdateConcurrencyException("Organization plan publication is claimed by another dashboard instance.");
-                }
-            }
+            var response = await PutAsync(organization.Id, PlanFor(organization), false, budget.Token);
+            if (response is < 200 or > 299) { throw new IOException("Organization plan publication failed."); }
         }
+
+        public async Task<bool> AnyDueAsync(IReadOnlyList<OrganizationRecord> organizations, CancellationToken cancellationToken)
+        {
+            await using var db = await storage.CreateDbContextAsync(cancellationToken);
+            var states = await db.BackgroundJobs.AsNoTracking().Where(row => row.Id.StartsWith("plan/"))
+                .Select(row => new { State = row, Now = DateTime.UtcNow }).ToListAsync(cancellationToken);
+            foreach (var organization in organizations)
+            {
+                if (PlatformDatabases.IsPlatform(organization.Id) || !TerraScaleIds.IsValid(organization.Id)) { continue; }
+                string plan;
+                try { plan = PlanFor(organization); }
+                catch (IOException) { continue; }
+                var state = states.SingleOrDefault(row => row.State.Id == "plan/" + organization.Id);
+                if (state is null || Due(state.State, plan, state.Now)) { return true; }
+            }
+            return false;
+        }
+
+        private static bool Due(BackgroundJobRow state, string plan, DateTime now) =>
+            state.LeaseUntil <= now && (state.Cursor != plan && state.Cursor != plan + "/projects" || state.AvailableAt <= now);
 
         internal async Task PublishAsync(OrganizationRecord organization, bool reconcile, CancellationToken cancellationToken)
         {
             if (PlatformDatabases.IsPlatform(organization.Id) || !TerraScaleIds.IsValid(organization.Id)) { return; }
             using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             if (!reconcile) { budget.CancelAfter(ViewBudget); }
-            try { await PublishClaimedAsync(organization, reconcile, false, budget.Token); }
-            catch (Exception error) when (error is HttpRequestException or TerraBaseException or IOException)
+            try
+            {
+                var plan = PlanFor(organization);
+                await using var db = await storage.CreateDbContextAsync(budget.Token);
+                var id = "plan/" + organization.Id;
+                var state = await db.BackgroundJobs.AsNoTracking().Where(row => row.Id == id)
+                    .Select(row => new { State = row, Now = DateTime.UtcNow }).SingleOrDefaultAsync(budget.Token);
+                if (state is not null && !Due(state.State, plan, state.Now)) { return; }
+                await jobs.RunAsync(id, TimeSpan.Zero, async (claim, token) =>
+                {
+                    var row = claim.State;
+                    row.Failures = row.Cursor == plan || row.Cursor == plan + "/projects" ? row.Failures + 1 : 1;
+                    row.Cursor = plan;
+                    row.AttemptedAt = claim.Now;
+                    row.SucceededAt = null;
+                    claim.Delay = Backoff(row.Failures, reconcile);
+                    await claim.SaveAsync(token);
+                    var settled = false;
+                    try
+                    {
+                        var response = await PutAsync(organization.Id, plan, false, token);
+                        if (response == 404)
+                        {
+                            row.Cursor = plan + "/projects";
+                            settled = true;
+                            foreach (var project in organization.Projects.Keys)
+                            {
+                                var enrolled = await PutAsync(project, plan, true, token);
+                                if (enrolled is >= 200 and <= 299 or 404) { continue; }
+                                settled = false;
+                                logger.TerraBaseRefusedPlanForProject(plan, project, enrolled);
+                            }
+                        }
+                        else
+                        {
+                            settled = response is >= 200 and <= 299;
+                            if (!settled) { logger.TerraBaseRefusedPlanForOrganization(plan, organization.Id, response); }
+                        }
+                    }
+                    finally
+                    {
+                        if (settled)
+                        {
+                            row.SucceededAt = claim.Now;
+                            row.Failures = 0;
+                            claim.Delay = Refresh;
+                        }
+                        await claim.SaveAsync(CancellationToken.None);
+                    }
+                }, budget.Token, plan);
+            }
+            catch (Exception error) when (error is HttpRequestException or TerraBaseException or IOException or DbUpdateException)
             {
                 logger.TerraBasePlanPublishFailedForOrganization(organization.Id, error.GetType().Name);
             }
@@ -66,41 +128,8 @@ namespace TerraScale.Dashboard.Platform.Persistence
             }
         }
 
-        private async Task<bool> PublishClaimedAsync(OrganizationRecord organization, bool reconcile, bool required, CancellationToken cancellationToken)
-        {
-            var plan = PlanFor(organization);
-            return await jobs.RunAsync("plan/" + organization.Id, TimeSpan.Zero, async (claim, token) =>
-            {
-                var state = claim.State;
-                var now = time.GetUtcNow().UtcDateTime;
-                if (!required && (state.Cursor == plan || state.Cursor == plan + "/projects") && (state.SucceededAt is { } success && now - success < Refresh ||
-                    !reconcile && state.AttemptedAt is { } attempted && now - attempted < Fresh)) { return; }
-                state.Cursor = plan;
-                state.AttemptedAt = now;
-                state.SucceededAt = null;
-                await claim.SaveAsync(token);
-                var response = await PutAsync(organization.Id, plan, false, token);
-                if (response == 404)
-                {
-                    if (required) { throw new IOException("Organization plan publication failed."); }
-                    state.Cursor = plan + "/projects";
-                    foreach (var project in organization.Projects.Keys)
-                    {
-                        var enrolled = await PutAsync(project, plan, true, token);
-                        if (enrolled is not (>= 200 and <= 299 or 404))
-                        {
-                            throw new IOException("Project plan publication failed.");
-                        }
-                    }
-                }
-                else if (response is < 200 or > 299)
-                {
-                    throw new IOException("Organization plan publication failed.");
-                }
-                state.SucceededAt = now;
-                await claim.SaveAsync(token);
-            }, cancellationToken);
-        }
+        private static TimeSpan Backoff(int failures, bool reconcile) =>
+            !reconcile ? Fresh : failures <= 1 ? TimeSpan.Zero : TimeSpan.FromTicks(Math.Min(Refresh.Ticks, RetryAfter.Ticks << Math.Min(failures - 2, 10)));
 
         private async Task<int> PutAsync(string id, string plan, bool project, CancellationToken cancellationToken)
         {

@@ -48,10 +48,10 @@ namespace TerraScale.Dashboard.Features.Billing
             await DispatchPendingAsync(cancellationToken);
         }
 
-        public async Task RunOnceAsync(CancellationToken cancellationToken)
+        public async Task<bool> RunOnceAsync(CancellationToken cancellationToken)
         {
-            if (!await gate.AllowsAsync(cancellationToken)) { return; }
-            await jobs.RunAsync("usage-settlement", TimeSpan.FromHours(1), async (claim, token) =>
+            if (!await gate.AllowsAsync(cancellationToken)) { return false; }
+            return await jobs.RunAsync("usage-settlement", TimeSpan.FromHours(1), async (claim, token) =>
             {
                 await SettleMonthsAsync(claim, token);
                 await DispatchPendingAsync(token);
@@ -308,8 +308,7 @@ namespace TerraScale.Dashboard.Features.Billing
                     var today = DateOnly.FromDateTime(clock.GetUtcNow().UtcDateTime);
                     if (lastDaily != today)
                     {
-                        await reporter.RunOnceAsync(stoppingToken);
-                        lastDaily = today;
+                        if (await reporter.RunOnceAsync(stoppingToken)) { lastDaily = today; }
                     }
                     else
                     {

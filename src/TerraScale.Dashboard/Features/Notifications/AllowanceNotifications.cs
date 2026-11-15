@@ -133,6 +133,12 @@ namespace TerraScale.Dashboard.Features.Notifications
                     }
                 }
 
+                var removed = db.ChangeTracker.Entries<AllowanceAlertRow>().Where(entry => entry.State == EntityState.Deleted)
+                    .Select(entry => "allowance/" + entry.Entity.Id).ToList();
+                if (removed.Count > 0)
+                {
+                    db.BackgroundJobs.RemoveRange(await db.BackgroundJobs.Where(row => removed.Contains(row.Id)).ToListAsync(cancellationToken));
+                }
                 try
                 {
                     await db.SaveChangesAsync(cancellationToken);
@@ -157,7 +163,12 @@ namespace TerraScale.Dashboard.Features.Notifications
                 await jobs.RunAsync("allowance/" + alert.Id, TimeSpan.Zero, async (claim, token) =>
                 {
                     var current = await claim.Database.AllowanceAlerts.SingleOrDefaultAsync(row => row.Id == alert.Id && row.EmailStatus == "pending", token);
-                    if (current is null) { return; }
+                    if (current is null)
+                    {
+                        claim.Database.BackgroundJobs.Remove(claim.State);
+                        await claim.Database.SaveChangesAsync(token);
+                        return;
+                    }
                     var outcome = await backend.SendAsync(Alert(current), token);
                     if (outcome != "retryable")
                     {

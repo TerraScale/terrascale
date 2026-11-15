@@ -31,6 +31,7 @@ namespace TerraScale.Dashboard.Features.Notifications
     {
         public const int RuleLimit = 20;
         public const int WebhookAttempts = 3;
+        private const int EventLimit = 10;
         public static readonly string[] Metrics = ["p95_latency_ms", "error_rate_percent", "storage_gb", "operation_units_percent"];
 
         public async Task<IReadOnlyList<AlertRule>> ListAsync(string projectId, CancellationToken cancellationToken)
@@ -174,11 +175,32 @@ namespace TerraScale.Dashboard.Features.Notifications
                 return;
             }
 
-            await jobs.RunAsync("alerts/" + projectId, TimeSpan.Zero, async (claim, token) =>
+            await using var snapshot = await storage.CreateDbContextAsync(cancellationToken);
+            var id = "alerts/" + projectId;
+            var state = await snapshot.BackgroundJobs.AsNoTracking().Where(row => row.Id == id)
+                .Select(row => new { State = row, Now = DateTime.UtcNow }).SingleOrDefaultAsync(cancellationToken);
+            if (state is not null && state.State.LeaseUntil > state.Now ||
+                !await ChangesDueAsync(snapshot, projectId, organization, project, units, cancellationToken)) { return; }
+            await jobs.RunAsync(id, TimeSpan.Zero, async (claim, token) =>
             {
                 await EvaluateAsync(projectId, organization, project, units, claim, token);
                 await DeliverAsync(projectId, organizationId, claim, token);
-            }, cancellationToken);
+            }, cancellationToken, fence: state?.State.Checkpoint ?? "");
+        }
+
+        private async Task<bool> ChangesDueAsync(DashboardDbContext db, string projectId, OrganizationRecord organization, ProjectRecord project,
+            Func<Task<IReadOnlyDictionary<string, long>>> units, CancellationToken cancellationToken)
+        {
+            var rules = await db.AlertRules.AsNoTracking().Include(row => row.Events)
+                .Where(row => row.ProjectId == projectId && row.OrganizationId == organization.Id).ToListAsync(cancellationToken);
+            if (rules.Any(rule => rule.Events.Any(item => item.EmailStatus == "pending" || item.WebhookStatus == "pending"))) { return true; }
+            if (rules.Count == 0) { return false; }
+            var analytics = await source.ReadAnalyticsAsync(projectId, cancellationToken);
+            double? percent = null;
+            if (rules.Any(rule => rule.Metric == "operation_units_percent") && PlanCatalog.Limits(organization).MonthlyOperations is > 0 and var allowance &&
+                (await units()).TryGetValue(organization.Id, out var used)) { percent = used * 100d / allowance; }
+            return rules.Any(row => Evaluate(Rule(row), analytics, project, percent) is var (value, _) &&
+                (row.Value != value || (row.State == "firing") != (value > row.Threshold)));
         }
 
         private async Task EvaluateAsync(string projectId, OrganizationRecord organization, ProjectRecord project, Func<Task<IReadOnlyDictionary<string, long>>> units,
@@ -234,6 +256,7 @@ namespace TerraScale.Dashboard.Features.Notifications
                     continue;
                 }
 
+                db.AlertEvents.RemoveRange(row.Events.OrderBy(item => item.Id == claim.State.DeliveryId ? 1 : 0).ThenBy(item => item.Id, StringComparer.Ordinal).SkipLast(EventLimit - 1).ToArray());
                 db.AlertEvents.Add(new AlertEventRow
                 {
                     Id = AccountService.NewId(),
