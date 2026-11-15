@@ -98,6 +98,7 @@ export class Audit {
         .every((animation) => animation.playState !== 'running' || animation.effect?.getComputedTiming().endTime === Infinity),
     );
     const found: string[] = [];
+    if (/\}\s*else if\(Model\.|@\(await |Model\.Tab/.test(await page.locator('main').innerText())) found.push('Razor source leaked into rendered main text');
     const broken = await page.evaluate(() =>
       [...document.querySelectorAll('img')].filter((image) => image.complete && image.naturalWidth === 0).map((image) => image.currentSrc || image.src),
     );

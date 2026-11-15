@@ -253,6 +253,7 @@ export const dashboardStates: readonly PageState[] = [
     heading: title('Connect', 2),
     data: async (page, journey) => {
       await databaseHeader(page, journey);
+      await expect(page.locator('#grants, #backup-policy, #danger-zone-title')).toHaveCount(0);
       await connectCard(page, journey);
     },
   },
@@ -263,6 +264,7 @@ export const dashboardStates: readonly PageState[] = [
     heading: title('Connect', 2),
     data: async (page, journey) => {
       await databaseHeader(page, journey);
+      await expect(page.locator('#grants, #backup-policy, #danger-zone-title')).toHaveCount(0);
     },
   },
   ...databaseTabs.map(
@@ -274,6 +276,7 @@ export const dashboardStates: readonly PageState[] = [
       data: async (page, journey) => {
         await expect(page).toHaveTitle(`${journey.databaseName} · ${label} · TerraScale`);
         await databaseHeader(page, journey);
+        if (tab === 'backups') await expect(page.locator('#grants, #danger-zone-title')).toHaveCount(0);
         if (tab === 'replication') {
           await expect(page.getByRole('heading', { level: 2, name: 'Regions', exact: true })).toBeVisible();
           await regionPicked(page, 'database-regions', journey);

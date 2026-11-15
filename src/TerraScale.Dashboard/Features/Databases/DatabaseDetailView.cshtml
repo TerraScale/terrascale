@@ -56,6 +56,7 @@ else{<div class="ts-table-wrap ts-data-result-wrap" role="region" tabindex="0" a
 </div></section>}
 </div></div>}
 }
+@if(Model.Context.CanWriteProjectData){
 @(await RenderPartialAsync<TerraScale.Dashboard.Features.Databases.CreateTableDialog, DatabaseDetailPage>(Model))
 }
 }else if(Model.Tab == "conflicts"){
