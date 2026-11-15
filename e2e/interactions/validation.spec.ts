@@ -56,11 +56,16 @@ test('validated dialog errors keep drafts and expired forms reject drafts', asyn
   expect(response.status()).toBe(200);
   expect(response.request().headers()['datastar-request']).toBe('true');
   await expect(create).toBeVisible();
+  await expect(page.locator('dialog:modal')).toHaveAttribute('id', 'create-database');
   await expect(create.getByRole('alert')).toContainText('Database not created');
   await expect(create.locator('#database-name')).toHaveValue(journey().databaseName);
   await expect(create.locator('form')).not.toHaveAttribute('inert');
   await expect(page).toHaveURL(databasesUrl);
   await audit.check('database creation error stays inside dialog');
+  await create.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.locator('dialog:modal')).toHaveCount(0);
+  await page.locator('#project-databases tbody tr').filter({ hasText: journey().databaseName }).getByRole('link').click();
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(journey().databaseName);
 
   await page.goto('/profile?tab=danger');
   await page.getByRole('button', { name: 'Delete account', exact: true }).click();

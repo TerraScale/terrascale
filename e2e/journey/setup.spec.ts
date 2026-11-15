@@ -185,6 +185,7 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
   await expect(createdRow).toBeVisible();
   await expect(createdRow.locator('.ts-badge')).toContainText(/ready|provisioning|accepted|pending/);
   await expect(page.locator('#create-database')).not.toBeVisible();
+  await expect(page.locator('dialog:modal')).toHaveCount(0);
   await expect(page).toHaveURL(databasesUrl);
   await expect(page.locator('#database-create-result')).toContainText(databaseName);
   await createdRow.getByRole('link').click();
