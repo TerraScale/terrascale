@@ -983,12 +983,14 @@ recovery-point timestamp, requested and reached log positions, expected row dige
 The current status and the dated record commit together before the success metric advances.
 Records live in `databases/<database id>/backup_drills` (or `backup_drills` for the catalog),
 keyed by `<region>/<member>/<destination>/<yyyy-MM-dd>`; another attempt that day replaces that day's result.
+Each record keeps the last 14 days for its region, member and destination; older evidence records of that key prefix are deleted in the same transaction (never backups or data).
 These records are local to the member's catalog. The current result reloads on restart.
 
 The following metrics carry one `region` label (the member's `TS_REGION`) and no tenant labels:
 
 - `terrabase_backup_recovery_point_age_seconds`: the oldest proven platform recovery point's initial age plus
-  monotonic elapsed time. It keeps rising when bucket access fails. An unproven file emits positive infinity.
+  monotonic elapsed time. It keeps rising when bucket access fails, also after a restart that cannot reach the bucket: the member
+  starts from its catalog file's locally stored recovery point. An unproven file, or a member with no proven point, emits positive infinity.
 - `terrabase_backup_drill_last_success_seconds`: the oldest successful latest platform drill across shipping
   files, or zero when any file's latest drill is missing or failed.
 - `terrabase_backup_drill_failed_files`: platform files whose latest drill or result commit failed.
