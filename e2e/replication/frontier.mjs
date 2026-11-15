@@ -373,7 +373,7 @@ try {
   const retriesAfter = await scrape(/^terrabase_push_apply_retries_total\{.*reason="engine"/);
   assert(retriesAfter > retriesBefore, 'engine apply retries ' + retriesBefore + ' -> ' + retriesAfter);
   assert.equal(await scrape(/^terrabase_push_reverts_total/), revertsBefore);
-  assert(readFileSync(gru.log, 'utf8').slice(engineMark).includes('injected apply storage failure'));
+  assert(readFileSync(gru.log, 'utf8').slice(engineMark).includes('injected apply engine failure'));
   assert.equal(existsSync(resolve(state, 'integrity-control')), false);
   console.log('one storage failure inside home apply: retried reason=engine (' + retriesBefore + ' -> ' + retriesAfter + '), no revert, next attempt confirmed value 7');
 

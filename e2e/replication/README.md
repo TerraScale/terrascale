@@ -57,8 +57,8 @@ every purge); a previous-build origin, shown by a freshly recreated stream witho
 database's messages without a marker, after which the home holds the database with reason `origin_previous_build` and applies
 nothing past the removal until the origin node's build record appears; and 130 unknown databases with 32 messages each held on one origin while a
 healthy database of that origin still applies. One pushed update whose home apply steps an `engine_retry` statement is failed once
-by the engine-crash integrity proxy (native status 133, a storage failure): the home retries it with reason `engine`, records
-no revert, and the next attempt confirms the updated value.
+by the engine-crash integrity proxy with native status Interrupt: the home retries it with reason `engine`, records
+no revert, and the next attempt confirms the updated value. A corruption status is not used, because that status faults the copy.
 
 The run changes the real JetStream regional ownership record, including the matching predecessor/preparation
 metadata, and waits for the target node's retry event to establish that it became the writer. This isolates

@@ -157,8 +157,8 @@ unsigned turso_connection_prepare_first(void *connection, const char *sql, void 
 unsigned turso_statement_step(void *statement, void **error) {
     if (take_apply(statement)) {
         *error = NULL;
-        fprintf(stderr, "injected apply storage failure\n");
-        return 133;
+        fprintf(stderr, "injected apply engine failure\n");
+        return 5;
     }
     const char *control = getenv("ENGINE_INTEGRITY_CONTROL");
     if (statement == integrity && control) {
