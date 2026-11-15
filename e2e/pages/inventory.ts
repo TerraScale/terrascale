@@ -293,6 +293,26 @@ export const dashboardStates: readonly PageState[] = [
     }),
   ),
   {
+    name: 'database conflicts filtered by table',
+    url: (journey) => `${database(journey)}/conflicts?table=records`,
+    covers: { path: databasePath('conflicts'), query: { table: /^records$/, since: /^$/, until: /^$/ } },
+    heading: title('Conflicts', 2),
+    data: async (page) => {
+      await expect(page.locator('#conflict-table')).toHaveValue('records');
+      await expect(page.locator('#conflicts')).toContainText('No conflicts match these filters.');
+    },
+  },
+  {
+    name: 'database logs filtered by server errors',
+    url: (journey) => `${database(journey)}/logs?status=5xx`,
+    covers: { path: databasePath('logs'), query: { status: /^5xx$/ } },
+    heading: title('Request logs', 2),
+    data: async (page) => {
+      await expect(page.locator('#request-status')).toHaveValue('5xx');
+      await expect(page.locator('#request-logs')).toContainText('No recorded requests match this filter');
+    },
+  },
+  {
     name: 'fork dialog',
     url: (journey) => `${database(journey)}/branches?fork=1`,
     covers: { path: databasePath('branches'), query: { fork: /^1$/ } },

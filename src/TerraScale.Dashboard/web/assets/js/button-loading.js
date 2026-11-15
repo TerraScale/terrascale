@@ -1,4 +1,5 @@
 import './workspace.js';
+import './dialog-patches.js';
 import { installSdkTabs } from './sdk-tabs.js';
 
 installSdkTabs();
