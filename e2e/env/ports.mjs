@@ -29,7 +29,7 @@ export function holdSync(preferred, mode = 'flex') {
   for (const [name, value] of Object.entries(preferred)) args.push(name + '=' + value);
   const child = spawn('python3', args, { stdio: ['ignore', 'pipe', 'inherit'] });
   child.unref();
-  child.stdout?.unref();
+  child.stdout.unref();
   holders.add(child);
   const started = Date.now();
   while (Date.now() - started < 10_000) {
