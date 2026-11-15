@@ -2,6 +2,11 @@ using System.Diagnostics.Metrics;
 
 namespace TerraBase.Hosting;
 
+internal interface ICounterSource
+{
+    void PublishSeries();
+}
+
 internal static class CounterSeries
 {
     public static void Zero(Counter<long> counter) => counter.Add(0);

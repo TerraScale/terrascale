@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using TerraBase.Engine;
-using TerraBase.Engine.Turso;
 using TerraBase.Features.Callers;
 using TerraBase.Features.Clock;
 using TerraBase.Features.Management;
@@ -24,7 +23,7 @@ internal sealed class CounterPublication(
 {
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        (engine as TursoStorageEngine ?? throw new UnreachableException()).PublishSeries();
+        (engine as ICounterSource ?? throw new UnreachableException()).PublishSeries();
         sessions.PublishSeries();
         callers.PublishSeries();
         relay.PublishSeries();

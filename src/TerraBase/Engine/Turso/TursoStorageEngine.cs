@@ -19,7 +19,7 @@ using ZLogger;
 
 namespace TerraBase.Engine.Turso;
 
-internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
+internal sealed partial class TursoStorageEngine : IStorageEngine, ICounterSource, IWalBackup
 {
     internal IDiskBudget Disk { get; }
     private const string FileExtension = ".db";
