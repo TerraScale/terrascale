@@ -12,15 +12,16 @@ internal sealed partial class ContinuousBackup
 
     private void RegisterDrillMetrics(Meter meter)
     {
+        var region = new KeyValuePair<string, object?>("region", _region);
         meter.CreateObservableGauge("terrabase.backup.recovery_point_age",
-            () => DrillFiles().Select(file => file.RecoveryPoint is { } point
-                ? point.AgeSeconds + _time.GetElapsedTime(point.ObservedAt).TotalSeconds : double.PositiveInfinity).DefaultIfEmpty().Max(),
+            () => new Measurement<double>(DrillFiles().Select(file => file.RecoveryPoint is { } point
+                ? point.AgeSeconds + _time.GetElapsedTime(point.ObservedAt).TotalSeconds : double.PositiveInfinity).DefaultIfEmpty().Max(), region),
             "s", "Age of the oldest proven platform recovery point, advancing without bucket access; infinity means unproven.");
         meter.CreateObservableGauge("terrabase.backup.drill_last_success",
-            () => DrillFiles().Select(file => file.LastDrill is { Passed: true } drill ? drill.At.ToUnixTimeSeconds() : 0).DefaultIfEmpty().Min(),
+            () => new Measurement<long>(DrillFiles().Select(file => file.LastDrill is { Passed: true } drill ? drill.At.ToUnixTimeSeconds() : 0).DefaultIfEmpty().Min(), region),
             "s", "Unix time of the oldest successful latest restore drill; zero means missing or failed.");
         meter.CreateObservableGauge("terrabase.backup.drill_failed_files",
-            () => DrillFiles().Count(file => file.LastDrill is { Passed: false }),
+            () => new Measurement<int>(DrillFiles().Count(file => file.LastDrill is { Passed: false }), region),
             description: "Files whose latest platform restore drill or result commit failed.");
     }
 
