@@ -32,7 +32,7 @@ namespace TerraScale.Dashboard.Features.Databases
         }
 
         internal static async Task<IResult> ListAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, IDatabaseBackend backend, DatabaseService databases,
-            TerraScale.Dashboard.Features.Backups.BackupService backups)
+            BackupService backups)
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
@@ -55,7 +55,7 @@ namespace TerraScale.Dashboard.Features.Databases
             try
             {
                 var (limit, after) = CursorPaging.Read(http.Request);
-                context = await http.RequestServices.GetRequiredService<TerraScale.Dashboard.Features.Backups.BackupService>().SettleRestoresAsync(context, http.RequestAborted);
+                context = await http.RequestServices.GetRequiredService<BackupService>().SettleRestoresAsync(context, http.RequestAborted);
                 await databases.SyncAsync(context, http.RequestAborted);
                 var page = CursorPaging.Page(context.Project?.Databases.Values ?? Enumerable.Empty<DatabaseRecord>(),
                     db => db.Id, CursorPaging.Scope(context, "databases"), limit, after);
@@ -150,7 +150,7 @@ namespace TerraScale.Dashboard.Features.Databases
                     var pointInTime = form["pointInTime"].ToString();
                     if (!string.IsNullOrWhiteSpace(pointInTime))
                     {
-                        var recovery = http.RequestServices.GetRequiredService<TerraScale.Dashboard.Features.Backups.WholeDatabaseRecovery>();
+                        var recovery = http.RequestServices.GetRequiredService<WholeDatabaseRecovery>();
                         var started = await recovery.StartForkAsync(context, id, pointInTime, form["name"].ToString(), DatabaseTtl.Seconds(DatabaseTtl.Hours(form["ttlHours"].ToString())), http.RequestAborted);
                         return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "backups") + "?restore=" + started.OperationId) :
                             Results.Json(new { operationId = started.OperationId, status = started.Status }, statusCode: 202);
@@ -230,7 +230,7 @@ namespace TerraScale.Dashboard.Features.Databases
             {
                 if (tab is "overview" or "backups")
                 {
-                    context = await http.RequestServices.GetRequiredService<TerraScale.Dashboard.Features.Backups.BackupService>().SettleRestoresAsync(context, http.RequestAborted);
+                    context = await http.RequestServices.GetRequiredService<BackupService>().SettleRestoresAsync(context, http.RequestAborted);
                 }
 
                 if (HttpMethods.IsGet(http.Request.Method) || HttpMethods.IsHead(http.Request.Method))
@@ -370,9 +370,17 @@ namespace TerraScale.Dashboard.Features.Databases
                 return Results.Empty;
             }
 
+            if (tab == "backups" && http.Request.Headers["Datastar-Request"] == "true" && page.Backups is { Recovery: { } recovery })
+            {
+                var card = await BackupEndpoints.PitrCardAsync(http, context, database,
+                    recovery with { Error = page.Backups.Error }, page.Backups.Listing, page.Backups.Bucket, http.RequestAborted);
+                await DatastarEvents.PatchElementsAsync(http, PitrCardView.Create(card));
+                return Results.Empty;
+            }
+
             if (tab == "backups" && http.Request.Headers["Datastar-Request"] == "true" && page.Backups?.Restore is not null)
             {
-                await DatastarEvents.PatchElementsAsync(http, TerraScale.Dashboard.Features.Backups.RestoreStatusView.Create(page.Backups));
+                await DatastarEvents.PatchElementsAsync(http, RestoreStatusView.Create(page.Backups));
                 return Results.Empty;
             }
 

@@ -337,7 +337,7 @@ namespace TerraScale.Dashboard.Features.Backups
         }
         private static BackupView View(ProducerBackup backup)
         {
-            return new(backup.Id, backup.Status, backup.CreatedAt, backup.SizeBytes);
+            return new(backup.Id, backup.Status, backup.Trigger, backup.CreatedAt, backup.SizeBytes);
         }
 
         private static void Validate(ProducerBackup backup, string databaseId)
