@@ -103,7 +103,6 @@ const databaseTabs: [string, string, Identity][] = [
   ['branches', 'Forks', title('Forks', 2)],
   ['settings', 'Settings', title('Settings')],
   ['danger', 'Danger zone', title('Delete database', 2)],
-  ['point-in-time', 'Point-in-time recovery', title('Restore database at UTC time', 2)],
 ];
 
 const tabStates: Record<string, PagePattern['query']> = {
@@ -253,7 +252,7 @@ export const dashboardStates: readonly PageState[] = [
     heading: title('Connect', 2),
     data: async (page, journey) => {
       await databaseHeader(page, journey);
-      await expect(page.locator('#grants, #backup-policy, #danger-zone-title')).toHaveCount(0);
+      await expect(page.locator('#grants, #backup-schedule, #danger-zone-title')).toHaveCount(0);
       await connectCard(page, journey);
     },
   },
@@ -264,7 +263,7 @@ export const dashboardStates: readonly PageState[] = [
     heading: title('Connect', 2),
     data: async (page, journey) => {
       await databaseHeader(page, journey);
-      await expect(page.locator('#grants, #backup-policy, #danger-zone-title')).toHaveCount(0);
+      await expect(page.locator('#grants, #backup-schedule, #danger-zone-title')).toHaveCount(0);
     },
   },
   ...databaseTabs.map(
