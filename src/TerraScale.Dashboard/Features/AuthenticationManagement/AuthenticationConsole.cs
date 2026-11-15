@@ -5,6 +5,7 @@ using TerraScale.Dashboard.Features.NotFound;
 using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Common.Databases;
 using TerraScale.Dashboard.Platform.TsAuth;
+using TerraScale.Dashboard.Platform.Datastar;
 
 namespace TerraScale.Dashboard.Features.AuthenticationManagement
 {
@@ -103,7 +104,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                         }
 
                         var ticket = await projects.StartImpersonationAsync(session, project, targetUser, new(reason, clientId), impersonationIntent.Challenge.Proof, cancel);
-                        return await PageAsync(http, context, projects, "users", impersonationTicket: ticket);
+                        return await PageViewAsync(http, context, projects, "users", impersonationTicket: ticket);
                     case ["users", "impersonations", var impersonationId, "end"]:
                         await projects.EndImpersonationAsync(session, project, impersonationId, cancel);
                         break;
@@ -169,7 +170,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                         }
 
                         var created = await projects.CreateClientAsync(session, project, request, intent.Challenge.Proof, cancel);
-                        return await PageAsync(http, context, projects, "clients", created: created);
+                        return await PageViewAsync(http, context, projects, "clients", created: created);
                     case ["clients", var id, "edit"]:
                         var update = ClientUpdate(form["name"], Lines(form["redirect_uris"]), form["type"], form["allowed_scopes"], form["allowed_audiences"], form["token_lifetime_minutes"]);
                         var editIntent = StepUpFlow.Intent(http, context, "update_oauth_client");
@@ -188,7 +189,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                         }
 
                         var rotated = await projects.RotateClientSecretAsync(session, project, id, rotateIntent.Challenge.Proof, cancel);
-                        return await PageAsync(http, context, projects, "clients", rotated: rotated);
+                        return await PageViewAsync(http, context, projects, "clients", rotated: rotated);
                     case ["clients", var id, "delete"]: await projects.DeleteClientAsync(session, project, id, cancel); break;
                     case ["webhooks"]:
                         var webhook = NewWebhook(form["url"], form["event_types"].Select(value => (string?)value));
@@ -199,7 +200,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                         }
 
                         var registered = await projects.CreateWebhookEndpointAsync(session, project, webhook, createIntent.Challenge.Proof, cancel);
-                        return await PageAsync(http, context, projects, "webhooks", createdWebhook: registered);
+                        return await PageViewAsync(http, context, projects, "webhooks", createdWebhook: registered);
                     case ["webhooks", var id, "rotate"]:
                         var secretIntent = StepUpFlow.Intent(http, context, "rotate_webhook_secret");
                         if (secretIntent is null)
@@ -208,7 +209,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                         }
 
                         var rotatedSecret = await projects.RotateWebhookSecretAsync(session, project, id, secretIntent.Challenge.Proof, cancel);
-                        return await PageAsync(http, context, projects, "webhooks", rotatedWebhook: rotatedSecret);
+                        return await PageViewAsync(http, context, projects, "webhooks", rotatedWebhook: rotatedSecret);
                     case ["webhooks", var id, "test"]: await projects.TestWebhookAsync(session, project, id, cancel); break;
                     case ["webhooks", var id, "deliveries", var delivery, "replay"]: await projects.ReplayWebhookDeliveryAsync(session, project, id, delivery, cancel); break;
                     case ["webhooks", var id, "delete"]: await projects.DeleteWebhookEndpointAsync(session, project, id, cancel); break;
@@ -228,8 +229,25 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             }
             catch (Exception error) when (error is AccountAccessException or HttpRequestException or IOException)
             {
-                return await PageAsync(http, context, projects, key, error is AccountAccessException access ? access.Message : Unreachable, error is AccountAccessException { StatusCode: var code } ? code : 503);
+                return await SectionResultAsync(http, context, projects, key, error is AccountAccessException access ? access.Message : Unreachable, error is AccountAccessException { StatusCode: var code } ? code : 503);
             }
+            return await SectionResultAsync(http, context, projects, key);
+        }
+
+        private static async Task<IResult> SectionResultAsync(HttpContext http, AccountContext context, ITsAuthProjects projects, string key, string error = "", int status = 200)
+        {
+            if (http.Request.Headers["Datastar-Request"] == "true")
+            {
+                var page = await PageModelAsync(http, context, projects, key, error, status);
+                await DatastarEvents.PatchElementsAsync(http, AuthenticationSectionView.Create(page));
+                return Results.Empty;
+            }
+
+            if (error.Length > 0)
+            {
+                return await PageViewAsync(http, context, projects, key, error, status);
+            }
+
             return HttpRedirects.SeeOther("/auth/" + key + "?saved=1");
         }
 
@@ -430,7 +448,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                 return await NotFoundEndpoints.PageAsync(http, sessions, accounts);
             }
 
-            return await PageAsync(http, context, projects, key);
+            return await PageViewAsync(http, context, projects, key);
         }
 
         private static string? Value(string query)
@@ -438,7 +456,14 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             return query.Length == 0 ? null : query;
         }
 
-        private static async Task<IResult> PageAsync(HttpContext http, AccountContext context, ITsAuthProjects projects, string key, string error = "", int status = 200,
+        private static async Task<IResult> PageViewAsync(HttpContext http, AccountContext context, ITsAuthProjects projects, string key, string error = "", int status = 200,
+            TsAuthProjectOAuthClient? created = null, TsAuthProjectClientSecret? rotated = null,
+            TsAuthWebhookEndpoint? createdWebhook = null, TsAuthWebhookSecret? rotatedWebhook = null, TsAuthImpersonationTicket? impersonationTicket = null)
+        {
+            return AuthenticationView.Create(await PageModelAsync(http, context, projects, key, error, status, created, rotated, createdWebhook, rotatedWebhook, impersonationTicket));
+        }
+
+        private static async Task<AuthenticationPage> PageModelAsync(HttpContext http, AccountContext context, ITsAuthProjects projects, string key, string error = "", int status = 200,
             TsAuthProjectOAuthClient? created = null, TsAuthProjectClientSecret? rotated = null,
             TsAuthWebhookEndpoint? createdWebhook = null, TsAuthWebhookSecret? rotatedWebhook = null, TsAuthImpersonationTicket? impersonationTicket = null)
         {
@@ -506,9 +531,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                     page = page with { Error = failure is AccountAccessException ? failure.Message : Unreachable };
                 }
             }
-            var result = AuthenticationView.Create(page);
-            result.StatusCode = status;
-            return result;
+            return page;
         }
     }
 

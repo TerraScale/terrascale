@@ -24,7 +24,7 @@ test('the Pro owner invites a second user, who signs up through the emailed link
   const ownerAudit = new Audit(ownerPage, info);
   await ownerPage.goto(`${dash}/auth/overview`);
   await expect(ownerPage.getByRole('navigation', { name: 'Authentication sections' }).getByRole('link', { name: 'Settings', exact: true })).toHaveCount(0);
-  await expect(ownerPage.locator('#auth-section-select option[value="settings"]')).toHaveCount(0);
+  await expect(ownerPage.locator('.ts-idp-tabs a[href="/auth/settings"]')).toHaveCount(0);
   await ownerAudit.check('customer authentication has no platform Settings section');
   const settingsResponse = await ownerPage.request.get(`${dash}/auth/settings`);
   expect(settingsResponse.status()).toBe(404);

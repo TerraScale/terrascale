@@ -58,10 +58,10 @@ test.describe('project MFA and session policy', () => {
     project = new URL(issuer).pathname.split('/').filter(Boolean)[0];
     cookie = 'tsauth_session_' + project;
     await admin.goto(dash + '/auth/clients');
-    await admin.getByRole('button', { name: 'Add application', exact: true }).first().click();
+    await admin.getByRole('button', { name: 'New client', exact: true }).first().click();
     await admin.locator('#auth-client-name').fill('MFA journey');
     await admin.locator('#auth-client-uris').fill('http://127.0.0.1/callback');
-    await admin.locator('#auth-create-client').getByRole('button', { name: 'Add application', exact: true }).click();
+    await admin.locator('#auth-create-client').getByRole('button', { name: 'New client', exact: true }).click();
     await confirmWithPassword(admin, adminAudit, password, 'create project application');
     await expect(admin.locator('#auth-created-client-id')).toBeVisible();
     client = (await admin.locator('#auth-created-client-id').textContent())!;
@@ -77,7 +77,10 @@ test.describe('project MFA and session policy', () => {
     await adminAudit.check('required TOTP and session policy saved');
     await admin.goto(dash + '/auth/attack-protection');
     await admin.locator('input[name=account_lockout]').uncheck();
+    const budgetOn = admin.waitForResponse((response) => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/v1/auth-management/attack-protection');
     await admin.getByRole('button', { name: 'Save attack protection', exact: true }).click();
+    await expect((await budgetOn).status()).toBe(200);
     await expect(admin.locator('input[name=account_lockout]')).not.toBeChecked();
     await adminAudit.check('MFA password handoffs use the per-email budget');
   }));
@@ -236,7 +239,10 @@ test.describe('project MFA and session policy', () => {
 
     await admin.goto(dash + '/auth/mfa-sessions');
     await admin.locator('input[name=single_session]').check();
+    const singleSessionOn = admin.waitForResponse((response) => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/v1/auth-management/mfa-sessions');
     await admin.getByRole('button', { name: 'Save MFA and sessions' }).click();
+    await expect((await singleSessionOn).status()).toBe(200);
     await expect(admin.locator('input[name=single_session]')).toBeChecked();
 
     const other = await second.newPage();

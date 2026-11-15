@@ -34,7 +34,7 @@ test('auth webhooks verify invited signup signatures, retry failures and replay 
       const projectId = new URL(await page.locator('#auth-sign-in-url').getAttribute('href') ?? '').pathname.split('/')[2];
       expect(projectId).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
       await page.goto(`${dash}/auth/webhooks`);
-      await page.getByRole('button', { name: 'Add webhook endpoint', exact: true }).first().click();
+      await page.getByRole('button', { name: 'Add webhook', exact: true }).first().click();
       await page.locator('#auth-webhook-url').fill('https://hooks.journey.terrascale.tech/receive');
       await page.locator('input[name=event_types][value="user.signed_up"]').check();
       await page.locator('#auth-create-webhook button[type=submit]').click();
@@ -50,13 +50,14 @@ test('auth webhooks verify invited signup signatures, retry failures and replay 
       try {
         const userEmail = await newAddress(`webhook-user-${randomBytes(4).toString('hex')}`);
         await page.goto(dash + '/auth/restrictions');
-        await page.locator('#signup-mode').selectOption('restricted');
+        await page.locator('.ts-chip', { hasText: 'Invitation only' }).click();
         await page.getByRole('button', { name: 'Save restrictions' }).click();
-        await expect(page.locator('#signup-mode')).toHaveValue('restricted');
+        await expect(page.locator('input[name=sign_up_mode][value=restricted]')).toBeChecked();
         await page.goto(dash + '/auth/invitations');
-        await page.locator('#invitation-email').fill(userEmail);
-        await page.getByRole('button', { name: 'Invite user' }).click();
-        await expect(page.locator('.ts-list-item').filter({ hasText: userEmail })).toContainText('pending');
+        await page.getByRole('button', { name: 'Invite user' }).first().click();
+    await page.locator('#invitation-email').fill(userEmail);
+        await page.locator('#auth-invite-dialog').getByRole('button', { name: 'Invite user' }).click();
+        await expect(page.locator('.ts-rows li').filter({ hasText: userEmail })).toContainText('Pending');
         const invitation = await nextMail(userEmail, 0);
         const link = invitation.text.match(new RegExp(auth + '/ui/' + projectId + '/invitations/[A-Za-z0-9_-]{43}'))?.[0];
         expect(link).toBeTruthy();
@@ -142,7 +143,7 @@ test('auth webhook delivery refuses redirects and private destinations', async (
       const before = await (await fetch(`${receiver}/deliveries`)).json();
       for (const url of ['https://hooks.journey.terrascale.tech/redirect', 'https://127.0.0.1:8029/receive']) {
         await page.goto(`${dash}/auth/webhooks`);
-        await page.getByRole('button', { name: 'Add webhook endpoint', exact: true }).first().click();
+        await page.getByRole('button', { name: 'Add webhook', exact: true }).first().click();
         await page.locator('#auth-webhook-url').fill(url);
         await page.locator('input[name=event_types][value="user.signed_up"]').check();
         await page.locator('#auth-create-webhook button[type=submit]').click();
@@ -195,7 +196,7 @@ test('auth webhook enqueue of 200 in one project allows another project through 
     const queued: string[] = [];
     const register = async (target: typeof page, targetAudit: Audit, path: string, credential: string) => {
       await target.goto(`${dash}/auth/webhooks`);
-      await target.getByRole('button', { name: 'Add webhook endpoint', exact: true }).first().click();
+      await target.getByRole('button', { name: 'Add webhook', exact: true }).first().click();
       await target.locator('#auth-webhook-url').fill(`https://hooks.journey.terrascale.tech${path}`);
       await target.locator('input[name=event_types][value="user.signed_up"]').check();
       await target.locator('#auth-create-webhook button[type=submit]').click();
@@ -304,7 +305,7 @@ test('auth webhook timeouts release delivery lanes for another project within on
     const register = async (page: Page, audit: Audit, password: string, hold: boolean) => {
       const path = '/receive/timeout-' + randomBytes(8).toString('hex');
       await page.goto(dash + '/auth/webhooks');
-      await page.getByRole('button', { name: 'Add webhook endpoint', exact: true }).first().click();
+      await page.getByRole('button', { name: 'Add webhook', exact: true }).first().click();
       await page.locator('#auth-webhook-url').fill('https://hooks.journey.terrascale.tech' + path);
       await page.locator('input[name=event_types][value="user.signed_up"]').check();
       await page.locator('#auth-create-webhook button[type=submit]').click();

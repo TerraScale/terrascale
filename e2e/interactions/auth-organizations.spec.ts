@@ -146,7 +146,7 @@ test('project organizations bind invitations, roles and refresh to the chosen or
     other = value(await organizations.createOrganization(key, current.projectId, { ...input, name: 'Second organization', slug: input.slug + '-two', admin_user_id: invitedId })).id;
 
     await ownerPage.goto(dash + '/auth/clients');
-    await ownerPage.getByRole('button', { name: 'Add application', exact: true }).first().click();
+    await ownerPage.getByRole('button', { name: 'New client', exact: true }).first().click();
     await ownerPage.locator('#auth-client-name').fill('Organization journey');
     await ownerPage.locator('#auth-client-type').selectOption('public');
     await ownerPage.locator('#auth-client-uris').fill(redirect);
