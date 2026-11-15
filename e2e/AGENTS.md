@@ -141,10 +141,13 @@ both versions, and each answers 409 `platform_project_protected`.
 the files are back once gru is added again. R3 also opens SQL sockets with header credentials, checks 1012 and PostgreSQL FATAL 57P01 on a writer move, refuses forwarded REST and socket upgrades with 503 instead of a second hop, and drops destination SYN packets to prove the five-second REST connect bound. R17 removes a follower, verifies its routing record learns a rename, and adds it again with current data. R18 deletes a database at its home while its follower is removed, then checks the removed follower forgets it. R19 starts a real, unprimed node in the home region with NATS disconnected and verifies direct placement requests return 503 not_writer for both live and absent ids, while the writer returns 200 and 404 respectively.
 
 Other existing projects can run in two-region mode by starting this same stack first and selecting their project
-normally. The placement pair shares one machine and third-party stand-ins, has no network delay and uses
-catalog-sweep replication without NATS; it does not model geographic latency or regional host failure.
+normally. The placement pair shares one machine and third-party stand-ins and has no network delay. Two-region mode
+starts NATS; with one node in a region the local-write gauge stays 0 and a write that would commit locally still commits
+at home. It does not model geographic latency or regional host failure.
 
 The CI session-limits shard selects only `placement/session-limits.spec.ts` with one worker and two cells. It covers input and answer progress, session admission, platform EF traffic, unknown outcomes and native commit completion. It also holds 32 idle sockets (no startup packet, a startup then silence, or a stalled TLS handshake) on the Postgres listener and the public edge and checks that an authenticated session keeps running and a new client still queries. Its peer-stream faults retain a live HTTP/2 connection while withholding an answer body.
+
+The CI write-guarantees shard selects `placement/write-guarantees.spec.ts` and `placement/region-restore.spec.ts` with one worker, two regions and one node in each. It checks that a local write preference cannot force a local commit, that one node never acknowledges locally, and that snapshot and point-in-time restore run in fra and in sjc.
 
 ## Multi-region fault lane
 
@@ -184,8 +187,8 @@ when selected with other cases.
 
 The extra nodes are `journey-3 gru 127.0.0.3` and `journey-4 fra 127.0.0.4`, with client/metrics/PostgreSQL ports
 8280/9291/6632 and 8380/9391/6732. Their independent data directories are `terrabase-gru-2` and `terrabase-fra-2`
-under the run state. Four-node mode starts a checksum-pinned NATS server with JetStream and a generated credential
-registered with the scrubber; all four real nodes use it for replication notices and regional writer coordination.
+under the run state. Two-region mode starts a checksum-pinned NATS server with JetStream and a generated credential
+registered with the scrubber. Four-node mode adds the second node of each region; every real node uses NATS for replication notices and regional writer coordination.
 The namespace remembers the node count for later exec calls and owns every original and restarted process.
 
 The fault owner upgrades through the existing Stripe stand-in so a restore has room alongside its source. Each

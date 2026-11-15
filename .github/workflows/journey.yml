@@ -202,6 +202,10 @@ jobs:
             projects: placement/session-limits.spec.ts --project placement --workers 1
             regions: 2
             nodes: 2
+          - shard: write guarantees
+            projects: placement/write-guarantees.spec.ts placement/region-restore.spec.ts --project placement --workers 1
+            regions: 2
+            nodes: 1
           - shard: multi-region faults
             projects: --project fault
             regions: 2
@@ -363,6 +367,8 @@ jobs:
           path: ${{ runner.temp }}/services
       - name: Install the journey tools and the proof's broker
         run: |
+          sudo apt-get update
+          sudo apt-get install --yes gcc
           bash e2e/env/tools.sh
           bash e2e/env/tools.sh nats-server
       - id: namespace

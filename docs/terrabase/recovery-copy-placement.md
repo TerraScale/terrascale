@@ -6,10 +6,13 @@ its own placement version at 1. Recovery never expands explicit placement to the
 default region set, and a restored database consumes a database allowance unit
 even when the snapshot lives outside its preserved primary region.
 
-Managed snapshot records identify the region holding their local file. Restore
-requests first authorize access and verify snapshot ownership, then answer 421
-with `ts-replay: region=<snapshot-region>` when another region holds it. Replayed
-requests do not emit another replay header. PITR runs in the source's primary.
+Managed snapshot records identify the region holding their local file. Each
+machine writes those records to its own catalog; they are not replicated. A
+region that does not hold the record answers 421 with `ts-replay:
+region=<primary>`, the database's primary. A region that holds the record and
+is not the recorded snapshot region answers 421 with `ts-replay:
+region=<snapshot-region>`. Replayed requests do not emit another replay header.
+PITR runs in the source's primary.
 Unknown snapshot regions return 503 `backup_region_unknown`; take a new snapshot.
 If the snapshot region has left source placement, restore returns 409
 `backup_region_not_placed` without registering a copy or widening residency.

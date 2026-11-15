@@ -49,18 +49,16 @@ if [ "${E2E_REGIONS:-1}" = 2 ]; then
     TERRABASE_SHAPES_CDN_API_TOKEN="$cloudflare_token"
     TERRABASE_FILES_S3_ENDPOINT=https://journey.r2.cloudflarestorage.com/ TERRABASE_FILES_S3_ACCESS_KEY_ID="$r2_access_key_id"
     TERRABASE_FILES_S3_SECRET_ACCESS_KEY="$r2_secret_access_key")
-  if [ "${E2E_NODES_PER_REGION:-1}" = 2 ]; then
-    nats_token=$(random 32)
-    rm -rf "$state/nats"
-    printf '%s\n' "$nats_token" >> "$state/secrets"
-    if [ -n "${GITHUB_ACTIONS:-}" ]; then printf '::add-mask::%s\n' "$nats_token"; fi
-    printf '%s' "$nats_token" > "$state/nats-token"
-    printf 'listen: 127.0.0.1:4222\nhttp: 127.0.0.1:8222\nauthorization { token: "%s" }\njetstream { store_dir: "%s/nats" }\n' \
-      "$nats_token" "$state" > "$state/nats.conf"
-    start nats "$E2E_TOOLS/nats-server" --config "$state/nats.conf"
-    ready nats curl -fsS --max-time 2 http://127.0.0.1:8222/healthz
-    cells+=(TS_NATS_URL=nats://127.0.0.1:4222 TERRABASE_NATS_TOKEN_FILE="$state/nats-token")
-  fi
+  nats_token=$(random 32)
+  rm -rf "$state/nats"
+  printf '%s\n' "$nats_token" >> "$state/secrets"
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then printf '::add-mask::%s\n' "$nats_token"; fi
+  printf '%s' "$nats_token" > "$state/nats-token"
+  printf 'listen: 127.0.0.1:4222\nhttp: 127.0.0.1:8222\nauthorization { token: "%s" }\njetstream { store_dir: "%s/nats" }\n' \
+    "$nats_token" "$state" > "$state/nats.conf"
+  start nats "$E2E_TOOLS/nats-server" --config "$state/nats.conf"
+  ready nats curl -fsS --max-time 2 http://127.0.0.1:8222/healthz
+  cells+=(TS_NATS_URL=nats://127.0.0.1:4222 TERRABASE_NATS_TOKEN_FILE="$state/nats-token")
   start terrabase env "${cells[@]}" TS_REGION=gru TS_NODE=journey-1 TERRABASE_DATA_DIRECTORY="$state/terrabase" \
     TERRABASE_PORT=8080 TERRABASE_METRICS_PORT=9091 TERRABASE_POSTGRES_PORT=6432 dotnet "$build/terrabase/terrabase.dll"
   ready terrabase curl -fsS --max-time 2 http://127.0.0.1:8080/readyz

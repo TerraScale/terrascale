@@ -43,18 +43,29 @@ internal sealed partial class EngineManagedBackupService
 
         var owner = DatabaseOwner.Of(database);
         return await catalog.ReadAsync<RestoreSourceResult>(async transaction =>
-                await GetRecordAsync(transaction, organizationId, backupId, cancellationToken).ConfigureAwait(false) is { State: BackupState.Registered } record
-                && record.DatabaseId == owner.DatabaseId
-                && await EngineManagementService.GetDatabaseAsync(transaction, userId, organizationId, owner.ProjectId, owner.DatabaseId, cancellationToken)
-                    .ConfigureAwait(false) is { } source
-                    ? new RestoreSource(source, record.Id, record.Region)
-                    : new NotFound(),
-                static error => error, cancellationToken).ConfigureAwait(false) switch
+            {
+                if (await EngineManagementService.GetDatabaseAsync(transaction, userId, organizationId, owner.ProjectId, owner.DatabaseId, cancellationToken)
+                        .ConfigureAwait(false) is not { } source)
+                {
+                    return new NotFound();
+                }
+
+                if (await GetRecordAsync(transaction, organizationId, backupId, cancellationToken).ConfigureAwait(false) is { State: BackupState.Registered } record
+                    && record.DatabaseId == owner.DatabaseId)
+                {
+                    return new RestoreSource(source, record.Id, record.Region);
+                }
+
+                var home = source.Home(options.Region);
+                return home == options.Region ? new NotFound() : new BackupElsewhere(home, source);
+            },
+            static error => error, cancellationToken).ConfigureAwait(false) switch
         {
             RestoreSource { Region: null } => new Unavailable("the snapshot's region is unknown; take a new snapshot", "backup_region_unknown"),
             RestoreSource source when source.Region != options.Region => new BackupElsewhere(source.Region!, source.Database),
             RestoreSource source when !source.Database.PlacedIn(options.Region) => new Conflict("the snapshot's region is outside the database's current placement", "backup_region_not_placed"),
             RestoreSource source => await AdmitBackupRestoreAsync(userId, organizationId, owner, source, name, cancellationToken),
+            BackupElsewhere elsewhere => elsewhere,
             NotFound error => error,
             Unavailable error => error,
         };
