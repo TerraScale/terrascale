@@ -8,7 +8,6 @@ import { expect } from '@playwright/test';
 import { e2eRoot, stateDir } from './stack';
 
 const exec = promisify(execFile);
-const port = 8791;
 
 export type StatusSite = { origin: string; stop: () => Promise<void> };
 
@@ -27,16 +26,16 @@ export function ulid(): string {
   return encode(BigInt(Date.now()), 10) + encode(random, 16);
 }
 
-export async function startStatusSite(sql: string, vars: Record<string, string>): Promise<StatusSite> {
+export async function startStatusSite(sql: string, vars: Record<string, string>, listen = 8791): Promise<StatusSite> {
   const root = join(e2eRoot, '..', 'status-site');
   const persist = join(root, '.wrangler', 'state');
-  const log = join(stateDir, 'status-site.log');
+  const log = join(stateDir, `status-site-${listen}.log`);
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
-  rmSync(join(root, '.wrangler'), { recursive: true, force: true });
+  rmSync(persist, { recursive: true, force: true });
   rmSync(join(root, '.dev.vars'), { force: true });
   const wrangler = join(root, 'node_modules', '.bin', 'wrangler');
   await exec(wrangler, ['d1', 'execute', 'ts-status', '--local', '--persist-to', persist, '--file', 'schema.sql', '-y'], { cwd: root });
-  const catalog = join(stateDir, 'status-catalog.sql');
+  const catalog = join(stateDir, `status-catalog-${listen}.sql`);
   writeFileSync(catalog, sql, { mode: 0o600 });
   await exec(wrangler, ['d1', 'execute', 'ts-status', '--local', '--persist-to', persist, '--file', catalog, '-y'], { cwd: root });
   if (Object.keys(vars).length > 0) {
@@ -44,7 +43,7 @@ export async function startStatusSite(sql: string, vars: Record<string, string>)
     writeFileSync(join(root, '.dev.vars'), `${body}\n`, { mode: 0o600 });
   }
   const output = createWriteStream(log);
-  const child = spawn(join(root, 'node_modules', '.bin', 'vp'), ['dev', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], {
+  const child = spawn(join(root, 'node_modules', '.bin', 'vp'), ['dev', '--host', '127.0.0.1', '--port', String(listen), '--strictPort'], {
     cwd: root,
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -52,7 +51,7 @@ export async function startStatusSite(sql: string, vars: Record<string, string>)
   });
   child.stdout?.pipe(output);
   child.stderr?.pipe(output);
-  const origin = `http://127.0.0.1:${port}`;
+  const origin = `http://127.0.0.1:${listen}`;
   let stopped = false;
   const stop = async (): Promise<void> => {
     if (stopped) return;

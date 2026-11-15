@@ -1,11 +1,10 @@
 import { createServer, type Server } from 'node:http';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { expect, request, test } from '@playwright/test';
+import { expect, test, type APIRequestContext, type APIResponse, type Page } from '@playwright/test';
 import { keyId } from '../support/api-key';
 import { signInToken } from '../support/auth-management';
-import { auth, production, stateDir } from '../support/stack';
-import { saveSecret, type Journey } from '../support/state';
+import { createDedicatedProjectOwner } from '../support/project-owner';
+import { auth, production } from '../support/stack';
+import { saveSecret } from '../support/state';
 import { startStatusSite, ulid, type StatusSite } from '../support/status-worker';
 
 test.describe.configure({ mode: 'serial' });
@@ -20,10 +19,6 @@ type StatusBody = {
   groups: { components: Component[] }[];
 };
 type Summary = { status: { description: string }; components: { name: string; status: string }[] };
-
-function owner(): Journey {
-  return JSON.parse(readFileSync(join(stateDir, 'setup.journey.json'), 'utf8')) as Journey;
-}
 
 function component(body: StatusBody, name: string): Component | undefined {
   return body.groups.flatMap((group) => group.components).find((item) => item.name === name);
@@ -61,34 +56,48 @@ function endpoint(id: string, componentId: string, url: string, kind: 'http' | '
   return `INSERT INTO endpoints (id, component_id, cluster, provider, url, headers, expect_status, assertions, extract, indirect, kind, live_since) VALUES ('${id}', '${componentId}', 'journey', 'other', '${url}', '{}', '200', '[]', '{}', 0, '${kind}', ${since});`;
 }
 
-async function sql(statements: { sql: string }[]): Promise<void> {
-  const current = owner();
-  const context = await request.newContext({ storageState: join(stateDir, 'setup.session.json') });
-  try {
-    const exchanged = await context.post(`${auth}/terrascale/oauth/token`, {
-      form: {
-        grant_type: 'client_credentials',
-        client_id: keyId(current.apiKey),
-        client_secret: current.apiKey,
-        project: current.projectId,
-        scope: 'sql:read sql:write',
-      },
-    });
-    expect(exchanged.status()).toBe(200);
-    const write = (await exchanged.json()).access_token as string;
-    saveSecret('status-canary-sql', write);
-    const response = await context.post(`https://api.terrascale.tech/v1/projects/${current.projectId}/databases/${current.databaseId}/sql/execute`, {
-      headers: { Authorization: `Bearer ${write}` },
-      data: { statements },
-    });
-    expect(response.status()).toBe(200);
-  } finally {
-    await context.dispose();
-  }
+async function answered(response: APIResponse, expected: number): Promise<void> {
+  const status = response.status();
+  expect(status, status === expected ? '' : await response.text()).toBe(expected);
+}
+
+async function writeToken(context: APIRequestContext, apiKey: string, projectId: string): Promise<string> {
+  const exchanged = await context.post(`${auth}/terrascale/oauth/token`, {
+    form: {
+      grant_type: 'client_credentials',
+      client_id: keyId(apiKey),
+      client_secret: apiKey,
+      project: projectId,
+      scope: 'sql:read sql:write',
+    },
+  });
+  await answered(exchanged, 200);
+  const token = (await exchanged.json()).access_token as string;
+  saveSecret('status-canary-sql', token);
+  return token;
+}
+
+async function createOwnedDatabase(page: Page, name: string): Promise<{ id: string; region: string }> {
+  await page.goto('/databases');
+  await page.getByRole('button', { name: 'New database', exact: true }).first().click();
+  await expect(page.locator('#create-database[open]')).toBeVisible();
+  const picked = page.locator('#create-database-regions input[name="regions"]:checked');
+  const region = (await picked.inputValue()).toLowerCase();
+  await page.locator('#database-name').fill(name);
+  await page.locator('#create-database form').getByRole('button', { name: 'Create database', exact: true }).click();
+  await page.waitForURL(/\/databases\/[0-9A-HJKMNP-TV-Z]{26}(\?|$)/);
+  return { id: new URL(page.url()).pathname.split('/')[2] ?? '', region };
+}
+
+async function sql(context: APIRequestContext, token: string, projectId: string, databaseId: string, statements: { sql: string }[]): Promise<void> {
+  const response = await context.post(`https://api.terrascale.tech/v1/projects/${projectId}/databases/${databaseId}/sql/execute`, {
+    headers: { Authorization: `Bearer ${token}` },
+    data: { statements },
+  });
+  await answered(response, 200);
 }
 
 let site: StatusSite | undefined;
-let canaryKeyId = '';
 let failing: Server | undefined;
 
 function healthy(seen: { api: StatusBody; page: string; summary: Summary }): {
@@ -127,27 +136,32 @@ const healthyState = {
 };
 
 test.describe('canary credential', () => {
-  test.beforeAll(async () => {
-    if (production) return;
-    const current = owner();
-    const context = await request.newContext({ storageState: join(stateDir, 'setup.session.json') });
+  test('a revoked canary credential is unknown and an unreachable component is unknown', async ({ browser }, info) => {
+    test.skip(production, 'the status worker runs against the local stack');
+    const account = await createDedicatedProjectOwner(browser, info, 'Status canary');
+    const current = account.current;
+    const context = account.page.request;
+    let local: StatusSite | undefined;
     try {
-      const token = await signInToken(context, 'status-canary');
+      const writer = await writeToken(context, current.apiKey, current.projectId);
+      const name = `canary-${current.runId}`;
+      const database = await createOwnedDatabase(account.page, name);
+      const token = await signInToken(context, `status-canary-${current.runId}`);
       const created = await context.post(`${auth}/v1/terrascale/organizations/${current.organizationId}/projects/${current.projectId}/api-keys`, {
         headers: { Authorization: `Bearer ${token}` },
         data: {
-          name: 'status canary',
+          name: `status canary ${current.runId}`,
           scopes: ['sql:read'],
-          database: current.databaseId,
+          database: database.id,
           expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
         },
       });
-      expect(created.status()).toBe(201);
+      await answered(created, 201);
       const body = await created.json();
       const secret = body.key as string;
-      canaryKeyId = body.api_key.id as string;
+      const canaryKeyId = body.api_key.id as string;
       saveSecret('status-canary-key', secret);
-      await sql([
+      await sql(context, writer, current.projectId, database.id, [
         { sql: 'CREATE TABLE IF NOT EXISTS canary (id TEXT PRIMARY KEY)' },
         { sql: "INSERT OR IGNORE INTO canary (id) VALUES ('00000000000000000000000007')" },
       ]);
@@ -162,46 +176,25 @@ test.describe('canary credential', () => {
         endpoint(canaryEndpoint, canaryComponent, 'https://api.terrascale.tech/canary', 'canary', false),
         endpoint(ulid(), closedComponent, 'http://127.0.0.1:1/', 'http', true),
       ].join('\n');
-      site = await startStatusSite(catalog, {
+      local = await startStatusSite(catalog, {
         DATA_API_CANARY: JSON.stringify({
           [canaryEndpoint]: {
             origin: 'https://api.terrascale.tech',
-            region: current.databaseRegion.toLowerCase(),
+            region: database.region,
             project: current.projectId,
-            database: current.databaseName,
+            database: name,
             issuer: 'https://auth.terrascale.tech/terrascale',
             key: secret,
           },
         }),
-      });
-    } finally {
-      await context.dispose();
-    }
-  });
+      }, 8900 + (parseInt(current.runId.slice(0, 2), 16) % 100));
+      const origin = local.origin;
+      await expect.poll(async () => healthy(await view(origin)), { timeout: 45_000 }).toEqual(healthyState);
 
-  test.afterAll(async () => {
-    await site?.stop();
-    site = undefined;
-    if (production) return;
-    await sql([{ sql: 'DROP TABLE IF EXISTS canary' }]);
-  });
-
-  test('a revoked canary credential is unknown and an unreachable component is unknown', async () => {
-    test.skip(production, 'the status worker runs against the local stack');
-    const origin = site?.origin ?? '';
-    const current = owner();
-    await expect.poll(async () => healthy(await view(origin)), { timeout: 45_000 }).toEqual(healthyState);
-
-    const context = await request.newContext({ storageState: join(stateDir, 'setup.session.json') });
-    try {
-      const token = await signInToken(context, 'status-canary-revoke');
       const revoked = await context.delete(`${auth}/v1/terrascale/organizations/${current.organizationId}/projects/${current.projectId}/api-keys/${canaryKeyId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      expect(revoked.status()).toBe(204);
-    } finally {
-      await context.dispose();
-    }
+      await answered(revoked, 204);
 
     await expect.poll(async () => {
       const seen = await view(origin);
@@ -232,6 +225,10 @@ test.describe('canary credential', () => {
       closedBadge: true,
       operationalHeadline: false,
     });
+    } finally {
+      await local?.stop();
+      await account.remove();
+    }
   });
 });
 
