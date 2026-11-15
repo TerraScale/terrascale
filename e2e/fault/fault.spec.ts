@@ -69,7 +69,8 @@ test('sjc automatically records the same verified restore evidence as the other 
   let region: Awaited<ReturnType<typeof startRegion>> | undefined;
   try {
     region = await startRegion('sjc', 0);
-    await verifyRestoreDrill({ name: 'journey-extra-sjc', region: 'sjc', address: '10.228.0.2', port: 8380 });
+    const { hostname, port } = new URL(region.endpoint);
+    await verifyRestoreDrill({ name: 'journey-extra-sjc', region: 'sjc', address: hostname, port: Number(port), metricsPort: region.metricsPort });
   } finally {
     if (region) await region.stop();
     restorePeers();

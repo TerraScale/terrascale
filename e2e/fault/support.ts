@@ -271,8 +271,8 @@ export function restartAfterKill(node: Node, writer = true, access?: { token: st
   };
 }
 
-export async function scrape(node: { address: string; port: number }): Promise<(metricName: string, label?: string) => number> {
-  const response = await fetch(`http://${node.address}:${node.port + 1011}/metrics`);
+export async function scrape(node: { address: string; port: number; metricsPort?: number }): Promise<(metricName: string, label?: string) => number> {
+  const response = await fetch(`http://${node.address}:${node.metricsPort ?? node.port + 1011}/metrics`);
   expect(response.status).toBe(200);
   const lines = (await response.text()).split('\n');
   return (metricName, label = '') => {
@@ -281,7 +281,7 @@ export async function scrape(node: { address: string; port: number }): Promise<(
   };
 }
 
-export async function metric(node: { address: string; port: number }, metricName: string, label = ''): Promise<number> {
+export async function metric(node: { address: string; port: number; metricsPort?: number }, metricName: string, label = ''): Promise<number> {
   return (await scrape(node))(metricName, label);
 }
 

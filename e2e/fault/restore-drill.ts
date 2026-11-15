@@ -6,7 +6,7 @@ type Drill = {
   generation: string; targetPosition: number; reachedPosition: number; expectedDigest: string; restoredDigest: string;
 };
 
-export async function verifyRestoreDrill(writer: { name: string; region: string; address: string; port: number }): Promise<void> {
+export async function verifyRestoreDrill(writer: { name: string; region: string; address: string; port: number; metricsPort?: number }): Promise<void> {
   let drill: Drill | undefined;
   await expect.poll(async () => {
     const response = await nodeRequest(writer, '/v1/backup');
