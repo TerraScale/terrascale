@@ -1,4 +1,5 @@
 import { expect, type APIRequestContext, type Page, type Response } from '@playwright/test';
+import { waitForCreatedDatabase } from './database';
 import { test as base, type Audit } from './audit';
 import { auth, dash } from './stack';
 import { keyId } from './api-key';
@@ -140,14 +141,9 @@ async function manageRemoteDatabase(page: Page, request: APIRequestContext, audi
     });
     const databasesUrl = page.url();
     await submit('create', () => page.locator('#create-database form').getByRole('button', { name: 'Create database', exact: true }).click());
-    const createdRow = page.locator('#project-databases tbody tr').filter({ hasText: name });
-    await expect(createdRow).toBeVisible();
-    await expect(page.locator('#create-database')).not.toBeVisible();
-    await expect(page).toHaveURL(databasesUrl);
-    const link = createdRow.getByRole('link');
-    id = /\/databases\/([0-9A-HJKMNP-TV-Z]{26})/.exec(await link.getAttribute('href') ?? '')?.[1] ?? '';
-    await link.click();
-    expect(id, 'creation returns the remote database id').toBeTruthy();
+    const created = await waitForCreatedDatabase(page, name, databasesUrl);
+    id = created.id;
+    await created.link.click();
     await page.waitForURL(url => url.pathname === '/databases/' + id);
     await expect(page.locator('.ts-db-head .ts-db-title')).toHaveText(name);
     await expect(page.locator('.ts-db-head .ts-db-region')).toHaveAttribute('data-region', region!.toLowerCase());
