@@ -220,7 +220,7 @@ internal static class BackgroundJourney
             await CountsAsync(application.Services, commands, organization, cancellationToken);
             await using var db = await storage.CreateDbContextAsync(cancellationToken);
             var drain = await db.LogDrains.SingleAsync(cancellationToken);
-            drain.Url = "://invalid-stored-url";
+            drain.Url = "https://[invalid-stored-url";
             var cursor = await db.LogDrainCursors.SingleAsync(row => row.DrainId == drain.Id && row.DatabaseId == owner.DatabaseId, cancellationToken);
             cursor.Cursor = Ulid.MinValue.ToString();
             await db.SaveChangesAsync(cancellationToken);
