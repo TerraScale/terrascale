@@ -1,0 +1,18 @@
+@using TerraScale.Dashboard.Features.ApiKeys
+@inherits RazorSlice<ApiKeysPage>
+<div id="credentials-body">@if (Model.ViewerOnly) { <div class="ts-empty" role="status"><p class="ts-empty-title">Only project members can see API keys.</p></div> }
+else if (Model.Filtered.Count == 0) { <div class="ts-empty" role="status"><p class="ts-empty-title">No credentials match these filters.</p>@if (Model.Context.CanManageKeys && Model.Search.Length == 0 && Model.DatabaseId.Length == 0 && Model.Status.Length == 0) { <button class="ts-btn ts-btn-primary ts-btn-sm" type="button" command="show-modal" commandfor="create-key">@Icons.Render("KeyRound", 16)<span>New API key</span></button> }</div> }
+else { <div class="ts-table-wrap"><table class="ts-table ts-table-stacked ts-apikeys-table"><thead><tr><th scope="col">Name</th><th scope="col">Key</th><th scope="col">Access</th><th scope="col">Last used</th><th scope="col">Expires</th>@if (Model.Context.CanManageKeys) { <th scope="col" class="ts-table-actions"><span class="ts-sr-only">Actions</span></th> }</tr></thead><tbody>
+@foreach (var key in Model.Filtered) {
+var details = "/api-keys/" + key.Id;
+<tr data-key-id="@key.Id"><td class="ts-table-strong ts-apikeys-name"><a href="@details">@key.Name</a></td>
+<td data-label="Key"><code class="ts-apikeys-hint" title="@(key.Id + "_")">@ApiKeyFormat.Hint(key)</code></td>
+<td data-label="Access"><span class="ts-badge ts-badge-neutral ts-apikeys-access">@ApiKeyFormat.Access(key.Scopes)</span></td>
+<td data-label="Last used" class="ts-meta">@if (key.LastUsedAt is { } used) { <time datetime="@ApiKeyFormat.Machine(used)" title="@ApiKeyFormat.Instant(used)">@ApiKeyFormat.Date(used)</time> } else { <span>Never</span> }</td>
+<td data-label="Expires" class="ts-meta">@if (!key.IsActive) { <span class="ts-badge ts-badge-neutral"><span class="ts-dot" aria-hidden="true"></span>Expired</span> } else if (key.ExpiresAt is { } expires) { <span class="ts-apikeys-expiry"><time datetime="@ApiKeyFormat.Machine(expires)" title="@ApiKeyFormat.Instant(expires)">@ApiKeyFormat.Date(expires)</time>@if (ApiKeyService.ExpiresSoon(key, Model.Now)) { <span class="ts-badge ts-badge-warning">Expires soon</span> }</span> } else { <span>Never</span> }</td>
+@if (Model.Context.CanManageKeys) { <td class="ts-table-actions"><div class="ts-row ts-apikeys-actions"><a class="ts-icon-btn" href="@details" aria-label="Details" title="Details">@Icons.Render("Info", 16)</a><button class="ts-icon-btn" type="button" command="show-modal" commandfor="@("rotate-" + key.Id)" aria-label="Rotate" title="Rotate">@Icons.Render("RotateCw", 16)</button><button class="ts-icon-btn ts-apikeys-revoke" type="button" command="show-modal" commandfor="@("revoke-" + key.Id)" aria-label="Revoke" title="Revoke">@Icons.Render("Trash2", 16)</button></div>
+@(await RenderPartialAsync<ApiKeyActionDialogs, ApiKeyActions>(Model.Actions(key)))</td> }
+</tr>
+}</tbody></table></div>
+@if (Model.HasMore || Model.Cursor.Length > 0) { <div class="ts-row ts-apikeys-paging" role="navigation" aria-label="Credentials pages">@if (Model.Cursor.Length > 0) { <a class="ts-btn ts-btn-ghost ts-btn-sm" href="@Model.With("/api-keys", clear: true)">First page</a> } @if (Model.HasMore) { <a class="ts-btn ts-btn-secondary ts-btn-sm" href="@Model.With("/api-keys")">Next</a> }</div> }}
+</div>

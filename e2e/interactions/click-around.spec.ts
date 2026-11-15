@@ -262,7 +262,6 @@ test('an API key is shown once and rotates twice during grace without another cl
   await expect(page.locator('dialog[open]')).toBeVisible();
   await audit.check('revoke API key dialog');
   await page.locator('dialog[open]').getByRole('button', { name: 'Revoke key', exact: true }).click();
-  await page.waitForURL((url) => url.pathname === '/api-keys');
   await expect(page.locator('main tr').filter({ hasText: name })).toHaveCount(0);
   await expect(page.locator('main tr').filter({ hasText: current.apiKeyName })).toHaveCount(1);
   await audit.check('API keys after revoke');

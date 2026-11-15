@@ -170,7 +170,7 @@
   white-space: nowrap;
 }
 
-.ts-billing-invoices .ts-table-actions .ts-row {
+.ts-billing-invoices .ts-table-actions {
   flex-wrap: nowrap;
 }
 
@@ -367,7 +367,7 @@
     padding-right: var(--ts-s3);
   }
 
-  .ts-billing-invoices .ts-table-actions .ts-row {
+  .ts-billing-invoices .ts-table-actions {
     gap: 0;
   }
 

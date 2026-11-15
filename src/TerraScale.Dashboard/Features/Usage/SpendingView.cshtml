@@ -5,16 +5,14 @@
 @{ var plan = PlanCatalog.For(Model.Selection.Context.Organization!); }
 @if (Model.SpendingAlert)
 {
-    <section class="ts-card" aria-labelledby="organization-controls-title">
+    <form id="spending-controls" class="ts-card" method="post" action="/api/v1/dashboard/usage/spending-cap" data-submit-once data-on:submit="evt.preventDefault(); @@post('/api/v1/dashboard/usage/spending-cap', {contentType:'form'})">
         <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="organization-controls-title">Spending alert</h2></div></header>
         <div class="ts-card-body">
-            <form id="spending-controls" class="ts-spending-form" method="post" action="/api/v1/dashboard/usage/spending-cap" data-submit-once>
-                <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
-                <fieldset class="ts-spending-control" disabled="@(Model.Shell.Context.CanManage ? null : "disabled")"><legend class="ts-sr-only">Spending alert</legend>@(await RenderPartialAsync<SpendingFieldView, SpendingField>(new("organization-spend-cap", "spendCap", "Monthly alert (USD), usage charges beyond your plan", Model.Spending.OrganizationCapCents <= 0 ? "" : (Model.Spending.OrganizationCapCents / 100m).ToString("F2", CultureInfo.InvariantCulture))))@if (Model.Shell.Context.CanManage) { <button class="ts-btn ts-btn-primary" type="submit">@Icons.Render("Save", 16)<span>Save spending alert</span></button> }</fieldset>
-                @if (!Model.Shell.Context.CanManage) { <p class="ts-meta">Only organization owners and admins can change the spending alert.</p> }
-            </form>
+        <fieldset class="ts-spending-control" disabled="@(Model.Shell.Context.CanManage ? null : "disabled")"><legend class="ts-sr-only">Spending alert</legend>@(await RenderPartialAsync<SpendingFieldView, SpendingField>(new("organization-spend-cap", "spendCap", "Monthly alert (USD), usage charges beyond your plan", Model.Spending.OrganizationCapCents <= 0 ? "" : (Model.Spending.OrganizationCapCents / 100m).ToString("F2", CultureInfo.InvariantCulture))))</fieldset>
+        @if (!Model.Shell.Context.CanManage) { <p class="ts-meta">Only organization owners and admins can change the spending alert.</p> }
         </div>
-    </section>
+        @if (Model.Shell.Context.CanManage) { <footer class="ts-card-foot"><button class="ts-btn ts-btn-primary" type="submit">@Icons.Render("Save", 16)<span>Save spending alert</span></button></footer> }
+    </form>
 }
 @if (!Model.SpendingAlert || Model.InternalBill is null)
 {

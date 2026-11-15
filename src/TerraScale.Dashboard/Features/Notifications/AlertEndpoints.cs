@@ -1,6 +1,7 @@
 using System.Text.Json;
 using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Platform.Datastar;
 
 namespace TerraScale.Dashboard.Features.Notifications
 {
@@ -83,6 +84,11 @@ namespace TerraScale.Dashboard.Features.Notifications
             }
             catch (AccountAccessException error) { return await PageAsync(http, context, rules, error.Message, error.StatusCode); }
             catch (ArgumentException error) { return await PageAsync(http, context, rules, error.Message, 422); }
+            if (http.Request.Headers["Datastar-Request"] == "true")
+            {
+                return await PageAsync(http, context, rules);
+            }
+
             return HttpRedirects.SeeOther("/notifications/alerts");
         }
 
@@ -102,7 +108,14 @@ namespace TerraScale.Dashboard.Features.Notifications
                     (error, status) = ("Alert rules are unavailable. Reload to retry.", 503);
                 }
             }
-            var page = AlertsView.Create(new AlertsPage(ShellModel.For(http, context, "Alerts"), items, error, created, secret));
+            var model = new AlertsPage(ShellModel.For(http, context, "Alerts"), items, error, created, secret);
+            if (http.Request.Headers["Datastar-Request"] == "true")
+            {
+                await DatastarEvents.PatchElementsAsync(http, AlertsContent.Create(model));
+                return Results.Empty;
+            }
+
+            var page = AlertsView.Create(model);
             page.StatusCode = status;
             return page;
         }

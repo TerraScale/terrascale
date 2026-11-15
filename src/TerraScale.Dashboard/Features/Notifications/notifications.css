@@ -9,11 +9,6 @@
   cursor: pointer;
 }
 
-.ts-alerts-back {
-  justify-content: flex-end;
-  margin-bottom: calc(var(--ts-s10) * -1 + var(--ts-s3));
-}
-
 /* Filter tabs on the left, summary on the right, no hairline under the tabs. */
 .ts-notifications-toolbar {
   display: flex;

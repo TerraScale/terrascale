@@ -4,6 +4,7 @@ using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Features.NotFound;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Platform.Datastar;
 
 namespace TerraScale.Dashboard.Features.ApiKeys
 {
@@ -58,7 +59,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                 catch (HttpRequestException) when (!http.RequestAborted.IsCancellationRequested) { }
                 if (key is not null)
                 {
-                    var details = ApiKeyDetailsView.Create(new(ShellModel.For(http, context, key.Name), key, now)
+                    var details = new ApiKeyDetailsPage(ShellModel.For(http, context, key.Name), key, now)
                     {
                         Error = error,
                         Warning = warning,
@@ -67,12 +68,26 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                         DraftGrace = grace,
                         Revealed = revealed,
                         Rotated = rotated
-                    });
-                    details.StatusCode = status;
-                    return details;
+                    };
+                    if (http.Request.Headers["Datastar-Request"] == "true")
+                    {
+                        await DatastarEvents.PatchElementsAsync(http, ApiKeyDetailsContent.Create(details));
+                        return Results.Empty;
+                    }
+
+                    var view = ApiKeyDetailsView.Create(details);
+                    view.StatusCode = status;
+                    return view;
                 }
             }
-            var result = ApiKeysView.Create(new(ShellModel.For(http, context, "API keys"), keys, http.Request.Query["q"].ToString(), http.Request.Query["databaseId"].ToString(), error, create.Length > 0 ? create : http.Request.Query["create"].ToString(), name, revealed, http.Request.Query["status"].ToString(), draftScopes.Length > 0 ? draftScopes : http.Request.Query["scopes"].ToString(), draftDatabaseId, DraftExpiresInDays: draftExpiresInDays, DraftAllowedCidrs: draftAllowedCidrs, Now: now, Cursor: cursor, HasMore: hasMore) { Warning = warning, ViewerOnly = viewerOnly, Reopen = reopen, DraftGrace = grace, Rotated = rotated });
+            var page = new ApiKeysPage(ShellModel.For(http, context, "API keys"), keys, http.Request.Query["q"].ToString(), http.Request.Query["databaseId"].ToString(), error, create.Length > 0 ? create : http.Request.Query["create"].ToString(), name, revealed, http.Request.Query["status"].ToString(), draftScopes.Length > 0 ? draftScopes : http.Request.Query["scopes"].ToString(), draftDatabaseId, DraftExpiresInDays: draftExpiresInDays, DraftAllowedCidrs: draftAllowedCidrs, Now: now, Cursor: cursor, HasMore: hasMore) { Warning = warning, ViewerOnly = viewerOnly, Reopen = reopen, DraftGrace = grace, Rotated = rotated };
+            if (http.Request.Headers["Datastar-Request"] == "true")
+            {
+                await DatastarEvents.PatchElementsAsync(http, ApiKeysContent.Create(page));
+                return Results.Empty;
+            }
+
+            var result = ApiKeysView.Create(page);
             result.StatusCode = status;
             return result;
         }
@@ -82,13 +97,26 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             await databases.SyncAsync(context, http.RequestAborted);
             ProjectCredential? key;
             try { key = await service.GetAsync(context, keyId, http.RequestAborted); }
-            catch (HttpRequestException) when (!http.RequestAborted.IsCancellationRequested) { return RequestError.Response(http, StatusCodes.Status503ServiceUnavailable, IssuerUnavailable); }
+            catch (HttpRequestException) when (!http.RequestAborted.IsCancellationRequested)
+            {
+                key = null;
+            }
             if (key is null)
             {
-                return NotFoundEndpoints.Page(http, context);
+                return http.Request.Headers["Datastar-Request"] == "true"
+                    ? RequestError.Response(http, StatusCodes.Status503ServiceUnavailable, IssuerUnavailable)
+                    : NotFoundEndpoints.Page(http, context);
             }
 
-            return ApiKeyDetailsView.Create(new(ShellModel.For(http, context, key.Name), key, http.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow()));
+            var page = new ApiKeyDetailsPage(ShellModel.For(http, context, key.Name), key, http.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow());
+            if (http.Request.Headers["Datastar-Request"] == "true")
+            {
+                await DatastarEvents.PatchElementsAsync(http, ApiKeyDetailsContent.Create(page));
+                return Results.Empty;
+            }
+
+            var view = ApiKeyDetailsView.Create(page);
+            return view;
         }
     }
 
@@ -239,5 +267,19 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         public bool ErrorInDialog => Error.Length > 0 && (CidrsFailed || Reopen == "rotate-" + Key.Id || Reopen == "revoke-" + Key.Id);
         public ApiKeySecret? Secret => Revealed is null ? null : ApiKeySecret.For(Context, Revealed, Rotated, Path, Warning);
         public ApiKeyActions Actions => new(Shell, Key, "", ApiKeyPages.DetailsView, Reopen, Error, DraftGrace, Now);
+    }
+
+    internal static class ApiKeyResults
+    {
+        public static async Task<IResult> RevokedAsync(HttpContext http, AccountContext context, ApiKeyService keys, DatabaseService databases)
+        {
+            if (http.Request.Headers["Datastar-Request"] == "true")
+            {
+                await ApiKeyPages.PageAsync(http, context, keys, databases);
+                return Results.Empty;
+            }
+
+            return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther("/api-keys" + http.Request.QueryString) : Results.NoContent();
+        }
     }
 }
