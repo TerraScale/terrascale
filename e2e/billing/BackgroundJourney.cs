@@ -302,10 +302,19 @@ internal static class BackgroundJourney
         await ActivatorUtilities.CreateInstance<PlanReconciler>(services).RunOnceAsync(cancellationToken);
         var pass = commands.Counts;
         Require(pass.Writes == 0, "An idle reconciler pass wrote claims.");
+        var drains = services.GetRequiredService<LogDrains>();
+        await drains.RunOnceAsync(cancellationToken);
+        await using (var db = await services.GetRequiredService<IDbContextFactory<DashboardDbContext>>().CreateDbContextAsync(cancellationToken))
+        {
+            var cursor = await db.LogDrainCursors.AsNoTracking().SingleAsync(cancellationToken);
+            var project = organization.Projects.Values.Single();
+            var batch = await services.GetRequiredService<ILogDrainSource>().ReadAsync(project.Id, cursor.DatabaseId, cursor.Cursor, cancellationToken);
+            Require(batch.Items.Count == 0 && !batch.Gap, $"Idle measurement requires an empty source: items={batch.Items.Count}, gap={batch.Gap}.");
+        }
         commands.Reset();
         for (var database = 0; database < 100; database++) { await services.GetRequiredService<LogDrains>().RunOnceAsync(cancellationToken); }
         var idle = commands.Counts;
-        Require(idle.Writes == 0, "Idle source reads wrote drain claims or cursors.");
+        Require(idle.Writes == 0, $"Idle source reads wrote drain claims or cursors: calls={idle.Calls}, writes={idle.Writes}, last={commands.LastWrite}.");
         Console.WriteLine($"background calls: settled plan request calls={request.Calls} writes={request.Writes}; idle reconciliation pass calls={pass.Calls} writes={pass.Writes}; 100 idle drain checks calls={idle.Calls} writes={idle.Writes}; projected 100 idle databases writes/min=0");
     }
 

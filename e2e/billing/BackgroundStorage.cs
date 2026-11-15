@@ -40,15 +40,16 @@ internal sealed class BackgroundCommands : DbCommandInterceptor, ILoggerProvider
     private int calls;
     private int writes;
     private int refuseRenewal;
+    public string? LastWrite { get; private set; }
     public TaskCompletionSource RenewalObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public (int Calls, int Writes) Counts => (Volatile.Read(ref calls), Volatile.Read(ref writes));
-    public void Reset() { Interlocked.Exchange(ref calls, 0); Interlocked.Exchange(ref writes, 0); }
+    public void Reset() { Interlocked.Exchange(ref calls, 0); Interlocked.Exchange(ref writes, 0); LastWrite = null; }
     public void RefuseRenewal() => Interlocked.Exchange(ref refuseRenewal, 1);
 
     private void Observe(DbCommand command)
     {
         Interlocked.Increment(ref calls);
-        if (!command.CommandText.TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase)) { Interlocked.Increment(ref writes); }
+        if (!command.CommandText.TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase)) { Interlocked.Increment(ref writes); LastWrite = command.CommandText; }
 
     }
 
