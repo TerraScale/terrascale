@@ -156,48 +156,61 @@ namespace TerraScale.Dashboard.Features.Logs
                 if (batch is { Items.Count: 0 } && (!batch.Gap || snapshot?.State.Cursor == "gap/" + preparedCursor)) { continue; }
                 await jobs.RunAsync(jobId, TimeSpan.Zero, async (claim, token) =>
                 {
-                    await using var prepared = await claim.Database.Database.BeginTransactionAsync(token);
-                    var current = await claim.Database.LogDrains.Include(row => row.Cursors)
-                        .SingleOrDefaultAsync(row => row.Id == id && row.Revision == drain.Revision &&
-                            claim.Database.ProjectDatabases.Any(member => member.Id == database.Id && member.ProjectId == row.ProjectId && member.OrganizationId == row.OrganizationId), token);
-                    if (current is null)
-                    {
-                        await claim.Database.BackgroundJobs.Where(row => row.Id == jobId && row.Owner == claim.State.Owner && row.Checkpoint == claim.State.Checkpoint)
-                            .ExecuteDeleteAsync(token);
-                        claim.Database.Entry(claim.State).State = EntityState.Detached;
-                        await prepared.CommitAsync(token);
-                        return;
-                    }
-                    var saved = current.Cursors.FirstOrDefault(row => row.DatabaseId == database.Id);
-                    var cursor = saved?.Cursor ?? Start(Utc(current.CreatedAt));
                     var state = claim.State;
-                    if (state.Payload is null)
+                    var owner = state.Owner;
+                    var current = await claim.Database.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
                     {
-                        if (cursor != preparedCursor || batch is null) { return; }
-                        if (batch.Gap) { current.LastGapAt = clock.GetUtcNow().UtcDateTime; }
-                        if (batch.Items.Count == 0 || batch.NextCursor == cursor)
+                        claim.Database.ChangeTracker.Clear();
+                        await using var prepared = await claim.Database.Database.BeginTransactionAsync(token);
+                        var held = await claim.Database.BackgroundJobs.AsNoTracking()
+                            .SingleOrDefaultAsync(row => row.Id == jobId && row.Owner == owner && row.LeaseUntil > DateTime.UtcNow, token);
+                        if (held is null) { return null; }
+                        claim.Database.Entry(state).CurrentValues.SetValues(held);
+                        claim.Database.Entry(state).State = EntityState.Unchanged;
+                        var current = await claim.Database.LogDrains.Include(row => row.Cursors)
+                            .SingleOrDefaultAsync(row => row.Id == id && row.Revision == drain.Revision &&
+                                claim.Database.ProjectDatabases.Any(member => member.Id == database.Id && member.ProjectId == row.ProjectId && member.OrganizationId == row.OrganizationId), token);
+                        if (current is null)
                         {
-                            if (batch.Gap)
-                            {
-                                state.Cursor = "gap/" + cursor;
-                                await claim.SaveAsync(token);
-                                await prepared.CommitAsync(token);
-                            }
-                            return;
+                            await claim.Database.BackgroundJobs.Where(row => row.Id == jobId && row.Owner == state.Owner && row.Checkpoint == state.Checkpoint)
+                                .ExecuteDeleteAsync(token);
+                            claim.Database.Entry(state).State = EntityState.Detached;
+                            await prepared.CommitAsync(token);
+                            return null;
                         }
-                        state.NextCursor = batch.NextCursor ?? throw new IOException("Log source returned no next cursor.");
-                        state.Payload = Otlp(current.ProjectId, database, batch.Items);
-                        state.DeliveryId = AccountService.NewId();
-                        await claim.SaveAsync(token);
-                    }
-                    await prepared.CommitAsync(token);
+                        var cursor = current.Cursors.FirstOrDefault(row => row.DatabaseId == database.Id)?.Cursor ?? Start(Utc(current.CreatedAt));
+                        if (state.Payload is null)
+                        {
+                            if (cursor != preparedCursor || batch is null) { return null; }
+                            if (batch.Gap) { current.LastGapAt = clock.GetUtcNow().UtcDateTime; }
+                            if (batch.Items.Count == 0 || batch.NextCursor == cursor)
+                            {
+                                if (batch.Gap)
+                                {
+                                    state.Cursor = "gap/" + cursor;
+                                    await claim.SaveAsync(token);
+                                    await prepared.CommitAsync(token);
+                                }
+                                return null;
+                            }
+                            state.NextCursor = batch.NextCursor ?? throw new IOException("Log source returned no next cursor.");
+                            state.Payload = Otlp(current.ProjectId, database, batch.Items);
+                            state.DeliveryId = AccountService.NewId();
+                            await claim.SaveAsync(token);
+                        }
+                        await prepared.CommitAsync(token);
+                        return current;
+                    });
+                    if (current is null) { return; }
+                    var saved = current.Cursors.FirstOrDefault(row => row.DatabaseId == database.Id);
 
+                    var payload = state.Payload ?? throw new IOException("The claimed log batch has no payload.");
                     var nextCursor = state.NextCursor ?? throw new IOException("The claimed log batch has no next cursor.");
                     var deliveryId = state.DeliveryId ?? throw new IOException("The claimed log batch has no delivery identity.");
                     var status = 0;
                     try
                     {
-                        status = await delivery.PostAsync(new Uri(current.Url), state.Payload,
+                        status = await delivery.PostAsync(new Uri(current.Url), payload,
                             [.. headers, new("Idempotency-Key", deliveryId), new("X-TerraScale-Delivery", deliveryId)], token);
                     }
                     catch (Exception error) when (error is HttpRequestException or IOException or ArgumentException or FormatException ||
