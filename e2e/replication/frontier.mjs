@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { Nats, putKey as putSealedKey, seal } from './push.mjs';
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { appendFileSync, cpSync, existsSync, openSync, closeSync, readFileSync, readdirSync, mkdirSync, writeFileSync, watch, rmSync } from 'node:fs';
+import { appendFileSync, cpSync, existsSync, openSync, closeSync, readFileSync, readdirSync, mkdirSync, renameSync, writeFileSync, watch, rmSync } from 'node:fs';
 import { connect as http2 } from 'node:http2';
 import { createConnection, createServer } from 'node:net';
 import { setPriority } from 'node:os';
@@ -13,6 +13,11 @@ import { holdSync } from '../env/ports.mjs';
 
 const journeyState = process.env.E2E_STATE;
 assert(journeyState, 'E2E_STATE names the isolated local journey namespace');
+const writeUnavailable = (value) => {
+  const path = journeyState + '/r2-unavailable-keys';
+  writeFileSync(path + '.next', JSON.stringify(value), { mode: 0o600 });
+  renameSync(path + '.next', path);
+};
 assert(process.env.E2E_BUILD, 'E2E_BUILD holds the TerraBase build');
 assert(process.env.E2E_TOOLS, 'E2E_TOOLS holds nats-server');
 assert(process.env.DOTNET_ROOT, 'DOTNET_ROOT holds the .NET runtime');
@@ -289,7 +294,7 @@ try {
   await logged(b, 'This node holds a new home lease session');
   const heldKey = id(Date.now() - 60_000);
   await putSealedKey({ master, access, secret }, org.id + '/' + project.id + '/' + first.id, heldKey, dataKey);
-  writeFileSync(journeyState + '/r2-unavailable-keys', JSON.stringify({ ['v1/keys/' + org.id + '/' + project.id + '/' + first.id + '/' + heldKey]: 503 }), { mode: 0o600 });
+  writeUnavailable({ ['v1/keys/' + org.id + '/' + project.id + '/' + first.id + '/' + heldKey]: 503 });
   const progress = (sent, count, consumer = () => true) => {
     let seen = 0;
     return nats.event('$JS.ACK.>', reply => {
@@ -341,7 +346,7 @@ try {
   const blocked = {};
   const block = (db, key) => {
     blocked['v1/keys/' + scope(db) + '/' + key] = 403;
-    writeFileSync(journeyState + '/r2-unavailable-keys', JSON.stringify(blocked), { mode: 0o600 });
+    writeUnavailable(blocked);
   };
   const unblock = () => {
     for (const key of Object.keys(blocked)) delete blocked[key];
@@ -449,7 +454,7 @@ try {
   };
   const release = (db, key) => {
     delete blocked['v1/keys/' + scope(db) + '/' + key];
-    writeFileSync(journeyState + '/r2-unavailable-keys', JSON.stringify(blocked), { mode: 0o600 });
+    writeUnavailable(blocked);
   };
   const moved = await database('moved');
   const movedInsert = audited(transaction([{ op: 'insert', table: 'items', values: { id: 40, value: 1 } }]));
