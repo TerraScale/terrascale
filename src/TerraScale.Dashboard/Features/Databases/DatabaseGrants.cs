@@ -1,3 +1,4 @@
+using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.Dashboard.Common.UI;
 using TerraScale.TerraBase.Contracts;
 
@@ -51,7 +52,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 {
                     try { await backend.DeleteReadGrantAsync(scope, home, database.Id, submitted.Table, http.RequestAborted); }
                     catch (TerraBaseNotFoundException error) when (error.ErrorCode == "no_read_grant") { }
-                    if (http.Request.Headers["Datastar-Request"] == "true")
+                    if (http.Request.IsDatastarRequest)
                     {
                         return await DatabaseEndpoints.DetailPageAsync(http, context, id, "grants", backend, databases);
                     }
@@ -69,7 +70,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 {
                     throw new AccountAccessException("Table " + submitted.Table + " does not exist.", 422);
                 }
-                if (http.Request.Headers["Datastar-Request"] == "true")
+                if (http.Request.IsDatastarRequest)
                 {
                     return await DatabaseEndpoints.DetailPageAsync(http, context, id, "grants", backend, databases);
                 }
@@ -77,7 +78,7 @@ namespace TerraScale.Dashboard.Features.Databases
             }
             catch (Exception error) when (DatabaseResults.KnownFailure(error))
             {
-                if (!(DatabaseResults.WantsHtml(http) || http.Request.Headers["Datastar-Request"] == "true") || DatabaseResults.Status(error) == 404 && error is not TerraBaseException)
+                if (!(DatabaseResults.WantsHtml(http) || http.Request.IsDatastarRequest) || DatabaseResults.Status(error) == 404 && error is not TerraBaseException)
                 {
                     return DatabaseResults.PageFailure(http, context, error);
                 }

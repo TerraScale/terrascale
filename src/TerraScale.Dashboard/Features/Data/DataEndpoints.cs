@@ -53,7 +53,7 @@ namespace TerraScale.Dashboard.Features.Data
 
                     if (action == "sql")
                     {
-                        if (DatabaseResults.WantsHtml(http) || http.Request.Headers["Datastar-Request"] == "true")
+                        if (DatabaseResults.WantsHtml(http) || http.Request.IsDatastarRequest)
                         {
                             return await RunAsync(http, context, id, form, data, saved);
                         }
@@ -62,7 +62,7 @@ namespace TerraScale.Dashboard.Features.Data
                         return Results.Json(new { columns = result.Columns, rows = result.Rows, rowsAffected = result.RowsAffected, lastInsertRowId = result.LastInsertRowId });
                     }
                     var query = await saved.SaveAsync(context, id, form["name"].ToString(), form["sql"].ToString(), http.RequestAborted);
-                    if (http.Request.Headers["Datastar-Request"] == "true")
+                    if (http.Request.IsDatastarRequest)
                     {
                         return await PageAsync(http, context, id, data, saved);
                     }
@@ -71,7 +71,7 @@ namespace TerraScale.Dashboard.Features.Data
                 if (action == "saved-queries/delete")
                 {
                     await saved.DeleteAsync(context, id, form["id"].ToString(), http.RequestAborted);
-                    if (http.Request.Headers["Datastar-Request"] == "true")
+                    if (http.Request.IsDatastarRequest)
                     {
                         return await PageAsync(http, context, id, data, saved);
                     }
@@ -80,7 +80,7 @@ namespace TerraScale.Dashboard.Features.Data
             }
             catch (Exception error) when (DatabaseResults.KnownFailure(error))
             {
-                if ((!DatabaseResults.WantsHtml(http) && http.Request.Headers["Datastar-Request"] != "true") || DatabaseResults.Status(error) == 404)
+                if ((!DatabaseResults.WantsHtml(http) && !http.Request.IsDatastarRequest) || DatabaseResults.Status(error) == 404)
                 {
                     return DatabaseResults.PageFailure(http, context, error);
                 }
@@ -112,14 +112,14 @@ namespace TerraScale.Dashboard.Features.Data
                 var receipt = await http.RequestServices.GetRequiredService<SqlRuns>().SaveAsync(context, id, sql,
                     SqlHistory.Run(SqlHistory.Read(form["history"].ToString()), sql), result, message, status, http.RequestAborted);
                 var url = DatabaseService.Path(id, "sql") + "?result=" + Uri.EscapeDataString(receipt.Id);
-                return http.Request.Headers["Datastar-Request"] == "true"
+                return http.Request.IsDatastarRequest
                     ? await PageAsync(http, context, id, data, saved, receipt.Error, sql: sql, sqlResult: receipt.Result, sqlNotice: RunNotice(receipt), runUrl: url)
                     : HttpRedirects.SeeOther(url);
             }
             catch (Exception error) when (SqlWorkspace.Unavailable(error) && !http.RequestAborted.IsCancellationRequested)
             {
                 return await PageAsync(http, context, id, data, saved, message, sql: sql, sqlResult: result, status: status,
-                    sqlNotice: http.Request.Headers["Datastar-Request"] == "true"
+                    sqlNotice: http.Request.IsDatastarRequest
                         ? "This outcome could not be saved for later viewing. The statement was not run again."
                         : "This outcome could not be saved for later viewing. Refreshing this page would send the statement again.",
                     runUrl: DatabaseService.Path(id, "sql"));
@@ -207,14 +207,14 @@ namespace TerraScale.Dashboard.Features.Data
                     return DatabaseResults.PageFailure(http, context, error);
                 }
             }
-            if (http.Request.Headers["Datastar-Request"] == "true" && runUrl.Length > 0)
+            if (http.Request.IsDatastarRequest && runUrl.Length > 0)
             {
                 var scope = DatabaseService.Scope(context);
                 runUrl = QueryHelpers.AddQueryString(QueryHelpers.AddQueryString(runUrl, "organizationId", scope.OrganizationId), "projectId", scope.ProjectId);
             }
             var page = new DataPage(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title("sql")), database, errorMessage, formError, dialog,
                 sql, sqlResult, queries, queryName, catalog, history, sqlChecked, catalogError, sqlNotice, runUrl);
-            if (http.Request.Headers["Datastar-Request"] == "true")
+            if (http.Request.IsDatastarRequest)
             {
                 if (http.Request.Path.StartsWithSegments("/api/v1/dashboard/data/saved-queries"))
                 {

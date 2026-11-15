@@ -1,6 +1,6 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.Projects.ProjectInvitationPage>
 @using TerraScale.Dashboard.Features.Organizations.Projects
-<main id="project-invitations-page" class="ts-page" aria-labelledby="project-invitations-title" data-signals="{_invitationPending: false}" data-on:submit="!evt.defaultPrevented &amp;&amp; ($_invitationPending = true)" data-on:pageshow__window="$_invitationPending = false" data-on:keydown__window="evt.key === 'Escape' &amp;&amp; ($_invitation
+<main id="project-invitations-page" class="ts-page" aria-labelledby="project-invitations-title" data-signals="{_invitationPending: false}" data-on:submit="!evt.defaultPrevented &amp;&amp; ($_invitationPending = true)" data-on:pageshow__window="$_invitationPending = false" data-on:keydown__window="evt.key === 'Escape' &amp;&amp; ($_invitationPending = false)">
     <header class="ts-page-header"><div class="ts-page-heading"><h1 class="ts-page-title" id="project-invitations-title">Project invitations</h1><p class="ts-meta">@Model.Shell.Context.Project!.Name · your role: @Model.Shell.Context.Project.Role</p></div><div class="ts-page-actions"><a class="ts-link" href="@(WorkspaceUrl.For(Model.Shell.Context, "/project", replace: true))">Project settings</a></div></header>
     @if (Model.Notice.Length > 0) { <p class="ts-alert ts-alert-success" role="status">@Model.Notice</p> }
     @if (Model.Error.Length > 0) { <p class="ts-alert ts-alert-danger" role="alert">@Model.Error <a class="ts-link" href="@Model.Url">Open the first page</a></p> }

@@ -132,7 +132,7 @@ namespace TerraScale.Dashboard.Features.Functions
             var cron = form["cron"].ToString().Trim();
             var source = form["source"].ToString();
             var intent = form["intent"].ToString();
-            var inPlace = intent is "trigger" or "code" && http.Request.Headers["Datastar-Request"] == "true";
+            var inPlace = intent is "trigger" or "code" && http.Request.IsDatastarRequest;
             FunctionRecord? before = null;
             try
             {
@@ -302,7 +302,7 @@ namespace TerraScale.Dashboard.Features.Functions
         private static async Task<IResult> RunView(HttpContext http, AccountContext context, DatabaseRecord database, FunctionRecord? selected, IReadOnlyList<FunctionInvocation> logs,
             string runEvent, string runResult, string runError, string trigger = "", string status = "")
         {
-            if (http.Request.Headers["Datastar-Request"] != "true")
+            if (!http.Request.IsDatastarRequest)
             {
                 return View(http, context, database, [], selected, logs, runEvent: runEvent, runResult: runResult, runError: runError, logsTrigger: trigger, logsStatus: status);
             }

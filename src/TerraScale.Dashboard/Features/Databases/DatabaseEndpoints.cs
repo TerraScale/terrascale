@@ -364,13 +364,13 @@ namespace TerraScale.Dashboard.Features.Databases
                 CreatedTable = createdTable.Length > 0 ? createdTable : http.Request.Query["created"].ToString() is { Length: > 0 and <= 128 } requested && !requested.Any(char.IsControl) ? requested : "",
                 SqlHistory = tableHistory
             };
-            if (tab == "replication" && HttpMethods.IsGet(http.Request.Method) && http.Request.Headers["Datastar-Request"] == "true")
+            if (tab == "replication" && HttpMethods.IsGet(http.Request.Method) && http.Request.IsDatastarRequest)
             {
                 await DatastarEvents.PatchElementsAsync(http, DatabaseReplicationView.Create(page));
                 return Results.Empty;
             }
 
-            if (tab == "backups" && http.Request.Headers["Datastar-Request"] == "true" && page.Backups is { Recovery: { } recovery })
+            if (tab == "backups" && http.Request.IsDatastarRequest && page.Backups is { Recovery: { } recovery })
             {
                 var card = await BackupEndpoints.PitrCardAsync(http, context, database,
                     recovery with { Error = page.Backups.Error }, page.Backups.Listing, page.Backups.Bucket, http.RequestAborted);
@@ -378,19 +378,19 @@ namespace TerraScale.Dashboard.Features.Databases
                 return Results.Empty;
             }
 
-            if (tab == "conflicts" && http.Request.Headers["Datastar-Request"] == "true")
+            if (tab == "conflicts" && http.Request.IsDatastarRequest)
             {
                 await DatastarEvents.PatchElementsAsync(http, DatabaseConflictsView.Create(page));
                 return Results.Empty;
             }
 
-            if (tab is "grants" or "replication" && http.Request.Headers["Datastar-Request"] == "true")
+            if (tab is "grants" or "replication" && http.Request.IsDatastarRequest)
             {
                 await DatastarEvents.PatchElementsAsync(http, DatabaseDetailSection.Create(page));
                 return Results.Empty;
             }
 
-            if (tab == "backups" && http.Request.Headers["Datastar-Request"] == "true" && page.Backups?.Restore is not null)
+            if (tab == "backups" && http.Request.IsDatastarRequest && page.Backups?.Restore is not null)
             {
                 await DatastarEvents.PatchElementsAsync(http, RestoreStatusView.Create(page.Backups));
                 return Results.Empty;

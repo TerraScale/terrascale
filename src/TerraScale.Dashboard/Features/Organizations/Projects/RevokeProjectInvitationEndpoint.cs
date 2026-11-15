@@ -22,7 +22,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             async Task<IResult> Error(string message, int status)
             {
-                if (http.Request.Headers["Datastar-Request"] == "true")
+                if (http.Request.IsDatastarRequest)
                 {
                     http.Response.Headers.CacheControl = "no-store";
                     await DatastarEvents.PatchElementsAsync(http, ProjectInvitationPageView.Create(new(ShellModel.For(http, context, "Project invitations"), [], null, message)));
@@ -53,7 +53,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
             try
             {
                 await invitations.RevokeAsync(context, form["invitationId"].ToString(), after.Length == 0 ? null : after, http.RequestAborted);
-                if (http.Request.Headers["Datastar-Request"] == "true")
+                if (http.Request.IsDatastarRequest)
                 {
                     return await PatchAsync(http, context, invitations, "Project invitation revoked. Its acceptance link no longer works.", after);
                 }

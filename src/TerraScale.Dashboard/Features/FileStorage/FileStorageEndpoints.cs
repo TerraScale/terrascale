@@ -71,7 +71,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
                     case "delete-bucket": await files.DeleteBucketAsync(context, bucket, http.RequestAborted); bucket = ""; break;
                     case "rules":
                         await files.SetRulesAsync(context, bucket, Rules(form), http.RequestAborted);
-                        if (http.Request.Headers["Datastar-Request"] == "true")
+                        if (http.Request.IsDatastarRequest)
                         {
                             return await PageAsync(http, context, files, bucket: Empty(bucket), settings: true);
                         }
@@ -89,7 +89,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
                     case "complete": await files.CompleteAsync(context, bucket, file, http.RequestAborted); return Results.NoContent();
                     case "delete":
                         await files.DeleteAsync(context, bucket, file, http.RequestAborted);
-                        if (http.Request.Headers["Datastar-Request"] == "true")
+                        if (http.Request.IsDatastarRequest)
                         {
                             return await PageAsync(http, context, files, bucket: Empty(bucket), settings: false);
                         }
@@ -121,7 +121,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
                     "delete" => new("delete-file-" + file, message, "", Rules(form)),
                     _ => null
                 };
-                if (http.Request.Headers["Datastar-Request"] == "true" && operation is "rules" or "delete")
+                if (http.Request.IsDatastarRequest && operation is "rules" or "delete")
                 {
                     return await PageAsync(http, context, files, message, draft, Empty(bucket), operation is "rules");
                 }
@@ -152,7 +152,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
             catch (Exception failure) when (Known(failure, http)) { error ??= Message(failure, "list"); http.Response.StatusCode = Status(failure); }
             var page = new FileStoragePage(ShellModel.For(http, context, "File storage"), listing, DateTimeOffset.UtcNow, error, draft,
                 settings ?? http.Request.Query["tab"] == "settings", prefix);
-            if (http.Request.Headers["Datastar-Request"] == "true" && listing?.BucketId is not null)
+            if (http.Request.IsDatastarRequest && listing?.BucketId is not null)
             {
                 http.Response.StatusCode = StatusCodes.Status200OK;
                 await DatastarEvents.PatchElementsAsync(http, FileStorageBody.Create(page));
