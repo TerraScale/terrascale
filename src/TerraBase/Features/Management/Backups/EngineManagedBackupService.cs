@@ -742,5 +742,5 @@ internal sealed partial class EngineManagedBackupService(
 
     private sealed record RestoreSource(ManagedDatabase Database, string StorageId, string? Region);
 
-    private readonly union RestoreSourceResult(RestoreSource, NotFound, Unavailable);
+    private readonly union RestoreSourceResult(RestoreSource, BackupElsewhere, NotFound, Unavailable);
 }

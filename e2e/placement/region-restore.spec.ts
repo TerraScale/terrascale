@@ -40,15 +40,11 @@ async function restorePair(cells: Cells, endpoint: string, region: string, remov
     await served(cells, source.id, [[1, 'snapshot']]);
     const backup = await json<{ id: string; status: string }>(await cells.post(`${endpoint}${database(source.id)}/backups`), 201);
     expect(backup.status).toBe('ready');
-    await expect.poll(async () => {
-      const elsewhere = await cells.post(`${home}${database(source.id)}/backups/${backup.id}/restore`, {
-        data: { name: name('snapshot-' + region) },
-      });
-      if (elsewhere.status() === 404) return false;
-      expect(elsewhere.status(), await elsewhere.text()).toBe(421);
-      expect(elsewhere.headers()['ts-replay']).toBe('region=' + region);
-      return true;
-    }, { message: 'gru has the backup record and refuses the restore' }).toBe(true);
+    const elsewhere = await cells.post(`${home}${database(source.id)}/backups/${backup.id}/restore`, {
+      data: { name: name('snapshot-' + region) },
+    });
+    expect(elsewhere.status(), await elsewhere.text()).toBe(421);
+    expect(elsewhere.headers()['ts-replay']).toBe('region=' + region);
     const snapshot = await json<{ id: string }>(await cells.post(`${endpoint}${database(source.id)}/backups/${backup.id}/restore`, {
       data: { name: name('snapshot-copy-' + region) },
     }), 202);
@@ -66,15 +62,11 @@ async function restorePair(cells: Cells, endpoint: string, region: string, remov
       return at;
     }, { message: region + ' proves the later write' }).toBeGreaterThanOrEqual(acked);
     const when = new Date(at).toISOString();
-    await expect.poll(async () => {
-      const missed = await cells.post(`${home}${database(source.id)}/point-in-time/restore`, {
-        data: { pointInTime: when, name: name('time-' + region) },
-      });
-      if (missed.status() === 404) return false;
-      expect(missed.status(), await missed.text()).toBe(421);
-      expect(missed.headers()['ts-replay']).toBe('region=' + region);
-      return true;
-    }, { message: 'gru refuses the point-in-time restore' }).toBe(true);
+    const missed = await cells.post(`${home}${database(source.id)}/point-in-time/restore`, {
+      data: { pointInTime: when, name: name('time-' + region) },
+    });
+    expect(missed.status(), await missed.text()).toBe(421);
+    expect(missed.headers()['ts-replay']).toBe('region=' + region);
     const timed = await json<{ id: string }>(await cells.post(`${endpoint}${database(source.id)}/point-in-time/restore`, {
       data: { pointInTime: when, name: name('time-copy-' + region) },
     }), 202);
