@@ -103,7 +103,7 @@ namespace TerraScale.Dashboard.Features.Databases
             {
                 var regions = Regions(form, context);
                 var database = await databases.CreateAsync(context, form["name"].ToString(), regions[0], http.RequestAborted, DatabaseTtl.Hours(form["ttlHours"].ToString()), [.. regions.Skip(1)]);
-                if (http.Request.Headers["Datastar-Request"] == "true")
+                if (http.Request.IsDatastarRequest)
                 {
                     return await ListPageAsync(http, context, backend, databases, createdName: database.Name);
                 }
@@ -112,7 +112,7 @@ namespace TerraScale.Dashboard.Features.Databases
             }
             catch (Exception error) when (KnownFailure(error))
             {
-                return WantsHtml(http) || http.Request.Headers["Datastar-Request"] == "true" ? await ListPageAsync(http, context, backend, databases, error: Message(error), openCreate: true, name: form["name"].ToString(), status: Status(error), selection: Picked(form) ? Chosen(form) : null) : Failure(error);
+                return WantsHtml(http) || http.Request.IsDatastarRequest ? await ListPageAsync(http, context, backend, databases, error: Message(error), openCreate: true, name: form["name"].ToString(), status: Status(error), selection: Picked(form) ? Chosen(form) : null) : Failure(error);
             }
         }
 
@@ -224,7 +224,7 @@ namespace TerraScale.Dashboard.Features.Databases
             var filtered = all.Where(database => search.Length == 0 || database.Name.Contains(search, StringComparison.OrdinalIgnoreCase) || database.Name == createdName).ToArray();
             var metrics = await metricsRead;
             var page = new DatabasesPage(ShellModel.For(http, context, "Databases"), filtered, choices, search, error, openCreate || http.Request.Query["create"] == "1", name, regionsError) { Metrics = metrics, Range = range, Selection = selection, CreatedName = createdName, Notice = synced ? "" : "The database list could not be refreshed. Reload the page to retry." };
-            if (http.Request.Headers["Datastar-Request"] == "true")
+            if (http.Request.IsDatastarRequest)
             {
                 await DatastarEvents.PatchElementsAsync(http, DatabasesPatch.Create(page));
                 return Results.Empty;
