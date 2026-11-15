@@ -24,7 +24,7 @@
 <section class="ts-card ts-card-boxed ts-card-flush" id="database-expiry" aria-labelledby="database-expiry-title" data-signals="@("{_expiry: '" + Model.ExpiryPreset + "', _ttlhours: '" + JavaScriptEncoder.Default.Encode(Model.TtlHours) + "'}")">
 <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="database-expiry-title">Database expiry</h2></div></header>
 @if(Model.CanManage){
-<form method="post" action="/v1/databases/ttl" class="ts-form" data-on:submit="evt.preventDefault(); @@post(el.action, {contentType: 'form'})">
+<form method="post" action="/v1/databases/ttl" class="ts-form" data-on:submit="evt.preventDefault(); @@post(el.getAttribute('action'), {contentType: 'form'})">
 <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="databaseId" value="@Model.Database.Id" /><input type="hidden" name="action" value="@(Model.TtlHours.Length == 0 ? "clear" : "set")" data-attr:value="$_expiry === '' ? 'clear' : 'set'" />
 <div class="ts-card-body ts-stack-lg">
 @if(Model.ExpiryError.Length > 0){<div class="ts-alert ts-alert-danger" role="alert" id="expiry-error"><p class="ts-alert-body">@Model.ExpiryError</p></div>}
