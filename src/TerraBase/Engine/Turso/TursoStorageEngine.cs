@@ -293,6 +293,8 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, ICounterSourc
     internal TimeSpan QueryBudget { get; }
     internal TursoSessionPool Pool { get; }
 
+    void ICounterSource.PublishSeries() => PublishSeries();
+
     internal void PublishSeries()
     {
         CounterSeries.Zero(_storageReads, "path", "point", "query", "shape", "shape_body", "shape_sweep");
