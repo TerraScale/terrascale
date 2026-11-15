@@ -97,26 +97,23 @@ internal sealed record DetachedImport(
     {
         DatabaseKeys.RejectLink(path);
         var name = Path.GetFileName(path);
+        var files = Directory.EnumerateFiles(Path.GetDirectoryName(path)!, name + "*")
+            .Where(file => !file.EndsWith(RevisionManifestFile.StagedSuffix, StringComparison.Ordinal)
+                && (file == path || file.StartsWith(path + "-", StringComparison.Ordinal)
+                    || file.StartsWith(path + ".", StringComparison.Ordinal))).ToArray();
+        long bytes = 0;
+        foreach (var file in files)
+        {
+            DatabaseKeys.RejectLink(file);
+            bytes = checked(bytes + new FileInfo(file).Length);
+        }
+        using var claim = disk.Reserve(DiskBudget.WorkspaceBytes(bytes));
         var scratch = Directory.CreateDirectory(Path.Combine(ScratchRoot(dataDirectory), EntityIds.New().ToString()));
         try
         {
-            using (RevisionManifestFile.Gate(path).EnterScope())
+            foreach (var file in files.Where(file => !WrappedKeyFile.IsKey(Path.GetFileName(file))))
             {
-                var files = Directory.EnumerateFiles(Path.GetDirectoryName(path)!, name + "*")
-                    .Where(file => !file.EndsWith(RevisionManifestFile.StagedSuffix, StringComparison.Ordinal)
-                        && (file == path || file.StartsWith(path + "-", StringComparison.Ordinal)
-                            || file.StartsWith(path + ".", StringComparison.Ordinal))).ToArray();
-                long bytes = 0;
-                foreach (var file in files)
-                {
-                    DatabaseKeys.RejectLink(file);
-                    bytes = checked(bytes + new FileInfo(file).Length);
-                }
-                using var claim = disk.Reserve(DiskBudget.WorkspaceBytes(bytes));
-                foreach (var file in files.Where(file => !WrappedKeyFile.IsKey(Path.GetFileName(file))))
-                {
-                    File.Copy(file, Path.Combine(scratch.FullName, Path.GetFileName(file)));
-                }
+                File.Copy(file, Path.Combine(scratch.FullName, Path.GetFileName(file)));
             }
             using var connection = Open(Path.Combine(scratch.FullName, name), key);
             return Inspect(connection);
