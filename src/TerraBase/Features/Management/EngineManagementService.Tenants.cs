@@ -53,6 +53,13 @@ internal sealed partial class EngineManagementService
     private readonly Counter<long> _cacheLookups = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.catalog.cache_lookups", "{lookup}",
         "Catalog cache lookups, by cache (tenants, records, plans, placements, registrations) and result (hit, miss).");
 
+    internal void PublishSeries()
+    {
+        CounterSeries.Zero(_cacheLookups, "cache", ["tenants", "records", "plans", "placements", "registrations"], "result", ["hit", "miss"]);
+        CounterSeries.Zero(_nameConflicts);
+        CounterSeries.Zero(_purgeErrors, "reason", "active_cleanup", "record", "file_cleanup");
+    }
+
     private bool Looked(string cache, bool hit)
     {
         _cacheLookups.Add(1, new KeyValuePair<string, object?>("cache", cache), new KeyValuePair<string, object?>("result", hit ? "hit" : "miss"));

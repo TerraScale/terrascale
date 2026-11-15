@@ -72,6 +72,29 @@ internal sealed class WriteRouter(
     private readonly ConcurrentQueue<string> _remembered = new();
     private readonly Counter<long> _routes = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.sql.write_routes", "{transaction}",
         "Writes of replica regions by the router's decision (route, reason) and where they committed (commit).");
+    private static readonly string[] RouteNames = ["local", "home"];
+    private static readonly string[] RouteReasons =
+    [
+        WriteReasons.ClientKey, WriteReasons.UpdateByKey, WriteReasons.DeleteByKey, WriteReasons.Read, WriteReasons.Ddl,
+        WriteReasons.Autoincrement, WriteReasons.RowidKey, WriteReasons.Unique, WriteReasons.UniqueChange, WriteReasons.ForeignKeyChange,
+        WriteReasons.ParentDelete, WriteReasons.Relative, WriteReasons.NotByKey, WriteReasons.Complex, WriteReasons.Trigger,
+        WriteReasons.ReadThenWrite, WriteReasons.Remembered, WriteReasons.Override, WriteReasons.Unknown,
+    ];
+
+    internal void PublishSeries()
+    {
+        foreach (var route in RouteNames)
+        {
+            foreach (var reason in RouteReasons)
+            {
+                foreach (var commit in RouteNames)
+                {
+                    _routes.Add(0, new KeyValuePair<string, object?>("route", route), new KeyValuePair<string, object?>("reason", reason),
+                        new KeyValuePair<string, object?>("commit", commit), new KeyValuePair<string, object?>("region", options.Region));
+                }
+            }
+        }
+    }
 
     private bool LocalCommitAvailable(TenantContext database, bool homeDurable) =>
         _path?.Ready(database) == true && (homeDurable || _path.LocalAckAvailable);

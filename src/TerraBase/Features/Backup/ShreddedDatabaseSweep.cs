@@ -15,6 +15,7 @@ internal sealed class ShreddedDatabaseSweep(KeyCustody custody, KeyRevocationLoc
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        CounterSeries.Zero(_refusals);
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2), time);
         do
         {

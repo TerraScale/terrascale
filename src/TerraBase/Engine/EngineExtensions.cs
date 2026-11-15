@@ -32,7 +32,8 @@ public static class EngineExtensions
         services.AddHostedService<KeyRewrap>();
         services.TryAddSingleton<DatabaseLifecycleCheckpoint>(_ => static (_, _) => { });
         services.AddMetrics();
-        services.TryAddSingleton<IDiskBudget, DiskBudget>();
+        services.TryAddSingleton<DiskBudget>();
+        services.TryAddSingleton<IDiskBudget>(provider => provider.GetRequiredService<DiskBudget>());
         services.AddTerraBaseMemory(options);
         services.AddLogging();
         services.AddSingleton(provider =>
@@ -48,7 +49,7 @@ public static class EngineExtensions
                 checkpoint: provider.GetRequiredService<DatabaseLifecycleCheckpoint>(),
                 schemaMemory: provider.GetRequiredService<IMemoryBudget>(),
                 nativeTemporaryStorage: provider.GetRequiredService<INativeTemporaryStorage>(),
-                diskBudget: provider.GetRequiredService<IDiskBudget>());
+                diskBudget: provider.GetRequiredService<DiskBudget>());
         });
         services.AddHostedService<CdcMaintenance>();
         services.AddSingleton<IOrphanDatabaseFiles>(provider => provider.GetRequiredService<TursoStorageEngine>());

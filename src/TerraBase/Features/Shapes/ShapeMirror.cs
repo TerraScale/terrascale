@@ -478,6 +478,10 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (_metrics is ShapeMetrics series)
+        {
+            series.PublishSeries();
+        }
         var sweep = SweepAsync(stoppingToken);
         var trims = TrimQueueAsync(stoppingToken);
         try

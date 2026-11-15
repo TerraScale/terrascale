@@ -33,6 +33,8 @@ internal sealed class DiskBudget : IDiskBudget
         meter.CreateObservableGauge("terrabase.disk.free", () => new DriveInfo(_root).AvailableFreeSpace, "By", "Available bytes on the managed data volume.");
     }
 
+    internal void PublishSeries() => CounterSeries.Zero(_refused);
+
     public IDisposable Reserve(long bytes)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(bytes);

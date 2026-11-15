@@ -19,6 +19,7 @@ internal sealed partial class EngineManagementService : IDisposable
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
+        PublishSeries();
         RegisterPurgeMetrics();
         RegisterClosureMetrics();
         _recoveryMeter.CreateObservableGauge("terrabase.storage.unknown_files", () => Interlocked.Read(ref _unknownDatabaseFiles),

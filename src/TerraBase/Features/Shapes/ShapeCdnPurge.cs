@@ -77,6 +77,8 @@ internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Time
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        CounterSeries.Zero(_attempts, "outcome", "accepted", "failed");
+        CounterSeries.Zero(_purges, "outcome", "dropped", "unavailable", "verification_failed", "purged", "failed");
         var meter = meters.Create(Telemetry.MeterName);
         meter.CreateObservableGauge("terrabase.shape.cdn.purge_pending", () => Interlocked.Read(ref _pending),
             description: "Durable CDN purge URLs awaiting verified removal.");

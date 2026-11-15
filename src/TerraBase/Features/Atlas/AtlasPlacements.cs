@@ -84,6 +84,7 @@ internal sealed class AtlasPlacementPublisher(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        CounterSeries.Zero(_publishes, "result", "updated", "stale", "retryable", "refused", "queue_failed");
         meters.Create(Telemetry.MeterName).CreateObservableGauge("terrabase.atlas.placement_pending", () => Volatile.Read(ref _pending),
             description: "Database placements waiting in the Atlas outbox.");
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2), time);

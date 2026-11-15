@@ -74,13 +74,29 @@ public static class BackupExtensions
     {
         public Task StartAsync(CancellationToken cancellationToken)
         {
-            meters.Create(Telemetry.MeterName).CreateObservableGauge("terrabase.backup.disabled", () => 1,
+            var meter = meters.Create(Telemetry.MeterName);
+            meter.CreateObservableGauge("terrabase.backup.disabled", () => 1,
                 description: "Continuous backup is disabled on this node; no new recovery points are stored.");
+            PublishBackupSeries(meter);
+            meter.CreateObservableGauge("terrabase.backup.holes", () => 0,
+                description: "Holes recorded in the durable backup accounts of the files this node has loaded.");
             logger.ZLogCritical($"Continuous backup is disabled on this node; no new recovery points are stored");
             return Task.CompletedTask;
         }
 
         public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+        private static void PublishBackupSeries(Meter meter)
+        {
+            CounterSeries.Zero(meter.CreateCounter<long>("terrabase.backup.uploaded", "By", "Sealed backup bytes stored in the bucket, by kind (snapshot, segment)."), "kind", "snapshot", "segment", "lineage", "hole");
+            CounterSeries.Zero(meter.CreateCounter<long>("terrabase.backup.failures", description: "Backup passes of a file that failed."));
+            CounterSeries.Zero(meter.CreateCounter<long>("terrabase.backup.holes_recorded", description: "Holes written to a file's durable backup account on this node: history the engine no longer retains was never stored."));
+            CounterSeries.Zero(meter.CreateCounter<long>("terrabase.backup.generation_restarts", description: "Generations started without a hole, by reason (lineage: the file or its destination changed; key_lost: the generation's data key is gone; log_unplaceable: the log cannot express a schema change)."), "reason", "lineage", "key_lost", "log_unplaceable");
+            CounterSeries.Zero(meter.CreateCounter<long>("terrabase.backup.snapshots_deferred", description: "Passes that put off a due daily snapshot, by reason (backlog: unread log remains; busy: snapshot uploads in flight)."), "reason", "backlog", "busy");
+            CounterSeries.Zero(meter.CreateCounter<long>("terrabase.backup.generations", description: "Generations started (each stores a snapshot)."));
+            CounterSeries.Zero(meter.CreateCounter<long>("terrabase.backup.drills", description: "Restore drills, by result (passed, failed)."), "result", "passed", "failed");
+            CounterSeries.Zero(meter.CreateCounter<long>("terrabase.backup.bucket_snapshots", description: "Tigris snapshots of the backup bucket, by result (taken, deleted, failed)."), "result", "taken", "deleted", "failed");
+        }
 
         public Task<bool> DestroyAsync(TenantContext database, DateTimeOffset until, CancellationToken cancellationToken) => Task.FromResult(true);
 

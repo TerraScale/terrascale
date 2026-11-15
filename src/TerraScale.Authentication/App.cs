@@ -279,6 +279,7 @@ public static class App
         });
         builder.Services.AddAuthOpenApi();
         builder.AddAuthTelemetry(options);
+        builder.Services.AddHostedService<AuthSeriesHost>();
 
         configure?.Invoke(builder);
 

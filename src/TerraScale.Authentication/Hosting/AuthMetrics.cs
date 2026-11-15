@@ -40,6 +40,39 @@ public static class AuthMetrics
     public static void Token(string? grantType, string? error) =>
         Tokens.Add(1, new KeyValuePair<string, object?>("grant_type", Grant(grantType)), new KeyValuePair<string, object?>("outcome", Outcome(error)));
 
+    internal static void Publish()
+    {
+        foreach (var outcome in new[] { "sent", "failed", "bounced", "not_configured", "capacity_refused", "provider_exhausted", "admission_unavailable", "failover" })
+        {
+            Emails.Add(0, new KeyValuePair<string, object?>("outcome", outcome));
+        }
+
+        (string Method, string Outcome)[] signIns =
+        [
+            ("hosted_code", "rate_limited"), ("hosted_code", "refused"), ("hosted_code", "succeeded"),
+            ("hosted_mfa", "challenged"), ("hosted_mfa", "expired"), ("hosted_mfa", "rate_limited"), ("hosted_mfa", "refused"), ("hosted_mfa", "succeeded"),
+            ("hosted_passkey", "rate_limited"), ("hosted_passkey", "refused"), ("hosted_passkey", "expired"), ("hosted_passkey", "succeeded"),
+            ("hosted_password", "rate_limited"), ("hosted_password", "refused"), ("hosted_password", "succeeded"),
+            ("hosted_sign_up", "rate_limited"), ("hosted_sign_up", "refused"), ("hosted_sign_up", "succeeded"),
+            ("hosted_social", "refused"), ("hosted_social", "succeeded"),
+            ("hosted_sso", "rate_limited"), ("hosted_sso", "refused"), ("hosted_sso", "succeeded"),
+        ];
+        foreach (var (method, outcome) in signIns)
+        {
+            SignIns.Add(0, new KeyValuePair<string, object?>("method", method), new KeyValuePair<string, object?>("outcome", outcome));
+        }
+
+        string?[] grants = [GrantTypes.AuthorizationCode, GrantTypes.RefreshToken, GrantTypes.ClientCredentials, GrantTypes.TokenExchange, "other"];
+        string?[] errors = [null, Errors.InvalidRequest, Errors.InvalidClient, Errors.InvalidGrant, Errors.UnauthorizedClient, Errors.UnsupportedGrantType, Errors.InvalidScope, Errors.TemporarilyUnavailable, Errors.ServerError, "other"];
+        foreach (var grant in grants)
+        {
+            foreach (var error in errors)
+            {
+                Tokens.Add(0, new KeyValuePair<string, object?>("grant_type", Grant(grant)), new KeyValuePair<string, object?>("outcome", Outcome(error)));
+            }
+        }
+    }
+
     internal static string Grant(string? grantType) => grantType switch
     {
         GrantTypes.AuthorizationCode => "authorization_code",

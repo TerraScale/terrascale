@@ -18,9 +18,9 @@ using ZLogger;
 
 namespace TerraBase.Engine.Turso;
 
-internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
+internal sealed partial class TursoStorageEngine : IStorageEngine, ICounterSource, IWalBackup
 {
-    internal IDiskBudget Disk { get; }
+    internal DiskBudget Disk { get; }
     private const string FileExtension = ".db";
 
     private static readonly TimeSpan StalledProbe = TimeSpan.FromSeconds(2);
@@ -68,6 +68,7 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     private readonly Counter<long> _rewriteRefused;
     private readonly Counter<long> _writersEvicted;
     private readonly Counter<long> _unshippedDiscarded;
+    private readonly Counter<long> _publicationWaits;
     private readonly ILogger<TursoStorageEngine> _logger;
     private readonly TimeSpan _shutdownGrace;
     private readonly DatabaseLifecycleCheckpoint _checkpoint;
@@ -292,10 +293,24 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
     internal TimeSpan QueryBudget { get; }
     internal TursoSessionPool Pool { get; }
 
+    void ICounterSource.PublishSeries() => PublishSeries();
+
+    internal void PublishSeries()
+    {
+        CounterSeries.Zero(_storageReads, "path", "point", "query", "shape", "shape_body", "shape_sweep");
+        CounterSeries.Zero(_unshippedDiscarded);
+        CounterSeries.Zero(_writersEvicted);
+        CounterSeries.Zero(_rewriteRefused, "reason", "Safety", "Budget", "Deadline", "Pressure");
+        CounterSeries.Zero(_migrationFailures);
+        CounterSeries.Zero(_publicationWaits);
+        Disk.PublishSeries();
+        Io.PublishSeries();
+    }
+
     public TursoStorageEngine(
     StorageEngineOptions configured, Meter meter, ILogger<TursoStorageEngine> logger, IKeyring masterKey,
     DatabaseLifecycleCheckpoint? checkpoint = null, IMemoryBudget? schemaMemory = null,
-    INativeTemporaryStorage? nativeTemporaryStorage = null, IDiskBudget? diskBudget = null)
+    INativeTemporaryStorage? nativeTemporaryStorage = null, DiskBudget? diskBudget = null)
     {
         ArgumentNullException.ThrowIfNull(masterKey);
         var clock = configured.Time ?? TimeProvider.System;
@@ -362,8 +377,9 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
             meter.CreateObservableGauge("terrabase.storage.faulted.databases", () => Ledger.FaultCount);
             meter.CreateObservableGauge("terrabase.storage.proof.pending", () => Ledger.PendingCount);
             Ledger.IncompleteProofs = meter.CreateCounter<long>("terrabase.storage.proof.incomplete");
-            Ledger.PublicationWaits = meter.CreateCounter<long>("terrabase.storage.fault.publication.late",
+            _publicationWaits = meter.CreateCounter<long>("terrabase.storage.fault.publication.late",
                 description: "Fault publications still waiting for a modification in flight on their copy after the publication bound.");
+            Ledger.PublicationWaits = _publicationWaits;
             Leases = new HomeLeaseGate(HostTime);
 
             Io = new(configured.Threads, configured.Queue, meter);

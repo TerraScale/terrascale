@@ -22,6 +22,14 @@ public sealed class DeletionCleanup(
     // Logical cleanup outcomes per job attempt: verified, a failure code, or invalid.
     private static readonly Counter<long> Outcomes = Meter.CreateCounter<long>("ts_auth.deletion_cleanup", description: "Account and scope deletion cleanup attempts by outcome.");
 
+    internal static void Publish()
+    {
+        foreach (var outcome in new[] { "invalid", "verified", "storage_unavailable", "cleanup_failed", "batch_remaining", "records_remaining", "scope_not_deleted", "project_handoff_required", "organization_handoff_required" })
+        {
+            Outcomes.Add(0, new KeyValuePair<string, object?>("outcome", outcome));
+        }
+    }
+
     internal static TimeSpan Retry(string? failure, int attempts, double jitter) =>
         failure is null or "batch_remaining" or "records_remaining" ? Interval
             : TimeSpan.FromTicks((long)(Math.Min(Interval.Ticks << Math.Min(attempts, 5), MaxRetry.Ticks) * jitter));

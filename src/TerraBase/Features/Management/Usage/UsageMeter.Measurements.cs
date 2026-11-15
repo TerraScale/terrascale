@@ -21,6 +21,8 @@ internal sealed partial class UsageMeter
 
     private readonly Counter<long> _measurementDrops = meters.Create(Telemetry.MeterName).CreateCounter<long>(
         "terrabase.usage.observations.dropped", "{observation}", "Usage observations dropped by bounded memory admission.");
+    internal void PublishSeries() => CounterSeries.Zero(_measurementDrops);
+
     public void RecordOperation(TenantContext database, string kind, int count)
     {
         RequestLogOperations.Current.Value?.Add(database, count);

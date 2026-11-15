@@ -126,6 +126,7 @@ builder.Services.AddTerraBaseShapes();
 builder.Services.AddTerraBaseAtlas(options);
 builder.Services.AddTerraBaseCatalog();
 builder.Services.AddTerraBaseRpc();
+builder.Services.AddHostedService<CounterPublication>();
 
 try
 {
