@@ -1,0 +1,44 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.FileStorage.BucketFilesCardModel>
+@using TerraScale.Dashboard.Features.FileStorage
+@using System.Globalization
+@{
+    var canWrite = Model.Page.Shell.Context.CanWriteProjectData;
+    var csrf = Model.Page.Shell.CsrfToken;
+    var bucketId = Model.Page.Listing!.BucketId!;
+    var prefix = Model.Page.Prefix;
+}
+<section class="ts-card ts-card-boxed ts-card-flush" id="bucket-files" aria-labelledby="bucket-files-title">
+    <header class="ts-card-head ts-card-head-title-actions"><div class="ts-card-heading"><h2 class="ts-card-title" id="bucket-files-title">Files</h2></div>
+        <div class="ts-card-actions">
+            <form class="ts-filters ts-files-search" method="get" action="/storage"><input type="hidden" name="bucket" value="@bucketId" /><label class="ts-sr-only" for="file-prefix">Filter by name</label><input class="ts-input" id="file-prefix" type="search" name="prefix" value="@prefix" placeholder="Filter by name" data-on:input.debounce.300ms="el.form.requestSubmit()" /></form>
+        </div>
+    </header>
+    <div class="ts-card-body">
+    @if (Model.Visible.Count == 0)
+    {
+        <div class="ts-empty" role="status"><p class="ts-empty-title">@(prefix.Length > 0 ? "No files match the filter." : "No files yet.")</p>@if (canWrite && prefix.Length == 0) { <button class="ts-btn ts-btn-primary ts-btn-sm" type="button" data-upload-browse>@Icons.Render("Upload", 16)<span>Upload files</span></button> }</div>
+    }
+    else
+    {
+        <div class="ts-table-wrap"><table class="ts-table ts-table-stacked ts-files-table"><thead><tr><th scope="col">Name</th><th scope="col" class="ts-num">Size</th><th scope="col">Type</th><th scope="col">Uploaded</th><th scope="col"><span class="ts-sr-only">Actions</span></th></tr></thead><tbody>
+        @foreach (var file in Model.Visible.OrderByDescending(file => file.Id, StringComparer.Ordinal))
+        {
+            var (icon, kind) = FileStorageFormat.Kind(file.ContentType);
+            <tr data-file-id="@file.Id">
+                <td><span class="ts-files-name"><span class="ts-files-icon" data-kind="@kind" aria-hidden="true">@Icons.Render(icon, 18)</span><span class="ts-strong ts-truncate" title="@file.Name">@file.Name</span></span></td>
+                <td class="ts-num" data-label="Size" title="@(file.Size.ToString("N0", CultureInfo.InvariantCulture) + " bytes")">@MetricFormat.Bytes(file.Size)</td>
+                <td class="ts-files-type" data-label="Type"><span class="ts-mono ts-truncate">@file.ContentType</span></td>
+                <td data-label="Uploaded">@FileStorageFormat.Time(FileStorageFormat.Created(file.Id), Model.Page.Now)</td>
+                <td class="ts-table-actions"><div class="ts-row ts-files-actions">
+                    <form method="post" action="/api/v1/dashboard/storage/download" data-download><input type="hidden" name="_csrf" value="@csrf" /><input type="hidden" name="bucket" value="@bucketId" /><input type="hidden" name="fileId" value="@file.Id" /><button class="ts-icon-btn" type="submit" aria-label="@("Download " + file.Name)" title="Download">@Icons.Render("Download", 16)</button></form>
+                    @if (canWrite) { <button class="ts-icon-btn ts-files-delete" type="button" command="show-modal" commandfor="@("delete-file-" + file.Id)" aria-label="@("Delete " + file.Name)" title="Delete">@Icons.Render("Trash2", 16)</button> }
+                </div>
+                @if (canWrite) { @(await RenderPartialAsync<FileConfirmDialog, FileConfirmDialogModel>(new("delete-file-" + file.Id, "/api/v1/dashboard/storage/delete", "Delete file: " + file.Name, "This permanently deletes the file.", "Delete file", csrf, new Dictionary<string, string> { ["bucket"] = bucketId, ["fileId"] = file.Id, ["prefix"] = prefix }, Model.Page.Draft?.Dialog == "delete-file-" + file.Id ? Model.Page.Draft.Error : null, Patch: true))) }
+                </td>
+            </tr>
+        }
+        </tbody></table></div>
+    }
+    @if (Model.Next is { } next) { <div class="ts-files-more"><a class="ts-btn ts-btn-ghost ts-btn-sm" href="@(FileStorageEndpoints.BucketPath(bucketId) + "&after=" + Uri.EscapeDataString(next))">More files</a></div> }
+    </div>
+</section>

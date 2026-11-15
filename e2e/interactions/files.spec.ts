@@ -14,7 +14,7 @@ test.skip(production, "the browser may reach only the stack's own host names on 
 
 async function createBucket(page: Page, name: string): Promise<string> {
   await page.goto('/storage');
-  await page.getByRole('button', { name: 'Create bucket', exact: true }).first().click();
+  await page.getByRole('button', { name: 'New bucket', exact: true }).first().click();
   const dialog = page.locator('dialog#create-bucket');
   await expect(dialog).toBeVisible();
   await dialog.locator('#bucket-name').fill(name);
@@ -35,7 +35,7 @@ test('a bucket is created, takes an upload, returns the same bytes, is emptied a
   const name = unique('files');
   await page.goto('/storage');
   await audit.check('files');
-  await page.getByRole('button', { name: 'Create bucket', exact: true }).first().click();
+  await page.getByRole('button', { name: 'New bucket', exact: true }).first().click();
   await expect(page.locator('dialog#create-bucket')).toBeVisible();
   await audit.check('create bucket dialog');
   await page.locator('dialog#create-bucket #bucket-name').fill(name);
@@ -74,18 +74,30 @@ test('a bucket is created, takes an upload, returns the same bytes, is emptied a
   const deleteFile = page.locator('dialog[open][id^="delete-file-"]');
   await expect(deleteFile).toBeVisible();
   await audit.check('delete file dialog');
+  const beforeDelete = page.url();
   await deleteFile.getByRole('button', { name: 'Delete file', exact: true }).click();
   await expect(page.locator('#bucket-files')).toContainText('No files yet.');
+  await expect(page).toHaveURL(beforeDelete);
 
   await page.getByRole('navigation', { name: 'Bucket sections' }).getByRole('link', { name: 'Settings', exact: true }).click();
-  await expect(page.getByRole('heading', { level: 2, name: 'Access rules', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 2, name: 'Access', exact: true })).toBeVisible();
   await audit.check('bucket settings');
+  const settingsUrl = page.url();
+  await page.getByRole('radio', { name: 'Public read', exact: true }).check();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByRole('radio', { name: 'Public read', exact: true })).toBeChecked();
+  await expect(page).toHaveURL(settingsUrl);
+  await expect(page.locator('#bucket-stats')).toContainText('Public read');
+  await page.getByRole('radio', { name: 'File owner', exact: true }).first().check();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.locator('#bucket-stats')).toContainText('Private');
+  await audit.check('bucket settings saved');
   await page.getByRole('button', { name: 'Delete bucket', exact: true }).click();
   const deleteBucket = page.locator('dialog#delete-bucket');
   await expect(deleteBucket).toBeVisible();
   await audit.check('delete bucket dialog');
   await deleteBucket.getByRole('button', { name: 'Delete bucket', exact: true }).click();
-  await expect(page.getByRole('heading', { level: 1, name: 'Files', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'File storage', exact: true })).toBeVisible();
   await expect(page.locator('main').getByRole('link', { name, exact: true }), 'a bucket whose only file was just deleted is deleted at once').toHaveCount(0);
   expect(await stored(object), 'deleting the bucket erased the deleted file from the object store').toBe(false);
 });
@@ -122,7 +134,7 @@ test('an upload or delete that names a bucket the file is not in is refused and 
   await page.goto(`/storage?bucket=${other}&tab=settings`);
   await page.getByRole('button', { name: 'Delete bucket', exact: true }).click();
   await page.locator('dialog#delete-bucket').getByRole('button', { name: 'Delete bucket', exact: true }).click();
-  await expect(page.getByRole('heading', { level: 1, name: 'Files', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'File storage', exact: true })).toBeVisible();
   await expect(page.locator('main').getByRole('link', { name: otherName, exact: true }), 'the empty bucket is deleted').toHaveCount(0);
   await expect(page.locator('main').getByRole('link', { name: keptName, exact: true })).toBeVisible();
 

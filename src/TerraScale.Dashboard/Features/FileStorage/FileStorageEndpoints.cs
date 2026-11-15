@@ -1,16 +1,33 @@
 using System.Globalization;
 using System.Text.Json;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.TerraBase.Contracts;
 using TerraScale.TerraBase.Contracts.FileStorage;
 
 namespace TerraScale.Dashboard.Features.FileStorage
 {
-    public sealed record FileStoragePage(ShellModel Shell, FileStorageListing? Listing, DateTimeOffset Now, string? Error = null, FileStorageDraft? Draft = null, bool Settings = false);
+    public sealed record FileStoragePage(ShellModel Shell, FileStorageListing? Listing, DateTimeOffset Now, string? Error = null, FileStorageDraft? Draft = null, bool Settings = false, string Prefix = "");
     public sealed record FileStorageDraft(string Dialog, string Error, string Name, TerraBaseFileRules Rules);
     public sealed record FileConfirmDialogModel(string Id, string Action, string Title, string Consequence, string Button, string CsrfToken,
-        IReadOnlyDictionary<string, string> Fields, string? Error = null);
+        IReadOnlyDictionary<string, string> Fields, string? Error = null, bool Patch = false);
     public sealed record FileRulesFormModel(string Prefix, TerraBaseFileRules Rules, bool Existing = false);
+    public sealed record BucketFilesCardModel(FileStoragePage Page, IReadOnlyList<TerraBaseStoredFile> Visible, string? Next)
+    {
+        public static BucketFilesCardModel For(FileStoragePage page)
+        {
+            var files = page.Listing?.Files;
+            return new(page, files is null ? [] : FileStorageFormat.Filtered(files, page.Prefix), files?.Next);
+        }
+    }
+    public sealed record BucketSideModel(FileStoragePage Page, IReadOnlyList<TerraBaseStoredFile>? Files, string? Next)
+    {
+        public static BucketSideModel For(FileStoragePage page)
+        {
+            var files = page.Listing?.Files;
+            return new(page, files is null ? null : FileStorageFormat.Filtered(files, page.Prefix), files?.Next);
+        }
+    }
 
     public static class FileStorageEndpoints
     {
@@ -52,7 +69,13 @@ namespace TerraScale.Dashboard.Features.FileStorage
                 {
                     case "bucket": bucket = (await files.CreateBucketAsync(context, form["name"].ToString(), Rules(form), http.RequestAborted)).Id; break;
                     case "delete-bucket": await files.DeleteBucketAsync(context, bucket, http.RequestAborted); bucket = ""; break;
-                    case "rules": await files.SetRulesAsync(context, bucket, Rules(form), http.RequestAborted); return HttpRedirects.SeeOther(BucketPath(bucket) + "&tab=settings");
+                    case "rules":
+                        await files.SetRulesAsync(context, bucket, Rules(form), http.RequestAborted);
+                        if (http.Request.Headers["Datastar-Request"] == "true")
+                        {
+                            return await PageAsync(http, context, files, bucket: Empty(bucket), settings: true);
+                        }
+                        return HttpRedirects.SeeOther(BucketPath(bucket) + "&tab=settings");
                     case "upload":
                         using (var metadata = JsonDocument.Parse(form["metadata"].ToString()))
                         {
@@ -64,7 +87,13 @@ namespace TerraScale.Dashboard.Features.FileStorage
                             return Results.Json(await files.UploadAsync(context, bucket, new(form["name"].ToString(), form["contentType"].ToString(), size, form["sha256"].ToString(), metadata.RootElement.Clone()), http.RequestAborted), FileStorageJson.Default.TerraBaseFileUrl);
                         }
                     case "complete": await files.CompleteAsync(context, bucket, file, http.RequestAborted); return Results.NoContent();
-                    case "delete": await files.DeleteAsync(context, bucket, file, http.RequestAborted); break;
+                    case "delete":
+                        await files.DeleteAsync(context, bucket, file, http.RequestAborted);
+                        if (http.Request.Headers["Datastar-Request"] == "true")
+                        {
+                            return await PageAsync(http, context, files, bucket: Empty(bucket), settings: false);
+                        }
+                        break;
                     case "download":
                         var signed = await files.DownloadAsync(context, bucket, file, http.RequestAborted);
                         http.Response.StatusCode = StatusCodes.Status303SeeOther;
@@ -92,6 +121,10 @@ namespace TerraScale.Dashboard.Features.FileStorage
                     "delete" => new("delete-file-" + file, message, "", Rules(form)),
                     _ => null
                 };
+                if (http.Request.Headers["Datastar-Request"] == "true" && operation is "rules" or "delete")
+                {
+                    return await PageAsync(http, context, files, message, draft, Empty(bucket), operation is "rules");
+                }
                 return await PageAsync(http, context, files, draft is null ? message : null, draft, operation is "bucket" ? null : Empty(bucket), operation is "rules" or "delete-bucket");
             }
         }
@@ -101,9 +134,12 @@ namespace TerraScale.Dashboard.Features.FileStorage
         {
             FileStorageListing? listing = null;
             var bucketAfter = http.Request.Query["bucketAfter"].ToString();
+            string prefix = http.Request.Query["prefix"].ToString();
             if (http.Request.HasFormContentType)
             {
-                bucketAfter = (await http.Request.ReadFormAsync(http.RequestAborted))["bucketAfter"].ToString();
+                var form = await http.Request.ReadFormAsync(http.RequestAborted);
+                bucketAfter = form["bucketAfter"].ToString();
+                prefix = form["prefix"].ToString();
             }
 
             var selected = http.Request.HasFormContentType ? bucket : Empty(http.Request.Query["bucket"].ToString());
@@ -114,10 +150,17 @@ namespace TerraScale.Dashboard.Features.FileStorage
                     : await files.ListAsync(context, selected, Empty(http.Request.Query["after"].ToString()), Empty(bucketAfter), http.RequestAborted);
             }
             catch (Exception failure) when (Known(failure, http)) { error ??= Message(failure, "list"); http.Response.StatusCode = Status(failure); }
-            var page = FileStorageView.Create(new(ShellModel.For(http, context, "File storage"), listing, DateTimeOffset.UtcNow, error, draft,
-                settings ?? http.Request.Query["tab"] == "settings"));
-            page.StatusCode = http.Response.StatusCode;
-            return page;
+            var page = new FileStoragePage(ShellModel.For(http, context, "File storage"), listing, DateTimeOffset.UtcNow, error, draft,
+                settings ?? http.Request.Query["tab"] == "settings", prefix);
+            if (http.Request.Headers["Datastar-Request"] == "true" && listing?.BucketId is not null)
+            {
+                http.Response.StatusCode = StatusCodes.Status200OK;
+                await DatastarEvents.PatchElementsAsync(http, FileStorageBody.Create(page));
+                return Results.Empty;
+            }
+            var view = FileStorageView.Create(page);
+            view.StatusCode = http.Response.StatusCode;
+            return view;
         }
 
         internal static string BucketPath(string bucket)
@@ -131,9 +174,20 @@ namespace TerraScale.Dashboard.Features.FileStorage
 
         private static TerraBaseFileRules Rules(IFormCollection form)
         {
-            return new(Empty(form["owner"].ToString()),
-                new(form["readOwner"] == "1", form["readPublic"] == "1", Roles(form["readRoles"].ToString())),
-                new(form["writeOwner"] == "1", form["writePublic"] == "1", Roles(form["writeRoles"].ToString())));
+            return new(Empty(form["owner"].ToString()), Policy(form, "read"), Policy(form, "write"));
+        }
+
+        private static TerraBaseFilePolicy Policy(IFormCollection form, string key)
+        {
+            var owner = form[key + "Owner"] == "1";
+            var all = form[key + "Public"] == "1";
+            return form[key + "Preset"].ToString() switch
+            {
+                "project" => new(false, false, Roles(form[key + "Roles"].ToString())),
+                "owner" => new(true, false, Roles(form[key + "Roles"].ToString())),
+                "all" => new(false, true, Roles(form[key + "Roles"].ToString())),
+                _ => new(owner, all, Roles(form[key + "Roles"].ToString()))
+            };
         }
 
         private static string[] Roles(string value)

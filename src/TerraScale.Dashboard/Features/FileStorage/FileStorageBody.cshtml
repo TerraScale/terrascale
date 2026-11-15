@@ -1,0 +1,5 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.FileStorage.FileStoragePage>
+@using TerraScale.Dashboard.Features.FileStorage
+@(await RenderPartialAsync<BucketStats, BucketSideModel>(BucketSideModel.For(Model)))
+@(await RenderPartialAsync<BucketFilesCard, BucketFilesCardModel>(BucketFilesCardModel.For(Model)))
+@(await RenderPartialAsync<BucketSide, BucketSideModel>(BucketSideModel.For(Model)))

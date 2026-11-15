@@ -1,12 +1,25 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.FileStorage.FileRulesFormModel>
+@using TerraScale.Dashboard.Features.FileStorage
+@{
+    string Preset(bool owner, bool all) => (owner, all) switch { (false, false) => "project", (true, false) => "owner", (false, true) => "all", _ => "custom" };
+}
 <div class="ts-field"><label class="ts-label" for="@(Model.Prefix)-owner">Owner field</label><input class="ts-input ts-mono" id="@(Model.Prefix)-owner" name="owner" value="@Model.Rules.Owner" placeholder="/userId" maxlength="4096" pattern="(\/[^\/]+){1,16}" title="A JSON Pointer into the file metadata, such as /userId." autocomplete="off" spellcheck="false" readonly="@Model.Existing" /></div>
 <div class="ts-files-rules">
-    @foreach (var (key, legend, policy) in new[] { ("read", "Read access", Model.Rules.Read), ("write", "Write access", Model.Rules.Write) })
+    @foreach (var (key, legend, allLabel, policy) in new[] { ("read", "Read access", "Public read", Model.Rules.Read), ("write", "Write access", "All users", Model.Rules.Write) })
     {
+        var preset = Preset(policy.Owner, policy.Public);
         <fieldset class="ts-files-rule">
             <legend class="ts-label">@legend</legend>
-            <label class="ts-check"><input type="checkbox" name="@(key + "Owner")" value="1" checked="@policy.Owner" /><span>File owner</span></label>
-            <label class="ts-check"><input type="checkbox" name="@(key + "Public")" value="1" checked="@policy.Public" /><span>All authenticated end users</span></label>
+            <fieldset class="ts-chips ts-files-chips">
+                <label class="ts-chip"><input type="radio" name="@(key + "Preset")" value="project" checked="@(preset == "project")" /><span>Project members</span></label>
+                <label class="ts-chip"><input type="radio" name="@(key + "Preset")" value="owner" checked="@(preset == "owner")" /><span>File owner</span></label>
+                <label class="ts-chip"><input type="radio" name="@(key + "Preset")" value="all" checked="@(preset == "all")" /><span>@allLabel</span></label>
+                <label class="ts-chip"><input type="radio" name="@(key + "Preset")" value="custom" checked="@(preset == "custom")" /><span>Custom</span></label>
+            </fieldset>
+            <div class="ts-files-raw">
+                <label class="ts-check"><input type="checkbox" name="@(key + "Owner")" value="1" checked="@policy.Owner" /><span>File owner</span></label>
+                <label class="ts-check"><input type="checkbox" name="@(key + "Public")" value="1" checked="@policy.Public" /><span>@allLabel</span></label>
+            </div>
             <div class="ts-field"><label class="ts-label" for="@(Model.Prefix + "-" + key + "-roles")">Roles</label><input class="ts-input" id="@(Model.Prefix + "-" + key + "-roles")" name="@(key + "Roles")" value="@string.Join(", ", policy.Roles)" placeholder="@(key == "read" ? "editor, reviewer" : "editor")" maxlength="4160" pattern="[^\x00-\x1F\x7F]*" title="Comma-separated role names." autocomplete="off" spellcheck="false" /></div>
         </fieldset>
     }
