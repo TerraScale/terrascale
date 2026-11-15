@@ -3,6 +3,8 @@ logs=$state/logs
 pids=$state/pids
 boot_seconds=90
 
+e2e_port() { jq -r --arg name "$1" '.[$name]' "$state/ports.json"; }
+
 start() {
   local name=$1
   shift

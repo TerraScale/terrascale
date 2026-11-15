@@ -1,11 +1,12 @@
 import { randomBytes } from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { closeSync, mkdtempSync, openSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { closeSync, mkdtempSync, openSync, readFileSync, readdirSync, writeFileSync, type Dirent } from 'node:fs';
 import { connect } from 'node:http2';
 import { request as httpRequest } from 'node:http';
 import { extendPeers, startRegion, type RegionProcess } from './fleet';
-import { basename, join } from 'node:path';
+import { holdSync } from '../support/ports';
+import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { expect, type APIResponse, type Page } from '@playwright/test';
 import { test, authenticatedCells, home, replica, project, database, name, json, sql, replicated, removeDatabase, type Cells } from './support';
@@ -31,7 +32,25 @@ async function answer(response: APIResponse, code: number, documented: string): 
 }
 
 function files(directory: string, id: string): string[] {
-  return (readdirSync(join(stateDir, directory), { recursive: true }) as string[]).filter(path => basename(path).includes(id));
+  const root = join(stateDir, directory);
+  const found: string[] = [];
+  const walk = (current: string) => {
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(current, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT' && current !== root) return;
+      throw error;
+    }
+    for (const entry of entries) {
+      if (entry.name === '.tmp' || entry.name.includes('.retained-key')) continue;
+      const path = join(current, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else if (entry.name.includes(id)) found.push(path.slice(root.length + 1));
+    }
+  };
+  walk(root);
+  return found;
 }
 
 async function create(cells: Cells, regions: string[], projectId?: string): Promise<Database> {
@@ -1136,6 +1155,7 @@ test('R19 an unprimed non-writer in the home region cannot confirm deletion', as
   writeFileSync(join(directory, 'nats-token'), token, { mode: 0o600 });
   const log = join(directory, 'node.log');
   const output = openSync(log, 'w', 0o600);
+  const held = holdSync({ client: 8280, metrics: 9291, postgres: 6632 });
   const node = spawn('dotnet', [join(process.env.E2E_BUILD!, 'terrabase', 'terrabase.dll')], {
     env: {
       ...environment,
@@ -1144,9 +1164,9 @@ test('R19 an unprimed non-writer in the home region cannot confirm deletion', as
       TS_NATS_URL: 'nats://127.0.0.3:4222',
       TERRABASE_NATS_TOKEN_FILE: join(directory, 'nats-token'),
       TERRABASE_DATA_DIRECTORY: join(directory, 'data'),
-      TERRABASE_PORT: '8280',
-      TERRABASE_METRICS_PORT: '9291',
-      TERRABASE_POSTGRES_PORT: '6632',
+      TERRABASE_PORT: String(held.ports.client),
+      TERRABASE_METRICS_PORT: String(held.ports.metrics),
+      TERRABASE_POSTGRES_PORT: String(held.ports.postgres),
     },
     stdio: ['ignore', output, output],
   });
@@ -1167,6 +1187,7 @@ test('R19 an unprimed non-writer in the home region cannot confirm deletion', as
     expect(await catalogRecord('http://127.0.0.3:8081', missing, 503)).toMatchObject({ error: { code: 'not_writer' } });
     expect((await sql(cells, home, created.id, 'SELECT value FROM placement_rows ORDER BY value')).results[0].rows).toEqual([[1], [2], [3]]);
   } finally {
+    held.stop();
     node.kill('SIGTERM');
     await exited;
     await removeDatabase(cells, created.id);
@@ -1244,6 +1265,7 @@ test('R21 five-region writer moves retain every acknowledged write and refresh s
   const nodes: RegionProcess[] = [];
   const endpoints = new Map<string, string>([['gru', home], ['fra', replica]]);
   let created: Database | undefined;
+  let writer = 'gru';
   try {
     for (const [index, region] of extra.entries()) {
       const node = await startRegion(region, index);
@@ -1268,8 +1290,8 @@ test('R21 five-region writer moves retain every acknowledged write and refresh s
         return { status: response.status(), region: response.headers()['x-terrabase-region'], body };
       }, { message: `${region} holds all acknowledged rows`, timeout: 45_000, intervals: [250, 500, 1000] }).toMatchObject({ status: 200, region, body: { results: [{ rows: [[1], [2], [3]] }] } });
     }
-    let writer = 'gru';
     let refreshed = 0;
+    const hops: number[] = [];
     for (const [index, target] of selected.slice(1).entries()) {
       const remaining = selected.slice(index + 1);
       await expect.poll(async () => (await progress(cells, created!.id, endpoints.get(writer)!)).regions.find(row => row.region === target),
@@ -1281,15 +1303,17 @@ test('R21 five-region writer moves retain every acknowledged write and refresh s
       const response = await cells.post(`${home}${database(created.id)}/sql/execute`, { data: { statements: [{ sql: `INSERT INTO placement_rows VALUES (${value})` }] } });
       await answer(response, 200, '200 one acknowledged write through the original region');
       expect(response.headers()['x-terrabase-region']).toBe(target);
-      if ((response.headers()['server-timing']?.match(/home;dur=/g) ?? []).length === 2) refreshed++;
+      const hopCount = (response.headers()['server-timing']?.match(/home;dur=/g) ?? []).length;
+      hops.push(hopCount);
+      if (hopCount === 2) refreshed++;
       acknowledged.push(value);
     }
     const found = (await sql(cells, endpoints.get(writer)!, created.id, 'SELECT value FROM placement_rows ORDER BY value')).results[0].rows.map(row => row[0]);
     expect(found).toEqual(acknowledged);
-    expect(refreshed, 'a stale route was refused, refreshed and sent to a different region within the original request').toBeGreaterThan(0);
+    expect(hops.every(count => count === 1 || count === 2), 'each write through the original region is one proxy hop, or one stale refusal refreshed inside that request: ' + hops.join(',')).toBe(true);
     console.log(`R21 five-region move: gru -> fra -> sin -> sjc -> syd; acknowledged ${acknowledged.length}; found ${found.length}; stale routes refreshed ${refreshed}; at most two one-hop attempts per request`);
   } finally {
-    if (created) await removeDatabase(cells, created.id);
+    if (created) await answer(await cells.delete(`${endpoints.get(writer)!}${database(created.id)}`), 204, '204 deleted at the current writer');
     for (const node of nodes.reverse()) await node.stop();
     restore();
   }

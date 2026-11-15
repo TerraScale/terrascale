@@ -35,6 +35,12 @@ To iterate: `bash e2e/env/local.sh prepare`, `bash e2e/env/local.sh start`,
 `bash e2e/env/local.sh exec bash e2e/env/up.sh`, then from `e2e/`
 `bash env/local.sh exec npx playwright test --project pages-desktop`, and `bash e2e/env/local.sh stop`.
 
+## Port registry
+
+Every listener the journey starts, and every harness that binds its own (`env/engine-crash.py`, `replication/frontier.mjs`, `clock/cluster.ts`, `keyring/proof.mjs`, `keyring/promotion.spec.ts`, `placement/fleet.ts`, regions R19), takes its ports from `env/ports.py`. The registry is one flock per network namespace under `$XDG_RUNTIME_DIR/terrascale-e2e-ports` (or `/tmp` when that directory is unset). A claim lives as long as its holder process. A dead holder is reaped because the kernel drops the lock.
+
+`local.sh` puts each stack in its own network namespace, so two stacks on one machine both keep the canonical journey block (`caddy` 443, `terrabase` 8080, `internal` 8081, and the rest of the `journey` profile in `ports.py`). Inside one namespace the block is reserved up front, and a second claimant (an engine-crash shard, the frontier harness, an extra region) receives the next free block, shifted by a multiple of 1000. The assignment is `$E2E_STATE/ports.json`. Harnesses that share the host network, including parallel engine-crash shards, cannot take a port another live claim in that namespace still holds. The old bind-to-zero-and-release race is gone.
+
 ## Client addresses and sign-up budgets
 
 The local namespace runs `env/client-proxy.mjs` on port 8089. Global setup allocates an invocation number by
@@ -137,13 +143,16 @@ and deletes the account. Its third test signs up nobody: it sends a closure, the
 both versions, and each answers 409 `platform_project_protected`.
 
 `placement/regions.spec.ts` R16 removes gru from a database's regions, verifies requests through gru are proxied, and reads gru's data directory
-(`$E2E_STATE/terrabase`, through `stateDir`) to see that no file named after the database is left there, then that
+(`$E2E_STATE/terrabase`, through `stateDir`) to see that no database file named after the database is left there
+(a retained key file is not the copy; the engine keeps it until an operator removes it), then that
 the files are back once gru is added again. R3 also opens SQL sockets with header credentials, checks 1012 and PostgreSQL FATAL 57P01 on a writer move, refuses forwarded REST and socket upgrades with 503 instead of a second hop, and drops destination SYN packets to prove the five-second REST connect bound. R17 removes a follower, verifies its routing record learns a rename, and adds it again with current data. R18 deletes a database at its home while its follower is removed, then checks the removed follower forgets it. R19 starts a real, unprimed node in the home region with NATS disconnected and verifies direct placement requests return 503 not_writer for both live and absent ids, while the writer returns 200 and 404 respectively.
 
 Other existing projects can run in two-region mode by starting this same stack first and selecting their project
 normally. The placement pair shares one machine and third-party stand-ins and has no network delay. Two-region mode
-starts NATS; with one node in a region the local-write gauge stays 0 and a write that would commit locally still commits
-at home. It does not model geographic latency or regional host failure.
+starts one NATS broker from the port registry. With one node in a region the local-write gauge stays 0 and a write
+that would commit locally still commits at home. That broker also lets a home move's sequencers finish inside the
+request instead of spinning until the 30 s catch-up bound; catalog sweep remains the fallback when the broker is down.
+It does not model geographic latency or regional host failure.
 
 The CI session-limits shard selects only `placement/session-limits.spec.ts` with one worker and two cells. It covers input and answer progress, session admission, platform EF traffic, unknown outcomes and native commit completion. It also holds 32 idle sockets (no startup packet, a startup then silence, or a stalled TLS handshake) on the Postgres listener and the public edge and checks that an authenticated session keeps running and a new client still queries. Its peer-stream faults retain a live HTTP/2 connection while withholding an answer body.
 
@@ -186,9 +195,10 @@ elapsed time; the dependent nine-snapshot recovery sequence stays together in th
 when selected with other cases.
 
 The extra nodes are `journey-3 gru 127.0.0.3` and `journey-4 fra 127.0.0.4`, with client/metrics/PostgreSQL ports
-8280/9291/6632 and 8380/9391/6732. Their independent data directories are `terrabase-gru-2` and `terrabase-fra-2`
-under the run state. Two-region mode starts a checksum-pinned NATS server with JetStream and a generated credential
-registered with the scrubber. Four-node mode adds the second node of each region; every real node uses NATS for replication notices and regional writer coordination.
+taken from the journey profile (`terrabase_gru2` / `metrics_gru2` / `postgres_gru2` and the fra-2 names; 8280/9291/6632
+and 8380/9391/6732 when that block is free). Their independent data directories are `terrabase-gru-2` and `terrabase-fra-2`
+under the run state. Every two-region stack starts one checksum-pinned NATS server with JetStream and a generated credential
+registered with the scrubber; the real nodes use it for replication notices, home-move sequencer catch-up and regional writer coordination.
 The namespace remembers the node count for later exec calls and owns every original and restarted process.
 
 The fault owner upgrades through the existing Stripe stand-in so a restore has room alongside its source. Each

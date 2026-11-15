@@ -4,6 +4,7 @@ import { randomUUID, sign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { connect } from 'node:http2';
 import { join } from 'node:path';
+import { port as assigned } from './ports.mjs';
 
 const [state, project, database] = process.argv.slice(2);
 const authorization = process.env.E2E_CALLER_BEARER;
@@ -11,14 +12,14 @@ assert.ok(authorization);
 const key = readFileSync(join(state, 'caller-bridge-key.pem'));
 const peer = readFileSync(join(state, 'secrets'), 'utf8').split('\n')[0];
 const path = '/v1/projects/' + project + '/databases/' + database;
-const session = connect('http://127.0.0.1:8081');
+const session = connect('http://127.0.0.1:' + assigned('internal'));
 const metrics = port => readMetrics('http://127.0.0.1:' + port + '/metrics');
 const count = (text, credential) => text.split('\n')
   .filter(line => line.startsWith('terrabase_internal_authentication_requests_total{') && line.includes('credential="' + credential + '"')
     && (credential !== 'caller' || line.includes('caller="journey-bridge-probe"')))
   .reduce((total, line) => total + Number(line.split(' ').at(-1)), 0);
 async function posts() {
-  const response = await fetch('http://127.0.0.1:8180' + path + '/analytics?region=fra', { headers: { authorization } });
+  const response = await fetch('http://127.0.0.1:' + assigned('terrabase_fra') + path + '/analytics?region=fra', { headers: { authorization } });
   assert.equal(response.status, 200);
   const result = await response.json();
   return result.items.flatMap(item => item.series).reduce((total, point) => total + (point.requests.post ?? 0), 0);
@@ -59,29 +60,29 @@ async function sql(caller) {
 try {
   for (const caller of [false, true]) {
     const before = await posts();
-    const sourceBefore = await metrics(9091);
-    const destinationBefore = await metrics(9191);
+    const sourceBefore = await metrics(assigned('metrics'));
+    const destinationBefore = await metrics(assigned('metrics_fra'));
     const response = await sql(caller);
     assert.equal(response.grpc, '0', 'bearer bridge call succeeds, caller=' + caller);
     const packed = response.body.subarray(5);
     const offset = packed[0] === 0xc4 ? 2 : packed[0] === 0xc5 ? 3 : 5;
     assert.deepEqual(JSON.parse(packed.subarray(offset).toString()).results[0].rows, [[291]]);
     assert.equal(await posts() - before, 1, 'forwarded SQL metered in fra');
-    const sourceAfter = await metrics(9091);
-    const destinationAfter = await metrics(9191);
+    const sourceAfter = await metrics(assigned('metrics'));
+    const destinationAfter = await metrics(assigned('metrics_fra'));
     if (caller) assert.equal(count(sourceAfter, 'caller') - count(sourceBefore, 'caller'), 1);
     else assert.ok(count(sourceAfter, 'peer') > count(sourceBefore, 'peer'));
     assert.equal(count(destinationAfter, 'caller_rejected') - count(destinationBefore, 'caller_rejected'), 0);
     console.log('bridge bearer caller=' + caller + ': fra rows=[[291]], fra metered POST +1, outer authentication recorded, rejected caller +0');
   }
-  const before = await metrics(9191);
-  const response = await fetch('http://127.0.0.1:8080' + path + '/sql/execute', {
+  const before = await metrics(assigned('metrics_fra'));
+  const response = await fetch('http://127.0.0.1:' + assigned('terrabase') + path + '/sql/execute', {
     method: 'POST', headers: { authorization, 'content-type': 'application/json', 'X-TerraScale-Caller': 'junk' },
     body: JSON.stringify({ statements: [{ sql: 'SELECT value FROM caller_bridge_rows' }] }),
   });
   assert.equal(response.status, 200);
   assert.deepEqual((await response.json()).results[0].rows, [[291]]);
-  assert.equal(count(await metrics(9191), 'caller_rejected') - count(before, 'caller_rejected'), 0);
+  assert.equal(count(await metrics(assigned('metrics_fra')), 'caller_rejected') - count(before, 'caller_rejected'), 0);
   console.log('forwarded public caller header: fra rows=[[291]], rejected caller +0');
 } finally {
   session.close();

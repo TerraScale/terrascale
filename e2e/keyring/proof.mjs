@@ -5,11 +5,14 @@ import { once } from 'node:events';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import { createServer } from 'node:https';
+import { holdSync } from '../env/ports.mjs';
 import { join, resolve } from 'node:path';
 import { setInterval } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { internal, project } from './operations.mjs';
 
+holdSync({ proxy: 443 }, 'exact');
+const keyringPorts = holdSync({ client: 18380, internal: 18381, postgres: 18382, metrics: 18383 }, 'block').ports;
 const root = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const profile = process.env.E2E_STATE;
 const baseline = resolve(process.env.E2E_KEYRING_BASELINE);
@@ -104,7 +107,8 @@ function node(binary, active, extra = {}, arguments_ = []) {
     TERRABASE_AUTH_ISSUER: 'https://auth.terrascale.tech/terrascale', TERRABASE_AUTH_AUDIENCE: 'https://api.terrascale.tech',
     ...(binary === baseline ? { TERRABASE_MASTER_KEY: master } : { TERRABASE_MASTER_KEYS_FILE: ring }),
     TERRABASE_PEER_SECRET: peer, TERRABASE_DATA_DIRECTORY: data, TERRABASE_MEMORY_BUDGET: '67108864', TERRABASE_STORAGE_THREADS: '1',
-    TERRABASE_PORT: '18380', TERRABASE_INTERNAL_PORT: '18381', TERRABASE_POSTGRES_PORT: '18382', TERRABASE_METRICS_PORT: '18383',
+    TERRABASE_PORT: String(keyringPorts.client), TERRABASE_INTERNAL_PORT: String(keyringPorts.internal), TERRABASE_POSTGRES_PORT: String(keyringPorts.postgres), TERRABASE_METRICS_PORT: String(keyringPorts.metrics),
+    E2E_KEYRING_METRICS_URL: 'http://127.0.0.1:' + keyringPorts.metrics,
     AWS_ENDPOINT_URL_S3: 'https://journey.backups.terrascale.tech', AWS_REGION: 'auto', BUCKET_NAME: 'journey-backups',
     AWS_ACCESS_KEY_ID: access, AWS_SECRET_ACCESS_KEY: secret,
     TERRABASE_SHAPES_ACCESS_KEY_ID: access, TERRABASE_SHAPES_SECRET_ACCESS_KEY: secret, TERRABASE_SHAPES_CDN_API_TOKEN: peer,
@@ -129,10 +133,10 @@ async function until(name, child, condition) {
 }
 async function ready(child) {
   await until('readiness', child, async () => {
-    try { return (await fetch('http://127.0.0.1:18380/readyz')).status === 200; } catch { return false; }
+    try { return (await fetch('http://127.0.0.1:' + keyringPorts.client + '/readyz')).status === 200; } catch { return false; }
   });
 }
-const metrics = async () => (await fetch('http://127.0.0.1:18383/metrics')).text();
+const metrics = async () => (await fetch('http://127.0.0.1:' + keyringPorts.metrics + '/metrics')).text();
 const value = (text, name, label = '') => {
   assert.ok(text.split('\n').some(line => line.startsWith('# TYPE ' + name) && /^[_ ]/.test(line.slice(7 + name.length))), 'metric instrument exists: ' + name);
   const sample = text.split('\n').find(line => line.startsWith(name) && (!label || line.includes(label)));
@@ -146,10 +150,10 @@ try {
   await ready(child);
   await until('origin custody and snapshots', child, async () =>
     (await objects('ts-terrabase-shapes-prod', 'v1/keys/')).length > 0 && (await objects('journey-backups', 'v1/')).some(key => key.includes('/snapshots/')));
-  const scope = await project(peer, 'http://127.0.0.1:18381', 'keyring-proof');
+  const scope = await project(peer, 'http://127.0.0.1:' + keyringPorts.internal, 'keyring-proof');
   const projectPath = '/v1/projects/' + scope.project;
-  const database = await internal(peer, 'http://127.0.0.1:18381', 'POST', projectPath + '/databases', { name: 'keyring-delete' });
-  await internal(peer, 'http://127.0.0.1:18381', 'PUT', projectPath + '/backup-destination', {
+  const database = await internal(peer, 'http://127.0.0.1:' + keyringPorts.internal, 'POST', projectPath + '/databases', { name: 'keyring-delete' });
+  await internal(peer, 'http://127.0.0.1:' + keyringPorts.internal, 'PUT', projectPath + '/backup-destination', {
     endpoint: 'https://journey.backups.terrascale.tech', region: 'auto', bucket: 'journey-backups',
     accessKeyId: access, secretKey: secret, mode: 'both',
   });
@@ -179,14 +183,14 @@ try {
   const snapshotReads = passRequests.filter(request => request.method === 'GET' && request.range === 'bytes=0-2097151');
   assert.equal(rootListings.length, 1, 'only the independent shred sweep lists the custody root');
   assert.equal(snapshotReads.length, 0, 'single-key inventory made no snapshot reads');
-  await internal(peer, 'http://127.0.0.1:18381', 'PUT', '/v1/management/organizations/' + scope.organization + '/plan', { plan: 'pro' });
-  const created = await internal(peer, 'http://127.0.0.1:18381', 'POST', projectPath + '/databases', { name: 'created-by-upgrade' });
+  await internal(peer, 'http://127.0.0.1:' + keyringPorts.internal, 'PUT', '/v1/management/organizations/' + scope.organization + '/plan', { plan: 'pro' });
+  const created = await internal(peer, 'http://127.0.0.1:' + keyringPorts.internal, 'POST', projectPath + '/databases', { name: 'created-by-upgrade' });
   const createdKey = join(data, scope.organization, scope.project, created.id + '.db.key');
   const createdBytes = readFileSync(createdKey);
   assert.equal(createdBytes.toString('ascii').split('\n')[0], 'TERRABASE-DB-KEY-1');
   assert.equal(Buffer.from(createdBytes.toString('ascii').split('\n')[1], 'base64').length, 60);
   const sqlPath = projectPath + '/databases/' + created.id + '/sql/execute';
-  await internal(peer, 'http://127.0.0.1:18381', 'POST', sqlPath, { statements: [{ sql: 'CREATE TABLE compatibility(value INTEGER)' }, { sql: 'INSERT INTO compatibility VALUES(42)' }, { sql: 'CREATE TABLE keyring_startup(value INTEGER)' }, { sql: 'INSERT INTO keyring_startup VALUES(42)' }] }, false);
+  await internal(peer, 'http://127.0.0.1:' + keyringPorts.internal, 'POST', sqlPath, { statements: [{ sql: 'CREATE TABLE compatibility(value INTEGER)' }, { sql: 'INSERT INTO compatibility VALUES(42)' }, { sql: 'CREATE TABLE keyring_startup(value INTEGER)' }, { sql: 'INSERT INTO keyring_startup VALUES(42)' }] }, false);
   await until('new custody wrapper', child, async () =>
     (await objects('ts-terrabase-shapes-prod', 'v1/keys/')).some(path => path.includes('/' + created.id + '/')));
   const createdCustody = (await objects('ts-terrabase-shapes-prod', 'v1/keys/')).filter(path => path.includes('/' + created.id + '/'));
@@ -208,7 +212,7 @@ try {
   console.log('one key: maintenance skipped; extra custody root listings=0 (shred sweep=1), snapshot range reads=0; maintenance wrapped=-1 last_complete=0; existing wrappers byte-identical');
   child = node(baseline, 'k0');
   await ready(child);
-  const opened = await internal(peer, 'http://127.0.0.1:18381', 'POST', sqlPath, { statements: [{ sql: 'SELECT value FROM compatibility' }] }, false);
+  const opened = await internal(peer, 'http://127.0.0.1:' + keyringPorts.internal, 'POST', sqlPath, { statements: [{ sql: 'SELECT value FROM compatibility' }] }, false);
   assert.deepEqual(opened.results[0].rows, [[42]]);
   await stop(child);
   assert.equal(readFileSync(createdKey).equals(createdBytes), true, "new single-key sidecar byte identity");
@@ -250,7 +254,7 @@ try {
   await stop(child);
   child = node(candidate, 'k1', disabledBackups);
   await ready(child);
-  await internal(peer, 'http://127.0.0.1:18381', 'PUT', '/v1/management/organizations/' + scope.organization + '/plan', { plan: 'team' });
+  await internal(peer, 'http://127.0.0.1:' + keyringPorts.internal, 'PUT', '/v1/management/organizations/' + scope.organization + '/plan', { plan: 'team' });
   const retained = value(await metrics(), 'terrabase_keys_local_wrapped', 'key_id="k0"');
   assert.ok(retained > 0, 'disabled backups retain unshipped old-key images across a catalog write: old_key=' + retained);
   console.log('retained images: backups disabled old_key=' + retained);
@@ -292,7 +296,7 @@ try {
   const unrelatedPromote = createdKey.replace('.db.key', '.promote.db.key');
   writeFileSync(unrelatedPromote, readFileSync(createdKey), { mode: 0o600 });
   const deletedKey = readFileSync(databaseKey);
-  await internal(peer, 'http://127.0.0.1:18381', 'DELETE', projectPath + '/databases/' + database.id);
+  await internal(peer, 'http://127.0.0.1:' + keyringPorts.internal, 'DELETE', projectPath + '/databases/' + database.id);
   assert.equal(existsSync(databaseKey), false);
   assert.equal(existsSync(databaseKey + '.rewrapping'), false);
   assert.equal(existsSync(promoteKey), false);

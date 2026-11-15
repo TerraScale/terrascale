@@ -16,6 +16,8 @@ import tempfile
 import threading
 import time
 
+import ports as e2e_ports
+
 cases = {}
 
 
@@ -38,11 +40,8 @@ baseline = pathlib.Path(sys.argv[1]).resolve()
 state = pathlib.Path(tempfile.mkdtemp(prefix="engine-crash-"))
 capacity = shutil.disk_usage(state)
 assert capacity.used + 24_000_000_000 < capacity.total * 0.8
-ports = []
-for _ in range(4):
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        ports.append(sock.getsockname()[1])
+_ports = e2e_ports.Hold({"client": 0, "internal": 0, "metrics": 0, "postgres": 0})
+ports = [_ports.ports[name] for name in ("client", "internal", "metrics", "postgres")]
 peer = secrets.token_hex(32)
 headers = state / "headers"
 headers.write_text("X-TerraBase-Peer-Credential: " + peer + "\n")

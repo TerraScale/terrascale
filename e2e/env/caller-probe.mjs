@@ -5,10 +5,11 @@ import { generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { connect } from 'node:http2';
 import { join } from 'node:path';
+import { port } from './ports.mjs';
 
 const state = process.argv[2];
-const origin = process.argv[3] ?? 'http://127.0.0.1:8081';
-const metrics = process.argv[4] ?? 'http://127.0.0.1:9091/metrics';
+const origin = process.argv[3] ?? 'http://127.0.0.1:' + port('internal');
+const metrics = process.argv[4] ?? 'http://127.0.0.1:' + port('metrics') + '/metrics';
 const key = readFileSync(join(state, 'caller-key.pem'));
 const probeKey = readFileSync(join(state, 'caller-probe-key.pem'));
 const peer = readFileSync(join(state, 'secrets'), 'utf8').split('\n')[0];

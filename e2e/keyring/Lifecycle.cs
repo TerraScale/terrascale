@@ -128,7 +128,7 @@ internal static class Lifecycle
                     new Dictionary<string, object?>(), 10, 1024, TimeSpan.FromSeconds(5)), cancellationToken);
                 Require(result.Rows is [var row] && row is [long value] && value == 42, "tenant with partial temporary did not serve");
                 using var client = new HttpClient();
-                var metrics = await client.GetStringAsync("http://127.0.0.1:18383/metrics", cancellationToken);
+                var metrics = await client.GetStringAsync(Environment.GetEnvironmentVariable("E2E_KEYRING_METRICS_URL") ?? throw new InvalidOperationException("E2E_KEYRING_METRICS_URL"), cancellationToken);
                 Require(metrics.Split('\n').Any(line => line.StartsWith("terrabase_keys_local_wrapped", StringComparison.Ordinal)
                     && line.Contains("key_id=\"k1\"", StringComparison.Ordinal) && line.EndsWith(" -1", StringComparison.Ordinal)),
                     "unauthentic temporary did not make its key unknown");
@@ -155,7 +155,7 @@ internal static class Lifecycle
                         new Dictionary<string, object?>(), 10, 1024, TimeSpan.FromSeconds(5)), cancellationToken);
                     Require(result.Rows is [var row] && row is [long value] && value == 42, "healthy row missing");
                     using var metricsClient = new HttpClient();
-                    var metrics = await metricsClient.GetStringAsync("http://127.0.0.1:18383/metrics", cancellationToken);
+                    var metrics = await metricsClient.GetStringAsync(Environment.GetEnvironmentVariable("E2E_KEYRING_METRICS_URL") ?? throw new InvalidOperationException("E2E_KEYRING_METRICS_URL"), cancellationToken);
                     Require(metrics.Split('\n').Any(line => line.StartsWith("terrabase_keys_refused", StringComparison.Ordinal)
                         && line.EndsWith(" 1", StringComparison.Ordinal)), "key refusal was not counted");
                     if (root.TryGetProperty("unreadable", out _))
@@ -209,7 +209,7 @@ internal static class Lifecycle
             http.DefaultRequestVersion = new Version(2, 0);
             http.DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact;
             http.DefaultRequestHeaders.Add("x-terrabase-peer-credential", Environment.GetEnvironmentVariable("TERRABASE_PEER_SECRET"));
-            var source = new Uri("http://127.0.0.1:18481/v1/sync/organizations/" + database.OrganizationId
+            var source = new Uri((Environment.GetEnvironmentVariable("E2E_KEYRING_SYNC_URL") ?? throw new InvalidOperationException("E2E_KEYRING_SYNC_URL")) + "/v1/sync/organizations/" + database.OrganizationId
                 + "/projects/" + database.ProjectId + "/databases/" + database.DatabaseId);
             await replicas.OpenAsync(database, source, http, cancellationToken);
             if (mode.ValueKind == JsonValueKind.String && mode.GetString() == "recovered")

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
+import { port } from './ports.mjs';
 
 const digest = createHash('sha1').update('TerraScale-journey-breached-2026!').digest('hex').toUpperCase();
 const calls = [];
@@ -35,4 +36,4 @@ createServer(async (request, response) => {
       && token === 'XXXX.DUMMY.TOKEN.XXXX' && !!form.get('remoteip') }));
   }
   return send(400, '{"error":"unexpected_attack_protection_request"}');
-}).listen(8030, '127.0.0.1');
+}).listen(port('attack'), '127.0.0.1');

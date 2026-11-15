@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { port } from './ports.mjs';
 import { createHash, randomBytes } from 'node:crypto';
 
 const codes = new Map();
@@ -60,4 +61,4 @@ createServer(async (request, response) => {
     return json(response, 200, { id: issued.subject, email: issued.email, email_verified: issued.verified });
   }
   return json(response, 404, { error: 'not_found' });
-}).listen(8031, '127.0.0.1');
+}).listen(port('oauth'), '127.0.0.1');

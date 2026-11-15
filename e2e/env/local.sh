@@ -3,6 +3,7 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 e2e=$(dirname "$here")
 repo=$(dirname "$e2e")
+export DOTNET_PROCESSOR_COUNT="${DOTNET_PROCESSOR_COUNT:-4}"
 export E2E_STATE=${E2E_STATE:-$e2e/.state}
 export E2E_TOOLS=${E2E_TOOLS:-${XDG_CACHE_HOME:-$HOME/.cache}/terrascale-e2e}
 export E2E_BUILD=${E2E_BUILD:-$E2E_STATE/build}

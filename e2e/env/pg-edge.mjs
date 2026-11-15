@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { connect, createServer } from 'node:net';
+import { port } from './ports.mjs';
 import { TLSSocket } from 'node:tls';
 
 const credentials = { key: readFileSync(process.env.E2E_EDGE_KEY), cert: readFileSync(process.env.E2E_EDGE_CERT) };
@@ -23,4 +24,4 @@ createServer((client) => {
     });
     secure.on('error', () => secure.destroy());
   });
-}).listen(5432, '127.0.0.1');
+}).listen(port('postgres_edge'), '127.0.0.1');

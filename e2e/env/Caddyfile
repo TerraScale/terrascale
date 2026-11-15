@@ -11,7 +11,7 @@
 
 https://dash.terrascale.tech, https://mcp.terrascale.tech, https://platform.terrascale.tech {
 	import edge
-	reverse_proxy 127.0.0.1:8085 {
+	reverse_proxy 127.0.0.1:{$E2E_PORT_dashboard} {
 		flush_interval -1
 	}
 }
@@ -22,10 +22,10 @@ https://auth.terrascale.tech {
 		method POST
 		path /v1/terrascale/organizations
 	}
-	reverse_proxy @organizationCreate 127.0.0.1:8027 {
+	reverse_proxy @organizationCreate 127.0.0.1:{$E2E_PORT_stripe} {
 		header_up X-Forwarded-For {remote_host}
 	}
-	reverse_proxy 127.0.0.1:8090 {
+	reverse_proxy 127.0.0.1:{$E2E_PORT_auth} {
 		header_up X-Forwarded-For {remote_host}
 		flush_interval -1
 	}
@@ -33,19 +33,19 @@ https://auth.terrascale.tech {
 
 https://api.terrascale.tech, https://gru.api.terrascale.tech {
 	import edge
-	reverse_proxy 127.0.0.1:8080 {
+	reverse_proxy 127.0.0.1:{$E2E_PORT_terrabase} {
 		flush_interval -1
 	}
 }
 
 https://api.cloudflare.com {
 	import edge
-	reverse_proxy 127.0.0.1:8026
+	reverse_proxy 127.0.0.1:{$E2E_PORT_cloudflare}
 }
 
 https://journey.r2.cloudflarestorage.com {
 	import edge
-	reverse_proxy 127.0.0.1:8028
+	reverse_proxy 127.0.0.1:{$E2E_PORT_r2}
 }
 
 https://status.terrascale.tech {
@@ -55,41 +55,41 @@ https://status.terrascale.tech {
 
 https://api.stripe.com, https://checkout.stripe.com, https://billing.stripe.com {
 	import edge
-	reverse_proxy 127.0.0.1:8027
+	reverse_proxy 127.0.0.1:{$E2E_PORT_stripe}
 }
 
 https://fra.api.terrascale.tech {
 	import edge
-	reverse_proxy 127.0.0.1:8180 {
+	reverse_proxy 127.0.0.1:{$E2E_PORT_terrabase_fra} {
 		flush_interval -1
 	}
 }
 
 https://journey.backups.terrascale.tech, https://6cd3f3639e928077593d9b470765efeb.r2.cloudflarestorage.com, https://shapes-ts-terrabase-shapes-prod.terrascale.tech {
 	import edge
-	reverse_proxy 127.0.0.1:8028
+	reverse_proxy 127.0.0.1:{$E2E_PORT_r2}
 }
 
 https://hooks.journey.terrascale.tech {
 	import edge
-	reverse_proxy 127.0.0.1:8029
+	reverse_proxy 127.0.0.1:{$E2E_PORT_webhook}
 }
 
 https://api.pwnedpasswords.com, https://challenges.cloudflare.com {
 	import edge
-	reverse_proxy 127.0.0.1:8030
+	reverse_proxy 127.0.0.1:{$E2E_PORT_attack}
 }
 
 https://cloudflare-dns.com {
 	import edge
-	reverse_proxy 127.0.0.1:8032
+	reverse_proxy 127.0.0.1:{$E2E_PORT_dns}
 }
 https://identity.journey.terrascale.tech {
 	import edge
-	reverse_proxy 127.0.0.1:8031
+	reverse_proxy 127.0.0.1:{$E2E_PORT_oauth}
 }
 
 https://login.journey-idp.example {
 	import edge
-	reverse_proxy 127.0.0.1:8033
+	reverse_proxy 127.0.0.1:{$E2E_PORT_sso}
 }

@@ -1,5 +1,6 @@
 import { createHash, generateKeyPairSync, randomBytes, sign } from 'node:crypto';
 import { createServer } from 'node:http';
+import { port } from './ports.mjs';
 
 const issuer = 'https://login.journey-idp.example/realms/journey';
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -52,4 +53,4 @@ createServer(async (request, response) => {
     return send(200, { id_token: payload + '.' + sign('RSA-SHA256', Buffer.from(payload), privateKey).toString('base64url') });
   }
   return send(404, {});
-}).listen(8033, '127.0.0.1');
+}).listen(port('sso'), '127.0.0.1');

@@ -10,13 +10,19 @@ import { expect, type APIRequestContext, type TestInfo } from '@playwright/test'
 import { saveSecret } from '../support/state';
 import { e2eRoot, stateDir } from '../support/stack';
 import { Nats, putKey, seal } from '../replication/push.mjs';
+import { holdSync } from '../support/ports';
 
 export type Node = { name: string; region: string; address: string; port: number; metrics: number; postgres: number };
 export type Answer = { status: number; body: string; retryAfter?: string };
 export type StandIn = { asked: () => number; answeredAt: () => number; close: () => Promise<void> };
 
-export const portOffset = Number(process.env.TEST_PARALLEL_INDEX ?? '0') * 100;
-export const internalPort = 21281 + portOffset;
+const clockPorts = holdSync({
+  anchor: 21280, internal: 21281, broker: 21285, b: 21290, c: 21300, p: 21310, k: 21320, h: 21330, w: 21340, d: 21350,
+  metricsA: 22280, metricsB: 22290, metricsC: 22300, metricsP: 22310, metricsK: 22320, metricsH: 22330, metricsW: 22340, metricsD: 22350,
+  pgA: 19280, pgB: 19290, pgC: 19300, pgP: 19310, pgK: 19320, pgH: 19330, pgW: 19340, pgD: 19350,
+}, 'block').ports;
+export const portOffset = clockPorts.anchor - 21280;
+export const internalPort = clockPorts.internal;
 export const run = randomBytes(3).toString('hex');
 export const lone = (letter: string, octet: number, port: number, partners: 'near' | 'far'): Record<'node' | 'first' | 'second', Node> => ({
   node: { name: `clock-${letter}-${run}`, region: `gru${letter}-${run}`, address: `127.0.0.${octet}`, port: port + portOffset, metrics: port + 1000 + portOffset, postgres: port - 2000 + portOffset },

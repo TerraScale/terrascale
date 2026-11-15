@@ -4,11 +4,12 @@ import { connect } from 'node:http2';
 import { join } from 'node:path';
 import { readMetrics } from './caller-metrics.mjs';
 import { rpc } from './caller-rpc.mjs';
+import { port } from './ports.mjs';
 
 const state = process.argv[2];
 const peer = readFileSync(join(state, 'secrets'), 'utf8').split('\n')[0];
-const session = connect('http://127.0.0.1:8081');
-const metrics = 'http://127.0.0.1:9091/metrics';
+const session = connect('http://127.0.0.1:' + port('internal'));
+const metrics = 'http://127.0.0.1:' + port('metrics') + '/metrics';
 const count = text => text.split('\n')
   .filter(line => line.startsWith('terrabase_internal_authentication_requests_total{') && line.includes('credential="peer"') && line.includes('caller="peer"'))
   .reduce((total, line) => total + Number(line.split(' ').at(-1)), 0);

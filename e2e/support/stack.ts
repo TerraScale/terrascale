@@ -7,12 +7,24 @@ if (target !== 'local' && target !== 'production') throw new Error(`E2E_TARGET i
 export const production = target === 'production';
 export const e2eRoot = join(__dirname, '..');
 export const stateDir = process.env.E2E_STATE ?? join(e2eRoot, '.state');
+
+function localPort(name: string, canonical: number): number {
+  try {
+    const parsed = JSON.parse(readFileSync(join(stateDir, 'ports.json'), 'utf8')) as Record<string, number>;
+    const value = parsed[name];
+    if (typeof value === 'number') return value;
+  } catch (error) {
+    if ((error as { code?: string }).code !== 'ENOENT') throw error;
+  }
+  return canonical;
+}
+
 export const dash = 'https://dash.terrascale.tech';
 export const auth = 'https://auth.terrascale.tech';
-export const mailpit = 'http://127.0.0.1:8025';
-export const cloudflareSink = 'http://127.0.0.1:8026';
-export const stripeStandIn = 'http://127.0.0.1:8027';
-export const r2StandIn = 'http://127.0.0.1:8028';
+export const mailpit = `http://127.0.0.1:${localPort('mailpit', 8025)}`;
+export const cloudflareSink = `http://127.0.0.1:${localPort('cloudflare', 8026)}`;
+export const stripeStandIn = `http://127.0.0.1:${localPort('stripe', 8027)}`;
+export const r2StandIn = `http://127.0.0.1:${localPort('r2', 8028)}`;
 export const mailWait = production ? 120_000 : 30_000;
 export const browserHome = production ? join(stateDir, 'browser-home') : join(stateDir, 'pki', 'browser-home');
 export const sessionFile = (setup: string) => join(stateDir, `${setup}.session.json`);

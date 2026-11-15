@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { port } from './ports.mjs';
 
 const records = new Map();
 const queries = [];
@@ -26,4 +27,4 @@ createServer(async (request, response) => {
     response.statusCode = 404;
     response.end('{}');
   }
-}).listen(8032, '127.0.0.1');
+}).listen(port('dns'), '127.0.0.1');
