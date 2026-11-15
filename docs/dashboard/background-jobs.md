@@ -39,7 +39,7 @@ SMTP do not promise durable idempotency; owner email keeps its existing unknown-
 semantics.
 
 The journey starts independent dashboard application processes against real TerraBase
-state isolated from the stack's scheduled dashboard worker. SQL activity feeds the
+state isolated from the stack's scheduled dashboard worker. SQL activity reaches the
 production log source; the worker persists its range before sending. The journey kills
 that sender after receiver acceptance and proves identical recovery, a real stale
 Claim.SaveAsync refusal, skewed-clock bounds, a lost real renewal reply, read-only idle

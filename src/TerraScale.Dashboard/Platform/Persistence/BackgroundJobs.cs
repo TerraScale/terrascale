@@ -122,6 +122,10 @@ public sealed partial class BackgroundJobs(IDbContextFactory<DashboardDbContext>
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
+        finally
+        {
+            if (!stoppingToken.IsCancellationRequested) { await active.CancelAsync(); }
+        }
     }
 
     [LoggerMessage(71, LogLevel.Warning, "Background job {JobId} lease renewal is unavailable ({ErrorType}); retaining the last proven lease.")]
