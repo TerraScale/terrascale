@@ -76,21 +76,35 @@ test('sjc automatically records the same verified restore evidence as the other 
   }
 });
 
-test('the recovery-point age keeps rising while the backup bucket is unreachable', async () => {
+test('the recovery-point age keeps rising while the backup bucket is unreachable, also across a writer restart', async () => {
   const writer = (await topology()).find(node => node.region === 'gru')!;
   await expect.poll(() => probe(writer, '/backupz'), { message: 'the writer ships every file before the outage' }).toBe(200);
-  const before = await metric(writer, 'terrabase_backup_recovery_point_age_seconds', 'region="gru"');
   await backupStore('down');
+  let outage = true;
   const down = Date.now();
-  try {
+  const rising = async (above: number, message: string) => {
+    let age = 0;
     await expect.poll(async () => {
       const elapsed = (Date.now() - down) / 1000;
-      const age = await metric(writer, 'terrabase_backup_recovery_point_age_seconds', 'region="gru"');
-      return elapsed >= 3 && age >= elapsed && age > before;
-    }, { message: 'no recovery point newer than the outage is proven, so the age covers the whole outage' }).toBe(true);
+      age = await metric(writer, 'terrabase_backup_recovery_point_age_seconds', 'region="gru"');
+      return Number.isFinite(age) && age > above && age >= elapsed;
+    }, { message }).toBe(true);
+    return age;
+  };
+  try {
+    const first = await rising(0, 'the age is a finite number covering the outage');
+    const second = await rising(first, 'the age rises between two observations');
+    const restart = restartAfterKill(writer, true, undefined, async () => {
+      expect(await probe(writer, '/readyz')).toBe(503);
+      await rising(second, 'the restarted writer reports a finite age that still covers the outage before the bucket is back');
+      await backupStore('up');
+      outage = false;
+    });
+    await restart();
   } finally {
-    await backupStore('up');
+    if (outage) await backupStore('up');
   }
+  await expect.poll(() => probe(writer, '/readyz'), { message: 'the restarted writer is ready' }).toBe(200);
   await expect.poll(() => probe(writer, '/backupz'), { message: 'the writer ships again once the bucket is back' }).toBe(200);
 });
 

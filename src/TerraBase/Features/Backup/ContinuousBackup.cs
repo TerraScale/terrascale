@@ -369,6 +369,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var bulk = StorageWork.Bulk();
+        await ObserveRestartRecoveryPointAsync(stoppingToken).ConfigureAwait(false);
         var observing = ObserveLagAsync(stoppingToken);
         try
         {

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
+using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Management.Backups;
@@ -23,6 +24,7 @@ internal sealed partial class ContinuousBackup
 {
     private static readonly TimeSpan RetentionInterval = TimeSpan.FromHours(1);
     private static readonly TimeSpan SizeInterval = TimeSpan.FromDays(1);
+    private static readonly TimeSpan DrillEvidenceRetention = TimeSpan.FromDays(14);
     private static readonly TimeSpan BucketSnapshotInterval = TimeSpan.FromDays(1);
     private static readonly TimeSpan BucketSnapshotRetention = TimeSpan.FromDays(14);
     private static readonly TimeSpan BaselineSlack = TimeSpan.FromDays(1);
@@ -453,9 +455,11 @@ internal sealed partial class ContinuousBackup
                 if (drill is not null)
                 {
                     var history = file.Database is null ? "backup_drills" : $"databases/{file.Database.DatabaseId}/backup_drills";
-                    var date = drill.At.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-                    await transaction.PutAsync(history, $"{_region}/{_node}/{drill.Destination}/{date}",
+                    var evidence = $"{_region}/{_node}/{drill.Destination}/";
+                    await transaction.PutAsync(history, evidence + EvidenceDate(drill.At),
                         JsonSerializer.SerializeToUtf8Bytes(drill, BackupJsonContext.Default.BackupDrill), cancellationToken).ConfigureAwait(false);
+                    await PruneDrillEvidenceAsync(transaction, history, evidence, evidence + EvidenceDate(drill.At - DrillEvidenceRetention), cancellationToken)
+                        .ConfigureAwait(false);
                 }
                 await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
                 if (drill is not null)
@@ -471,6 +475,29 @@ internal sealed partial class ContinuousBackup
         finally
         {
             file.RecordGate.Release();
+        }
+    }
+
+    private static string EvidenceDate(DateTimeOffset at) => at.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+    private static async Task PruneDrillEvidenceAsync(IStorageTransaction transaction, string history, string evidence, string oldestKept,
+        CancellationToken cancellationToken)
+    {
+        var after = evidence;
+        while (true)
+        {
+            var page = await transaction.ListAsync(history, after, 32, 1 << 20, cancellationToken).ConfigureAwait(false);
+            var expired = page.Records.TakeWhile(record => record.Id.StartsWith(evidence, StringComparison.Ordinal)
+                && string.CompareOrdinal(record.Id, oldestKept) < 0).ToList();
+            foreach (var record in expired)
+            {
+                await transaction.DeleteAsync(history, record.Id, cancellationToken).ConfigureAwait(false);
+            }
+            if (expired.Count < page.Records.Count || !page.HasMore)
+            {
+                return;
+            }
+            after = expired[^1].Id;
         }
     }
 }
