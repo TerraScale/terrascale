@@ -214,6 +214,12 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
             loaded.Root.Version = AccountService.NewId();
         }
 
+        foreach (var removed in db.ChangeTracker.Entries<ProjectDatabaseRow>().Where(entry => entry.State == EntityState.Deleted).Select(entry => entry.Entity).ToArray())
+        {
+            var prefix = "log-drain/" + removed.ProjectId + "/";
+            var suffix = "/" + removed.Id;
+            db.BackgroundJobs.RemoveRange(await db.BackgroundJobs.Where(row => row.Id.StartsWith(prefix) && row.Id.EndsWith(suffix)).ToListAsync(cancellationToken));
+        }
         await RowSync.ReplaceAsync(db, cancellationToken);
     }
 

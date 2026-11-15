@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet.TerraBase;
 
@@ -15,7 +16,7 @@ namespace TerraScale.Dashboard.Features.Logs
     }
 
     public sealed partial class LogDrains(IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, ILogDrainSource source, ICustomerDelivery delivery, IDashboardIdentity identity,
-        TimeProvider clock, ILogger<LogDrains> logger, BackgroundJobs jobs)
+        TimeProvider clock, ILogger<LogDrains> logger, BackgroundJobs jobs, BillingSchemaGate gate)
     {
         private static readonly string[] ReservedHeaders = ["host", "content-length", "content-type", "transfer-encoding", "connection", "te", "upgrade", "expect", "cookie", "idempotency-key", "x-terrascale-delivery"];
 
@@ -106,6 +107,7 @@ namespace TerraScale.Dashboard.Features.Logs
 
         public async Task RunOnceAsync(CancellationToken cancellationToken)
         {
+            if (!await gate.AllowsAsync(cancellationToken)) { return; }
             List<string> drains;
             await using (var db = await storage.CreateDbContextAsync(cancellationToken))
             {
@@ -151,7 +153,7 @@ namespace TerraScale.Dashboard.Features.Logs
                 if (snapshot is not null && snapshot.State.LeaseUntil > snapshot.Now) { continue; }
                 var preparedCursor = drain.Cursors.FirstOrDefault(row => row.DatabaseId == database.Id)?.Cursor ?? Start(Utc(drain.CreatedAt));
                 var batch = snapshot?.State.Payload is null ? await source.ReadAsync(drain.ProjectId, database.Id, preparedCursor, cancellationToken) : null;
-                if (batch is { Items.Count: 0, Gap: false }) { continue; }
+                if (batch is { Items.Count: 0 } && (!batch.Gap || snapshot?.State.Cursor == "gap/" + preparedCursor)) { continue; }
                 await jobs.RunAsync(jobId, TimeSpan.Zero, async (claim, token) =>
                 {
                     var current = await claim.Database.LogDrains.Include(row => row.Cursors)
@@ -169,7 +171,15 @@ namespace TerraScale.Dashboard.Features.Logs
                     {
                         if (cursor != preparedCursor || batch is null) { return; }
                         if (batch.Gap) { current.LastGapAt = clock.GetUtcNow().UtcDateTime; }
-                        if (batch.NextCursor == cursor) { return; }
+                        if (batch.Items.Count == 0 || batch.NextCursor == cursor)
+                        {
+                            if (batch.Gap)
+                            {
+                                state.Cursor = "gap/" + cursor;
+                                await claim.SaveAsync(token);
+                            }
+                            return;
+                        }
                         state.NextCursor = batch.NextCursor ?? throw new IOException("Log source returned no next cursor.");
                         state.Payload = Otlp(current.ProjectId, database, batch.Items);
                         state.DeliveryId = AccountService.NewId();

@@ -125,23 +125,30 @@ test('a new owner onboards on Free, upgrades to Pro through Stripe Checkout, and
   });
 });
 
-test('dashboard background work is claimed across instances and recovers accepted log deliveries', async () => {
+async function backgroundCase(kind: string) {
   const build = process.env.E2E_BUILD;
   if (!build) throw new Error('E2E_BUILD is required for background delivery proof');
-  const result = await promisify(execFile)('dotnet', [join(build, 'billing', 'BillingJourney.dll'), 'background', join(stateDir, 'paid.journey.json')], { env: process.env });
-  const lines = result.stdout.split('\n').filter(line => line.startsWith('background journey:'));
-  expect(lines).toHaveLength(2);
-  console.log(lines.join('\n'));
-});
+  const result = await promisify(execFile)('dotnet', [join(build, 'billing', 'BillingJourney.dll'), 'background-case', kind, join(stateDir, 'paid.journey.json')], { env: process.env });
+  return result.stdout;
+}
 
-test('dashboard lease fences survive storage faults and idle work remains read-only', async () => {
-  const build = process.env.E2E_BUILD;
-  if (!build) throw new Error('E2E_BUILD is required for lease and idle-work proof');
-  const result = await promisify(execFile)('dotnet', [join(build, 'billing', 'BillingJourney.dll'), 'background-claims', join(stateDir, 'paid.journey.json')], { env: process.env });
-  const lines = result.stdout.split('\n').filter(line => /^background (lease|calls|transport):/.test(line));
-  expect(lines).toHaveLength(3);
-  console.log(lines.join('\n'));
-});
+for (const [kind, name] of [
+  ['crash', 'persisted log payload replays after a crash following receiver acceptance'],
+  ['alert', 'one alert sends one signed delivery and one owner notification across dashboards'],
+  ['quiet', 'an old quiet drain records its unchanged-cursor gap once without idle claim writes'],
+  ['contention', 'dashboard claim contention skips a live owner and releases callbacks without saves'],
+  ['stale', 'a stale dashboard owner fails its real checkpoint save after database-clock expiry'],
+  ['skew', 'forward and backward dashboard clocks cannot steal or extend database-clock leases'],
+  ['renewal', 'a lost renewal reply preserves work inside the last proven lease'],
+  ['plans', 'settled plan requests and idle reconciliation passes write no claims'],
+  ['gate', 'an unknown dashboard schema idles nonbilling background workers'],
+]) {
+  test(`dashboard background: ${name}`, async () => {
+    const output = await backgroundCase(kind);
+    expect(output.split('\n')).toContain(`background case: ${kind}`);
+    console.log(output.split('\n').filter(line => line.startsWith('background ')).join('\n'));
+  });
+}
 
 test('paid owner billing recovery, UTC deadline and subscription tax policy', async ({ page, context, audit }) => {
   await context.addCookies(JSON.parse(readFileSync(ownerSession(), 'utf8')).cookies);
@@ -267,8 +274,19 @@ test('paid owner billing recovery, UTC deadline and subscription tax policy', as
   console.log('billing payment journey: UTC deadline; duplicate and late failure never extend grace; paid invoice failure never starts grace; tax transport failure preserves restored entitlement; webhook replay acknowledged');
   await saveSession(context);
 });
+
+test('dashboard background: a quiet drain immediately ships its next settled batch and removes deleted database claims', async () => {
+  await expect.poll(async () => (await backgroundCase('quiet-ready')).trim(), { message: 'the production request-log source exposes the newly settled SQL event' }).toBe('ready');
+  expect((await backgroundCase('quiet-next')).split('\n')).toContain('background case: quiet-next');
 });
 
+test('dashboard background: idle drains write no claims and invalid URLs record No response', async () => {
+  const output = await backgroundCase('idle');
+  expect(output.split('\n')).toContain('background case: idle');
+  console.log(output.split('\n').filter(line => line.startsWith('background ')).join('\n'));
+});
+
+});
 
 async function organizationOwner(page: Page, audit: import('../support/audit').Audit) {
   const run = randomBytes(4).toString('hex');

@@ -2,7 +2,7 @@
 
 Every region runs the same workers. The dashboard stores claims in background_jobs
 in its TerraBase database. Acquisition is one conditional upsert: the database clock
-must show both the lease and the next-run deadline expired. A new owner and checkpoint
+must show an expired lease and due work. A new owner and checkpoint
 fence the previous owner. Renewal is one conditional update requiring the current
 owner and an unexpired lease. Both operations calculate the two-minute lease in SQL.
 Completion calculates the next run in SQL, bounded to one day from database time;
@@ -12,12 +12,12 @@ process cannot take a live claim or extend its lease or schedule.
 Renewal runs every 20 seconds. A transient storage error retains the last proven
 lease, logs the failure, and leaves current work running. Monotonic elapsed time and
 a bounded renewal request budget ensure work is canceled before that proof expires.
-A changed owner cancels work immediately. Every checkpoint updates its concurrency
+A changed owner cancels work immediately. A callback that returns without saving also releases its lease; deleting the claimed row completes without a release write. Every checkpoint updates its concurrency
 token in the same EF Core transaction as the corresponding business changes.
 
 | Job | Previous risk | Coordination |
 | --- | --- | --- |
-| Log drains | Instances sent a range before saving a cursor; interrupted sends had no stable identity. | Read the source first; empty ranges without a gap do not claim or write. A claim stores source bytes, delivery ID and next cursor before sending. Idempotency-Key and X-TerraScale-Delivery preserve that ID. Cursor and completion commit together. Transport/URL errors record No response with status zero. Old revisions and deleted projects remove retained claims. |
+| Log drains | Instances sent a range before saving a cursor; interrupted sends had no stable identity. | Read the source first; empty ranges without a new gap do not claim or write. An empty retention gap records LastGapAt and its observed cursor once, even when the source cursor cannot advance. The next nonempty batch can claim immediately. A claim stores source bytes, delivery ID and next cursor before sending. Idempotency-Key and X-TerraScale-Delivery preserve that ID. Cursor and completion commit together. Transport/URL errors record No response with status zero. Old revisions, deleted projects and individually removed databases remove retained claims. |
 | Alerts | Instances evaluated and delivered the same pending events. | Read-only evaluation identifies changes or pending events before claiming the project. Checkpoint observations fence stale evaluations. Stored webhook bytes and event IDs survive interrupted delivery. Keep ten events per rule, including a currently claimed event. |
 | Allowance notifications | Instances sent the same pending allowance before changing its status. | Claim each pending allowance before sending and fence completion. Auth retains its existing owner-delivery deduplication key. Removed allowances also remove their claims. |
 | Plan reconciliation | Each instance reconciled and cached publication attempts independently. | A read-only pass checks receipts, checkouts, grace deadlines and persisted publication state before claiming work. Publication reads persisted state before claiming, stores failure counts and exponential backoff, and writes nothing on a settled view. Claim failures use the optional publisher error boundary. Onboarding uses the existing idempotent organization setter without failing on claim contention. |
@@ -38,7 +38,7 @@ can repeat an HTTP send with the same key and bytes. Arbitrary OTLP endpoints an
 SMTP do not promise durable idempotency; owner email keeps its existing unknown-outcome
 semantics.
 
-The journey starts independent dashboard application processes against real TerraBase
+Focused journeys start minimal hosts of the production dashboard background services in independent processes against real TerraBase
 state isolated from the stack's scheduled dashboard worker. SQL activity reaches the
 production log source; the worker persists its range before sending. The journey kills
 that sender after receiver acceptance and proves identical recovery, a real stale
@@ -47,4 +47,9 @@ passes, one alert webhook and one owner email. It adds no production hooks, slee
 retries, raised timeouts or weakened assertions.
 
 Rolling back leaves billing jobs idle through BillingSchemaGate until roll-forward.
-During a mixed-version deployment, old instances still run background work unclaimed.
+The same gate protects drains, alerts, allowance mail, deletion and sweeping in binaries
+that contain those checks. An older binary without the nonbilling gates still runs
+those jobs unclaimed: the initial overlap starts with the first new worker and ends
+when the last old process exits. Stop old processes before the claims migration/start,
+or deploy the gates across all regions before the migration, to avoid that overlap.
+A rollback to a binary predating these gates has the same nonbilling limitation.

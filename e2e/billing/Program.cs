@@ -25,19 +25,14 @@ Environment.SetEnvironmentVariable("TS_AUTH_DASHBOARD_CLIENT_SECRET", secrets[5]
 Environment.SetEnvironmentVariable("STRIPE_SECRET_KEY", secrets[6]);
 Environment.SetEnvironmentVariable("STRIPE_WEBHOOK_SECRET", secrets[7]);
 Environment.SetEnvironmentVariable("TS_DASHBOARD_TERRABASE_URL", "http://127.0.0.1:8081");
-if (args is ["background", var journeyPath])
+if (args is ["background-case", var kind, var journeyPath])
 {
-    await BackgroundJourney.RunAsync(journeyPath, cancellationToken);
+    await BackgroundJourney.CaseAsync(kind, journeyPath, cancellationToken);
     return;
 }
-if (args is ["background-claims", var claimsPath])
+if (args is ["background-worker", var work, var at, var ownerPath, var job])
 {
-    await BackgroundJourney.ClaimsAsync(claimsPath, cancellationToken);
-    return;
-}
-if (args is ["background-worker", var kind, var at, var ownerPath])
-{
-    await BackgroundJourney.WorkAsync(kind, DateTimeOffset.Parse(at, CultureInfo.InvariantCulture), ownerPath, cancellationToken);
+    await BackgroundJourney.WorkAsync(work, DateTimeOffset.Parse(at, CultureInfo.InvariantCulture), ownerPath, job, cancellationToken);
     return;
 }
 using var control = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:8027") };

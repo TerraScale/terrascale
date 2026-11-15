@@ -40,13 +40,14 @@ namespace TerraScale.Dashboard.Features.Notifications
         Task<string> SendAsync(AllowanceAlert alert, CancellationToken cancellationToken);
     }
 
-    public sealed class AllowanceNotifications(IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, IAllowanceNotificationBackend backend, TimeProvider clock, ILogger<AllowanceNotifications> logger, BackgroundJobs jobs)
+    public sealed class AllowanceNotifications(IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, IAllowanceNotificationBackend backend, TimeProvider clock, ILogger<AllowanceNotifications> logger, BackgroundJobs jobs, BillingSchemaGate gate)
     {
         public const string OperationsContract = "write-units-4kib-global-v2";
         public const string StorageContract = "stored-byte-hours-global-v1";
 
         public async Task RunOnceAsync(CancellationToken cancellationToken)
         {
+            if (!await gate.AllowsAsync(cancellationToken)) { return; }
             string? after = null;
             do
             {

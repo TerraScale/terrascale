@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
+using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.TerraBase.Contracts;
 using TerraBaseSqlErrorCodes = TerraScale.DotNet.TerraBase.TerraBaseSqlErrorCodes;
@@ -27,7 +28,7 @@ namespace TerraScale.Dashboard.Features.Notifications
     }
 
     public sealed class AlertRules(IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, IAlertSource source, ICustomerDelivery delivery, IDashboardIdentity identity,
-        TimeProvider clock, ILogger<AlertRules> logger, BackgroundJobs jobs)
+        TimeProvider clock, ILogger<AlertRules> logger, BackgroundJobs jobs, BillingSchemaGate gate)
     {
         public const int RuleLimit = 20;
         public const int WebhookAttempts = 3;
@@ -143,6 +144,7 @@ namespace TerraScale.Dashboard.Features.Notifications
 
         public async Task RunOnceAsync(CancellationToken cancellationToken)
         {
+            if (!await gate.AllowsAsync(cancellationToken)) { return; }
             List<(string ProjectId, string OrganizationId)> projects;
             await using (var db = await storage.CreateDbContextAsync(cancellationToken))
             {

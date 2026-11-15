@@ -15,7 +15,7 @@ namespace TerraScale.Dashboard.Features.Profile
     // Local fences guard CAS writers; immutable authorization and enrollment references
     // replay after ACK to repair delayed regional writes.
     public sealed class DeletionReconciler(ITsAuthDeletions deletions, IDbContextFactory<DashboardDbContext> storage, DashboardStateInitializer initializer, AccountStore accounts, OrganizationStore organizations, DashboardSessions sessions,
-        AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity, TimeProvider clock, ServiceSloTelemetry telemetry, ILogger<DeletionReconciler> logger, BackgroundJobs jobs) : BackgroundService
+        AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity, TimeProvider clock, ServiceSloTelemetry telemetry, ILogger<DeletionReconciler> logger, BackgroundJobs jobs, BillingSchemaGate gate) : BackgroundService
     {
         private readonly Dictionary<string, string> failing = new(StringComparer.Ordinal);
         private readonly DeletionCleanupJournal journal = new(storage, organizations, clock);
@@ -40,6 +40,7 @@ namespace TerraScale.Dashboard.Features.Profile
 
         public async Task RunOnceAsync(CancellationToken cancellationToken)
         {
+            if (!await gate.AllowsAsync(cancellationToken)) { return; }
             await jobs.RunAsync("deletion-cleanup", TimeSpan.Zero, async (claim, token) =>
             {
                 var failed = new Dictionary<string, string>(StringComparer.Ordinal);

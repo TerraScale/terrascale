@@ -47,7 +47,7 @@ public sealed partial class BackgroundJobs(IDbContextFactory<DashboardDbContext>
             try { await renewing; }
             finally
             {
-                if (claim.Committed || interval > TimeSpan.Zero)
+                if (db.Entry(row).State != EntityState.Detached)
                 {
                     await using var release = await storage.CreateDbContextAsync(CancellationToken.None);
                     var periodic = claim.Delay is null && interval > TimeSpan.Zero;
@@ -137,7 +137,6 @@ public sealed partial class BackgroundJobs(IDbContextFactory<DashboardDbContext>
         public BackgroundJobRow State { get; } = state;
         public DateTime Now { get; } = now;
         public TimeSpan? Delay { get; set; }
-        public bool Committed { get; private set; }
 
         public async Task SaveAsync(CancellationToken cancellationToken)
         {
@@ -147,7 +146,6 @@ public sealed partial class BackgroundJobs(IDbContextFactory<DashboardDbContext>
             lease.IsModified = false;
             State.Checkpoint = AccountService.NewId();
             await Database.SaveChangesAsync(cancellationToken);
-            Committed = true;
         }
     }
 }
