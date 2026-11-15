@@ -985,7 +985,7 @@ Records live in `databases/<database id>/backup_drills` (or `backup_drills` for 
 keyed by `<region>/<member>/<destination>/<yyyy-MM-dd>`; another attempt that day replaces that day's result.
 These records are local to the member's catalog. The current result reloads on restart.
 
-The following metrics have no region special cases or tenant labels:
+The following metrics carry one `region` label (the member's `TS_REGION`) and no tenant labels:
 
 - `terrabase_backup_recovery_point_age_seconds`: the oldest proven platform recovery point's initial age plus
   monotonic elapsed time. It keeps rising when bucket access fails. An unproven file emits positive infinity.

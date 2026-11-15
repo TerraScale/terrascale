@@ -76,6 +76,24 @@ test('sjc automatically records the same verified restore evidence as the other 
   }
 });
 
+test('the recovery-point age keeps rising while the backup bucket is unreachable', async () => {
+  const writer = (await topology()).find(node => node.region === 'gru')!;
+  await expect.poll(() => probe(writer, '/backupz'), { message: 'the writer ships every file before the outage' }).toBe(200);
+  const before = await metric(writer, 'terrabase_backup_recovery_point_age_seconds', 'region="gru"');
+  await backupStore('down');
+  const down = Date.now();
+  try {
+    await expect.poll(async () => {
+      const elapsed = (Date.now() - down) / 1000;
+      const age = await metric(writer, 'terrabase_backup_recovery_point_age_seconds', 'region="gru"');
+      return elapsed >= 3 && age >= elapsed && age > before;
+    }, { message: 'no recovery point newer than the outage is proven, so the age covers the whole outage' }).toBe(true);
+  } finally {
+    await backupStore('up');
+  }
+  await expect.poll(() => probe(writer, '/backupz'), { message: 'the writer ships again once the bucket is back' }).toBe(200);
+});
+
 test('restore a backup into another database and compare its rows with the snapshot ledger in every region', async ({ cells }) => {
   const created = await json<{ id: string }>(await cells.post(`${endpoint('gru')}${project()}/databases`, {
     data: { name: name('backup-ledger'), regions: [...regions] },
@@ -211,12 +229,9 @@ test('history lost while the backup store is unreachable is one hole each time, 
     expect(shipped).toMatchObject({ replacing: false, storedIncarnation: shipped.incarnation, holes: [] });
 
     const firstMark = (await backupPuts(shipped.file)).length;
-    const recoveryAge = await metric(writer, 'terrabase_backup_recovery_point_age_seconds');
     await backupStore('down');
     outage = true;
     const inside = await churn(75);
-    expect(await metric(writer, 'terrabase_backup_recovery_point_age_seconds'),
-      'the recovery-point age keeps rising while the backup bucket is unreachable').toBeGreaterThan(recoveryAge);
     console.log('backup holes: first discard completed');
     const duringSent = Date.now();
     await ledger.write(cells, 'gru', [[2, 'during-outage']]);
