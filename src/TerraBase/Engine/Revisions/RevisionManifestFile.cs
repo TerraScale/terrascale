@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Buffers.Binary;
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using TerraBase.Primitives;
 
@@ -9,6 +10,10 @@ internal static class RevisionManifestFile
 {
     internal const string Suffix = ".revisions";
     internal const string StagedSuffix = Suffix + ".tmp";
+    private static readonly ConcurrentDictionary<string, Lock> Gates = new(StringComparer.Ordinal);
+
+    internal static Lock Gate(string databasePath) =>
+        Gates.GetOrAdd(Path.GetFullPath(databasePath), static _ => new Lock());
     private const uint Magic = 0x56525354;
     private const byte Format = 1;
     private const int ChecksumBytes = 8;
@@ -99,6 +104,7 @@ internal static class RevisionManifestFile
 
     public static void Store(string databasePath, RevisionManifest manifest)
     {
+        using var held = Gate(databasePath).EnterScope();
         var writer = new ArrayBufferWriter<byte>(4096);
         U32(writer, Magic);
         writer.Write([Format]);

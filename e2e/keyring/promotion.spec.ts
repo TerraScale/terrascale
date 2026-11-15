@@ -76,6 +76,17 @@ const test = base.extend<{}, { promotion: Promotion }>({
       children.delete(child);
     }
 
+    async function shipping(): Promise<void> {
+      await expect.poll(async () => {
+        try {
+          const text = await (await fetch('http://127.0.0.1:' + promotionPorts.metricsGru + '/metrics')).text();
+          const value = (name: string) => Number(text.match(new RegExp('^' + name + '(?:\\{[^}]*\\})? (\\d+(?:\\.\\d+)?)', 'm'))?.[1] ?? '0');
+          const files = value('terrabase_backup_files');
+          return files > 0 && value('terrabase_backup_generations_total') >= files;
+        } catch { return false; }
+      }, { message: 'the home has started shipping', intervals: [500] }).toBe(true);
+    }
+
     async function ready(port: number, clock = true): Promise<void> {
       await expect.poll(async () => {
         for (const child of children) expect(child.exitCode, 'throwaway nodes remain running').toBeNull();
@@ -182,6 +193,7 @@ const test = base.extend<{}, { promotion: Promotion }>({
         }, false);
       }
       const sql = { statements: [{ sql: 'SELECT value FROM keyring_rows' }] };
+      const oneShipped = shipping();
       await expect.poll(() => existsSync(replicaKey(one.id)) && existsSync(replicaKey(two.id))).toBe(true);
       await request(replica, 'POST', syncPath(one.id) + '/catch-up', undefined, false);
       await expect.poll(async () => {
@@ -205,6 +217,7 @@ const test = base.extend<{}, { promotion: Promotion }>({
       const firstPlacement = await request(home, 'GET', syncPath(one.id) + '/placement', undefined, false);
       const firstObserved = observePromotion(organization.id, project.id, one.id);
       await request(replica, 'POST', syncPath(one.id) + '/catch-up', undefined, false);
+      await oneShipped;
       await request(replica, 'POST', syncPath(one.id) + '/promote', {
         moveId: '01J00000000000000000000001', fromRegion: 'gru', version: Number(firstPlacement.placementVersion) + 1,
         replicaRegions: ['gru'], allRegions: false, name: firstPlacement.name, identity: firstPlacement.identity,
@@ -222,6 +235,7 @@ const test = base.extend<{}, { promotion: Promotion }>({
       second = start('fra', 'k1');
       await ready(promotionPorts.gru);
       await ready(promotionPorts.fra);
+      const twoShipped = shipping();
       await expect.poll(async () => (await (await fetch('http://127.0.0.1:' + promotionPorts.metricsFra + '/metrics')).text())
         .match(/terrabase_keys_last_complete[^\n]* (\d+)/)?.[1] ?? '0').not.toBe('0');
       expect(readFileSync(replicaKey(two.id), 'ascii').startsWith('TERRABASE-REPLICA-KEY-2\nv2.k1.')).toBe(true);
@@ -235,6 +249,7 @@ const test = base.extend<{}, { promotion: Promotion }>({
       const secondPlacement = await request(home, 'GET', syncPath(two.id) + '/placement', undefined, false);
       const secondObserved = observePromotion(organization.id, project.id, two.id);
       await request(replica, 'POST', syncPath(two.id) + '/catch-up', undefined, false);
+      await twoShipped;
       let promoting = true;
       let concurrentWrites = 0;
       let writesBeforeReply = 0;
