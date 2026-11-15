@@ -134,6 +134,15 @@ test('dashboard background work is claimed across instances and recovers accepte
   console.log(lines.join('\n'));
 });
 
+test('dashboard lease fences survive storage faults and idle work remains read-only', async () => {
+  const build = process.env.E2E_BUILD;
+  if (!build) throw new Error('E2E_BUILD is required for lease and idle-work proof');
+  const result = await promisify(execFile)('dotnet', [join(build, 'billing', 'BillingJourney.dll'), 'background-claims', join(stateDir, 'paid.journey.json')], { env: process.env });
+  const lines = result.stdout.split('\n').filter(line => /^background (lease|calls|transport):/.test(line));
+  expect(lines).toHaveLength(3);
+  console.log(lines.join('\n'));
+});
+
 test('paid owner billing recovery, UTC deadline and subscription tax policy', async ({ page, context, audit }) => {
   await context.addCookies(JSON.parse(readFileSync(ownerSession(), 'utf8')).cookies);
   const saved = journey<PaidJourney>();

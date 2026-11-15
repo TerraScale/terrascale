@@ -30,9 +30,14 @@ if (args is ["background", var journeyPath])
     await BackgroundJourney.RunAsync(journeyPath, cancellationToken);
     return;
 }
-if (args is ["background-worker", var kind, var at])
+if (args is ["background-claims", var claimsPath])
 {
-    await BackgroundJourney.WorkAsync(kind, DateTimeOffset.Parse(at, CultureInfo.InvariantCulture), cancellationToken);
+    await BackgroundJourney.ClaimsAsync(claimsPath, cancellationToken);
+    return;
+}
+if (args is ["background-worker", var kind, var at, var ownerPath])
+{
+    await BackgroundJourney.WorkAsync(kind, DateTimeOffset.Parse(at, CultureInfo.InvariantCulture), ownerPath, cancellationToken);
     return;
 }
 using var control = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:8027") };
