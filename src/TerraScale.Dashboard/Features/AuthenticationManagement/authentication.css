@@ -2,8 +2,42 @@
   gap: var(--ts-s6);
 }
 
+.ts-idp > .ts-page-header > .ts-page-title {
+  font-size: var(--ts-fs-2xl);
+}
+
 .ts-idp-tabs {
-  margin-bottom: var(--ts-s2);
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.ts-idp-settings > .ts-card-body,
+.ts-idp-settings > .ts-card-body.ts-form,
+.ts-idp-settings > form > .ts-card-body,
+.ts-idp-panel > form > .ts-card-body,
+#auth-social > .ts-card-body,
+#auth-organizations > .ts-card-body,
+.ts-idp-danger > .ts-card-body {
+  padding: var(--ts-s5);
+}
+
+.ts-idp-settings > form,
+.ts-idp-panel > form {
+  gap: 0;
+}
+
+.ts-idp-panel > #auth-sign-in-form > .ts-card-body {
+  padding: 0;
+}
+
+.ts-idp .ts-card-foot {
+  flex-wrap: wrap;
+}
+
+.ts-idp-brand-fields.ts-card-flush > .ts-card-body {
+  padding: var(--ts-s5);
+  gap: var(--ts-s4);
 }
 
 .ts-idp-content {
@@ -147,8 +181,17 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--ts-s4);
-  padding-top: var(--ts-s4);
-  border-top: 1px solid var(--ts-line);
+  padding-block: var(--ts-s4);
+  border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-idp-danger-row:first-child {
+  padding-top: 0;
+}
+
+.ts-idp-danger-row:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
 }
 
 .ts-idp-branding {
