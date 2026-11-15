@@ -93,6 +93,11 @@ internal sealed partial class ContinuousBackup
     {
         file.Account = await ReadAccountAsync(file.Prefix, cancellationToken).ConfigureAwait(false);
         file.Loaded = true;
+        if (file.Account is { Destination: var destination, Stored.PlatformAt: { } recoveryPoint } && destination == file.Target.Revision)
+        {
+            ObserveRecoveryPoint(file, recoveryPoint);
+        }
+        await RecoverDrillAsync(file, cancellationToken).ConfigureAwait(false);
         if (file.Account is { Upload: { } upload } account && account.Destination == file.Target.Revision)
         {
             var found = await file.Target.Store.ReadAsync(upload.Key, async (stream, token) =>

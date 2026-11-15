@@ -959,7 +959,7 @@ snapshot deletes, which would stop retention.
 
 ## Restore drills
 
-At least once a day, when it stores a snapshot, the shipper checks it: it rebuilds the file from the bucket alone (the
+At the first shipping opportunity on each new UTC date, every shipping member takes and checks a snapshot: it rebuilds the file from the bucket alone (the
 generation's previous snapshot, or the new one at generation start, rolled forward through the segments up to the new
 snapshot's exact log position), then compares a SHA-256 of the schema and every row of every table with the local copy
 the snapshot was made from, which is the live file at that position. A drill exercises download, decryption, contiguity,
@@ -975,6 +975,36 @@ destination and shutdown cancel a drill; a cancelled drill records no result. Wh
 or snapshot upload runs (a hole or a new generation), the next generation's snapshot is drilled.
 
 A failed drill is logged as an error and counted in `terrabase_backup_drills_total{result="failed"}`.
+Every region uses this same schedule and scratch-only restore path; region identity comes from `TS_REGION`.
+A stalled upload can delay its drill; monitoring must detect the missed night as well as an explicit failure.
+
+Each completed drill durably records its UTC timestamp, region, member, backup destination, generation,
+recovery-point timestamp, requested and reached log positions, expected row digest and restored row digest.
+The current status and the dated record commit together before the success metric advances.
+Records live in `databases/<database id>/backup_drills` (or `backup_drills` for the catalog),
+keyed by `<region>/<member>/<destination>/<yyyy-MM-dd>`; another attempt that day replaces that day's result.
+Each record keeps the last 14 days for its region, member and destination; older evidence records of that key prefix are deleted in the same transaction (never backups or data).
+These records are local to the member's catalog. The current result reloads on restart.
+
+The following metrics carry one `region` label (the member's `TS_REGION`) and no tenant labels:
+
+- `terrabase_backup_recovery_point_age_seconds`: the oldest proven platform recovery point's initial age plus
+  monotonic elapsed time. It keeps rising when bucket access fails, also after a restart that cannot reach the bucket: the member
+  starts from its catalog file's locally stored recovery point. An unproven file, or a member with no proven point, emits positive infinity.
+- `terrabase_backup_drill_last_success_seconds`: the oldest successful latest platform drill across shipping
+  files, or zero when any file's latest drill is missing or failed.
+- `terrabase_backup_drill_failed_files`: platform files whose latest drill or result commit failed.
+
+Production paging is owned by `TerraScale/ts-orchestrator`, in
+`deploy/observability/production/operational-rules.yml`. Its existing gru-only selectors and scraping
+must be expanded there before this constitutes three-region operational coverage. Required alerts are an explicit
+failed drill, recovery-point age over the recovery target (including infinity), and a missing successful drill
+for each required region after the nightly deadline. The missing-night check must seed gru, sjc and fra
+independently of observed series, so a missing scrape or an entirely absent region cannot count as success.
+The fault journey verifies the same recovery-position and row-digest evidence in gru and fra,
+then uses the existing region launcher to verify sjc with the same assertions. Its bucket-outage
+scenario checks that recovery-point age continues rising before recovery.
+No production monitoring installation or actual page delivery is claimed by this runtime change.
 
 ## Records in TerraBase
 

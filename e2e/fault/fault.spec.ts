@@ -9,6 +9,8 @@ import { auth, dash, e2eRoot, stateDir } from '../support/stack';
 import { keyId } from '../support/api-key';
 import { journey, ownerSession, saveSecret } from '../support/state';
 import { receiptHandoff } from './receipt-handoff';
+import { verifyRestoreDrill } from './restore-drill';
+import { extendPeers, startRegion } from '../placement/fleet';
 import { backupPuts, backupStore, continuity, crashWrite, endpoint, faultId, holeRecords, Ledger, metric, nodeHoles, nodes, nodeRequest, nodeStatus, plantHole, probe, regions, restartAfterKill, systemContinuity, scrape, tokenReady, topology } from './support';
 
 test.beforeEach(async () => {
@@ -56,6 +58,55 @@ test('a writer killed during a write restarts without losing acknowledged rows i
   } finally {
     await removeDatabase(cells, created.id);
   }
+});
+
+test('each regional writer records a restore drill with matching row content and exact recovery position', async () => {
+  for (const writer of await topology()) await verifyRestoreDrill(writer);
+});
+
+test('sjc automatically records the same verified restore evidence as the other regions', async () => {
+  const restorePeers = extendPeers(['sjc']);
+  let region: Awaited<ReturnType<typeof startRegion>> | undefined;
+  try {
+    region = await startRegion('sjc', 0);
+    const { hostname, port } = new URL(region.endpoint);
+    await verifyRestoreDrill({ name: 'journey-extra-sjc', region: 'sjc', address: hostname, port: Number(port), metricsPort: region.metricsPort });
+  } finally {
+    if (region) await region.stop();
+    restorePeers();
+  }
+});
+
+test('the recovery-point age keeps rising while the backup bucket is unreachable, also across a writer restart', async () => {
+  const writer = (await topology()).find(node => node.region === 'gru')!;
+  await expect.poll(() => probe(writer, '/backupz'), { message: 'the writer ships every file before the outage' }).toBe(200);
+  await backupStore('down');
+  let outage = true;
+  const down = Date.now();
+  const rising = async (above: number, message: string) => {
+    let age = 0;
+    await expect.poll(async () => {
+      const elapsed = (Date.now() - down) / 1000;
+      age = await metric(writer, 'terrabase_backup_recovery_point_age_seconds', 'region="gru"');
+      return Number.isFinite(age) && age > above && age >= elapsed;
+    }, { message }).toBe(true);
+    return age;
+  };
+  try {
+    const first = await rising(0, 'the age is a finite number covering the outage');
+    const second = await rising(first, 'the age rises between two observations');
+    const restart = restartAfterKill(writer, true, undefined, async () => {
+      expect(await probe(writer, '/readyz')).toBe(503);
+      await rising(second, 'the restarted writer reports a finite age that still covers the outage before the bucket is back');
+      await backupStore('up');
+      outage = false;
+    });
+    await restart();
+  } finally {
+    if (outage) await backupStore('up');
+  }
+  await expect.poll(() => probe(writer, '/readyz'), { message: 'the restarted writer is ready' }).toBe(200);
+  await expect.poll(() => probe(writer, '/backupz'), { message: 'the writer ships again once the bucket is back' }).toBe(200);
 });
 
 test('restore a backup into another database and compare its rows with the snapshot ledger in every region', async ({ cells }) => {

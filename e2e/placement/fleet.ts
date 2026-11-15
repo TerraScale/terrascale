@@ -7,7 +7,7 @@ import { nodeRequest } from '../fault/support';
 import { holdSync } from '../support/ports';
 import { stateDir } from '../support/stack';
 
-export type RegionProcess = { region: string; endpoint: string; stop(): Promise<void> };
+export type RegionProcess = { region: string; endpoint: string; metricsPort: number; stop(): Promise<void> };
 
 export async function startRegion(region: string, index: number): Promise<RegionProcess> {
   const source = readFileSync(join(stateDir, 'pids', 'terrabase.pid'), 'utf8').trim();
@@ -74,7 +74,7 @@ export async function startRegion(region: string, index: number): Promise<Region
       return JSON.parse(response.body) as { node: string; owner: string; writer: boolean; ready: boolean };
     }, { message: `${region} is ready to serve as its regional writer` })
       .toMatchObject({ node: `journey-extra-${region}`, owner: `journey-extra-${region}`, writer: true, ready: true });
-    return { region, endpoint, stop };
+    return { region, endpoint, metricsPort: held.ports.metrics, stop };
   } catch (error) {
     await stop();
     throw error;

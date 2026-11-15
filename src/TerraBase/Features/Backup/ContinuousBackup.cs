@@ -28,7 +28,6 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 {
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan DiscoveryInterval = TimeSpan.FromSeconds(10);
-    private static readonly TimeSpan SnapshotInterval = TimeSpan.FromDays(1);
     private static readonly TimeSpan ConfigurationTimeout = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan ObservePeriod = TimeSpan.FromSeconds(5);
@@ -51,6 +50,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     private readonly IDatabaseFileCatalog _fileCatalog;
     private readonly BackupSettings _settings;
     private readonly string _node;
+    private readonly string _region;
     private readonly string _scratch;
     private readonly ConcurrentDictionary<string, ShippedFile> _files = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _pass = new(1, 1);
@@ -88,6 +88,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         _catalog = catalog;
         (_engine, _storage, _targets, _time, _logger, _shippers) = (engine, storage, targets, time, logger, shippers);
         (_tenants, _settings, _node, _bucket) = (tenants, settings, options.MachineId, bucket);
+        _region = options.Region;
         _catalogGate = catalogGate;
         _fileCatalog = fileCatalog;
         _disk = disk;
@@ -106,6 +107,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             description: "Passes that put off a due daily snapshot, by reason (backlog: unread log remains; busy: snapshot uploads in flight).");
         _generations = meter.CreateCounter<long>("terrabase.backup.generations", description: "Generations started (each stores a snapshot).");
         _drills = meter.CreateCounter<long>("terrabase.backup.drills", description: "Restore drills, by result (passed, failed).");
+        RegisterDrillMetrics(meter);
         _bucketSnapshots = meter.CreateCounter<long>("terrabase.backup.bucket_snapshots", description: "Tigris snapshots of the backup bucket, by result (taken, deleted, failed).");
         meter.CreateObservableGauge("terrabase.backup.bucket_snapshot", () => _newestBucketSnapshot?.ToUnixTimeSeconds() ?? 0, "s",
             "Unix time of the newest Tigris snapshot of the backup bucket, on the member that takes them (0 elsewhere).");
@@ -381,6 +383,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     {
         PublishSeries();
         using var bulk = StorageWork.Bulk();
+        await ObserveRestartRecoveryPointAsync(stoppingToken).ConfigureAwait(false);
         var observing = ObserveLagAsync(stoppingToken);
         try
         {
@@ -707,6 +710,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         public bool FinalRefreshed { get; set; }
         public bool FinalCustomer { get; set; }
         public Lock RetainGate { get; } = new();
+        public SemaphoreSlim RecordGate { get; } = new(1, 1);
         public BackupTarget Target { get; set; } = target;
         public ProjectBackupDestinationRecord? Configuration { get; set; }
         public DateTimeOffset NextConfiguration { get; set; } = DateTimeOffset.MinValue;
@@ -774,6 +778,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
         public int RetentionDays { get; set; }
 
+        public RecoveryObservation? RecoveryPoint { get; set; }
         public BackupDrill? LastDrill { get; set; }
         public DateTimeOffset DrilledAt { get; set; } = DateTimeOffset.MinValue;
         public async Task StopSideAsync()
@@ -814,6 +819,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 {
                     Target.Dispose();
                     Retirement.Dispose();
+                    RecordGate.Dispose();
                 }
             }
         }
