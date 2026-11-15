@@ -18,6 +18,8 @@ internal sealed class PostgresRelay(IHttpClientFactory http, InternalCredential 
 {
     private readonly Counter<long> _outputTimeouts = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.qos.relay.output.timeouts");
 
+    internal void PublishSeries() => CounterSeries.Zero(_outputTimeouts);
+
     internal const string Path = "/v1/internal/postgres";
     internal const string ClientHeader = "X-TerraBase-Postgres-Client";
 

@@ -69,6 +69,12 @@ internal sealed partial class TsAuthKeys : BackgroundService, IIssuerKeys
         }
     }
 
+    internal void PublishSeries()
+    {
+        CounterSeries.Zero(_storedRejected, "reason", "invalid", "clock_backwards", "expired");
+        CounterSeries.Zero(_fetches, "outcome", "success", "failure");
+    }
+
     private sealed record Snapshot(IReadOnlyList<SecurityKey> Keys, PublicIssuerKeys Public, DateTimeOffset FetchedAt,
         DateTimeOffset LastKnownTime, TimeSpan AgeAtLoad, long LoadedAt);
 
@@ -212,6 +218,7 @@ internal sealed partial class TsAuthKeys : BackgroundService, IIssuerKeys
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        PublishSeries();
         if (_firstFetch is null)
         {
             return;

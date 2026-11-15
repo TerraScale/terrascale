@@ -96,6 +96,12 @@ internal sealed partial class S3ObjectStore : IObjectStore, IDisposable
         };
     }
 
+    internal void PublishSeries()
+    {
+        UnprovenDeleted?.Add(0);
+        _bucketMissing?.Add(0);
+    }
+
     internal Counter<long>? UnprovenDeleted { get; }
 
     internal static Counter<long> BucketMissingCounter(IMeterFactory meters) =>

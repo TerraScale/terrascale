@@ -12,6 +12,16 @@ internal sealed class CallerAdmission(CallerTokens tokens, InternalCredential pe
     private readonly Counter<long> _requests = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.internal.authentication.requests");
     private readonly Counter<long> _legacy = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.operator.legacy_grants");
 
+    internal void PublishSeries()
+    {
+        foreach (var credential in new[] { "caller_rejected", "unmatched", "legacy", "peer" })
+        {
+            _requests.Add(0, new KeyValuePair<string, object?>("credential", credential), new KeyValuePair<string, object?>("caller", "peer"));
+        }
+
+        CounterSeries.Zero(_legacy, "kind", "act_as", "data");
+    }
+
     internal void Legacy(string kind) => _legacy.Add(1, new KeyValuePair<string, object?>("kind", kind));
 
     internal async Task<bool> AdmitAsync(HttpContext context, bool forwarded = false)

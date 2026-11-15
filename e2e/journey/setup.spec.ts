@@ -17,7 +17,34 @@ function stat(page: Page, label: string) {
 const apiKeyFormat = /^(?:sk_)?[0-9A-HJKMNP-TV-Z]{26}_[0-9a-hjkmnp-tv-z]{52}$/;
 const scopes = ['sql:read', 'sql:write', 'databases:read', 'databases:write', 'auth:read', 'auth:write'];
 
+function reading(text: string, name: string, ...labels: string[]): number {
+  const line = text.split('\n').find(row => (row.startsWith(`${name}{`) || row.startsWith(`${name} `)) && labels.every(label => row.includes(label)));
+  if (line === undefined) throw new Error(`missing ${name} ${labels.join(' ')}`);
+  return Number(line.slice(line.lastIndexOf(' ') + 1));
+}
+
 test('sign up, verify the email, onboard on Free, create a database and an API key', async ({ page, context, audit, browser }, info) => {
+  await onLocalStack(async () => {
+    const terrabase = await (await fetch('http://127.0.0.1:9091/metrics')).text();
+    const authMetrics = await (await fetch('http://127.0.0.1:9092/metrics')).text();
+    expect(reading(terrabase, 'terrabase_backup_holes')).toBe(0);
+    expect(reading(terrabase, 'terrabase_backup_failures_total')).toBe(0);
+    expect(reading(terrabase, 'terrabase_backup_holes_recorded_total')).toBe(0);
+    expect(reading(terrabase, 'terrabase_backup_drills_total', 'result="passed"')).toBe(0);
+    expect(reading(terrabase, 'terrabase_backup_drills_total', 'result="failed"')).toBe(0);
+    for (const outcome of ['sent', 'failed', 'bounced', 'not_configured', 'capacity_refused', 'provider_exhausted', 'admission_unavailable', 'failover']) {
+      expect(reading(authMetrics, 'ts_auth_emails_total', `outcome="${outcome}"`), outcome).toBe(0);
+    }
+    expect(reading(authMetrics, 'ts_auth_sign_ins_total', 'method="hosted_password"', 'outcome="refused"')).toBe(0);
+    const refused = await page.request.post(`${auth}/ui/terrascale/sign-in/password`, {
+      headers: { origin: auth },
+      form: { email: 'metric-zero@example.com', password: 'not-a-real-password' },
+    });
+    expect(refused.status()).toBe(401);
+    const after = await (await fetch('http://127.0.0.1:9092/metrics')).text();
+    expect(reading(after, 'ts_auth_sign_ins_total', 'method="hosted_password"', 'outcome="refused"')).toBe(1);
+    expect(reading(after, 'ts_auth_emails_total', 'outcome="provider_exhausted"')).toBe(0);
+  });
   const runId = randomBytes(4).toString('hex');
   const email = await newAddress(`journey-${runId}`);
   const password = randomBytes(24).toString('base64url');

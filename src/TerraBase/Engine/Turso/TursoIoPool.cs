@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using TerraBase.Features.Qos;
+using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Engine.Turso;
@@ -149,6 +150,8 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
             throw;
         }
     }
+
+    internal void PublishSeries() => CounterSeries.Zero(_rejected);
 
     public void Admit()
     {

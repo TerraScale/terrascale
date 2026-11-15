@@ -14,6 +14,15 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
     private static readonly Counter<long> Decisions = Meter.CreateCounter<long>("ts_auth.email_admission");
     private static readonly Gauge<long> Remaining = Meter.CreateGauge<long>("ts_auth.email_remaining");
 
+    internal static void Publish()
+    {
+        foreach (var purpose in Enum.GetValues<EmailPurpose>())
+        {
+            Decisions.Add(0, new KeyValuePair<string, object?>("purpose", purpose.ToString()), new KeyValuePair<string, object?>("outcome", "admitted"));
+            Decisions.Add(0, new KeyValuePair<string, object?>("purpose", purpose.ToString()), new KeyValuePair<string, object?>("outcome", "refused"));
+        }
+    }
+
     internal static readonly TimeSpan Window = TimeSpan.FromHours(25);
 
     internal async Task<bool> AcquireAsync(EmailMessage message, CancellationToken cancellationToken, string? attemptId = null)

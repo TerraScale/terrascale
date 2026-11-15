@@ -46,6 +46,7 @@ internal sealed class DatabaseBackupPurge(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        CounterSeries.Zero(_failures, "reason", "catalog_unavailable", "storage_unavailable", "key_shred_unavailable");
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1), time);
         do
         {

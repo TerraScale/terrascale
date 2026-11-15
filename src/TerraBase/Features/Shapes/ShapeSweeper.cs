@@ -55,6 +55,8 @@ internal sealed class ShapeSweeper(IStorageEngine engine, IShapeStorage storage,
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        CounterSeries.Zero(_handles, "result", "failed", "refused", "current", "retired", "unclassified", "malformed", "unknown");
+        CounterSeries.Zero(_deleted);
         try
         {
             while (await _timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))

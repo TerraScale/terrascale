@@ -50,6 +50,15 @@ internal sealed class ShapeMetrics : IShapeMetrics
         _redirects = meter.CreateCounter<long>("terrabase.shape.redirects", description: "Shape redirects issued.");
     }
 
+    internal void PublishSeries()
+    {
+        CounterSeries.Zero(_reads);
+        CounterSeries.Zero(_flightStarts);
+        CounterSeries.Zero(_seals);
+        CounterSeries.Zero(_sealedBytes);
+        CounterSeries.Zero(_redirects);
+    }
+
     public void RecordRead() => _reads.Add(1);
 
     public void ChangeWaiting(long delta) => _waiting.Add(delta);

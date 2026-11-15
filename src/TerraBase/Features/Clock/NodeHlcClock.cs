@@ -22,6 +22,12 @@ internal sealed class NodeHlcClock(IStorageEngine engine, TerraBaseOptions optio
 
     private long HighWater => Volatile.Read(ref _highWater);
 
+    internal void PublishSeries()
+    {
+        CounterSeries.Zero(_capped);
+        CounterSeries.Zero(_stamps, "outcome", "issued", "refused");
+    }
+
     public void Dispose() => _gate.Dispose();
 
     public async Task SaveLastStampAsync()

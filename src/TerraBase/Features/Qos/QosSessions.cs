@@ -38,6 +38,13 @@ internal sealed class QosSessions
         meter.CreateObservableGauge("terrabase.qos.organization.session.utilization", Utilization);
     }
 
+    internal void PublishSeries()
+    {
+        CounterSeries.Zero(_refusals, "kind", "organization_cap", "process_ceiling", "relay_ceiling", "preauthentication_allowance");
+        CounterSeries.Zero(_admissions);
+        CounterSeries.Zero(_preauthenticationAdmissions);
+    }
+
     private double Utilization()
     {
         lock (_gate)

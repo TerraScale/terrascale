@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Metrics;
 using System.IO.Enumeration;
@@ -291,6 +292,18 @@ internal sealed partial class TursoStorageEngine : IStorageEngine, IWalBackup
 
     internal TimeSpan QueryBudget { get; }
     internal TursoSessionPool Pool { get; }
+
+    internal void PublishSeries()
+    {
+        CounterSeries.Zero(_storageReads, "path", "point", "query", "shape", "shape_body", "shape_sweep");
+        CounterSeries.Zero(_unshippedDiscarded);
+        CounterSeries.Zero(_writersEvicted);
+        CounterSeries.Zero(_rewriteRefused, "reason", "Safety", "Budget", "Deadline", "Pressure");
+        CounterSeries.Zero(_migrationFailures);
+        CounterSeries.Zero(Ledger.PublicationWaits ?? throw new UnreachableException());
+        (Disk as DiskBudget ?? throw new UnreachableException()).PublishSeries();
+        Io.PublishSeries();
+    }
 
     public TursoStorageEngine(
     StorageEngineOptions configured, Meter meter, ILogger<TursoStorageEngine> logger, IKeyring masterKey,

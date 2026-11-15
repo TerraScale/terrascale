@@ -40,6 +40,8 @@ internal sealed class DatabaseStats(IMeterFactory meters) : IDatabaseStats
     private StatsWindow? _last;
     public StatsWindow? LastWindow => Volatile.Read(ref _last);
 
+    internal void PublishSeries() => CounterSeries.Zero(_dropped, "kind", "database");
+
     public void Read(TenantContext database)
     {
         var entry = Entry(database);

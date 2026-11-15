@@ -35,6 +35,8 @@ internal sealed class RequestLogRecorder(SystemCatalog catalog, TimeProvider tim
     private int _count;
     private bool _disposed;
 
+    internal void PublishSeries() => CounterSeries.Zero(_drops);
+
     public void Record(TenantContext database, string method, string route, int status, TimeSpan elapsed, long operations, string? requestId = null,
         long statements = 0, long statementErrors = 0)
     {

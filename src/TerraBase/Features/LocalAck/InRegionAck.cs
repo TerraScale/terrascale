@@ -64,6 +64,9 @@ internal sealed class InRegionAck(
             "Held transactions retained because their payload could not be decrypted or decoded.");
         _unplaced = _meter.CreateCounter<long>("terrabase.localack.unplaced", "{attempt}",
             "Held transactions kept because the catalog does not know their database.");
+        CounterSeries.Zero(_finished!);
+        CounterSeries.Zero(_unreadable!, "reason", "decrypt", "decode");
+        CounterSeries.Zero(_unplaced!);
         _ = _meter.CreateObservableGauge("terrabase.localack.held", () => holds.Count, "{transaction}", "Transactions this node holds for its in-region partner.");
         _ = _meter.CreateObservableGauge("terrabase.localack.partner", () => PartnerHealthy ? 1 : 0, "{node}", "1 while the in-region partner answers.");
         try

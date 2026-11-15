@@ -66,6 +66,8 @@ internal sealed class ClockTrust(TerraBaseOptions options, InternalCredential cr
     {
         _steps = _meter.CreateCounter<long>("terrabase.clock.steps", "{step}", "Wall-clock steps this node detected against its monotonic clock.");
         var failedRounds = _meter.CreateCounter<long>("terrabase.clock.failed_rounds", "{round}", "Trust rounds that ended with an unexpected error; the loop goes on.");
+        CounterSeries.Zero(_steps!);
+        CounterSeries.Zero(failedRounds);
         _ = _meter.CreateObservableGauge("terrabase.clock.skew", Skew, "ms");
         _ = _meter.CreateObservableGauge("terrabase.clock.local_writes_allowed", () => Trusted ? 1 : 0);
         _ = _meter.CreateObservableGauge("terrabase.clock.agreeing_rounds", () => Volatile.Read(ref _agreeingRounds), "{round}");

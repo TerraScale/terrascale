@@ -117,6 +117,19 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         meter.CreateObservableGauge("terrabase.backup.last_success", () => Shipped().Select(file => file.LastShipped?.ToUnixTimeSeconds() ?? 0).DefaultIfEmpty().Min(),
             "s", "Unix time of the least recent data in the bucket over every file this node ships (0 while a file has none).");
     }
+
+    private void PublishSeries()
+    {
+        CounterSeries.Zero(_uploaded, "kind", "snapshot", "segment", "lineage", "hole");
+        CounterSeries.Zero(_failures);
+        CounterSeries.Zero(_holesRecorded);
+        CounterSeries.Zero(_restarts, "reason", "lineage", "key_lost", "log_unplaceable");
+        CounterSeries.Zero(_deferred, "reason", "backlog", "busy");
+        CounterSeries.Zero(_generations);
+        CounterSeries.Zero(_drills, "result", "passed", "failed");
+        CounterSeries.Zero(_bucketSnapshots, "result", "taken", "deleted", "failed");
+        _bucket.PublishSeries();
+    }
     internal static string Scratch(TerraBaseOptions options) => Path.Combine(options.DataDirectory, ".backup");
 
     public BackupStatus Status
@@ -366,6 +379,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        PublishSeries();
         using var bulk = StorageWork.Bulk();
         var observing = ObserveLagAsync(stoppingToken);
         try

@@ -13,6 +13,8 @@ internal sealed class ClosureFaults(IMeterFactory meters, TimeProvider time, ILo
     private readonly Counter<long> _errors = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.project_closure.forward_errors");
     private readonly ConcurrentDictionary<(string? Region, string Error), DateTimeOffset> _logged = new();
 
+    internal void PublishSeries() => CounterSeries.Zero(_errors, "error", "failed");
+
     public void Failed(string? project, Exception error)
     {
         if (!Counted(null, Failure))

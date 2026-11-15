@@ -42,6 +42,7 @@ internal sealed class ShapeCdnAnalytics(IHttpClientFactory http, string? host, s
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        CounterSeries.Zero(_requests, "cache_status", "hit", "miss", "other");
         if (host is null || token is null)
         {
             return;
