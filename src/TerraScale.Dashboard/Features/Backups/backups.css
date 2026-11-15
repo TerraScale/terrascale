@@ -1,4 +1,28 @@
-.ts-backups-pitr .ts-card-body {
+.ts-backups-pitr > .ts-card-body,
+#backup-schedule > .ts-card-body,
+#backup-storage > .ts-card-body {
+  padding: var(--ts-s5);
+}
+
+#backup-page .ts-card-head {
+  align-items: center;
+}
+
+#backup-page .ts-card-heading {
+  flex-basis: max-content;
+}
+
+.ts-backups-retention {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s2);
+}
+
+.ts-backups-retention > .ts-input {
+  width: calc(var(--ts-control-h) * 2);
+}
+
+.ts-backups-pitr.ts-card-flush > .ts-card-body {
   gap: var(--ts-s4);
 }
 

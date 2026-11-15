@@ -2,9 +2,9 @@
 @using TerraScale.Dashboard.Features.Backups
 @using TerraScale.Dashboard.Features.Databases
 @{ var recovery = Model.Recovery; var window = recovery.Available?.Window; var canManage = Model.Shell.Context.CanManage && Model.Database.Status == "ready"; }
-<section class="ts-card ts-backups-pitr" id="pitr-card" aria-labelledby="pitr-card-title">
+<section class="ts-card ts-card-boxed ts-card-flush ts-backups-pitr" id="pitr-card" aria-labelledby="pitr-card-title">
 <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="pitr-card-title">Restore to a point in time</h2></div>
-@if(Model.HasBucket){<div class="ts-card-actions"><form method="get" action="@DatabaseService.Path(Model.Database.Id, "backups")" data-on:change="el.requestSubmit()" data-on:submit="evt.preventDefault(); @@get(el.action + '?pitr=' + encodeURIComponent(el.elements['pitr-source-select'].value), {contentType:'form'})"><select class="ts-select" id="pitr-source-select" name="pitr" aria-label="Backup source"><option value="platform" selected="@(recovery.Destination == "platform" ? "selected" : null)">TerraScale storage</option><option value="customer" selected="@(recovery.Destination == "customer" ? "selected" : null)">Your bucket</option></select></form></div>}
+<div class="ts-card-actions">@if(Model.HasBucket){<form method="get" action="@DatabaseService.Path(Model.Database.Id, "backups")" data-on:change="el.requestSubmit()" data-on:submit="evt.preventDefault(); @@get(el.action + '?pitr=' + encodeURIComponent(el.elements['pitr-source-select'].value), {contentType:'form'})"><select class="ts-select" id="pitr-source-select" name="pitr" aria-label="Backup source"><option value="platform" selected="@(recovery.Destination == "platform" ? "selected" : null)">TerraScale storage</option><option value="customer" selected="@(recovery.Destination == "customer" ? "selected" : null)">Your bucket</option></select></form>}</div>
 </header>
 <div class="ts-card-body ts-stack-lg">
 @if(recovery.Error.Length > 0){<div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@recovery.Error</p></div>}
