@@ -137,12 +137,12 @@ for (const [kind, name] of [
   ['alert', 'one alert sends one signed delivery and one owner notification across dashboards'],
   ['contention', 'dashboard claim contention skips a live owner and releases callbacks without saves'],
   ['stale', 'a stale dashboard owner fails its real checkpoint save after database-clock expiry'],
+  ['crash', 'persisted log payload replays after a crash following receiver acceptance'],
+  ['quiet', 'an old quiet drain records its unchanged-cursor gap once without idle claim writes'],
   ['skew', 'forward and backward dashboard clocks cannot steal or extend database-clock leases'],
   ['renewal', 'a lost renewal reply preserves work inside the last proven lease'],
   ['plans', 'settled plan requests and idle reconciliation passes write no claims'],
   ['gate', 'an unknown dashboard schema idles nonbilling background workers'],
-  ['crash', 'persisted log payload replays after a crash following receiver acceptance'],
-  ['quiet', 'an old quiet drain records its unchanged-cursor gap once without idle claim writes'],
 ]) {
   test(`dashboard background: ${name}`, async () => {
     if (kind === 'crash') {
