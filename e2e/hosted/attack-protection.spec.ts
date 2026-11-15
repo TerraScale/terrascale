@@ -159,7 +159,10 @@ test('project attack protection refuses breaches, locks passwords, unlocks by em
     }
     await page.goto(`${dash}/auth/attack-protection`);
     await page.locator('input[name=account_lockout]').uncheck();
+    const lockoutOff = page.waitForResponse((response) => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/v1/auth-management/attack-protection');
     await page.getByRole('button', { name: 'Save attack protection', exact: true }).click();
+    await expect((await lockoutOff).status()).toBe(200);
     await expect(page.locator('input[name=account_lockout]')).not.toBeChecked();
     const window = 15 * 60_000;
     await waitForBudgetWindow(page.request, window);

@@ -6,21 +6,19 @@
     var manage = Model.Context.CanManageProject;
     bool Checked(string name, bool saved) => Model.Draft is { } draft ? draft[name] == "on" : saved;
 }
-<header class="ts-card-head"><h2 class="ts-card-title" id="auth-attack-protection-title">Attack protection</h2></header>
-<div class="ts-card-body">
+<header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="auth-attack-protection-title">Attack protection</h2></div></header>
 @if (Model.Settings is null) {
-<p role="status">Attack protection settings are unavailable.</p>
+<div class="ts-card-body"><div class="ts-empty" role="status"><p class="ts-empty-title">Attack protection settings are unavailable.</p></div></div>
 } else {
-<form class="ts-form" method="post" action="/api/v1/auth-management/attack-protection">
+<form class="ts-form" method="post" action="/api/v1/auth-management/attack-protection" data-on:submit="@("@post(el.action, {contentType:'form'})")">
 <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
-<fieldset class="ts-form" disabled="@(!manage)">
-<label class="ts-check"><input type="checkbox" name="bot_challenge" checked="@Checked("bot_challenge", protection.BotChallenge)" disabled="@(!protection.ChallengeConfigured)" />Bot challenge</label>
+<div class="ts-card-body"><fieldset class="ts-form" disabled="@(!manage)">
+<label class="ts-check"><input type="checkbox" name="bot_challenge" checked="@Checked("bot_challenge", protection.BotChallenge)" disabled="@(!protection.ChallengeConfigured)" /><span>Bot challenge</span></label>
 @if (!protection.ChallengeConfigured) { <p role="status">Cloudflare Turnstile site and secret keys are not configured.</p> }
-<label class="ts-check"><input type="checkbox" name="breached_passwords" checked="@Checked("breached_passwords", protection.BreachedPasswords)" />Refuse breached passwords</label>
-<label class="ts-check"><input type="checkbox" name="account_lockout" checked="@Checked("account_lockout", protection.AccountLockout)" />Lock accounts after 10 failed password attempts for 30 minutes</label>
-<label class="ts-check"><input type="checkbox" name="new_device_email" checked="@Checked("new_device_email", protection.NewDeviceEmail)" />Email users about new devices</label>
-@if (manage) { <button class="ts-btn ts-btn-primary" type="submit">Save attack protection</button> }
-</fieldset>
+<label class="ts-check"><input type="checkbox" name="breached_passwords" checked="@Checked("breached_passwords", protection.BreachedPasswords)" /><span>Refuse breached passwords</span></label>
+<label class="ts-check"><input type="checkbox" name="account_lockout" checked="@Checked("account_lockout", protection.AccountLockout)" /><span>Lock accounts after 10 failed password attempts for 30 minutes</span></label>
+<label class="ts-check"><input type="checkbox" name="new_device_email" checked="@Checked("new_device_email", protection.NewDeviceEmail)" /><span>Email users about new devices</span></label>
+</fieldset></div>
+@if (manage) { <footer class="ts-card-foot"><button class="ts-btn ts-btn-primary" type="submit">Save attack protection</button></footer> }
 </form>
 }
-</div>

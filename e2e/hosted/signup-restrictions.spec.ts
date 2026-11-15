@@ -32,9 +32,13 @@ test('restricted sign-up, single-use invitations and waitlist approval', async (
     const signup = auth + '/ui/' + project + '/sign-up';
 
     await page.goto(dash + '/auth/restrictions' + selection);
-    await page.locator('#signup-mode').selectOption('restricted');
+    await page.locator('.ts-chip', { hasText: 'Invitation only' }).click();
+    const restrictedOn = page.waitForResponse((response) => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/v1/auth-management/restrictions');
     await page.getByRole('button', { name: 'Save restrictions' }).click();
-    await expect(page.locator('#signup-mode')).toHaveValue('restricted');
+    await expect((await restrictedOn).status()).toBe(200);
+    await expect(page.locator('input[name=sign_up_mode][value=restricted]')).toBeChecked();
+    await expect(page).toHaveURL(dash + '/auth/restrictions' + selection);
     await audit.check('restricted project settings saved');
 
     await memberPage.goto(signup);
@@ -46,13 +50,14 @@ test('restricted sign-up, single-use invitations and waitlist approval', async (
     await memberAudit.check('restricted stranger refused');
 
     await page.goto(dash + '/auth/invitations' + selection);
+    await page.getByRole('button', { name: 'Invite user' }).first().click();
     await page.locator('#invitation-email').fill(invitedEmail);
-    await page.getByRole('button', { name: 'Invite user' }).click();
-    await expect(page.locator('.ts-list-item').filter({ hasText: invitedEmail })).toContainText('pending');
-    const expires = await page.locator('.ts-list-item').filter({ hasText: invitedEmail }).locator('time').getAttribute('datetime');
+    await page.locator('#auth-invite-dialog').getByRole('button', { name: 'Invite user' }).click();
+    await expect(page.locator('.ts-rows li').filter({ hasText: invitedEmail })).toContainText('Pending');
+    const expires = await page.locator('.ts-rows li').filter({ hasText: invitedEmail }).locator('time').getAttribute('datetime');
     expect(Math.abs(Date.parse(expires!) - Date.now() - 7 * 24 * 60 * 60 * 1000)).toBeLessThan(60_000);
     await audit.check('project invitation created');
-    const revokeAction = await page.locator('.ts-list-item').filter({ hasText: invitedEmail }).locator('form').getAttribute('action');
+    const revokeAction = await page.locator('.ts-rows li').filter({ hasText: invitedEmail }).locator('form').getAttribute('action');
     const invitationId = revokeAction!.split('/').at(-2)!;
     const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
     let predecessor = [...invitationId].reduce((value, character) => value * 32n + BigInt(alphabet.indexOf(character)), 0n) - 1n;
@@ -84,18 +89,21 @@ test('restricted sign-up, single-use invitations and waitlist approval', async (
     await expect(memberPage.locator('#sign-in-error')).toHaveCount(0);
     await expect.poll(async () => (await member.cookies()).some(cookie => cookie.name.includes(project))).toBe(true);
     await page.reload();
-    await expect(page.locator('.ts-list-item').filter({ hasText: invitedEmail })).toContainText('accepted');
+    await expect(page.locator('.ts-rows li').filter({ hasText: invitedEmail })).toContainText('Accepted');
     const replay = await memberPage.request.get(link!);
     expect(replay.status()).toBe(404);
 
     await page.goto(dash + '/auth/restrictions' + selection);
-    await page.locator('#signup-mode').selectOption('public');
+    await page.locator('.ts-chip', { hasText: 'Public' }).click();
     await page.locator('#signup-allowlist').fill('example.com');
     const blockedEmail = await newAddress('restrictions-blocked-' + run);
     await page.locator('#signup-blocklist').fill(invitedEmail + '\n' + blockedEmail + '\nexample.net\nbücher.de\nxn--caf-dma.fr');
     await page.locator('input[name=block_email_aliases]').check();
     await page.locator('input[name=block_disposable_emails]').check();
+    const listsOn = page.waitForResponse((response) => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/v1/auth-management/restrictions');
     await page.getByRole('button', { name: 'Save restrictions' }).click();
+    await expect((await listsOn).status()).toBe(200);
     for (const email of [invitedEmail, blockedEmail, 'alias+blocked@example.com', 'blocked@mailinator.com', 'blocked@x.mailinator.com', 'blocked@example.net', 'blocked@x.example.net', 'blocked@xn--bcher-kva.de']) {
       const blockedPage = await member.newPage();
       const blockedAudit = new Audit(blockedPage, info);
@@ -132,24 +140,31 @@ test('restricted sign-up, single-use invitations and waitlist approval', async (
     expect(unknownWaitlist.status()).toBe(404);
     await page.locator('#signup-allowlist').fill('');
     await page.locator('#signup-blocklist').fill('');
-    await page.locator('#signup-mode').selectOption('waitlist');
+    await page.locator('.ts-chip', { hasText: 'Waitlist' }).click();
+    const waitlistOn = page.waitForResponse((response) => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/v1/auth-management/restrictions');
     await page.getByRole('button', { name: 'Save restrictions' }).click();
+    await expect((await waitlistOn).status()).toBe(200);
+    await expect(page.locator('input[name=sign_up_mode][value=waitlist]')).toBeChecked();
+    await expect
+      .poll(async () => (await memberPage.request.get(auth + '/ui/' + project + '/waitlist')).status())
+      .toBe(200);
     await memberPage.goto(auth + '/ui/' + project + '/waitlist');
     await memberPage.locator('#waitlist-email').fill(invitedEmail);
     await memberPage.getByRole('button', { name: 'Join waitlist' }).click();
     await expect(memberPage.getByRole('status')).toContainText('Your request has been received.');
     await page.goto(dash + '/auth/waitlist' + selection);
-    await expect(page.locator('.ts-list-item').filter({ hasText: invitedEmail })).toHaveCount(0);
+    await expect(page.locator('.ts-rows li').filter({ hasText: invitedEmail })).toHaveCount(0);
     await memberPage.goto(auth + '/ui/' + project + '/waitlist');
     await memberPage.locator('#waitlist-email').fill(waitingEmail);
     await memberPage.getByRole('button', { name: 'Join waitlist' }).click();
     await expect(memberPage.getByRole('status')).toContainText('Your request has been received.');
     await memberAudit.check('project waitlist joined');
     await page.goto(dash + '/auth/waitlist' + selection);
-    const entry = page.locator('.ts-list-item').filter({ hasText: waitingEmail });
-    await expect(entry).toContainText('pending');
+    const entry = page.locator('.ts-rows li').filter({ hasText: waitingEmail });
+    await expect(entry).toContainText('Pending');
     await entry.getByRole('button', { name: 'Approve', exact: true }).click();
-    await expect(page.locator('.ts-list-item').filter({ hasText: waitingEmail })).toContainText('approved');
+    await expect(page.locator('.ts-rows li').filter({ hasText: waitingEmail })).toContainText('Approved');
     const approved = await nextMail(waitingEmail, 0);
     expect(approved.text).toContain('/ui/' + project + '/invitations/');
     await audit.check('waitlist approval sends an invitation');

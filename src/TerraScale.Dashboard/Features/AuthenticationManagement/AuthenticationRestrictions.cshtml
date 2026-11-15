@@ -5,22 +5,22 @@
     var restrictions = settings?.Restrictions;
     var manage = Model.Context.CanManageProject;
 }
-<header class="ts-card-head"><h2 class="ts-card-title" id="auth-restrictions-title">Restrictions</h2></header>
-<div class="ts-card-body">
+<header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="auth-restrictions-title">Restrictions</h2></div></header>
 @if (settings is null)
 {
-<p class="ts-empty">Restrictions are unavailable.</p>
+<div class="ts-card-body"><div class="ts-empty" role="status"><p class="ts-empty-title">Restrictions are unavailable.</p></div></div>
 }
 else
 {
-<form class="ts-form" method="post" action="/api/v1/auth-management/restrictions">
+<form class="ts-form" method="post" action="/api/v1/auth-management/restrictions" data-on:submit="@("@post(el.action, {contentType:'form'})")">
 <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
-<div class="ts-field"><label class="ts-label" for="signup-mode">Sign-up mode</label><select class="ts-input" id="signup-mode" name="sign_up_mode" disabled="@(!manage)">@foreach (var mode in new[] { "public", "restricted", "waitlist" }) { <option value="@mode" selected="@(settings.Methods.SignUpMode == mode)">@mode</option> }</select></div>
+<div class="ts-card-body"><fieldset class="ts-form" disabled="@(!manage)">
+<fieldset class="ts-chips"><legend class="ts-label">Sign-up mode</legend>@foreach (var mode in new[] { ("public", "Public"), ("restricted", "Invitation only"), ("waitlist", "Waitlist") }) { <label class="ts-chip"><input type="radio" name="sign_up_mode" value="@mode.Item1" checked="@(settings.Methods.SignUpMode == mode.Item1)" disabled="@(!manage)" /><span>@mode.Item2</span></label> }</fieldset>
 <div class="ts-field"><label class="ts-label" for="signup-allowlist">Allowlist</label><textarea class="ts-input ts-mono" id="signup-allowlist" name="allowlist" rows="5" placeholder="person@example.com&#10;example.com" disabled="@(!manage)">@string.Join(Environment.NewLine, restrictions?.Allowlist ?? [])</textarea></div>
 <div class="ts-field"><label class="ts-label" for="signup-blocklist">Blocklist</label><textarea class="ts-input ts-mono" id="signup-blocklist" name="blocklist" rows="5" placeholder="person@example.com&#10;example.com" disabled="@(!manage)">@string.Join(Environment.NewLine, restrictions?.Blocklist ?? [])</textarea></div>
 <label class="ts-check"><input type="checkbox" name="block_disposable_emails" checked="@(restrictions?.BlockDisposableEmails == true)" disabled="@(!manage)" /><span>Block disposable email domains</span></label>
 <label class="ts-check"><input type="checkbox" name="block_email_aliases" checked="@(restrictions?.BlockEmailAliases == true)" disabled="@(!manage)" /><span>Block + aliases</span></label>
-@if (manage) { <button class="ts-btn ts-btn-primary" type="submit">Save restrictions</button> }
+</fieldset></div>
+@if (manage) { <footer class="ts-card-foot"><button class="ts-btn ts-btn-primary" type="submit">Save restrictions</button></footer> }
 </form>
 }
-</div>

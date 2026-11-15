@@ -35,7 +35,10 @@ test('password reservations are returned after sign-in and retained for wrong pa
       expect(current.projectId).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
       await page.goto(`${dash}/auth/attack-protection?organizationId=${current.organizationId}&projectId=${current.projectId}`);
       await page.locator('input[name=account_lockout]').uncheck();
+      const budgetActive = page.waitForResponse((response) => response.request().method() === 'POST'
+        && new URL(response.url()).pathname === '/api/v1/auth-management/attack-protection');
       await page.getByRole('button', { name: 'Save attack protection', exact: true }).click();
+      await expect((await budgetActive).status()).toBe(200);
       await expect(page.locator('input[name=account_lockout]')).not.toBeChecked();
       await audit.check('per-email budget active without project account lockout');
       const email = `password-budget-${randomBytes(8).toString('hex')}@example.com`;

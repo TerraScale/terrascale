@@ -351,7 +351,7 @@ export const dashboardStates: readonly PageState[] = [
     name: 'authentication',
     url: () => '/auth',
     covers: { path: /^\/auth$/ },
-    heading: title('Project authentication', 2),
+    heading: title('Authentication'),
     data: async (page, journey) => {
       await expect(page.locator('.ts-idp-kv dd').first()).toHaveText(journey.projectName);
     },
@@ -361,7 +361,7 @@ export const dashboardStates: readonly PageState[] = [
       name: `authentication ${label.toLowerCase()}`,
       url: () => `/auth/${section}`,
       covers: { path: new RegExp(`^/auth/${section}$`), query: { saved: /^1?$/, ...(section === 'logs' ? { after: optionalId } : section === 'users' || section === 'sessions' ? { user: optionalId } : section === 'organizations' ? { org: optionalId, after: optionalId, view: /^(members|invitations|domains)?$/ } : {}) } },
-      heading: section === 'overview' ? title('Project authentication', 2) : title(`Authentication: ${label}`),
+      heading: title('Authentication'),
       data: async (page, journey) => {
         if (section === 'overview') await expect(page.locator('.ts-idp-kv dd').first()).toHaveText(journey.projectName);
         else if (section === 'logs') await expect(page.getByText('No events in the last 30 days.', { exact: true })).toBeVisible();
@@ -385,7 +385,7 @@ export const dashboardStates: readonly PageState[] = [
         else if (section === 'invitations') await expect(page.getByText('No invitations yet.', { exact: true })).toBeVisible();
         else if (section === 'waitlist') await expect(page.getByText('The waitlist is empty.', { exact: true })).toBeVisible();
         else if (section === 'restrictions') {
-          await expect(page.locator('#signup-mode')).toHaveValue('public');
+          await expect(page.locator('input[name=sign_up_mode][value=public]')).toBeChecked();
           await expect(page.locator('#signup-allowlist')).toHaveValue('');
         }
         else if (section === 'sign-in') {
@@ -395,7 +395,7 @@ export const dashboardStates: readonly PageState[] = [
         } else if (section === 'social') await expect(page.locator('.ts-idp-provider')).toHaveCount(12);
         else if (section === 'danger') {
           await expect(page.getByText('No records.', { exact: true })).toHaveCount(3);
-          await expect(page.locator('main')).toHaveAttribute('data-auth-section', 'danger');
+          await expect(page.locator('#auth-section')).toHaveAttribute('data-auth-section', 'danger');
         }
       },
     }),
@@ -404,7 +404,7 @@ export const dashboardStates: readonly PageState[] = [
     name: 'authentication under its alias',
     url: () => '/authentication',
     covers: { path: /^\/authentication$/ },
-    heading: title('Project authentication', 2),
+    heading: title('Authentication'),
     data: async (page, journey) => {
       await expect(page.locator('.ts-idp-kv dd').first()).toHaveText(journey.projectName);
     },
@@ -413,7 +413,7 @@ export const dashboardStates: readonly PageState[] = [
     name: 'authentication users under its alias',
     url: () => '/authentication/users',
     covers: { path: new RegExp(`^/authentication/(${authSections.map(([section]) => section).join('|')})$`) },
-    heading: title('Authentication: Users'),
+    heading: title('Authentication'),
     data: async (page) => {
       await expect(page.getByText('No users yet.', { exact: true })).toBeVisible();
     },

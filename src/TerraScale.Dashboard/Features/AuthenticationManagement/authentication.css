@@ -2,91 +2,15 @@
   gap: var(--ts-s6);
 }
 
-.ts-idp-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--ts-s2);
-}
-
-.ts-idp-actions:empty {
-  display: none;
-}
-
-.ts-idp-layout {
-  display: grid;
-  grid-template-columns: calc(var(--ts-s16) * 3) minmax(0, 1fr);
-  align-items: start;
-  gap: var(--ts-s6);
-  min-width: 0;
-}
-
-.ts-idp-nav {
-  --ts-nav-inset: var(--ts-s2);
-  --ts-nav-row: 28px;
-  --ts-nav-icon: var(--ts-s4);
-  position: sticky;
-  top: var(--ts-s6);
-  display: grid;
-  align-content: start;
-  gap: var(--ts-s3);
-  max-height: calc(100dvh - var(--ts-s6) * 2);
-  padding: 0;
-  margin-inline-start: calc(-1 * var(--ts-nav-inset));
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-}
-
-.ts-idp-nav .ts-nav-group,
-.ts-idp-nav .ts-nav {
-  gap: 2px;
-}
-
-.ts-idp-nav .ts-nav-group-label {
-  height: var(--ts-s4);
-}
-
-.ts-idp-nav .ts-nav-link {
-  font-size: var(--ts-fs-sm);
-}
-
-.ts-idp-nav .ts-nav-link:focus-visible {
-  outline-offset: -2px;
+.ts-idp-tabs {
+  margin-bottom: var(--ts-s2);
 }
 
 .ts-idp-content {
-  container: page / inline-size;
   display: grid;
   align-content: start;
   gap: var(--ts-s6);
   min-width: 0;
-}
-
-.ts-idp-mobile-nav {
-  display: none;
-}
-
-@container page (width < 960px) {
-  .ts-idp-layout {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .ts-idp-nav {
-    display: none;
-  }
-
-  .ts-idp-mobile-nav {
-    display: flex;
-    align-items: center;
-    gap: var(--ts-s2);
-  }
-
-  .ts-idp-mobile-nav .ts-select {
-    flex: 1;
-    min-width: 0;
-  }
 }
 
 .ts-idp-nowrap {
@@ -234,6 +158,14 @@
   gap: var(--ts-s6);
 }
 
+.ts-idp-branding .ts-idp-brand-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: var(--ts-s6);
+  min-width: 0;
+}
+
 .ts-idp-range {
   display: flex;
   align-items: center;
@@ -261,6 +193,11 @@
   display: grid;
   gap: var(--ts-s3);
   min-width: 0;
+}
+
+.ts-idp-brand-fields .ts-card-body {
+  display: grid;
+  gap: var(--ts-s4);
 }
 
 .ts-idp-brand-toolbar {
