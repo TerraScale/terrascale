@@ -37,7 +37,7 @@ namespace TerraScale.Dashboard.Features.Usage
                 }
 
                 var page = await usage.LoadAsync(ShellModel.For(http, selection.Context, "Usage"), selection, tab, http.Request.Query["saved"].ToString(), http.RequestAborted);
-                if (http.Request.Headers["Datastar-Request"] == "true")
+                if (http.Request.IsDatastarRequest)
                 {
                     await DatastarEvents.PatchElementsAsync(http, UsagePageView.Create(page));
                     return Results.Empty;

@@ -93,7 +93,7 @@ namespace TerraScale.Dashboard.Features.Logs
                 message = code == 400 ? "Choose a valid status filter." : "Request logs for " + database.Name + " are unavailable.";
             }
             var model = new DatabaseLogPage(ShellModel.For(http, context, database.Name + " · Logs"), database, status, logs, message, drain, drainError);
-            if (http.Request.Headers["Datastar-Request"] == "true")
+            if (http.Request.IsDatastarRequest)
             {
                 await DatastarEvents.PatchElementsAsync(http, DatabaseLogSection.Create(model));
                 return Results.Empty;

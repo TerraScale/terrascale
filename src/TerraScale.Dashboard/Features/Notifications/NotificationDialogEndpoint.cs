@@ -18,7 +18,7 @@ namespace TerraScale.Dashboard.Features.Notifications
             }
 
             context = await NotificationCommands.RefreshAsync(accounts, context, http.RequestAborted);
-            if (http.Request.Headers["Datastar-Request"] != "true")
+            if (!http.Request.IsDatastarRequest)
             {
                 return Results.Redirect("/notifications");
             }

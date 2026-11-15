@@ -199,6 +199,14 @@ test('an API key is shown once and rotates twice during grace without another cl
   await audit.check('second API key created');
 
   await page.locator('#key-secret').getByRole('link', { name: 'Done', exact: true }).click();
+  await page.goto(`/api-keys/${keyId(key)}`);
+  await page.locator('#key-allowed-ips').getByRole('button', { name: 'Edit', exact: true }).click();
+  const allowedIps = page.locator('dialog[open]');
+  await allowedIps.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.locator('dialog[open]')).toHaveCount(0);
+  await page.locator('#key-allowed-ips').getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.locator('dialog[open]').getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.locator('#key-allowed-ips')).toContainText('Any IP');
   const secrets = [key];
   for (let generation = 1; generation <= 2; generation += 1) {
     const target = generation === 1 ? '/api-keys' : `/api-keys/${keyId(key)}`;
@@ -269,6 +277,8 @@ test('an API key is shown once and rotates twice during grace without another cl
   await page.locator('dialog[open]').getByRole('button', { name: 'Revoke key', exact: true }).click();
   await expect(page.locator('main tr').filter({ hasText: name })).toHaveCount(0);
   await expect(page.locator('main tr').filter({ hasText: current.apiKeyName })).toHaveCount(1);
+  await page.getByRole('button', { name: 'New API key', exact: true }).first().click();
+  await page.locator('#create-key').getByRole('button', { name: 'Cancel', exact: true }).click();
   await audit.check('API keys after revoke');
 });
 

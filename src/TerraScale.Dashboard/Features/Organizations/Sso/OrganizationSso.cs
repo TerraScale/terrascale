@@ -231,7 +231,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
                     await sso.SaveAsync(context, OrganizationSsoService.Parse(form), http.RequestAborted);
                 }
 
-                if (http.Request.Headers["Datastar-Request"] == "true")
+                if (http.Request.IsDatastarRequest)
                 {
                     context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, reload: true);
                     await DatastarEvents.PatchElementsAsync(http, OrganizationPageView.Create(await OrganizationEndpoints.PageModelAsync(http, context, placement, tabOverride: "sso")));
@@ -241,7 +241,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
             }
             catch (AccountAccessException error)
             {
-                if (http.Request.Headers["Datastar-Request"] == "true")
+                if (http.Request.IsDatastarRequest)
                 {
                     await OrganizationEndpoints.PatchAsync(http, context, placement, error.Message, "sso");
                     return Results.Empty;
@@ -250,7 +250,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
             }
             catch (Exception error) when (error is HttpRequestException or JsonException or IOException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
             {
-                if (http.Request.Headers["Datastar-Request"] == "true")
+                if (http.Request.IsDatastarRequest)
                 {
                     await OrganizationEndpoints.PatchAsync(http, context, placement, "Single sign-on is unavailable right now. Try again shortly.", "sso");
                     return Results.Empty;

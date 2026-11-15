@@ -84,7 +84,7 @@ namespace TerraScale.Dashboard.Features.Notifications
             }
             catch (AccountAccessException error) { return await PageAsync(http, context, rules, error.Message, error.StatusCode); }
             catch (ArgumentException error) { return await PageAsync(http, context, rules, error.Message, 422); }
-            if (http.Request.Headers["Datastar-Request"] == "true")
+            if (http.Request.IsDatastarRequest)
             {
                 return await PageAsync(http, context, rules);
             }
@@ -109,7 +109,7 @@ namespace TerraScale.Dashboard.Features.Notifications
                 }
             }
             var model = new AlertsPage(ShellModel.For(http, context, "Alerts"), items, error, created, secret);
-            if (http.Request.Headers["Datastar-Request"] == "true")
+            if (http.Request.IsDatastarRequest)
             {
                 await DatastarEvents.PatchElementsAsync(http, AlertsContent.Create(model));
                 return Results.Empty;

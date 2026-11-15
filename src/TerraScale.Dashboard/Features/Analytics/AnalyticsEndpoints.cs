@@ -25,7 +25,7 @@ namespace TerraScale.Dashboard.Features.Analytics
                 var selection = AnalyticsSelection.For(context, http.Request.Query["project"].ToString(), http.Request.Query["database"].ToString(),
                     http.Request.Query["region"].ToString(), http.Request.Query["range"].ToString());
                 var page = await analytics.LoadAsync(ShellModel.For(http, selection.Context, "Analytics"), selection, http.RequestAborted);
-                if (http.Request.Headers["Datastar-Request"] == "true")
+                if (http.Request.IsDatastarRequest)
                 {
                     await DatastarEvents.PatchElementsAsync(http, AnalyticsPageView.Create(page));
                     return Results.Empty;
