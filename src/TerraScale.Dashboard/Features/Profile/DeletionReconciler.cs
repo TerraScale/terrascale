@@ -28,7 +28,11 @@ namespace TerraScale.Dashboard.Features.Profile
             {
                 await initializer.WhenInitialized.WaitAsync(stoppingToken);
                 using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30), clock);
-                do { await RunOnceAsync(stoppingToken); }
+                do
+                {
+                    try { await RunOnceAsync(stoppingToken); }
+                    catch (Exception error) when (Retryable(error, stoppingToken)) { Retry(error); }
+                }
                 while (await timer.WaitForNextTickAsync(stoppingToken));
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
