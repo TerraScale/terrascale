@@ -6,7 +6,13 @@ import { isId } from "../ids";
 import { logEvent } from "../log";
 
 import { settle } from "../domain/consensus";
-import { CANARY_CREDENTIAL_INVALID, CANARY_QUOTA_EXHAUSTED, SLOW_MS, type TimelineState } from "../domain/status";
+import {
+  CANARY_CREDENTIAL_EXPIRED,
+  CANARY_CREDENTIAL_INVALID,
+  CANARY_QUOTA_EXHAUSTED,
+  SLOW_MS,
+  type TimelineState,
+} from "../domain/status";
 import { MAX_BODY_BYTES, USER_AGENT } from "./check";
 import type { Sample } from "./round";
 
@@ -35,13 +41,26 @@ export interface CanaryResult {
   /** The slowest TerraBase request; null when the canary failed. */
   latencyMs: number | null;
   error: string | null;
+  credentialExpiresAt?: string | null;
+}
+
+export function credentialExpiry(token: string): string | null {
+  const segment = token.split(".")[1];
+  if (!segment) return null;
+  try {
+    const json = JSON.parse(atob(segment.replace(/-/g, "+").replace(/_/g, "/"))) as { key_exp?: unknown };
+    if (typeof json.key_exp !== "string" || !/^[0-9]{1,16}$/.test(json.key_exp)) return null;
+    const seconds = Number(json.key_exp);
+    return Number.isSafeInteger(seconds) ? new Date(seconds * 1000).toISOString() : null;
+  } catch {
+    return null;
+  }
 }
 
 const NAME = /^[a-z][a-z0-9_-]{0,62}$/;
 const VERSION = /^tbv1-[0-9a-f]{32}$/;
-const REGION_CODE = /^[a-z]{3}$/;
+const REGION_CODE = /^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
-/** A three-letter deployment region code, e.g. gru or sjc. */
 export const isRegionCode = (value: unknown): value is string => typeof value === "string" && REGION_CODE.test(value);
 
 const projectKeyBody = (key: string): string => (key.startsWith("sk_") ? key.slice(3) : key);
@@ -132,8 +151,8 @@ export class CanaryError extends Error {
 export class CanaryMonitorError extends CanaryError {}
 
 export class CanaryCredentialError extends CanaryMonitorError {
-  constructor() {
-    super(CANARY_CREDENTIAL_INVALID);
+  constructor(message: string = CANARY_CREDENTIAL_INVALID) {
+    super(message);
   }
 }
 
@@ -316,6 +335,11 @@ const TOKEN_MARGIN_MS = 4 * CANARY_TIMEOUT_MS;
 /** Exchanges in flight, shared by concurrent probes of the same key and scope. */
 const exchanges = new WeakMap<typeof fetch, Map<string, Promise<string>>>();
 
+export function forgetTokens(fetcher: typeof fetch = fetch): void {
+  tokens.get(fetcher)?.clear();
+  exchanges.get(fetcher)?.clear();
+}
+
 /** Forget a config's token, so a failed round exchanges the key again. */
 export function forgetToken(config: Pick<CanaryConfig, "key">, fetcher: typeof fetch): void {
   const cached = tokens.get(fetcher);
@@ -363,8 +387,25 @@ function tokenError(error: unknown): never {
     [400, 401, 403].includes(error.status ?? 0) &&
     CREDENTIAL_ERRORS.has(error.code ?? "")
   )
-    throw new CanaryCredentialError();
+    throw new CanaryCredentialError(
+      error.code === "key_expired" ? CANARY_CREDENTIAL_EXPIRED : CANARY_CREDENTIAL_INVALID,
+    );
   throw error;
+}
+
+export function canaryFailure(error: CanaryError, credentialExpiresAt?: string | null): CanaryResult {
+  const rejected =
+    !(error instanceof CanaryMonitorError) && error.code !== undefined && CREDENTIAL_ERRORS.has(error.code);
+  return {
+    ok: error instanceof CanaryMonitorError || rejected ? null : false,
+    latencyMs: null,
+    error: rejected
+      ? error.code === "key_expired"
+        ? CANARY_CREDENTIAL_EXPIRED
+        : CANARY_CREDENTIAL_INVALID
+      : error.message,
+    ...(credentialExpiresAt ? { credentialExpiresAt } : {}),
+  };
 }
 
 async function exchangeToken(
@@ -438,10 +479,15 @@ export async function runTokenProbe(config: CanaryConfig, fetcher: typeof fetch 
     ).catch(tokenError)) as { access_token?: unknown; token_type?: unknown };
     if (typeof body.access_token !== "string" || body.token_type !== "Bearer")
       throw new CanaryError("Invalid response");
-    return { ok: true, latencyMs: Date.now() - started, error: null };
+    return {
+      ok: true,
+      latencyMs: Date.now() - started,
+      error: null,
+      credentialExpiresAt: credentialExpiry(body.access_token),
+    };
   } catch (error) {
     if (!(error instanceof CanaryError)) throw error;
-    return { ok: error instanceof CanaryMonitorError ? null : false, latencyMs: null, error: error.message };
+    return canaryFailure(error);
   }
 }
 
@@ -471,6 +517,7 @@ export async function runCanary(
   try {
     if (!isCanaryConfig(config)) throw new CanaryError("Invalid probe config");
     const token = await readToken(config, fetcher);
+    const credentialExpiresAt = credentialExpiry(token);
     const terrabase = timed(fetcher);
     const read = await canaryJson(
       config.origin + sqlPath(config),
@@ -491,11 +538,11 @@ export async function runCanary(
       [200],
     );
     if (!holdsRow(read, CANARY_ROW)) throw new CanaryError("Invalid response");
-    return { ok: true, latencyMs: terrabase.slowest(), error: null };
+    return { ok: true, latencyMs: terrabase.slowest(), error: null, credentialExpiresAt };
   } catch (error) {
     if (!(error instanceof CanaryError)) throw error;
     forgetToken(config, fetcher);
-    return { ok: error instanceof CanaryMonitorError ? null : false, latencyMs: null, error: error.message };
+    return canaryFailure(error);
   }
 }
 
@@ -522,7 +569,7 @@ export function canarySample(
       results: [
         { v: CANARY_VANTAGE, ok: result.ok === null ? null : result.ok ? 1 : 0, ms: result.latencyMs, e: result.error },
       ],
-      values: null,
+      values: result.credentialExpiresAt ? { credentialExpiresAt: result.credentialExpiresAt } : null,
     },
     streak: settled.streak,
   };

@@ -27,6 +27,7 @@ export function statusPayload(view: Overview) {
     lastRoundAt: iso(view.monitoring.lastRoundAt),
     monitoringDelayed: view.monitoring.delayed,
     monitoringIssues: view.monitoring.issues,
+    credentials: view.credentials,
     monitoringCoverage: (({ vantages: _vantages, ...summary }) => summary)(view.monitoring.coverage),
     groups: view.groups.map(({ components, ...group }) => ({
       ...group,

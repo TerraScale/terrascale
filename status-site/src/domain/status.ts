@@ -119,6 +119,8 @@ export const NOT_CONFIGURED = "Not configured";
 
 export const CANARY_CREDENTIAL_INVALID = "Canary credential invalid";
 
+export const CANARY_CREDENTIAL_EXPIRED = "Canary credential expired";
+
 /** The monitor's own Free-plan operation allowance is spent, so TerraBase
     refuses its writes: no evidence of service health either. */
 export const CANARY_QUOTA_EXHAUSTED = "Canary quota exhausted";
@@ -129,6 +131,7 @@ export const EMAIL_INBOX_UNAVAILABLE = "Probe inbox unavailable";
 /** Notes of checks the monitor itself could not run. */
 const MONITOR_FAULTS: ReadonlySet<string> = new Set([
   CANARY_CREDENTIAL_INVALID,
+  CANARY_CREDENTIAL_EXPIRED,
   CANARY_QUOTA_EXHAUSTED,
   EMAIL_INBOX_UNAVAILABLE,
 ]);
@@ -180,6 +183,11 @@ export function aggregate(states: readonly TimelineState[]): TimelineState {
   return known.reduce<TimelineState>(worst, "none");
 }
 
+export function reported(states: readonly TimelineState[]): TimelineState {
+  const state = aggregate(states);
+  return states.includes("none") && (state === "operational" || state === "none") ? "none" : state;
+}
+
 export type MaintenancePhase = "scheduled" | "in_progress" | "completed";
 
 /** Where a maintenance window stands at `now`: operators may complete it
@@ -225,8 +233,8 @@ export function overallStatus(
     if (!isActive(incident, now) || incident.components.length > 0) continue;
     state = worst(state, incident.kind === "maintenance" ? "maintenance" : IMPACT_STATUS[incident.impact]);
   }
-  if (components.includes("none") && (state === "none" || state === "operational")) return "unknown";
-  return state === "none" ? "operational" : state;
+  if (state === "none" || (components.includes("none") && state === "operational")) return "unknown";
+  return state;
 }
 
 /** A component's state: maintenance while a window covering it is in
@@ -322,6 +330,7 @@ export interface LatestSample {
   total: number;
   latencyMs: number | null;
   results: VantageSample[];
+  values: Record<string, unknown> | null;
 }
 
 /** Probe counts over any stretch of time. `checks` counts judged rounds,

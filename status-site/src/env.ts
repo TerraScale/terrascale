@@ -38,6 +38,7 @@ export interface Env {
   /** The Data API canary's databases and scoped keys, as JSON keyed by
       canary endpoint id (a Worker secret; see src/probe/canary.ts). */
   DATA_API_CANARY?: string;
+  ROUND_NOW?: string;
   /** TerraBase health and SQL API probes' origins and keys, as JSON
       keyed by endpoint id (a Worker secret; see src/probe/terrabase.ts). */
   TERRABASE_PROBES?: string;

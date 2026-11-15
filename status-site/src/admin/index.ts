@@ -141,6 +141,7 @@ const views: Record<string, View> = {
                 total: 0,
                 latencyMs: null,
                 results: [],
+                values: null,
               } satisfies LatestSample)
             : undefined,
           frame.now,

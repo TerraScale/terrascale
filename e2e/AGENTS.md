@@ -465,10 +465,11 @@ Paid Checkout session creation must carry allowed_payment_method_types of card a
   1000 keys a call; a listing of anything else is unexpected), and CORS for the dashboard's origin only. A request it refuses for any other reason than a
   checksum or a missing object is a line in its `unexpected` list, which fails the run when it ends). The
   edge stands in for the ts-orch edge: Caddy for HTTPS and `env/pg-edge.mjs` for PostgreSQL on
-  `pg.terrascale.tech:5432` (`SSLRequest`, TLS with the edge certificate, then TerraBase's listener). One exclusion:
-  our status site (`status-site/`, Cloudflare Workers on D1) does not run here, so the edge answers
-  `status.terrascale.tech` with 404 (`env/Caddyfile:38-41`) and the dashboard's Regions card
-  (`HomeMeasurements.cs:194`) is tested on its unavailable path only.
+  `pg.terrascale.tech:5432` (`SSLRequest`, TLS with the edge certificate, then TerraBase's listener). The edge
+  answers `status.terrascale.tech` with 404 (`env/Caddyfile:38-41`) and the dashboard's Regions card
+  (`HomeMeasurements.cs:194`) is tested on its unavailable path only. `interactions/status-unknown.spec.ts` runs the
+  status Worker on a loopback port against this stack: its probe uses the journey API, a closed port and an HTTP 500,
+  and the spec reads that Worker's page and API.
 - Every audited state fails on a console error, warning or failed `console.assert`, an uncaught page error, a failed
   request, an HTTP status of 400 or more, a broken `<img>`, horizontal overflow of the document, an axe WCAG 2.2 AA
   violation or an uncovered same-origin link. What passes on purpose: the other console types (`log`, `debug`,

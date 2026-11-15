@@ -39,18 +39,27 @@ export async function createDedicatedProjectOwner(browser: Browser, info: TestIn
   saveSecret(label + '-api-key', apiKey);
   const current = { runId, email, password, projectId, organizationId, apiKey };
   await audit.check(label + ' provisioned');
+  const closed = (error: unknown) => error instanceof Error && error.message.includes('has been closed');
   const close = async () => {
-    await saveCookies(context);
-    await context.close();
+    try {
+      if (!context.pages().some((item) => !item.isClosed())) return;
+      await saveCookies(context);
+      await context.close();
+    } catch (error) {
+      if (!closed(error)) throw error;
+    }
   };
   const remove = async () => {
     try {
+      if (page.isClosed()) return;
       const token = await signInToken(page.request, 'dedicated-owner-cleanup');
       const proof = await stepUp(page.request, token, 'delete_account', password);
       const deleted = await page.request.delete(auth + '/v1/terrascale/account', {
         headers: { Authorization: 'Bearer ' + token, 'X-TerraScale-Step-Up-Proof': proof },
       });
       expect(deleted.status()).toBe(204);
+    } catch (error) {
+      if (!closed(error)) throw error;
     } finally {
       await close();
     }
@@ -71,8 +80,13 @@ export async function createProjectOwner(browser: Browser, info: TestInfo) {
   const page = await context.newPage();
   const audit = new Audit(page, info);
   const close = async () => {
-    await saveCookies(context);
-    await context.close();
+    try {
+      if (!context.pages().some((item) => !item.isClosed())) return;
+      await saveCookies(context);
+      await context.close();
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes('has been closed')) throw error;
+    }
   };
   return { current, context, page, audit, close };
 }

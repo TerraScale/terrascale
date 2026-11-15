@@ -4,14 +4,7 @@
    Statuspage has no such state. */
 
 import type { Component, Incident, IncidentUpdate, PageStatus, TimelineState } from "../domain/status";
-import {
-  aggregate,
-  HEADLINES,
-  isMonitorFault,
-  maintenancePhase,
-  PENDING_LAUNCH,
-  updatesByIncident,
-} from "../domain/status";
+import { HEADLINES, reported, maintenancePhase, PENDING_LAUNCH, updatesByIncident } from "../domain/status";
 import type { Overview } from "../overview";
 
 const PAGE_ID = "01M4E7GK59RY4WPKPBBKFEDF48";
@@ -69,14 +62,13 @@ function components(feed: Feed) {
   let position = 1;
   for (const group of feed.view.groups) {
     const members = group.components.filter(
-      (component) =>
-        component.lifecycle === "active" && component.note !== PENDING_LAUNCH && !isMonitorFault(component.note),
+      (component) => component.lifecycle === "active" && component.note !== PENDING_LAUNCH,
     );
     if (members.length === 0) continue;
     list.push({
       id: group.id,
       name: group.name,
-      status: COMPONENT_STATUS[aggregate(members.map((member) => member.status))],
+      status: COMPONENT_STATUS[reported(members.map((member) => member.status))],
       position: position++,
       description: null,
       group: true,

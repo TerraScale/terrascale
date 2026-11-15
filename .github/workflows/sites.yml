@@ -260,6 +260,14 @@ jobs:
         if: steps.live.outputs.deploy == 'true'
         working-directory: status-site
         run: npm run build
+      - name: Refuse a production round trigger
+        if: steps.live.outputs.deploy == 'true'
+        working-directory: status-site
+        run: |
+          if grep -n ROUND_NOW wrangler.jsonc dist/*/wrangler.json; then
+            echo "ROUND_NOW is not a production binding" >&2
+            exit 1
+          fi
       - name: Deploy the status Workers
         if: steps.live.outputs.deploy == 'true'
         working-directory: status-site

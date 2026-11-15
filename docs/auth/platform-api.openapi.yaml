@@ -1527,7 +1527,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: An access token the token endpoint issued for an API key (client credentials), carrying key_id and key_gen.
+      description: An access token the token endpoint issued for an API key (client credentials), carrying key_id, key_gen and, when the key expires, key_exp.
     clientBasic:
       type: http
       scheme: basic

@@ -12,6 +12,7 @@ import {
   aggregate,
   COMING_SOON,
   componentState,
+  reported,
   countsOf,
   endpointStatus,
   incidentWindows,
@@ -126,6 +127,7 @@ export interface Overview {
   endpoints: Endpoint[];
   /** Certificates of measured hosts expiring within two weeks, or expired. */
   expiring: Certificate[];
+  credentials: { componentId: string; expiresAt: string }[];
   activeIncidents: Incident[];
   resolvedIncidents: Incident[];
   /** Maintenance windows in progress or scheduled, soonest first. */
@@ -326,7 +328,7 @@ export function overview(snapshot: Snapshot, now: number, range: RangeKey): Over
     const endpoints = component.lifecycle === "planned" ? [] : (endpointsOf.get(component.id) ?? []);
     const list = withIncidents(bars(counter, endpoints, range, now), component.id);
     const own = endpoints.flatMap((endpoint) => clusters.get(endpoint.id) ?? []);
-    const measuredState = aggregate(endpoints.map(status));
+    const measuredState = reported(endpoints.map(status));
     const monitorFault = own.some((cluster) => isMonitorFault(cluster.note));
     const state =
       component.lifecycle === "planned"
@@ -361,7 +363,7 @@ export function overview(snapshot: Snapshot, now: number, range: RangeKey): Over
     const endpoints = measured.filter((endpoint) => endpoint.regionCode === region.code);
     const own = endpoints.flatMap((endpoint) => clusters.get(endpoint.id) ?? []);
     const pings = own.flatMap((entry) => (entry.pingMs === null ? [] : [entry.pingMs]));
-    const state = aggregate(own.map((entry) => entry.status));
+    const state = reported(own.map((entry) => entry.status));
     return {
       ...region,
       status: state,
@@ -420,6 +422,21 @@ export function overview(snapshot: Snapshot, now: number, range: RangeKey): Over
       const certificate = certificates.get(host);
       return certificate?.notAfter && Date.parse(certificate.notAfter) - now < EXPIRY_WARNING_MS ? [certificate] : [];
     }),
+    credentials: [
+      ...measured
+        .flatMap((endpoint) => {
+          const raw = latest.get(endpoint.id)?.values?.credentialExpiresAt;
+          if (typeof raw !== "string") return [];
+          const at = Date.parse(raw);
+          if (!Number.isFinite(at) || at - now >= EXPIRY_WARNING_MS) return [];
+          return [[endpoint.componentId, new Date(at).toISOString()] as const];
+        })
+        .reduce((soonest, [componentId, expiresAt]) => {
+          const current = soonest.get(componentId);
+          if (!current || expiresAt < current) soonest.set(componentId, expiresAt);
+          return soonest;
+        }, new Map<string, string>()),
+    ].map(([componentId, expiresAt]) => ({ componentId, expiresAt })),
     activeIncidents: snapshot.incidents.filter(
       (incident) => incident.kind !== "maintenance" && isActive(incident, now),
     ),
