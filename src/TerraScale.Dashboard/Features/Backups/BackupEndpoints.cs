@@ -40,7 +40,8 @@ namespace TerraScale.Dashboard.Features.Backups
                 {
                     var days = int.TryParse(form["retentionDays"], NumberStyles.None, CultureInfo.InvariantCulture, out var parsed) ? parsed : 0;
                     var preset = form["schedulePreset"].ToString();
-                    var hour = int.TryParse(form["hour"].ToString() is { Length: > 0 } daily ? daily : form["weeklyHour"], NumberStyles.None, CultureInfo.InvariantCulture, out var postedHour) ? postedHour : 3;
+                    var hourField = preset == "weekly" ? "weeklyHour" : "hour";
+                    var hour = int.TryParse(form[hourField], NumberStyles.None, CultureInfo.InvariantCulture, out var postedHour) ? postedHour : 3;
                     var cron = preset switch
                     {
                         "every6" => BackupSchedule.Cron(new EveryHours(6)),
@@ -138,7 +139,7 @@ namespace TerraScale.Dashboard.Features.Backups
 
             return new(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title("backups")), database, listing, error,
                 form?["backupId"].ToString() ?? "", form?["name"].ToString() ?? http.Request.Query["name"].ToString(),
-                form is not null && form.ContainsKey("fullBackupCron") ? form["fullBackupCron"].ToString() : null,
+                form is not null && form.TryGetValue("fullBackupCron", out var fullCron) && fullCron.ToString().Length > 0 ? fullCron.ToString() : null,
                 form is not null && form.ContainsKey("retentionDays") ? form["retentionDays"].ToString() : null)
             { Bucket = bucket, BucketRead = export, Restore = restore, Recovery = recovery };
         }

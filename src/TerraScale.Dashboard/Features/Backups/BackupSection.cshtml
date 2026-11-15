@@ -6,7 +6,7 @@
 <div id="backup-page">
 <script type="module" src="@Assets.Url("js/backup-timeline.js")" nonce="@Model.Shell.Nonce"></script>
 @if(Model.Restore is not null){@(await RenderPartialAsync<TerraScale.Dashboard.Features.Backups.RestoreStatusView, TerraScale.Dashboard.Features.Backups.BackupPage>(Model))}
-<header class="ts-page-header"><h1 class="ts-page-title" id="backups-title">Backups</h1>
+<header class="ts-page-header"><h2 class="ts-page-title" id="backups-title">Backups</h2>
 @if(canManage){<div class="ts-page-actions"><form method="post" action="/api/v1/dashboard/backups" data-submit-once data-on:submit="evt.preventDefault(); @@post(el.action, {contentType:'form'})"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="databaseId" value="@Model.Database.Id" /><button class="ts-btn ts-btn-primary" type="submit">@Icons.Render("Archive",16)<span>Back up now</span></button></form></div>}
 </header>
 @if(policy is null){<div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-body">Backup schedules couldn't be loaded.</p><a class="ts-link" href="@DatabaseService.Path(Model.Database.Id, "backups")">Retry</a></div>}
@@ -29,7 +29,7 @@ else{<ul class="ts-rows" id="restore-points-list">@(await RenderPartialAsync<Ter
 <div class="ts-columns-side">
 <section class="ts-card" id="backup-schedule" aria-labelledby="backup-schedule-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="backup-schedule-title">Schedule</h2></div></header>
 @if(policy is null || !canManage){<div class="ts-card-body"><p class="ts-meta">@(policy is null ? "Unavailable." : "Requires organization management access.")</p></div>}
-else{var choice = BackupSchedule.Parse(Model.FullBackupCron ?? policy.FullBackupCron);var preset = choice switch { EveryHours(6) => "every6", EveryHours(12) => "every12", Daily => "daily", Weekly => "weekly", _ => "custom" };<form method="post" action="/api/v1/dashboard/backups/policy" class="ts-stack-lg" data-signals:_schedulePreset="@preset" data-on:submit="evt.preventDefault(); @@post(el.action, {contentType:'form'})"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="databaseId" value="@Model.Database.Id" />
+else{var choice = BackupSchedule.Parse(Model.FullBackupCron ?? policy.FullBackupCron);var preset = choice switch { EveryHours(6) => "every6", EveryHours(12) => "every12", Daily => "daily", Weekly => "weekly", _ => "custom" };<form method="post" action="/api/v1/dashboard/backups/policy" class="ts-stack-lg" data-signals="@("{ _schedulePreset: '" + preset + "' }")" data-on:submit="evt.preventDefault(); @@post(el.action, {contentType:'form'})"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="databaseId" value="@Model.Database.Id" />
 <fieldset class="ts-chips" id="schedule-chips"><legend class="ts-label">Full backup</legend>
 <label class="ts-chip"><input type="radio" name="schedulePreset" value="every6" checked="@(preset == "every6" ? "checked" : null)" data-on:change="$_schedulePreset = 'every6'"><span>Every 6 h</span></label>
 <label class="ts-chip"><input type="radio" name="schedulePreset" value="every12" checked="@(preset == "every12" ? "checked" : null)" data-on:change="$_schedulePreset = 'every12'"><span>Every 12 h</span></label>
