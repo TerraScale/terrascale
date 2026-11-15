@@ -40,7 +40,7 @@ export async function startStatusSite(sql: string, vars: Record<string, string>)
   writeFileSync(catalog, sql, { mode: 0o600 });
   await exec(wrangler, ['d1', 'execute', 'ts-status', '--local', '--persist-to', persist, '--file', catalog, '-y'], { cwd: root });
   if (Object.keys(vars).length > 0) {
-    const body = Object.entries(vars).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join('\n');
+    const body = Object.entries(vars).map(([key, value]) => `${key}='${value.replaceAll("'", "'\\''")}'`).join('\n');
     writeFileSync(join(root, '.dev.vars'), `${body}\n`, { mode: 0o600 });
   }
   const output = createWriteStream(log);

@@ -71,13 +71,13 @@ async function sql(statements: { sql: string }[]): Promise<void> {
         client_id: keyId(current.apiKey),
         client_secret: current.apiKey,
         project: current.projectId,
-        scope: 'sql:write',
+        scope: 'sql:read sql:write',
       },
     });
     expect(exchanged.status()).toBe(200);
     const write = (await exchanged.json()).access_token as string;
     saveSecret('status-canary-sql', write);
-    const response = await context.post(`https://api.terrascale.tech/v1/projects/${current.projectId}/databases/${current.databaseName}/sql/execute`, {
+    const response = await context.post(`https://api.terrascale.tech/v1/projects/${current.projectId}/databases/${current.databaseId}/sql/execute`, {
       headers: { Authorization: `Bearer ${write}` },
       data: { statements },
     });

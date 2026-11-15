@@ -59,9 +59,8 @@ export function credentialExpiry(token: string): string | null {
 
 const NAME = /^[a-z][a-z0-9_-]{0,62}$/;
 const VERSION = /^tbv1-[0-9a-f]{32}$/;
-const REGION_CODE = /^[a-z]{3}$/;
+const REGION_CODE = /^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
-/** A three-letter deployment region code, e.g. gru or sjc. */
 export const isRegionCode = (value: unknown): value is string => typeof value === "string" && REGION_CODE.test(value);
 
 const projectKeyBody = (key: string): string => (key.startsWith("sk_") ? key.slice(3) : key);
