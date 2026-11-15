@@ -7,7 +7,7 @@ public sealed partial class BackgroundJobs(IDbContextFactory<DashboardDbContext>
     private static readonly TimeSpan Lease = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan Renewal = TimeSpan.FromSeconds(20);
 
-    public async Task<bool> RunAsync(string id, TimeSpan interval, Func<Claim, CancellationToken, Task> work, CancellationToken cancellationToken, string? target = null, string? fence = null)
+    public async Task<bool> RunAsync(string id, TimeSpan interval, Func<Claim, CancellationToken, Task> work, CancellationToken cancellationToken, string? target = null, string? fence = null, string? databaseId = null)
     {
         ArgumentNullException.ThrowIfNull(work);
         await using var db = await storage.CreateDbContextAsync(cancellationToken);
@@ -19,7 +19,9 @@ public sealed partial class BackgroundJobs(IDbContextFactory<DashboardDbContext>
         var started = clock.GetTimestamp();
         var rows = await db.BackgroundJobs.FromSqlInterpolated($"""
             INSERT INTO background_jobs (id, owner, checkpoint, available_at, lease_until, failures)
-            VALUES ({id}, {owner}, {checkpoint}, '0001-01-01 00:00:00', strftime('%Y-%m-%d %H:%M:%f', 'now', '+120 seconds'), 0)
+            SELECT {id}, {owner}, {checkpoint}, '0001-01-01 00:00:00', strftime('%Y-%m-%d %H:%M:%f', 'now', '+120 seconds'), 0
+            WHERE ({fence} IS NULL OR COALESCE((SELECT checkpoint FROM background_jobs WHERE id = {id}), '') = {fence})
+              AND ({databaseId} IS NULL OR EXISTS (SELECT 1 FROM project_databases WHERE id = {databaseId}))
             ON CONFLICT(id) DO UPDATE SET owner = excluded.owner, checkpoint = excluded.checkpoint, lease_until = excluded.lease_until
             WHERE ({fence} IS NULL OR background_jobs.checkpoint = {fence})
               AND background_jobs.lease_until <= strftime('%Y-%m-%d %H:%M:%f', 'now')

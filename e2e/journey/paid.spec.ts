@@ -138,6 +138,7 @@ for (const [kind, name] of [
   ['contention', 'dashboard claim contention skips a live owner and releases callbacks without saves'],
   ['stale', 'a stale dashboard owner fails its real checkpoint save after database-clock expiry'],
   ['crash', 'persisted log payload replays after a crash following receiver acceptance'],
+  ['deleted', 'a prefetched drain cannot recreate a deleted database claim or delivery'],
   ['quiet', 'an old quiet drain records its unchanged-cursor gap once without idle claim writes'],
   ['skew', 'forward and backward dashboard clocks cannot steal or extend database-clock leases'],
   ['renewal', 'a lost renewal reply preserves work inside the last proven lease'],

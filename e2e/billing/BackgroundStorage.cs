@@ -40,11 +40,13 @@ internal sealed class BackgroundCommands : DbCommandInterceptor, ILoggerProvider
     private int calls;
     private int writes;
     private int refuseRenewal;
+    private BackgroundClaimPause? pausedClaim;
     public string? LastWrite { get; private set; }
     public TaskCompletionSource RenewalObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public (int Calls, int Writes) Counts => (Volatile.Read(ref calls), Volatile.Read(ref writes));
     public void Reset() { Interlocked.Exchange(ref calls, 0); Interlocked.Exchange(ref writes, 0); LastWrite = null; }
     public void RefuseRenewal() => Interlocked.Exchange(ref refuseRenewal, 1);
+    public BackgroundClaimPause PauseClaim(string id, bool afterWrite) => pausedClaim = new(id, afterWrite);
 
     private void Observe(DbCommand command)
     {
@@ -53,10 +55,27 @@ internal sealed class BackgroundCommands : DbCommandInterceptor, ILoggerProvider
 
     }
 
-    public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+    public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
     {
         Observe(command);
-        return ValueTask.FromResult(result);
+        await PauseAsync(command, false, cancellationToken);
+        return result;
+    }
+
+    public override async ValueTask<DbDataReader> ReaderExecutedAsync(DbCommand command, CommandExecutedEventData eventData, DbDataReader result, CancellationToken cancellationToken = default)
+    {
+        await PauseAsync(command, true, cancellationToken);
+        return result;
+    }
+
+    private async Task PauseAsync(DbCommand command, bool afterWrite, CancellationToken cancellationToken)
+    {
+        if (pausedClaim is not { } pause || pause.AfterWrite != afterWrite ||
+            !command.CommandText.TrimStart().StartsWith("INSERT INTO background_jobs", StringComparison.Ordinal) ||
+            !command.Parameters.Cast<DbParameter>().Any(parameter => parameter.Value is string value && value == pause.Id)) { return; }
+        pausedClaim = null;
+        pause.Prefetched.TrySetResult();
+        await pause.Resume.Task.WaitAsync(cancellationToken);
     }
 
     public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(DbCommand command, CommandEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
@@ -85,4 +104,12 @@ internal sealed class BackgroundCommands : DbCommandInterceptor, ILoggerProvider
             if (category.EndsWith("BackgroundJobs", StringComparison.Ordinal) && eventId.Id == 71) { observed.TrySetResult(); }
         }
     }
+}
+
+internal sealed class BackgroundClaimPause(string id, bool afterWrite)
+{
+    public string Id { get; } = id;
+    public bool AfterWrite { get; } = afterWrite;
+    public TaskCompletionSource Prefetched { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource Resume { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 }

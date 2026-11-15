@@ -2,7 +2,10 @@
 
 Every region runs the same workers. The dashboard stores claims in background_jobs
 in its TerraBase database. Acquisition is one conditional upsert: the database clock
-must show an expired lease and due work. A new owner and checkpoint
+must show an expired lease and due work. The same statement checks the observed
+checkpoint on both insert and update; deleting a previously observed claim cannot
+turn its stale checkpoint into a fresh claim. Drain acquisition also requires the
+database membership to exist. A new owner and checkpoint
 fence the previous owner. Renewal is one conditional update requiring the current
 owner and an unexpired lease. Both operations calculate the two-minute lease in SQL.
 Completion calculates the next run in SQL, bounded to one day from database time;
@@ -43,7 +46,11 @@ state isolated from the stack's scheduled dashboard worker. SQL activity reaches
 production log source; the worker persists its range before sending. The journey kills
 that sender after receiver acceptance and proves identical recovery, a real stale
 Claim.SaveAsync refusal, skewed-clock bounds, a lost real renewal reply, read-only idle
-passes, one alert webhook and one owner email. It adds no production hooks, sleeps,
+passes, one alert webhook and one owner email. It also pauses a production prefetch,
+removes the database through OrganizationStore, and verifies that neither a first
+claim nor a deleted checkpoint can resurrect delivery. Deletion immediately after
+acquisition is checked in the transaction that validates membership and saves the
+payload. It adds no production hooks, sleeps,
 retries, raised timeouts or weakened assertions.
 
 Rolling back leaves billing jobs idle through BillingSchemaGate until roll-forward.

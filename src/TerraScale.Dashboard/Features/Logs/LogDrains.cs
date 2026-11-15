@@ -156,12 +156,16 @@ namespace TerraScale.Dashboard.Features.Logs
                 if (batch is { Items.Count: 0 } && (!batch.Gap || snapshot?.State.Cursor == "gap/" + preparedCursor)) { continue; }
                 await jobs.RunAsync(jobId, TimeSpan.Zero, async (claim, token) =>
                 {
+                    await using var prepared = await claim.Database.Database.BeginTransactionAsync(token);
                     var current = await claim.Database.LogDrains.Include(row => row.Cursors)
-                        .SingleOrDefaultAsync(row => row.Id == id && row.Revision == drain.Revision, token);
+                        .SingleOrDefaultAsync(row => row.Id == id && row.Revision == drain.Revision &&
+                            claim.Database.ProjectDatabases.Any(member => member.Id == database.Id && member.ProjectId == row.ProjectId && member.OrganizationId == row.OrganizationId), token);
                     if (current is null)
                     {
-                        claim.Database.BackgroundJobs.Remove(claim.State);
-                        await claim.Database.SaveChangesAsync(token);
+                        await claim.Database.BackgroundJobs.Where(row => row.Id == jobId && row.Owner == claim.State.Owner && row.Checkpoint == claim.State.Checkpoint)
+                            .ExecuteDeleteAsync(token);
+                        claim.Database.Entry(claim.State).State = EntityState.Detached;
+                        await prepared.CommitAsync(token);
                         return;
                     }
                     var saved = current.Cursors.FirstOrDefault(row => row.DatabaseId == database.Id);
@@ -177,6 +181,7 @@ namespace TerraScale.Dashboard.Features.Logs
                             {
                                 state.Cursor = "gap/" + cursor;
                                 await claim.SaveAsync(token);
+                                await prepared.CommitAsync(token);
                             }
                             return;
                         }
@@ -185,6 +190,7 @@ namespace TerraScale.Dashboard.Features.Logs
                         state.DeliveryId = AccountService.NewId();
                         await claim.SaveAsync(token);
                     }
+                    await prepared.CommitAsync(token);
 
                     var nextCursor = state.NextCursor ?? throw new IOException("The claimed log batch has no next cursor.");
                     var deliveryId = state.DeliveryId ?? throw new IOException("The claimed log batch has no delivery identity.");
@@ -223,7 +229,7 @@ namespace TerraScale.Dashboard.Features.Logs
                     state.NextCursor = null;
                     state.DeliveryId = null;
                     await claim.SaveAsync(token);
-                }, cancellationToken, fence: snapshot?.State.Checkpoint ?? "");
+                }, cancellationToken, fence: snapshot?.State.Checkpoint ?? "", databaseId: database.Id);
             }
         }
 

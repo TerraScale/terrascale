@@ -103,6 +103,7 @@ internal static partial class BackgroundJourney
         switch (kind)
         {
             case "crash": await CrashAsync(services, owner, path, cancellationToken); break;
+            case "deleted": await DeletedAsync(services, commands, owner, cancellationToken); break;
             case "alert": await AlertAsync(services, owner, path, cancellationToken); break;
             case "contention":
             case "stale":
