@@ -84,8 +84,12 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: read
+      issues: read
     outputs:
       report: ${{ steps.scrub.outputs.report }}
+    env:
+      JOURNEY_QUARANTINE: ${{ github.workspace }}/e2e/.state/quarantine.json
+      JOURNEY_RESULTS: ${{ github.workspace }}/e2e/.state/quarantine-results
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -120,8 +124,12 @@ jobs:
       - name: Journey against production
         timeout-minutes: 30
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           DOTNET_CLI_TELEMETRY_OPTOUT: 1
-        run: bash e2e/env/production.sh
+        run: |
+          node e2e/support/quarantine.mjs read
+          unset GITHUB_TOKEN
+          bash e2e/env/production.sh
       - id: scrub
         name: End every process of this job, then redact every generated secret from the files that upload
         if: always()
@@ -146,8 +154,16 @@ jobs:
             ps -o pid=,comm= -p "${left[*]}" || true
             kill -KILL "${left[@]}" 2> /dev/null || true
           done
-          python3 e2e/env/scrub.py e2e/.state/production e2e/production-report
+          python3 e2e/env/scrub.py e2e/.state/production e2e/production-report "$JOURNEY_RESULTS"
           if [ -f e2e/production-report/list.txt ]; then echo "report=true" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always() && steps.scrub.outcome == 'success'
+        with:
+          name: journey-results-${{ github.run_attempt }}-production
+          path: ${{ env.JOURNEY_RESULTS }}
+          include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always() && steps.scrub.outcome == 'success' && steps.scrub.outputs.report == 'true'
         with:

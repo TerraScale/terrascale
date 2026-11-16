@@ -332,8 +332,9 @@ try {
   writeFileSync(join(profile, 'journey', 'r2'), readFileSync(join(profile, 'r2')), { mode: 0o600 });
   const config = join(profile, 'playwright.config.ts');
   writeFileSync(config, 'import { defineConfig } from ' + JSON.stringify(join(root, 'e2e/node_modules/@playwright/test'))
-    + '; export default defineConfig(' + JSON.stringify({ testDir: join(root, 'e2e'), testMatch: ['interactions/keyring.spec.ts', 'keyring/promotion.spec.ts'],
-      timeout: 90000, expect: { timeout: 20000 }, retries: 0, workers: 1, reporter: 'list', outputDir: join(profile, 'journey-results') }) + ');');
+    + '; import { quarantineGrep } from ' + JSON.stringify(join(root, 'e2e/support/quarantine.mjs'))
+    + '; export default defineConfig({grepInvert: quarantineGrep(), ...' + JSON.stringify({ testDir: join(root, 'e2e'), testMatch: ['interactions/keyring.spec.ts', 'keyring/promotion.spec.ts'],
+      timeout: 90000, expect: { timeout: 20000 }, retries: 0, workers: 1, reporter: [['list'], [join(root, 'e2e/support/quarantine-reporter.ts')]], outputDir: join(profile, 'journey-results') }) + '});');
   const journey = spawn(join(root, 'e2e/node_modules/.bin/playwright'), ['test', '--config', config], {
     env: { ...clean, E2E_STATE: join(profile, 'journey'), E2E_KEYRING_BASELINE: baseline, E2E_KEYRING_DRIVER: process.env.E2E_KEYRING_DRIVER }, stdio: 'inherit',
   });

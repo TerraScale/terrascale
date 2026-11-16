@@ -990,6 +990,9 @@ jobs:
           fi
 
   journey:
+    permissions:
+      contents: read
+      issues: read
     needs: changes
     if: >-
       (github.event_name == 'pull_request' && needs.changes.outputs.journey == 'true')
