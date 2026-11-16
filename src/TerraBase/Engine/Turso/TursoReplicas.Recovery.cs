@@ -45,7 +45,7 @@ internal sealed partial class TursoReplicas
             logger.ZLogError($"Detached import recovery cannot enumerate database scope {scope:@Scope}; its databases are refused and all copies preserved: {error.GetType().Name:@Error}");
             yield break;
         }
-        foreach (var detached in files.Select(path => path[..(path.LastIndexOf(".promote.db", StringComparison.Ordinal) + ".promote.db".Length)]).Distinct(StringComparer.Ordinal))
+        foreach (var detached in files.Where(path => !path.Contains(".retained-key", StringComparison.Ordinal)).Select(path => path[..(path.LastIndexOf(".promote.db", StringComparison.Ordinal) + ".promote.db".Length)]).Distinct(StringComparer.Ordinal))
         {
             yield return detached;
         }

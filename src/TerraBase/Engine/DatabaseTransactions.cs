@@ -6,8 +6,14 @@ internal static class DatabaseTransactions
 {
     extension(IStorageEngine engine)
     {
-        internal async ValueTask<IStorageTransaction?> BeginTransactionAsync(
-            TenantContext database, bool write, CancellationToken cancellationToken)
+        internal ValueTask<IStorageTransaction?> BeginTransactionAsync(TenantContext database, bool write, CancellationToken cancellationToken) =>
+            engine.BeginAsync(database, store => store.BeginTransactionAsync(write, cancellationToken), cancellationToken);
+
+        internal ValueTask<IStorageTransaction?> BeginPromotionTransactionAsync(TenantContext database, CancellationToken cancellationToken) =>
+            engine.BeginAsync(database, store => store.BeginPromotionTransactionAsync(cancellationToken), cancellationToken);
+
+        private async ValueTask<IStorageTransaction?> BeginAsync(
+            TenantContext database, Func<IDatabaseStore, ValueTask<IStorageTransaction>> begin, CancellationToken cancellationToken)
         {
             for (var attempt = 0; ; attempt++)
             {
@@ -18,7 +24,7 @@ internal static class DatabaseTransactions
 
                 try
                 {
-                    return await store.BeginTransactionAsync(write, cancellationToken).ConfigureAwait(false);
+                    return await begin(store).ConfigureAwait(false);
                 }
                 catch (ObjectDisposedException) when (attempt == 0)
                 {

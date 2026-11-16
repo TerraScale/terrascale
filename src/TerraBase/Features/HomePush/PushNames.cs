@@ -22,6 +22,8 @@ internal static class PushNames
     public static string Purged(string origin, TenantContext database) =>
         $"terrabase.push-state.{origin}.purged.{database.OrganizationId}.{database.ProjectId}.{database.DatabaseId}";
 
+    public const string PurgedAll = "terrabase.push-state.*.purged.>";
+
     public static string Upgrade(string origin) => $"terrabase.push-state.{origin}.upgrade";
 
     public static string Build(string origin, string node) => $"terrabase.push-state.{origin}.build.{node}";

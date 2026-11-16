@@ -15,6 +15,7 @@ const log = { calls: [], unexpected: [] };
 let backupsDown = false;
 let holesUnlisted = false;
 const backupPuts = [];
+const keyHolds = new Map();
 
 const sha256 = (data, encoding) => createHash('sha256').update(data).digest(encoding);
 const hmac = (key, data) => createHmac('sha256', key).update(data).digest();
@@ -118,6 +119,23 @@ createServer((request, response) => {
     response.writeHead(204);
     return response.end();
   }
+  if (rawPath === '/fault/key-hold' && ['POST', 'GET', 'DELETE'].includes(request.method)) {
+    const held = new URLSearchParams(rawQuery).get('key') ?? '';
+    const hold = keyHolds.get(held);
+    const done = status => {
+      response.writeHead(status);
+      response.end();
+    };
+    if (request.method === 'POST') {
+      keyHolds.set(held, { parked: [], waiting: [] });
+      return done(204);
+    }
+    if (!hold) return done(404);
+    if (request.method === 'GET') return hold.parked.length ? done(204) : hold.waiting.push(() => done(204));
+    keyHolds.delete(held);
+    for (const resume of hold.parked) resume();
+    return done(204);
+  }
   if (request.method === 'GET' && rawPath === '/fault/puts') {
     const text = JSON.stringify(backupPuts);
     response.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(text) });
@@ -161,7 +179,7 @@ createServer((request, response) => {
   if (!target && !listed && !platformBucket) return unexpected(request, response, 404, 'NoSuchBucket', 'path outside the files bucket');
   const chunks = [];
   request.on('data', (chunk) => chunks.push(chunk));
-  request.on('end', () => {
+  const answer = () => {
     const body = Buffer.concat(chunks);
     if (request.headers.origin === origin) cors(response);
     const authenticated = signed(request, rawPath, query);
@@ -212,6 +230,12 @@ createServer((request, response) => {
       return response.end();
     }
     if (request.method !== 'GET' && request.method !== 'HEAD') return unexpected(request, response, 405, 'MethodNotAllowed', 'unsupported method');
+    const hold = platform && request.method === 'GET' ? keyHolds.get(target[2]) : undefined;
+    if (hold) {
+      hold.parked.push(answer);
+      for (const wake of hold.waiting.splice(0)) wake();
+      return;
+    }
     const unavailable = process.env.E2E_STATE + '/r2-unavailable-keys';
     let refused;
     if (platform && existsSync(unavailable)) {
@@ -234,5 +258,6 @@ createServer((request, response) => {
       ...(query.has('response-cache-control') ? { 'cache-control': query.get('response-cache-control') } : {}),
     });
     response.end(request.method === 'HEAD' ? undefined : stored.body);
-  });
+  };
+  request.on('end', answer);
 }).listen(port('r2'), '127.0.0.1');

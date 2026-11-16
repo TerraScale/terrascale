@@ -344,7 +344,8 @@ jobs:
               {shard: "phone and flows", projects: "--project pages-mobile --project hosted --project interactions --project invitation", selected: env.PHONE},
               {shard: "session limits", projects: "placement/session-limits.spec.ts --project placement --workers 1", regions: 2, nodes: 2, selected: env.SESSION},
               {shard: "write guarantees", projects: "placement/write-guarantees.spec.ts placement/region-restore.spec.ts --project placement --workers 1", regions: 2, nodes: 1, selected: env.WRITE},
-              {shard: "multi-region faults", projects: "--project fault", regions: 2, nodes: 2, selected: env.FAULTS}
+              {shard: "multi-region faults", projects: "--project fault --grep-invert receipt|retained.receiver|commit.point|rollback.keeps|home.move.never|previous.build|planned.move|cannot.serve|regional.writer.role.moves|thirty.second.first.writer.outage|writer.killed.right.after.an.acknowledgement", regions: 2, nodes: 2, selected: env.FAULTS},
+              {shard: "multi-region home moves and receipt handoffs", projects: "--project fault --grep receipt|retained.receiver|commit.point|rollback.keeps|home.move.never|previous.build|planned.move|cannot.serve|regional.writer.role.moves|thirty.second.first.writer.outage|writer.killed.right.after.an.acknowledgement", regions: 2, nodes: 2, selected: env.FAULTS}
             ] | map(select(env.ALL_LANES == "true" or .selected == "true") | del(.selected)) as $shards
             | ($shards | length > 0) as $browser
             | ($browser or env.ALL_LANES == "true" or env.ENGINE == "true" or env.FRONTIER == "true" or env.KEYRING == "true") as $journey
