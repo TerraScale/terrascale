@@ -120,7 +120,7 @@ function alertFor(issues, name) {
   const matches = issues.filter((issue) => {
     const body = (issue.body ?? '').replaceAll('\r\n', '\n');
     const blocks = [...body.matchAll(/^```[^\n]*\n([\s\S]*?)^```/gm)];
-    return names.test(issue.title) || blocks.some((block) => new RegExp(`"thing"\\s*:\\s*"${name}"`).test(block[1]))
+    return (issue.title.startsWith('Deployment state:') && names.test(issue.title)) || blocks.some((block) => new RegExp(`"thing"\\s*:\\s*"${name}"`).test(block[1]))
       || (issue.labels.some((entry) => entry.name === label) && names.test(`${issue.title}\n${body}`));
   });
   assert.ok(matches.length <= 1, `${name}: multiple deployment state candidates (${matches.map((issue) => issue.html_url).join(', ')}); restore exactly one state issue`);
