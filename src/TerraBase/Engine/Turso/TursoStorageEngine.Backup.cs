@@ -141,8 +141,8 @@ internal sealed partial class TursoStorageEngine
                         {
                             return true;
                         }
-                        var retained = Path.Combine(_dataDirectory, PreservedFiles.Directory, EntityIds.New().ToString(), key.Organization, key.Project);
-                        DatabaseKeys.RejectLink(Path.Combine(_dataDirectory, PreservedFiles.Directory));
+                        var retained = Path.Combine(_dataDirectory, ".handoff", EntityIds.New().ToString(), key.Organization, key.Project);
+                        DatabaseKeys.RejectLink(Path.Combine(_dataDirectory, ".handoff"));
                         Directory.CreateDirectory(retained);
                         for (var ancestor = retained; ; ancestor = Path.GetDirectoryName(ancestor)!)
                         {

@@ -59,26 +59,6 @@ nothing past the removal until the origin node's build record appears; and 130 u
 healthy database of that origin still applies. One pushed update whose home apply steps an `engine_retry` statement is failed once
 by the engine-crash integrity proxy with native status Interrupt: the home retries it with reason `engine`, records
 no revert, and the next attempt confirms the updated value. A corruption status is not used, because that status faults the copy.
-The same proxy, loaded on gru and on fra, holds one statement: `hold <file> <text>` in the node's control file holds the
-next statement containing the text on a database whose path contains the file, until the run writes a byte to the
-control file's `.release` FIFO, which the run keeps open and releases again on exit; a `.held` file signals the hold.
-With it the run removes a message under a purge marker after its batch was checked, while the message before it in
-that batch is being applied. On gru's sequencer, the head is held on a refused data key until the sequencer reads the
-message after it in the same round, then its apply is held. On fra's promotion drain, the drain is held at its first
-frontier read of the imported copy while gru is paused for the move, the head and the next message are pushed, and the
-head's apply is held. gru's sequencer logs that the purge marker covers the pushes it is applying and never applies the
-purged message; fra holds the origin with reason `purged` and the promotion is refused with `drain_failed` while gru
-stays the home.
-gru's sequencer, whose batch may have been checked before the purge and then waited out the pause, checks the stream
-again once the pause lifts (a home apply refuses a batch checked before any change of the database's fence), holds the
-database with reason `purged` and its value stays unchanged.
-A second promotion repeats that purge with fra's copy of the purge marker withheld (fra's broker connection runs through
-its own relay, which drops core deliveries on the marker subject) and closes fra's broker connection at the drain's next
-stream read. When the drain has applied the removed message, it then fails and is retried against the copy it already
-changed (on 26a836e that retry committed the move); fra's own sequencer, which sees fra as the home once the placement
-changes, can instead report the marker first, and the drain stops at the message. Either way the drain compares the
-marker with the frontier fra's copy had at the import, holds the origin with reason `purged` and refuses the promotion;
-gru stays the home with its value unchanged.
 
 The run changes the real JetStream regional ownership record, including the matching predecessor/preparation
 metadata, and waits for the target node's retry event to establish that it became the writer. This isolates

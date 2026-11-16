@@ -1,4 +1,3 @@
-using TerraBase.Errors;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 using TerraBase.Features.Callers;
@@ -25,6 +24,6 @@ internal sealed class RegionalPrimeEndpoint(RegionalHandoff handoff) : EndpointW
     {
         var source = HttpContext.Request.Query["source"].ToString();
         return await handoff.PrimeAsync(source, cancellationToken).ConfigureAwait(false)
-            ? TypedResults.NoContent() : ErrorResponse.From(new Unavailable("this node is not caught up with the regional writer; retry"));
+            ? TypedResults.NoContent() : TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
     }
 }

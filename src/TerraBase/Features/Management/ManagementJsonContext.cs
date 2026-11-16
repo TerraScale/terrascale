@@ -39,7 +39,6 @@ namespace TerraBase.Features.Management;
 [JsonSerializable(typeof(PointInTimePlanRequest))]
 [JsonSerializable(typeof(DatabasePurgeRecord))]
 [JsonSerializable(typeof(DatabasePurgeReceipt))]
-[JsonSerializable(typeof(PurgeReceiptStatus))]
 [JsonSerializable(typeof(ManagedDatabase))]
 [JsonSerializable(typeof(ManagementPage<DatabaseBackup>))]
 [JsonSerializable(typeof(ManagementPage<ManagedDatabase>))]

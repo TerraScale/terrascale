@@ -3,10 +3,8 @@ using System.Diagnostics;
 using System.Buffers.Binary;
 using System.Diagnostics.Metrics;
 using System.Globalization;
-using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading.Channels;
-using Amazon.S3;
 using NativeCompressions;
 using NATS.Client.Core;
 using NATS.Client.JetStream;
@@ -50,14 +48,6 @@ internal interface ILocalTransaction : IAsyncDisposable
 internal sealed record LocalCommit(string? Id, HomeApplyResult? Home);
 
 internal sealed class LocalOutcomeUnknownException(string message, Exception inner) : Exception(message, inner);
-
-internal sealed record DrainedPush(string Region, HomeApplyResult Result, ulong Sequence);
-
-internal closed record class PromotionDrain;
-
-internal sealed record class DrainedOrigins(IReadOnlyList<DrainedPush> Pushes) : PromotionDrain;
-
-internal sealed record class HeldOrigin(string Origin, string Kind) : PromotionDrain;
 
 internal partial class HomePush(
     TerraBaseOptions options, IRegionPeers peers, IReplicaCatalog catalog, IDatabaseReplicas replicas, IHomeApply apply, IHlcClock clock,
@@ -193,7 +183,7 @@ internal partial class HomePush(
         await RetryAsync(token => EnsureStreamAsync(js, nats, token), "the push stream is not ready", stoppingToken).ConfigureAwait(false);
         await RetryAsync(token => RebuildAsync(js, token), "the push overlay could not be read back", stoppingToken).ConfigureAwait(false);
         _ready = true;
-        await Task.WhenAll(NoticesAsync(nats, stoppingToken), PurgeMarkersAsync(nats, stoppingToken), PurgesAsync(js, stoppingToken), OriginsAsync(js, nats, stoppingToken), ParkedCountsAsync(js, stoppingToken)).ConfigureAwait(false);
+        await Task.WhenAll(NoticesAsync(nats, stoppingToken), PurgesAsync(js, stoppingToken), OriginsAsync(js, nats, stoppingToken), ParkedCountsAsync(js, stoppingToken)).ConfigureAwait(false);
     }
 
     private async Task OriginsAsync(NatsJSContext js, NatsConnection nats, CancellationToken cancellationToken)
@@ -288,205 +278,6 @@ internal partial class HomePush(
     }
 
     private static (string, string, string) Key(TenantContext database) => (database.OrganizationId, database.ProjectId!, database.DatabaseId!);
-
-    private async Task<IReadOnlyList<string>> DrainedRegionsAsync(CancellationToken cancellationToken) =>
-        [.. (await peers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false)).Select(peer => peer.Region).Append(options.Region).Distinct(StringComparer.Ordinal)];
-
-    internal async Task<IReadOnlyDictionary<string, ulong>> PromotionBaselineAsync(TenantContext database, CancellationToken cancellationToken)
-    {
-        Dictionary<string, ulong> baseline = new(StringComparer.Ordinal);
-        if (_js is not { } js)
-        {
-            return baseline;
-        }
-
-        foreach (var origin in await DrainedRegionsAsync(cancellationToken).ConfigureAwait(false))
-        {
-            var source = await SourceAsync(js, origin, cancellationToken).ConfigureAwait(false);
-            baseline[source] = await apply.FrontierAsync(database, source, cancellationToken).ConfigureAwait(false)
-                ?? throw new IOException("the imported database is not stored");
-        }
-
-        return baseline;
-    }
-
-    internal async Task<PromotionDrain> DrainOriginsAsync(TenantContext database, long fence, IReadOnlyDictionary<string, ulong> baseline, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(baseline);
-        if (_js is not { } js)
-        {
-            return new DrainedOrigins([]);
-        }
-
-        var scans = new List<(INatsJSConsumer Consumer, string Origin, string Source)>();
-        foreach (var origin in await DrainedRegionsAsync(cancellationToken).ConfigureAwait(false))
-        {
-            var source = await SourceAsync(js, origin, cancellationToken).ConfigureAwait(false);
-            var consumer = await js.CreateOrderedConsumerAsync(PushNames.Stream(origin), new NatsJSOrderedConsumerOpts
-            {
-                FilterSubjects = [PushNames.DatabaseFilter(origin, database)],
-                DeliverPolicy = ConsumerConfigDeliverPolicy.All,
-            }, cancellationToken).ConfigureAwait(false);
-            if (source != await SourceAsync(js, origin, cancellationToken).ConfigureAwait(false))
-            {
-                throw new IOException("the push stream was recreated while the promotion drain opened it");
-            }
-
-            Sourced(origin, source);
-            scans.Add((consumer, origin, source));
-        }
-
-        IReadOnlyList<(INatsJSConsumer Consumer, string Origin, string Source)> opened = [.. scans];
-        List<DrainedPush> applied = [];
-        while (true)
-        {
-            var read = 0;
-            foreach (var scan in scans.ToList())
-            {
-                List<(ulong Sequence, RegionTransaction Transaction)> batch = [];
-                await foreach (var message in scan.Consumer.FetchNoWaitAsync<byte[]>(new NatsJSFetchOpts { MaxMsgs = 256 }, cancellationToken: cancellationToken).ConfigureAwait(false))
-                {
-                    read++;
-                    var sequence = message.Metadata?.Sequence.Stream ?? throw new IOException("a retained origin push has no stream sequence");
-                    if (Epoch(message.Headers) >= fence)
-                    {
-                        logger.ZLogInformation($"A push to {database.DatabaseId:@Database} from {message.Subject:@Subject} at stream sequence {sequence:@Sequence} names the new home's epoch; the new home's sequencer applies it and every later push of its origin in stream order");
-                        _ = scans.Remove(scan);
-                        break;
-                    }
-
-                    RegionTransaction? transaction;
-                    try
-                    {
-                        transaction = message.Data is { } data ? await DecodeAsync(database, data, cancellationToken).ConfigureAwait(false) : null;
-                    }
-                    catch (Exception error) when (error is AmazonS3Exception or HttpRequestException or CryptographicException)
-                    {
-                        logger.ZLogWarning($"A push to {database.DatabaseId:@Database} from {message.Subject:@Subject} at stream sequence {sequence:@Sequence} is held at promotion: {RetryKind(error):@Kind}; the new home's sequencer applies it and every later push of its origin in stream order");
-                        _ = scans.Remove(scan);
-                        break;
-                    }
-
-                    if (transaction is null)
-                    {
-                        throw new IOException("a retained origin push could not be decoded during promotion");
-                    }
-
-                    if (Ulid.TryParse(transaction.Id, out var created) && created.Time < time.GetUtcNow() - HomeApplier.KeptApplied + AppliedMargin)
-                    {
-                        logger.ZLogInformation($"A push to {database.DatabaseId:@Database} from {message.Subject:@Subject} at stream sequence {sequence:@Sequence} is older than the applied-id retention; the new home's sequencer decides it from its stream frontier, with every later push of its origin in stream order");
-                        _ = scans.Remove(scan);
-                        break;
-                    }
-
-                    batch.Add((sequence, transaction));
-                }
-
-                var (kind, frontier) = await PromotionStopAsync(js, scan.Origin, scan.Source, database, cancellationToken).ConfigureAwait(false);
-                if (kind is not null)
-                {
-                    return new HeldOrigin(scan.Origin, kind);
-                }
-
-                try
-                {
-                    foreach (var (sequence, transaction) in batch)
-                    {
-                        if (sequence > frontier && !Admits(scan.Source, database.DatabaseId!, sequence))
-                        {
-                            return new HeldOrigin(scan.Origin, "purged");
-                        }
-
-                        var result = await apply.ApplyPromotingAsync(database, transaction, new StreamSequence(scan.Source, sequence), cancellationToken).ConfigureAwait(false)
-                            ?? throw new StorageBusyException();
-                        applied.Add(new DrainedPush(transaction.Region!, result, sequence));
-                    }
-                }
-                finally
-                {
-                    Settled(scan.Source, database.DatabaseId!);
-                }
-            }
-
-            if (read == 0)
-            {
-                break;
-            }
-        }
-
-        foreach (var (_, origin, source) in opened)
-        {
-            var current = await js.GetStreamAsync(PushNames.Stream(origin), cancellationToken: cancellationToken).ConfigureAwait(false);
-            if (Source(current) != source)
-            {
-                throw new IOException("the push stream was recreated during the promotion drain");
-            }
-
-            if (await PurgedThroughAsync(current, origin, database, cancellationToken).ConfigureAwait(false) > baseline.GetValueOrDefault(source))
-            {
-                return new HeldOrigin(origin, "purged");
-            }
-        }
-
-        return new DrainedOrigins(applied);
-    }
-
-    private async Task<(string? Kind, ulong Frontier)> PromotionStopAsync(NatsJSContext js, string origin, string source, TenantContext database, CancellationToken cancellationToken)
-    {
-        var current = await js.GetStreamAsync(PushNames.Stream(origin), cancellationToken: cancellationToken).ConfigureAwait(false);
-        if (Source(current) != source)
-        {
-            throw new IOException("the push stream was recreated during the promotion drain");
-        }
-
-        if (await apply.FrontierAsync(database, source, cancellationToken).ConfigureAwait(false) is not { } frontier)
-        {
-            return ("not_stored", 0);
-        }
-
-        if (current.Info.State.LastSeq < frontier)
-        {
-            return ("stream_behind", frontier);
-        }
-
-        if (await PurgedThroughAsync(current, origin, database, cancellationToken).ConfigureAwait(false) is { } purged)
-        {
-            Purged(origin, source, database.DatabaseId!, purged);
-            if (purged > frontier)
-            {
-                return ("purged", frontier);
-            }
-        }
-
-        if ((current.Info.State.FirstSeq > 1 || current.Info.State.NumDeleted > 0)
-            && !await OriginMarksAsync(current, origin, [], cancellationToken).ConfigureAwait(false))
-        {
-            return ("origin_previous_build", frontier);
-        }
-
-        return (null, frontier);
-    }
-
-    internal async Task PublishDrainedAsync(TenantContext database, IReadOnlyList<DrainedPush> drained, CancellationToken cancellationToken)
-    {
-        if (_nats is not { } nats)
-        {
-            return;
-        }
-
-        foreach (var push in drained)
-        {
-            await nats.PublishAsync(PushNames.Applied(push.Region, database),
-                JsonSerializer.SerializeToUtf8Bytes(push.Result, HomeApplyJsonContext.Default.HomeApplyResult), cancellationToken: cancellationToken).ConfigureAwait(false);
-            _applies?.Add(1, new KeyValuePair<string, object?>("state", push.Result.State));
-            Progressed(push.Region, database, push.Sequence);
-        }
-    }
-
-    private static long Epoch(NatsHeaders? headers) =>
-        headers is not null && headers.TryGetValue("Tb-Epoch", out var value) && long.TryParse(value.ToString(), NumberStyles.None, CultureInfo.InvariantCulture, out var epoch)
-            ? epoch
-            : 0;
 
     private void Progressed(string origin, TenantContext? database, ulong sequence)
     {
@@ -720,7 +511,6 @@ internal partial class HomePush(
         {
             run.Source = source;
             run.Previous = previous;
-            Sourced(origin, source);
             _runs[origin] = run;
         }
 

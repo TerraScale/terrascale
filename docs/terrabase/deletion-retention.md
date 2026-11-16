@@ -39,20 +39,3 @@ Account, organization and project roots create logical deletion jobs in the same
 Nothing here establishes live physical erasure.
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
-
-## Regional receipt fetch ordering
-
-An erasure holder keeps its durable receipt in its own catalog. The current
-regional writer fetches the receipts its own purge record waits for, from each
-named holder of its region, on every maintenance pass until every one is recorded.
-A writer without the purge record fetches nothing, and a holder without a receipt
-answers 404. Absence never authorizes deletion or retention of unbound evidence.
-The writer records a fetched receipt only when its purge record names that holder
-for the same deletion.
-
-The internal `GET /v1/sync/purge-receipts/{database}` reports `known` and `settled`.
-An unknown purge reports both false. A writer reports settled only when every
-expected holder has matching erasure evidence. A follower reports settled when it
-holds its own receipt for its purge record, or when that record does not require
-its receipt. This endpoint reports active-copy receipt fetching, separately from
-backup erasure verification.

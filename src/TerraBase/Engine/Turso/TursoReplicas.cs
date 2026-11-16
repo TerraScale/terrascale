@@ -233,18 +233,6 @@ internal sealed partial class TursoReplicas(
         }
     }
 
-    public void ArchiveCompletedImport(TenantContext database)
-    {
-        var detached = PathOf(Key(database))[..^3] + ".promote.db";
-        lock (KeyRecords)
-        {
-            if (!ActiveDetached.Contains(detached))
-            {
-                ArchiveCompletedDetached(detached);
-            }
-        }
-    }
-
     private static void ArchiveCompletedDetached(string detached)
     {
         var intentPath = detached + ".importing";
@@ -258,7 +246,13 @@ internal sealed partial class TursoReplicas(
             return;
         }
         var directory = Path.GetDirectoryName(detached)!;
-        var archive = NewArchive(directory);
+        var root = Path.Combine(directory, ".retained");
+        DatabaseKeys.RejectLink(root);
+        Directory.CreateDirectory(root);
+        DirectorySync.Sync(directory);
+        var archive = Path.Combine(root, EntityIds.New().ToString());
+        Directory.CreateDirectory(archive);
+        DirectorySync.Sync(root);
         foreach (var file in Directory.GetFiles(directory, Path.GetFileName(detached) + "*")
             .OrderBy(file => file == intentPath))
         {
@@ -268,51 +262,6 @@ internal sealed partial class TursoReplicas(
             DirectorySync.Sync(directory);
         }
     }
-
-    private static string NewArchive(string directory)
-    {
-        var root = Path.Combine(directory, ".retained");
-        DatabaseKeys.RejectLink(root);
-        Directory.CreateDirectory(root);
-        DirectorySync.Sync(directory);
-        var archive = Path.Combine(root, EntityIds.New().ToString());
-        Directory.CreateDirectory(archive);
-        DirectorySync.Sync(root);
-        return archive;
-    }
-
-    public int ArchiveSetAside(TenantContext database)
-    {
-        var path = PathOf(Key(database));
-        lock (KeyRecords)
-        {
-            var directory = Path.GetDirectoryName(path)!;
-            if (!Directory.Exists(directory))
-            {
-                return 0;
-            }
-            DatabaseKeys.RejectLink(directory);
-            string[] files = [.. SetAsideFiles(path)];
-            if (files.Length == 0)
-            {
-                return 0;
-            }
-            var archive = NewArchive(directory);
-            foreach (var file in files)
-            {
-                DatabaseKeys.RejectLink(file);
-                File.Move(file, Path.Combine(archive, Path.GetFileName(file)), overwrite: false);
-            }
-            DirectorySync.Sync(archive);
-            DirectorySync.Sync(directory);
-            return files.Length;
-        }
-    }
-
-    private static IEnumerable<string> SetAsideFiles(string path) =>
-        Directory.EnumerateFiles(Path.GetDirectoryName(path)!, Path.GetFileName(path) + ".retained.*")
-            .Where(file => file.Length >= path.Length + ".retained.".Length + 26
-                && Ulid.TryParse(file.AsSpan(path.Length + ".retained.".Length, 26), out _));
 
     private static void DeleteArchivedDetached(string replica)
     {
@@ -326,19 +275,6 @@ internal sealed partial class TursoReplicas(
         {
             DatabaseKeys.RejectLink(archive);
             DeleteDetachedFiles(Path.Combine(archive, Path.GetFileName(replica)[..^3] + ".promote.db"));
-            foreach (var file in SetAsideFiles(Path.Combine(archive, Path.GetFileName(replica))))
-            {
-                DatabaseKeys.RejectLink(file);
-                if (WrappedKeyFile.IsKey(Path.GetFileName(file)))
-                {
-                    WrappedKeyFile.Retain(file);
-                }
-                else
-                {
-                    File.Delete(file);
-                }
-            }
-            DirectorySync.Sync(archive);
         }
     }
 
@@ -376,22 +312,6 @@ internal sealed partial class TursoReplicas(
 
     public DatabaseRevision? HeldRevision(TenantContext database) =>
         _replicas.TryGetValue(Key(database), out var opening) && opening.IsValueCreated && opening.Value.IsCompletedSuccessfully ? opening.Value.Result.Held : null;
-
-    public ReplicaHolding Holding(TenantContext database) =>
-        Retained(PathOf(Key(database))) ? new PositionUnknown()
-        : !_replicas.TryGetValue(Key(database), out var opening) || !opening.IsValueCreated || !opening.Value.IsCompletedSuccessfully
-            ? OnDisk(PathOf(Key(database))) ? new PositionUnknown() : new NoReplica()
-        : opening.Value.Result switch
-        {
-            { Held: { } held } => new HeldAt(held),
-            { Pulled: false } => new NoReplica(),
-            _ => new PositionUnknown(),
-        };
-
-    private static bool OnDisk(string path) => File.Exists(path) || File.Exists(path + "-info");
-
-    private static bool Retained(string path) => Directory.Exists(Path.GetDirectoryName(path))
-        && SetAsideFiles(path).Any(file => file.Length == path.Length + ".retained.".Length + 26);
 
     public async ValueTask<ReplicaComparison?> CompareAsync(TenantContext database, DatabaseRevision revision, IReadOnlyList<RangeChecksum> home, CancellationToken cancellationToken)
     {
@@ -532,21 +452,15 @@ internal sealed partial class TursoReplicas(
 
         await Task.Run(() => RetainReplicaFiles(path)).ConfigureAwait(false);
         hexKey = await NewKeyAsync(path).ConfigureAwait(false);
-        Replica? created = null;
+        var replica = new Replica(this, Tenant(key), await TursoSyncDatabase.CreateAsync(Options(path, hexKey, source, observed)).ConfigureAwait(false), path, observer, observed, logger, _time, pulled: false);
         try
         {
-            created = new Replica(this, Tenant(key), await TursoSyncDatabase.CreateAsync(Options(path, hexKey, source, observed)).ConfigureAwait(false), path, observer, observed, logger, _time, pulled: false);
-            _ = await created.PullAsync(fromHome: true, CancellationToken.None).ConfigureAwait(false);
-            return created;
+            _ = await replica.PullAsync(fromHome: true, CancellationToken.None).ConfigureAwait(false);
+            return replica;
         }
         catch
         {
-            if (created is not null)
-            {
-                await created.DisposeAsync().ConfigureAwait(false);
-            }
-
-            _ = await Task.Run(() => DeleteFiles(path, keepDetached: true)).ConfigureAwait(false);
+            await replica.DisposeAsync().ConfigureAwait(false);
             throw;
         }
     }
@@ -689,10 +603,6 @@ internal sealed partial class TursoReplicas(
             var deleted = false;
             foreach (var file in Directory.EnumerateFiles(directory, name + "*"))
             {
-                if (keepDetached && file.StartsWith(path + ".retained.", StringComparison.Ordinal))
-                {
-                    continue;
-                }
                 if (WrappedKeyFile.IsKey(Path.GetFileName(file)))
                 {
                     WrappedKeyFile.Retain(file);

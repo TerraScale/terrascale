@@ -14,14 +14,6 @@ internal sealed record class Diverged : ReplicaVerdict;
 
 internal sealed record class Moved : ReplicaVerdict;
 
-internal closed record class ReplicaHolding;
-
-internal sealed record class NoReplica : ReplicaHolding;
-
-internal sealed record class HeldAt(DatabaseRevision Revision) : ReplicaHolding;
-
-internal sealed record class PositionUnknown : ReplicaHolding;
-
 internal sealed record ReplicaComparison(ReplicaVerdict Verdict, DatabaseRevision? Revision, string? Where);
 
 internal interface IDatabaseReplicas
@@ -38,17 +30,11 @@ internal interface IDatabaseReplicas
 
     void CompleteDetach(string file);
 
-    void ArchiveCompletedImport(TenantContext database);
-
-    int ArchiveSetAside(TenantContext database);
-
     bool Holds(TenantContext database);
 
     IReadOnlyList<TenantContext> List();
 
     DatabaseRevision? HeldRevision(TenantContext database);
-
-    ReplicaHolding Holding(TenantContext database);
 
     ValueTask<ReplicaComparison?> CompareAsync(TenantContext database, DatabaseRevision revision, IReadOnlyList<RangeChecksum> home, CancellationToken cancellationToken);
 

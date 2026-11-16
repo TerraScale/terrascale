@@ -408,7 +408,6 @@ internal partial class HomePush
         var database = queue.Database;
         var cursor = queue.Cursor ?? 0;
         var home = false;
-        var fenceGeneration = apply.FenceGeneration(database);
         switch (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false))
         {
             case Unavailable:
@@ -453,7 +452,7 @@ internal partial class HomePush
             {
                 var sequence = replay.Metadata!.Value.Sequence.Stream;
                 var prepared = await PrepareAsync(queue, replay.Subject, sequence, replay.Data, cancellationToken).ConfigureAwait(false);
-                switch (prepared is PushReady ready ? await ApplyAsync(queue, sequence, ready, fenceGeneration, cancellationToken).ConfigureAwait(false) : prepared)
+                switch (prepared is PushReady ready ? await ApplyAsync(queue, sequence, ready, cancellationToken).ConfigureAwait(false) : prepared)
                 {
                     case PushWait(var kind):
                         return new Held(kind, sequence);
@@ -506,59 +505,46 @@ internal partial class HomePush
                 }
             }
 
-            fenceGeneration = apply.FenceGeneration(database);
             if (steps is [{ Step: not (PushWait or PushAway) }, ..]
                 && await StreamStopAsync(queue, cursor, home, cancellationToken).ConfigureAwait(false) is { } removed)
             {
                 return new Held(removed, cursor + 1);
             }
 
-            try
+            foreach (var (stored, prepared) in steps)
             {
-                foreach (var (stored, prepared) in steps)
+                var position = new StreamSequence(queue.Source, stored.Seq);
+                PushDone? applied = null;
+                switch (prepared is PushReady ready ? await ApplyAsync(queue, stored.Seq, ready, cancellationToken).ConfigureAwait(false) : prepared)
                 {
-                    if (!Admits(queue.Source, database.DatabaseId!, stored.Seq))
-                    {
-                        return new Held("purged", stored.Seq);
-                    }
-
-                    var position = new StreamSequence(queue.Source, stored.Seq);
-                    PushDone? applied = null;
-                    switch (prepared is PushReady ready ? await ApplyAsync(queue, stored.Seq, ready, fenceGeneration, cancellationToken).ConfigureAwait(false) : prepared)
-                    {
-                        case PushWait(var kind):
-                            return new Held(kind, stored.Seq);
-                        case PushAway:
-                            await AckThroughAsync(queue, 0, ulong.MaxValue, cancellationToken).ConfigureAwait(false);
-                            queue.Cursor = null;
-                            return null;
-                        case PushPark(var reason):
-                            await ParkAsync(queue.Origin, queue.Source, stored.Seq, stored.Subject, stored.Data.ToArray(), reason, cancellationToken).ConfigureAwait(false);
-                            await apply.SkipAsync(database, position, cancellationToken).ConfigureAwait(false);
-                            Progressed(queue.Origin, database, stored.Seq);
-                            break;
-                        case PushSkip:
-                            await apply.SkipAsync(database, position, cancellationToken).ConfigureAwait(false);
-                            Progressed(queue.Origin, database, stored.Seq);
-                            break;
-                        case PushDone done:
-                            applied = done;
-                            break;
-                    }
-
-                    cursor = stored.Seq;
-                    queue.Cursor = cursor;
-                    Released(queue);
-                    await AckThroughAsync(queue, floor, cursor, cancellationToken).ConfigureAwait(false);
-                    if (applied is not null)
-                    {
-                        await NoticeAsync(nats, applied, cancellationToken).ConfigureAwait(false);
-                    }
+                    case PushWait(var kind):
+                        return new Held(kind, stored.Seq);
+                    case PushAway:
+                        await AckThroughAsync(queue, 0, ulong.MaxValue, cancellationToken).ConfigureAwait(false);
+                        queue.Cursor = null;
+                        return null;
+                    case PushPark(var reason):
+                        await ParkAsync(queue.Origin, queue.Source, stored.Seq, stored.Subject, stored.Data.ToArray(), reason, cancellationToken).ConfigureAwait(false);
+                        await apply.SkipAsync(database, position, cancellationToken).ConfigureAwait(false);
+                        Progressed(queue.Origin, database, stored.Seq);
+                        break;
+                    case PushSkip:
+                        await apply.SkipAsync(database, position, cancellationToken).ConfigureAwait(false);
+                        Progressed(queue.Origin, database, stored.Seq);
+                        break;
+                    case PushDone done:
+                        applied = done;
+                        break;
                 }
-            }
-            finally
-            {
-                Settled(queue.Source, database.DatabaseId!);
+
+                cursor = stored.Seq;
+                queue.Cursor = cursor;
+                Released(queue);
+                await AckThroughAsync(queue, floor, cursor, cancellationToken).ConfigureAwait(false);
+                if (applied is not null)
+                {
+                    await NoticeAsync(nats, applied, cancellationToken).ConfigureAwait(false);
+                }
             }
 
             failed?.Throw();
@@ -642,17 +628,13 @@ internal partial class HomePush
         }
 
         var stream = queue.Stream ?? current;
-        if (await PurgedThroughAsync(stream, queue.Origin, queue.Database, cancellationToken).ConfigureAwait(false) is { } purged)
+        if (await PurgedThroughAsync(stream, queue.Origin, queue.Database, cancellationToken).ConfigureAwait(false) > cursor)
         {
-            Purged(queue.Origin, queue.Source, queue.Database.DatabaseId!, purged);
-            if (purged > cursor)
-            {
-                return "purged";
-            }
+            return "purged";
         }
 
         if ((current.Info.State.FirstSeq > 1 || current.Info.State.NumDeleted > 0)
-            && !await OriginMarksAsync(stream, queue.Origin, queue.Run.Marked, cancellationToken).ConfigureAwait(false))
+            && !await OriginMarksAsync(stream, queue.Run, cancellationToken).ConfigureAwait(false))
         {
             return "origin_previous_build";
         }
@@ -772,7 +754,6 @@ internal partial class HomePush
         AmazonS3Exception or HttpRequestException => "object_store",
         CryptographicException => "crypto",
         NatsException => "broker",
-        DatabaseMovedException => "moving",
         OperationCanceledException => "cancelled",
         ObjectDisposedException => "disposed",
         IOException or TimeoutException => "io",
@@ -845,7 +826,7 @@ internal partial class HomePush
         return new PushReady(database, transaction);
     }
 
-    private async Task<PushStep> ApplyAsync(PushQueue queue, ulong sequence, PushReady ready, long fenceGeneration, CancellationToken cancellationToken)
+    private async Task<PushStep> ApplyAsync(PushQueue queue, ulong sequence, PushReady ready, CancellationToken cancellationToken)
     {
         var (database, transaction) = ready;
         cancellationToken.ThrowIfCancellationRequested();
@@ -854,7 +835,7 @@ internal partial class HomePush
         HomeApplyResult? result;
         try
         {
-            result = await apply.ApplyAsync(database, transaction, new StreamSequence(queue.Source, sequence), fenceGeneration, cancellationToken).ConfigureAwait(false);
+            result = await apply.ApplyAsync(database, transaction, new StreamSequence(queue.Source, sequence), cancellationToken).ConfigureAwait(false);
         }
         finally
         {

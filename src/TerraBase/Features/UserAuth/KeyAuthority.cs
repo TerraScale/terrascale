@@ -33,7 +33,6 @@ public interface IKeyAuthority
 public sealed class KeyWatch : IDisposable
 {
     private static readonly TimeSpan Poll = TimeSpan.FromMilliseconds(250);
-    private static readonly TimeSpan RunningAllowance = TimeSpan.FromMilliseconds(500);
     private readonly CancellationTokenSource _stop = new();
     private readonly PeriodicTimer _timer;
 
@@ -86,21 +85,13 @@ public sealed class KeyWatch : IDisposable
     {
         try
         {
-            while (true)
+            while (await _timer.WaitForNextTickAsync().ConfigureAwait(false))
             {
-                using var deadline = until is { } end ? new CancellationTokenSource(end + RunningAllowance - time.GetUtcNow() is { Ticks: > 0 } left ? left : TimeSpan.Zero, time) : new CancellationTokenSource();
+                using var deadline = until is { } end ? new CancellationTokenSource(end - time.GetUtcNow() is { Ticks: > 0 } left ? left : TimeSpan.Zero, time) : new CancellationTokenSource();
                 using var asking = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token, deadline.Token);
-                if (!await _timer.WaitForNextTickAsync(asking.Token).ConfigureAwait(false))
-                {
-                    return;
-                }
                 var answer = await current(asking.Token).ConfigureAwait(false) is { } key
                     ? (await authority.CheckAsync(key, asking.Token).ConfigureAwait(false)).Value
                     : null;
-                if (answer is Unavailable && until is { } confirmed && time.GetUtcNow() < confirmed + RunningAllowance)
-                {
-                    continue;
-                }
                 if (answer is not KeyActive active)
                 {
                     Refusal = answer as KeyRefused;

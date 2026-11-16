@@ -23,7 +23,7 @@ namespace TerraBase.Features.Replicas;
 internal sealed partial class RegionReplication(
     TerraBaseOptions options, IReplicaPeers peers, IReplicaCatalog catalog, IDatabaseReplicas replicas,
     IDatabaseRevisions revisions, IMemoryBudget memory, ReplicaHolds holds, InternalCredential credential, IMeterFactory meters, TimeProvider time, ILogger<RegionReplication> logger,
-    ITransactionCrypto crypto, IOperationAllowance allowance, RegionalOwners owners, RemovedReplicaFaults faults, RemoteDatabases remote, HomeLeaseGate leaseGate) : BackgroundService
+    ITransactionCrypto crypto, IOperationAllowance allowance, RegionalOwners owners, RemovedReplicaFaults faults, RemoteDatabases remote) : BackgroundService
 {
     internal static readonly TimeSpan Sweep = TimeSpan.FromSeconds(30);
 
@@ -216,7 +216,7 @@ internal sealed partial class RegionReplication(
                 try
                 {
                     if (await catalog.FindAsync(revised.Database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var placement }
-                        || placement.Home != options.Region || !owners.Writer || !leaseGate.Serves(revised.Database.DatabaseId!))
+                        || placement.Home != options.Region || !owners.Writer)
                     {
                         _ = _published.TryRemove(key, out _);
                         continue;
@@ -224,8 +224,7 @@ internal sealed partial class RegionReplication(
 
                     using var push = await RevisionPush.BuildAsync(revisions, memory, revised.Database, _published.GetValueOrDefault(key).Revision, revised.At, cancellationToken)
                         .ConfigureAwait(false);
-                    if (!leaseGate.Serves(revised.Database.DatabaseId!) || !owners.Writer
-                        || push is not { Notice.Revision: { } revision, Result.Format: var format })
+                    if (push is not { Notice.Revision: { } revision, Result.Format: var format })
                     {
                         continue;
                     }

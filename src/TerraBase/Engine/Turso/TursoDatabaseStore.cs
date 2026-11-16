@@ -173,10 +173,6 @@ internal sealed partial class TursoDatabaseStore(
         CancellationToken cancellationToken, [CallerFilePath] string file = "", [CallerLineNumber] int line = 0) =>
         await BeginAsync(write: true, durable: true, cancellationToken, "a durable write transaction", file: file, line: line).ConfigureAwait(false);
 
-    public async ValueTask<IStorageTransaction> BeginPromotionTransactionAsync(
-        CancellationToken cancellationToken, [CallerFilePath] string file = "", [CallerLineNumber] int line = 0) =>
-        await BeginAsync(write: true, durable: false, cancellationToken, "a home promotion", promotion: true, file: file, line: line).ConfigureAwait(false);
-
     internal ValueTask<TursoStorageTransaction> BeginMaintenanceTransactionAsync(CancellationToken cancellationToken, bool synced = true) =>
     IsSystem ? BeginAsync(write: true, durable: synced, cancellationToken, "storage fault bookkeeping", maintenance: true)
         : throw new InvalidOperationException("fault bookkeeping requires a system store");
@@ -344,7 +340,7 @@ internal sealed partial class TursoDatabaseStore(
     }
 
     private async ValueTask<TursoStorageTransaction> BeginAsync(
-        bool write, bool durable, CancellationToken cancellationToken, string writer = "a write transaction", bool maintenance = false, bool promotion = false,
+        bool write, bool durable, CancellationToken cancellationToken, string writer = "a write transaction", bool maintenance = false,
         string? file = null, int line = 0)
     {
         if (Ledger is { } ledger && !IsSystem)
@@ -359,17 +355,13 @@ internal sealed partial class TursoDatabaseStore(
         {
             ThrowIfRefused(maintenance);
         }
-        if (!write && !maintenance && LeasedId is { } leased)
-        {
-            Leases!.ThrowIfUnserved(leased);
-        }
         if (write)
         {
             if (FencedId(maintenance) is { } fenced)
             {
-                await Fences!.WaitAsync(fenced, promotion, cancellationToken).ConfigureAwait(false);
+                await Fences!.WaitAsync(fenced, cancellationToken).ConfigureAwait(false);
             }
-            ThrowIfUnleased(maintenance || promotion);
+            ThrowIfUnleased(maintenance);
         }
 
         durable |= write && !maintenance;
@@ -396,9 +388,9 @@ internal sealed partial class TursoDatabaseStore(
                 ThrowIfRefused(maintenance);
                 if (FencedId(maintenance) is { } fenced)
                 {
-                    Fences!.ThrowIfFenced(fenced, promotion);
+                    Fences!.ThrowIfFenced(fenced);
                 }
-                ThrowIfUnleased(maintenance || promotion);
+                ThrowIfUnleased(maintenance);
             }
 
             session = write ? await WriterSessionAsync(cancellationToken).ConfigureAwait(false) : await RentAsync(runner, cancellationToken).ConfigureAwait(false);
@@ -420,7 +412,7 @@ internal sealed partial class TursoDatabaseStore(
                 this, session, transaction, runner, write, write ? Committed : null, ownsAdmission)
             {
                 Operation = operation,
-                Leased = write && !maintenance && !promotion ? LeasedId : null,
+                Leased = write && !maintenance ? LeasedId : null,
             };
         }
         catch (Exception error)
