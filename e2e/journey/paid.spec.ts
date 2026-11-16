@@ -126,7 +126,37 @@ test('a new owner onboards on Free, upgrades to Pro through Stripe Checkout, and
     runId, email, password, displayName, organizationId, organizationName, projectId, projectName,
     databaseId, databaseName, databaseRegion: region, apiKeyName, apiKey, secondDatabaseId, secondDatabaseName, checkoutSessionId: session,
   });
+  expect((await backgroundCase('source')).split('\n')).toContain('background case: source');
 });
+
+async function backgroundCase(kind: string) {
+  const build = process.env.E2E_BUILD;
+  if (!build) throw new Error('E2E_BUILD is required for background delivery proof');
+  const result = await promisify(execFile)('dotnet', [join(build, 'billing', 'BillingJourney.dll'), 'background-case', kind, join(stateDir, 'paid.journey.json')], { env: process.env });
+  return result.stdout;
+}
+
+for (const [kind, name] of [
+  ['alert', 'one alert sends one signed delivery and one owner notification across dashboards'],
+  ['contention', 'dashboard claim contention skips a live owner and releases callbacks without saves'],
+  ['stale', 'a stale dashboard owner fails its real checkpoint save after database-clock expiry'],
+  ['crash', 'persisted log payload replays after a crash following receiver acceptance'],
+  ['deleted', 'a prefetched drain cannot recreate a deleted database claim or delivery'],
+  ['quiet', 'an old quiet drain records its unchanged-cursor gap once without idle claim writes'],
+  ['skew', 'forward and backward dashboard clocks cannot steal or extend database-clock leases'],
+  ['renewal', 'a lost renewal reply preserves work inside the last proven lease'],
+  ['plans', 'settled plan requests and idle reconciliation passes write no claims'],
+  ['gate', 'an unknown dashboard schema idles nonbilling background workers'],
+]) {
+  test(`dashboard background: ${name}`, async () => {
+    if (kind === 'crash') {
+      await expect.poll(async () => (await backgroundCase('source-ready')).trim(), { message: 'the production request-log source exposes at least two settled SQL events' }).toBe('ready');
+    }
+    const output = await backgroundCase(kind);
+    expect(output.split('\n')).toContain(`background case: ${kind}`);
+    console.log(output.split('\n').filter(line => line.startsWith('background ')).join('\n'));
+  });
+}
 
 test('paid owner billing recovery, UTC deadline and subscription tax policy', async ({ page, context, audit }) => {
   await context.addCookies(JSON.parse(readFileSync(ownerSession(), 'utf8')).cookies);
@@ -252,8 +282,19 @@ test('paid owner billing recovery, UTC deadline and subscription tax policy', as
   console.log('billing payment journey: UTC deadline; duplicate and late failure never extend grace; paid invoice failure never starts grace; tax transport failure preserves restored entitlement; webhook replay acknowledged');
   await saveSession(context);
 });
+
+test('dashboard background: a quiet drain immediately ships its next settled batch and removes deleted database claims', async () => {
+  await expect.poll(async () => (await backgroundCase('quiet-ready')).trim(), { message: 'the production request-log source exposes the newly settled SQL event' }).toBe('ready');
+  expect((await backgroundCase('quiet-next')).split('\n')).toContain('background case: quiet-next');
 });
 
+test('dashboard background: idle drains write no claims and invalid URLs record No response', async () => {
+  const output = await backgroundCase('idle');
+  expect(output.split('\n')).toContain('background case: idle');
+  console.log(output.split('\n').filter(line => line.startsWith('background ')).join('\n'));
+});
+
+});
 
 async function organizationOwner(page: Page, audit: import('../support/audit').Audit) {
   const run = randomBytes(4).toString('hex');

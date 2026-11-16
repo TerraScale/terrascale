@@ -8,6 +8,7 @@ const deliveries = [];
 const endpoints = new Map();
 const held = new Map();
 const waiters = new Set();
+const dashboardEffects = new Map();
 
 function respond(response, status, body) {
   response.writeHead(status, { 'content-type': 'application/json' });
@@ -22,9 +23,9 @@ createServer(async (request, response) => {
   if (url.pathname === '/configure' && request.method === 'POST') {
     const config = JSON.parse(body);
     if (config.path) {
-      endpoints.set(config.path, { secret: config.secret, hold: config.hold ?? false });
+      endpoints.set(config.path, { secret: config.secret, hold: config.hold ?? false, dashboard: config.dashboard ?? false });
     } else secret = config.secret;
-    failures = config.failures;
+    if (!config.dashboard) failures = config.failures;
     if (!config.path) deliveries.length = 0;
     respond(response, 200, {});
   } else if (url.pathname === '/release' && request.method === 'POST') {
@@ -33,14 +34,18 @@ createServer(async (request, response) => {
     for (const pending of held.get(path) ?? []) pending();
     held.delete(path);
     respond(response, 200, {});
+  } else if (url.pathname === '/dashboard-effects') {
+    respond(response, 200, [...dashboardEffects.values()].filter(item => item.path === url.searchParams.get('path')));
   } else if (url.pathname === '/deliveries') {
     respond(response, 200, deliveries);
   } else if (url.pathname === '/wait') {
     const after = Number(url.searchParams.get('after') ?? 0);
-    const predicate = () => deliveries.length > after;
-    if (predicate()) respond(response, 200, deliveries);
+    const path = url.searchParams.get('path');
+    const selected = () => path ? deliveries.filter(item => item.path === path) : deliveries;
+    const predicate = () => selected().length > after;
+    if (predicate()) respond(response, 200, selected());
     else {
-      const notify = () => { if (predicate()) { waiters.delete(notify); respond(response, 200, deliveries); } };
+      const notify = () => { if (predicate()) { waiters.delete(notify); respond(response, 200, selected()); } };
       waiters.add(notify);
       response.on('close', () => waiters.delete(notify));
     }
@@ -50,6 +55,23 @@ createServer(async (request, response) => {
   } else if (url.pathname === '/forbidden') {
     deliveries.push({ redirectFollowed: true });
     respond(response, 500, {});
+  } else if (endpoints.get(url.pathname)?.dashboard) {
+    const id = request.headers['idempotency-key'];
+    const key = `${url.pathname}/${id}`;
+    const previous = dashboardEffects.get(key);
+    const valid = typeof id === 'string' && id.length === 26 && (!previous || previous.body === body.toString());
+    const event = JSON.parse(body);
+    if (valid && !previous) dashboardEffects.set(key, { path: url.pathname, id, body: body.toString(), event });
+    deliveries.push({ path: url.pathname, id, valid, duplicate: !!previous, code: valid ? 200 : 409, event });
+    for (const notify of waiters) notify();
+    if (endpoints.get(url.pathname).hold) {
+      await new Promise(resolve => {
+        const pending = held.get(url.pathname) ?? [];
+        pending.push(resolve);
+        held.set(url.pathname, pending);
+      });
+    }
+    respond(response, valid ? 200 : 409, {});
   } else if ((url.pathname === '/receive' && secret) || endpoints.has(url.pathname)) {
     const signingSecret = endpoints.get(url.pathname)?.secret ?? secret;
     const id = request.headers['webhook-id'];

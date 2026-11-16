@@ -15,7 +15,7 @@ namespace TerraScale.Dashboard.Features.Profile
     // Local fences guard CAS writers; immutable authorization and enrollment references
     // replay after ACK to repair delayed regional writes.
     public sealed class DeletionReconciler(ITsAuthDeletions deletions, IDbContextFactory<DashboardDbContext> storage, DashboardStateInitializer initializer, AccountStore accounts, OrganizationStore organizations, DashboardSessions sessions,
-        AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity, TimeProvider clock, ServiceSloTelemetry telemetry, ILogger<DeletionReconciler> logger) : BackgroundService
+        AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity, TimeProvider clock, ServiceSloTelemetry telemetry, ILogger<DeletionReconciler> logger, BackgroundJobs jobs, BillingSchemaGate gate) : BackgroundService
     {
         private readonly Dictionary<string, string> failing = new(StringComparer.Ordinal);
         private readonly DeletionCleanupJournal journal = new(storage, organizations, clock);
@@ -28,7 +28,11 @@ namespace TerraScale.Dashboard.Features.Profile
             {
                 await initializer.WhenInitialized.WaitAsync(stoppingToken);
                 using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30), clock);
-                do { await RunOnceAsync(stoppingToken); }
+                do
+                {
+                    try { await RunOnceAsync(stoppingToken); }
+                    catch (Exception error) when (Retryable(error, stoppingToken)) { Retry(error); }
+                }
                 while (await timer.WaitForNextTickAsync(stoppingToken));
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
@@ -36,65 +40,68 @@ namespace TerraScale.Dashboard.Features.Profile
 
         public async Task RunOnceAsync(CancellationToken cancellationToken)
         {
-            var failed = new Dictionary<string, string>(StringComparer.Ordinal);
-            var cleaned = new HashSet<string>(StringComparer.Ordinal);
-            // Replay does not depend on producer availability or delivery of an already ACKed proof.
-            try
+            if (!await gate.AllowsAsync(cancellationToken)) { return; }
+            await jobs.RunAsync("deletion-cleanup", TimeSpan.Zero, async (claim, token) =>
             {
-                foreach (var entry in await journal.ListAsync(cancellationToken))
+                var failed = new Dictionary<string, string>(StringComparer.Ordinal);
+                var cleaned = new HashSet<string>(StringComparer.Ordinal);
+                try
+                {
+                    foreach (var entry in await journal.ListAsync(token))
+                    {
+                        try
+                        {
+                            Validate(entry.Proof);
+                            var started = clock.GetUtcNow().UtcDateTime;
+                            await CleanAsync(entry, token);
+                            await SettleAsync(entry, started, token);
+                            cleaned.Add(entry.Proof.Id);
+                        }
+                        catch (Exception error) when (Retryable(error, token)) { Fail(failed, entry.Proof, error); }
+                    }
+                }
+                catch (Exception error) when (Retryable(error, token)) { Retry(error); }
+                IReadOnlyList<TsAuthDeletionProof> proofs;
+                try
+                {
+                    proofs = await deletions.ListAsync(token);
+                    if (proofs.Count > 20 || proofs.Any(proof => proof is null) || proofs.Select(proof => proof.Id).Distinct(StringComparer.Ordinal).Count() != proofs.Count)
+                    {
+                        throw new IOException("ts-auth returned an invalid deletion page.");
+                    }
+
+                    foreach (var proof in proofs)
+                    {
+                        Validate(proof);
+                    }
+                }
+                catch (Exception error) when (Retryable(error, token)) { Retry(error); proofs = []; }
+                foreach (var proof in proofs)
                 {
                     try
                     {
-                        Validate(entry.Proof);
-                        var started = clock.GetUtcNow().UtcDateTime;
-                        await CleanAsync(entry, cancellationToken);
-                        await SettleAsync(entry, started, cancellationToken);
-                        cleaned.Add(entry.Proof.Id);
+                        var entry = await journal.RememberAsync(proof, token);
+                        await CleanAsync(entry, token);
+                        await deletions.AcknowledgeAsync(proof, token);
+                        await journal.AcknowledgedAsync(proof.Id, token);
+                        cleaned.Add(proof.Id);
                     }
-                    catch (Exception error) when (Retryable(error, cancellationToken)) { Fail(failed, entry.Proof, error); }
+                    catch (Exception error) when (Retryable(error, token)) { Fail(failed, proof, error); }
                 }
-            }
-            catch (Exception error) when (Retryable(error, cancellationToken)) { Retry(error); }
-            IReadOnlyList<TsAuthDeletionProof> proofs;
-            try
-            {
-                proofs = await deletions.ListAsync(cancellationToken);
-                if (proofs.Count > 20 || proofs.Any(proof => proof is null) || proofs.Select(proof => proof.Id).Distinct(StringComparer.Ordinal).Count() != proofs.Count)
+
+                cleaned.ExceptWith(failed.Keys);
+                foreach (var id in cleaned)
                 {
-                    throw new IOException("ts-auth returned an invalid deletion page.");
+                    failing.Remove(id);
                 }
 
-                foreach (var proof in proofs)
+                foreach (var (id, cause) in failed)
                 {
-                    Validate(proof);
+                    failing[id] = cause;
                 }
-            }
-            catch (Exception error) when (Retryable(error, cancellationToken)) { Retry(error); proofs = []; }
-            foreach (var proof in proofs)
-            {
-                try
-                {
-                    var entry = await journal.RememberAsync(proof, cancellationToken);
-                    await CleanAsync(entry, cancellationToken);
-                    await deletions.AcknowledgeAsync(proof, cancellationToken);
-                    await journal.AcknowledgedAsync(proof.Id, cancellationToken);
-                    cleaned.Add(proof.Id);
-                }
-                catch (Exception error) when (Retryable(error, cancellationToken)) { Fail(failed, proof, error); }
-            }
 
-            cleaned.ExceptWith(failed.Keys);
-            foreach (var id in cleaned)
-            {
-                failing.Remove(id);
-            }
-
-            foreach (var (id, cause) in failed)
-            {
-                failing[id] = cause;
-            }
-
-            telemetry.ReportDeletionCleanupFailures(failing.Count);
+                telemetry.ReportDeletionCleanupFailures(failing.Count);
+            }, cancellationToken);
         }
 
         internal static (string Type, string Code) Failure(Exception error)

@@ -40,13 +40,14 @@ namespace TerraScale.Dashboard.Features.Notifications
         Task<string> SendAsync(AllowanceAlert alert, CancellationToken cancellationToken);
     }
 
-    public sealed class AllowanceNotifications(IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, IAllowanceNotificationBackend backend, TimeProvider clock, ILogger<AllowanceNotifications> logger)
+    public sealed class AllowanceNotifications(IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, IAllowanceNotificationBackend backend, TimeProvider clock, ILogger<AllowanceNotifications> logger, BackgroundJobs jobs, BillingSchemaGate gate)
     {
         public const string OperationsContract = "write-units-4kib-global-v2";
         public const string StorageContract = "stored-byte-hours-global-v1";
 
         public async Task RunOnceAsync(CancellationToken cancellationToken)
         {
+            if (!await gate.AllowsAsync(cancellationToken)) { return; }
             string? after = null;
             do
             {
@@ -133,6 +134,12 @@ namespace TerraScale.Dashboard.Features.Notifications
                     }
                 }
 
+                var removed = db.ChangeTracker.Entries<AllowanceAlertRow>().Where(entry => entry.State == EntityState.Deleted)
+                    .Select(entry => "allowance/" + entry.Entity.Id).ToList();
+                if (removed.Count > 0)
+                {
+                    db.BackgroundJobs.RemoveRange(await db.BackgroundJobs.Where(row => removed.Contains(row.Id)).ToListAsync(cancellationToken));
+                }
                 try
                 {
                     await db.SaveChangesAsync(cancellationToken);
@@ -154,14 +161,22 @@ namespace TerraScale.Dashboard.Features.Notifications
                 .OrderBy(alert => alert.Id).ToListAsync(cancellationToken);
             foreach (var alert in pending)
             {
-                var outcome = await backend.SendAsync(Alert(alert), cancellationToken);
-                if (outcome == "retryable")
+                await jobs.RunAsync("allowance/" + alert.Id, TimeSpan.Zero, async (claim, token) =>
                 {
-                    continue;
-                }
-
-                await db.AllowanceAlerts.Where(row => row.Id == alert.Id && row.EmailStatus == "pending")
-                    .ExecuteUpdateAsync(row => row.SetProperty(saved => saved.EmailStatus, outcome), cancellationToken);
+                    var current = await claim.Database.AllowanceAlerts.SingleOrDefaultAsync(row => row.Id == alert.Id && row.EmailStatus == "pending", token);
+                    if (current is null)
+                    {
+                        claim.Database.BackgroundJobs.Remove(claim.State);
+                        await claim.Database.SaveChangesAsync(token);
+                        return;
+                    }
+                    var outcome = await backend.SendAsync(Alert(current), token);
+                    if (outcome != "retryable")
+                    {
+                        current.EmailStatus = outcome;
+                        await claim.SaveAsync(token);
+                    }
+                }, cancellationToken);
             }
         }
 

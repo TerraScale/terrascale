@@ -1035,7 +1035,6 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                         .HasColumnName("pricing_version");
 
                     b.Property<string>("Basis")
-                        .IsRequired()
                         .HasColumnType("TEXT")
                         .HasColumnName("basis");
 
@@ -2366,6 +2365,70 @@ namespace TerraScale.Dashboard.Platform.Persistence.Migrations
                             t.HasCheckConstraint("ck_mcp_codes_id", "length(id) = 26");
 
                             t.HasCheckConstraint("ck_mcp_codes_token_expiry", "token_expires_at > expires_at");
+                        });
+                });
+
+            modelBuilder.Entity("TerraScale.Dashboard.Platform.Persistence.BackgroundJobRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime?>("AttemptedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("attempted_at");
+
+                    b.Property<DateTime>("AvailableAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("available_at");
+
+                    b.Property<string>("Checkpoint")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("checkpoint");
+
+                    b.Property<string>("Cursor")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("cursor");
+
+                    b.Property<string>("DeliveryId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("delivery_id");
+
+                    b.Property<int>("Failures")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("failures");
+
+                    b.Property<DateTime>("LeaseUntil")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("lease_until");
+
+                    b.Property<string>("NextCursor")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("next_cursor");
+
+                    b.Property<string>("Owner")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("owner");
+
+                    b.Property<byte[]>("Payload")
+                        .HasColumnType("BLOB")
+                        .HasColumnName("payload");
+
+                    b.Property<DateTime?>("SucceededAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("succeeded_at");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("background_jobs", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_background_jobs_delivery", "(payload IS NULL AND next_cursor IS NULL AND delivery_id IS NULL) OR (payload IS NOT NULL AND (next_cursor IS NULL OR length(next_cursor) = 26) AND length(delivery_id) = 26)");
+
+                            t.HasCheckConstraint("ck_background_jobs_id", "length(id) BETWEEN 1 AND 256 AND length(owner) = 26 AND length(checkpoint) = 26");
                         });
                 });
 

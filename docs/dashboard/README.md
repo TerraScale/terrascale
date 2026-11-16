@@ -49,3 +49,5 @@ Each secret may instead arrive as a file named by `<NAME>_FILE` (ts-orch deliver
 
 More: [development](development.md), [state storage](state-storage.md), [state storage](state-storage.md),
 [zero-configuration contract](zero-configuration.md), [metric definitions](metrics.md).
+
+- [Background jobs across instances](background-jobs.md)

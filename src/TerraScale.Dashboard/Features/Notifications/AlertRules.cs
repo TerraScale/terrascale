@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
+using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.TerraBase.Contracts;
 using TerraBaseSqlErrorCodes = TerraScale.DotNet.TerraBase.TerraBaseSqlErrorCodes;
@@ -27,7 +28,7 @@ namespace TerraScale.Dashboard.Features.Notifications
     }
 
     public sealed class AlertRules(IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, IAlertSource source, ICustomerDelivery delivery, IDashboardIdentity identity,
-        TimeProvider clock, ILogger<AlertRules> logger)
+        TimeProvider clock, ILogger<AlertRules> logger, BackgroundJobs jobs, BillingSchemaGate gate)
     {
         public const int RuleLimit = 20;
         public const int WebhookAttempts = 3;
@@ -143,6 +144,7 @@ namespace TerraScale.Dashboard.Features.Notifications
 
         public async Task RunOnceAsync(CancellationToken cancellationToken)
         {
+            if (!await gate.AllowsAsync(cancellationToken)) { return; }
             List<(string ProjectId, string OrganizationId)> projects;
             await using (var db = await storage.CreateDbContextAsync(cancellationToken))
             {
@@ -175,14 +177,44 @@ namespace TerraScale.Dashboard.Features.Notifications
                 return;
             }
 
-            await EvaluateAsync(projectId, organization, project, units, cancellationToken);
-            await DeliverAsync(projectId, organizationId, cancellationToken);
+            await using var snapshot = await storage.CreateDbContextAsync(cancellationToken);
+            var id = "alerts/" + projectId;
+            var state = await snapshot.BackgroundJobs.AsNoTracking().Where(row => row.Id == id)
+                .Select(row => new { State = row, Now = DateTime.UtcNow }).SingleOrDefaultAsync(cancellationToken);
+            if (state is not null && state.State.LeaseUntil > state.Now ||
+                !await ChangesDueAsync(snapshot, projectId, organization, project, units, cancellationToken)) { return; }
+            await jobs.RunAsync(id, TimeSpan.Zero, async (claim, token) =>
+            {
+                if (!await claim.Database.AlertRules.AsNoTracking().AnyAsync(row => row.ProjectId == projectId && row.OrganizationId == organizationId, token))
+                {
+                    claim.Database.BackgroundJobs.Remove(claim.State);
+                    await claim.Database.SaveChangesAsync(token);
+                    return;
+                }
+                await EvaluateAsync(projectId, organization, project, units, claim, token);
+                await DeliverAsync(projectId, organizationId, claim, token);
+            }, cancellationToken, fence: state?.State.Checkpoint ?? "");
+        }
+
+        private async Task<bool> ChangesDueAsync(DashboardDbContext db, string projectId, OrganizationRecord organization, ProjectRecord project,
+            Func<Task<IReadOnlyDictionary<string, long>>> units, CancellationToken cancellationToken)
+        {
+            var rules = await db.AlertRules.AsNoTracking().Include(row => row.Events)
+                .Where(row => row.ProjectId == projectId && row.OrganizationId == organization.Id).ToListAsync(cancellationToken);
+            if (rules.Any(rule => rule.Events.Any(item => item.EmailStatus == "pending" || item.WebhookStatus == "pending"))) { return true; }
+            if (rules.Count == 0) { return false; }
+            var analytics = await source.ReadAnalyticsAsync(projectId, cancellationToken);
+            double? percent = null;
+            if (rules.Any(rule => rule.Metric == "operation_units_percent") && PlanCatalog.Limits(organization).MonthlyOperations is > 0 and var allowance &&
+                (await units()).TryGetValue(organization.Id, out var used)) { percent = used * 100d / allowance; }
+            return rules.Any(row => Evaluate(Rule(row), analytics, project, percent) is var (value, _) &&
+                (row.Value != value || (row.State == "firing") != (value > row.Threshold)));
         }
 
         private async Task EvaluateAsync(string projectId, OrganizationRecord organization, ProjectRecord project, Func<Task<IReadOnlyDictionary<string, long>>> units,
-            CancellationToken cancellationToken)
+            BackgroundJobs.Claim claim, CancellationToken cancellationToken)
         {
-            await using var db = await storage.CreateDbContextAsync(cancellationToken);
+            var db = claim.Database;
             var rules = await db.AlertRules.Include(row => row.Events).Where(row => row.ProjectId == projectId && row.OrganizationId == organization.Id)
                 .OrderBy(row => row.Id).ToListAsync(cancellationToken);
             if (rules.Count == 0)
@@ -232,7 +264,7 @@ namespace TerraScale.Dashboard.Features.Notifications
                     continue;
                 }
 
-                db.AlertEvents.RemoveRange(row.Events.OrderBy(item => item.Id, StringComparer.Ordinal).SkipLast(EventLimit - 1).ToArray());
+                db.AlertEvents.RemoveRange(row.Events.OrderBy(item => item.Id == claim.State.DeliveryId ? 1 : 0).ThenBy(item => item.Id, StringComparer.Ordinal).SkipLast(EventLimit - 1).ToArray());
                 db.AlertEvents.Add(new AlertEventRow
                 {
                     Id = AccountService.NewId(),
@@ -253,37 +285,38 @@ namespace TerraScale.Dashboard.Features.Notifications
                 return;
             }
 
-            try { await db.SaveChangesAsync(cancellationToken); }
-            catch (DbUpdateConcurrencyException) { }
+            await claim.SaveAsync(cancellationToken);
         }
 
-        private async Task DeliverAsync(string projectId, string organizationId, CancellationToken cancellationToken)
+        private async Task DeliverAsync(string projectId, string organizationId, BackgroundJobs.Claim claim, CancellationToken cancellationToken)
         {
-            await using var db = await storage.CreateDbContextAsync(cancellationToken);
+            var db = claim.Database;
             var rules = await db.AlertRules.AsNoTracking().Where(row => row.ProjectId == projectId && row.OrganizationId == organizationId).ToDictionaryAsync(row => row.Id, cancellationToken);
             var pending = await db.AlertEvents.Where(item => db.AlertRules.Any(rule => rule.Id == item.RuleId && rule.ProjectId == projectId && rule.OrganizationId == organizationId))
                 .OrderBy(item => item.Id).ToListAsync(cancellationToken);
-            if (pending.Count == 0)
+            if (claim.State.DeliveryId is { } deliveryId && pending.All(item => item.Id != deliveryId))
             {
-                return;
+                claim.State.Payload = null;
+                claim.State.DeliveryId = null;
+                await claim.SaveAsync(cancellationToken);
             }
-
-            foreach (var item in pending)
+            foreach (var item in pending.OrderBy(item => item.Id == claim.State.DeliveryId ? 0 : 1).ThenBy(item => item.Id, StringComparer.Ordinal))
             {
                 if (!rules.TryGetValue(item.RuleId, out var rule))
                 {
                     continue;
                 }
 
-                await DeliverAsync(projectId, organizationId, rule, item, cancellationToken);
+                await DeliverAsync(projectId, organizationId, rule, item, claim, cancellationToken);
                 if (item.EmailStatus != "pending" && item.WebhookStatus != "pending")
                 {
                     db.AlertEvents.Remove(item);
+                    claim.State.Payload = null;
+                    claim.State.DeliveryId = null;
                 }
+                await claim.SaveAsync(cancellationToken);
+                if (claim.State.Payload is not null) { return; }
             }
-
-            try { await db.SaveChangesAsync(cancellationToken); }
-            catch (DbUpdateConcurrencyException) { }
         }
 
         public static (double Value, string? Database)? Evaluate(AlertRule rule, AlertAnalytics analytics, ProjectRecord project, double? operationUnitsPercent)
@@ -309,7 +342,7 @@ namespace TerraScale.Dashboard.Features.Notifications
             return (Math.Round(value, 3), rule.DatabaseId is null ? null : project.Databases.GetValueOrDefault(rule.DatabaseId)?.Name);
         }
 
-        private async Task DeliverAsync(string projectId, string organizationId, AlertRuleRow rule, AlertEventRow item, CancellationToken cancellationToken)
+        private async Task DeliverAsync(string projectId, string organizationId, AlertRuleRow rule, AlertEventRow item, BackgroundJobs.Claim claim, CancellationToken cancellationToken)
         {
             if (item.EmailStatus == "pending")
             {
@@ -322,16 +355,23 @@ namespace TerraScale.Dashboard.Features.Notifications
                 return;
             }
 
-            var body = JsonSerializer.SerializeToUtf8Bytes(new
+            if (claim.State.Payload is null)
             {
-                type = "alert." + item.State,
-                alertId = item.AlertId,
-                projectId,
-                rule = new { id = rule.Id, name = rule.Name, metric = rule.Metric, threshold = rule.Threshold },
-                database = rule.DatabaseId is null ? null : new { id = rule.DatabaseId, name = item.DatabaseName },
-                value = item.Value,
-                at = Utc(item.At)
-            });
+                claim.State.DeliveryId = item.Id;
+                claim.State.Payload = JsonSerializer.SerializeToUtf8Bytes(new
+                {
+                    type = "alert." + item.State,
+                    alertId = item.AlertId,
+                    projectId,
+                    rule = new { id = rule.Id, name = rule.Name, metric = rule.Metric, threshold = rule.Threshold },
+                    database = rule.DatabaseId is null ? null : new { id = rule.DatabaseId, name = item.DatabaseName },
+                    value = item.Value,
+                    at = Utc(item.At)
+                });
+                await claim.SaveAsync(cancellationToken);
+            }
+            if (claim.State.DeliveryId != item.Id) { throw new IOException("Alert claim contains another delivery."); }
+            var body = claim.State.Payload;
             var key = WebEncoders.Base64UrlDecode(new SealedSecret(rule.WebhookNonce, rule.WebhookCiphertext, rule.WebhookTag)
                 .Open((await identity.ReadAsync(cancellationToken)).SessionEncryptionKey, Purpose(projectId, rule.Id)));
             var timestamp = clock.GetUtcNow().ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture);
@@ -340,7 +380,7 @@ namespace TerraScale.Dashboard.Features.Notifications
             try
             {
                 code = await delivery.PostAsync(new Uri(rule.WebhookUrl), body,
-                    [new("X-TerraScale-Delivery", item.Id), new("X-TerraScale-Timestamp", timestamp), new("X-TerraScale-Signature", "v1=" + signature)], cancellationToken);
+                    [new("Idempotency-Key", item.Id), new("X-TerraScale-Delivery", item.Id), new("X-TerraScale-Timestamp", timestamp), new("X-TerraScale-Signature", "v1=" + signature)], cancellationToken);
             }
             catch (Exception error) when (error is TerraBaseException or HttpRequestException or ArgumentException or IOException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested) { code = 0; }
             finally { CryptographicOperations.ZeroMemory(key); }

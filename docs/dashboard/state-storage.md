@@ -74,6 +74,7 @@ pending.
 | `account_deletions` | A browser's account deletion operation: the sealed session, receipt and step-up authorization while it runs, then only a completion window | `id` ULID; unique `key_hash` (SHA-256 of the browser's 256-bit deletion cookie, lowercase hex); a running row has `user_id` and a 12-byte nonce, ciphertext and 16-byte tag, a completed row has none of them and a `completed_until`; indexes on `user_id` and `completed_until`; `version` concurrency token |
 | `deletion_cleanup` | The deletion cleanup journal: one ts-auth deletion proof the dashboard accepted | `id` is the proof's ULID; `scope` is `account` (no organization), `organization` (organization absent or another than the subject) or `project` (organization ULID); `subject_id` ULID; index on `(scope, subject_id)` |
 | `deletion_cleanup_targets` | A project or Stripe customer the journal entry found before removing its aggregate | Key `(cleanup_id, kind, target_id)`; `cleanup_id` foreign key to `deletion_cleanup` with cascade delete; `kind` is `project` (a ULID) or `customer` (1 to 255 characters) |
+| `background_jobs` | Durable cross-region work claims, retry deadlines and retained deliveries | Job ID primary key; owner/checkpoint concurrency tokens; database-clock lease and next-run deadlines; persisted cursor, delivery ID and payload. Subject deletion removes its claims and retained payloads. |
 | `pending_restores` | A backup or point-in-time restore the dashboard started and still polls | `id` is the TerraBase operation ULID; organization, project and source database ULIDs; index on `(organization_id, project_id)` |
 
 Grants (access and refresh tokens) stay encrypted with `TS_DASHBOARD_SESSION_ENCRYPTION_KEY` (AES-GCM) in
@@ -193,6 +194,8 @@ Startup (`DashboardStateInitializer`) runs `MigrateAsync`; concurrent replicas a
 provider's migration lock. Until it succeeds every request answers 503 and the initializer retries with jittered
 backoff from 1 to 30 seconds; `StorageSweeper` and `DeletionReconciler` start their first pass only after it. `/readyz`
 reports TerraBase unavailable while a migration is pending.
+
+Dashboard timer workers check `BillingSchemaGate` before claiming work. A binary containing these checks idles billing, drains, alerts, allowance mail, deletion reconciliation and sweeping if the database contains an unknown migration, until roll-forward. An already-running binary from before the nonbilling gates were introduced cannot honor them: on the initial rollout its unclaimed-worker overlap lasts from the first new worker starting until the last old process exits. Stop old processes before the claims migration/start, or deploy the gates to every region before that migration, to avoid this overlap.
 
 `AddDeletionCleanupSettlement` is forward-only. It adds the nullable `acknowledged_at` and `billing_settled_at` columns
 to `deletion_cleanup` in place, but its `Down` cannot run on TerraBase: SQLite drops a column by rebuilding the table,
