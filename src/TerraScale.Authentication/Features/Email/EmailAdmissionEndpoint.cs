@@ -19,7 +19,7 @@ public sealed class EmailAdmissionEndpoint(AuthOptions options, EmailAdmission a
         Post("/v1/terrascale/email/admission");
         Name("email_admission");
         Summary("Reserve one infrastructure notification attempt");
-        Description("ts-alerts only. Domain-separated HMAC credential derived from the shared SMTP password. A fresh ULID may grant one send, within ten seconds. Admitted IDs never grant another attempt; refusals and ambiguous responses suppress email. No retry of an unknown provider outcome.");
+        Description("ts-alerts only. Domain-separated HMAC credential derived from CLOUDFLARE_EMAIL_TOKEN (Vault secret gru-1-cloudflare-email-token). A fresh ULID may grant one send, within ten seconds. Admitted IDs never grant another attempt; refusals and ambiguous responses suppress email. No retry of an unknown provider outcome.");
         Tags("Email");
         Metadata(new AcceptsMetadata(["application/json"], typeof(EmailAdmissionRequest)), new RequiresSecurity(SecuritySchemes.MailAdmission));
         Produces<EmailAdmissionResponse>();
@@ -35,9 +35,12 @@ public sealed class EmailAdmissionEndpoint(AuthOptions options, EmailAdmission a
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var authorization = this.HttpContext.Request.Headers.Authorization.ToString();
-        var expected = options.Smtp is { } smtp ? Credential(smtp.Password)
-            : options.CloudflareEmail is { } cloudflare ? Credential(cloudflare.ApiToken) : string.Empty;
-        if (expected.Length == 0 || !CryptographicOperations.FixedTimeEquals(
+        if (options.CloudflareEmail is not { } cloudflare)
+        {
+            return TypedResults.Unauthorized();
+        }
+        var expected = Credential(cloudflare.ApiToken);
+        if (!CryptographicOperations.FixedTimeEquals(
             SHA256.HashData(Encoding.UTF8.GetBytes(authorization)), SHA256.HashData(Encoding.UTF8.GetBytes("Bearer " + expected))))
         {
             return TypedResults.Unauthorized();
