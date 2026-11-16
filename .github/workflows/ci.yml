@@ -64,7 +64,9 @@ jobs:
       landing: ${{ steps.filter.outputs.landing }}
       status: ${{ steps.filter.outputs.status }}
       dashboard: ${{ steps.filter.outputs.dashboard }}
-      journey: ${{ steps.journey.outputs.journey }}
+      journey: ${{ steps.areas.outputs.journey }}
+      shards: ${{ steps.areas.outputs.shards }}
+      services: ${{ steps.areas.outputs.services }}
       keyring: ${{ steps.filter.outputs.keyring }}
       engine: ${{ steps.filter.outputs.engine }}
       frontier: ${{ steps.filter.outputs.frontier }}
@@ -82,66 +84,6 @@ jobs:
           base: ${{ github.event_name == 'push' && github.event.before || '' }}
           ref: ${{ github.event_name == 'push' && github.sha || '' }}
           filters: |
-            engine:
-              - src/TerraBase/Engine/**/!(AGENTS.md|CLAUDE.md)
-              - src/vendor/**/!(AGENTS.md|CLAUDE.md)
-              - src/TerraBase/Features/Backup/**/!(AGENTS.md|CLAUDE.md)
-              - src/TerraBase/Hosting/Shutdown.cs
-              - src/TerraBase/Hosting/ApplicationRunCompletion.cs
-              - src/TerraBase/Hosting/DatabaseRoute.cs
-              - src/TerraBase/Hosting/DatabaseLifecycleCheckpoint.cs
-              - src/TerraBase/Hosting/BadRequests.cs
-              - src/TerraBase/Hosting/Listeners.cs
-              - src/TerraBase/Features/Health/NodeReadiness.cs
-              - src/TerraBase/Features/Health/ReadyzEndpoint.cs
-              - src/TerraBase/Configuration/TerraBaseOptions.cs
-              - src/TerraBase/Features/Memory/MemoryBudget.cs
-              - src/TerraBase/Features/Memory/IMemoryBudget.cs
-              - src/TerraBase/Features/Qos/QosAdmission.cs
-              - src/TerraBase/Features/Qos/IQosAdmission.cs
-              - src/TerraBase/Features/Qos/QosContext.cs
-              - src/TerraBase/Features/Qos/QosPolicy.cs
-              - src/TerraBase/Features/Qos/QosRequestLease.cs
-              - src/TerraBase/Features/Qos/QosMemoryException.cs
-              - src/TerraBase/Tenancy/TenantContext.cs
-              - src/TerraBase/Tenancy/PlanTierExtensions.cs
-              - src/TerraBase/Program.cs
-              - src/TerraBase/TerraBase.csproj
-              - src/TerraBase/Features/Sql/SqlErrors.cs
-              - src/TerraBase/Features/Sql/SqlService.cs
-              - src/TerraBase/Features/Sql/SqlScript.cs
-              - src/TerraBase/Features/Sql/SqlSocket.cs
-              - src/TerraBase/Features/Postgres/PostgresConnectionHandler.cs
-              - src/TerraBase/Features/Management/CreateDatabaseEndpoint.cs
-              - src/TerraBase/Features/Management/DeleteManagedDatabaseEndpoint.cs
-              - src/TerraBase/Features/Management/EngineManagementService.AddPipeline.cs
-              - src/TerraBase/Features/Management/EngineManagementService.DeletePipeline.cs
-              - src/TerraBase/Features/Management/EngineManagementService.Databases.cs
-              - src/TerraBase/Features/Management/EngineManagementService.Recovery.cs
-              - src/TerraBase/Features/Management/EngineManagementService.Orphans.cs
-              - src/TerraBase/Features/Management/EngineManagementService.Tenants.cs
-              - src/TerraBase/Features/Management/Backups/StorageSweep.cs
-              - src/TerraBase/Features/Management/Backups/EngineManagedBackupService.Restores.cs
-              - src/TerraBase/Features/Replicas/HomeMoves.cs
-              - src/TerraBase/Features/Replicas/HomeLeases.cs
-              - src/TerraBase/Features/Replicas/RegionalHandoff.cs
-              - src/TerraBase/Features/Memory/MemoryBudgetExtensions.cs
-              - src/TerraBase/Primitives/DirectorySync.cs
-              - src/TerraBase/Primitives/EntityIds.cs
-              - src/TerraBase/Primitives/StrictJson.cs
-              - src/TerraScale.Logging/**/!(AGENTS.md|CLAUDE.md)
-              - e2e/env/engine-crash*
-              - e2e/env/build.sh
-              - scripts/terrabase/**
-              - scripts/vendor/download-turso-native.sh
-              - scripts/vendor/verify-turso-native.sh
-              - benchmark/turso-sync-host/turso-pin.env
-              - Makefile
-              - Directory.*
-              - global.json
-              - NuGet.config
-              - .github/workflows/ci.yml
-              - .github/workflows/journey.yml
             shared: &shared
               - .github/workflows/ci.yml
               - Makefile
@@ -196,11 +138,130 @@ jobs:
               - src/TerraBase*/**/!(AGENTS.md|CLAUDE.md)
               - src/TerraScale.TerraBase.*/**/!(AGENTS.md|CLAUDE.md)
               - landing-site/static/pricing.json
-            frontier:
-              - *terrabase
-              - e2e/replication/**
+            journey-shared: &journey-shared
+              - .github/workflows/{ci,journey}.yml
+              - .github/actions/**
               - e2e/env/**
-              - .github/workflows/journey.yml
+              - e2e/support/**
+              - e2e/*.{json,ts}
+              - Makefile
+              - Directory.*
+              - global.json
+              - NuGet.config
+              - .editorconfig
+              - BannedSymbols.txt
+              - TerraScale.slnx
+              - scripts/terrabase/**
+              - scripts/vendor/{download,verify}-turso-native.sh
+              - benchmark/turso-sync-host/turso-pin.env
+              - src/TerraScale.Endpoints*/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraScale.Logging/**/!(AGENTS.md|CLAUDE.md)
+            journey-server: &journey-server
+              - *journey-shared
+              - src/TerraBase*/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraScale.TerraBase.*/**/!(AGENTS.md|CLAUDE.md)
+              - src/vendor/**/!(*.md|*.patch)
+            journey-browser: &journey-browser
+              - *journey-server
+              - src/TerraScale.Authentication*/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraScale.Dashboard*/**/!(AGENTS.md|CLAUDE.md)
+              - sdk/dotnet/**/!(AGENTS.md|CLAUDE.md)
+              - landing-site/static/pricing.json
+              - e2e/journey/{setup,close}.spec.ts
+              - e2e/pages/inventory.ts
+            journey-desktop:
+              - *journey-browser
+              - e2e/pages/**
+              - e2e/journey/{paid*,invitation}.spec.ts
+              - e2e/usage/**
+              - e2e/billing/**
+              - e2e/sdk/**
+              - sdk/{go,js,python,rust}/**/!(AGENTS.md|CLAUDE.md)
+            journey-phone:
+              - *journey-browser
+              - e2e/pages/**
+              - e2e/hosted/**
+              - e2e/interactions/**
+              - e2e/clock/**
+              - e2e/replication/push.mjs
+              - e2e/storage/**
+              - status-site/**/!(AGENTS.md|CLAUDE.md)
+              - e2e/social/**
+              - e2e/billing/**
+              - e2e/journey/{finish,invitation}.spec.ts
+              - e2e/sdk/**
+              - sdk/{go,js,python,rust}/**/!(AGENTS.md|CLAUDE.md)
+            journey-session:
+              - *journey-browser
+              - e2e/placement/{support,fleet}.ts
+              - e2e/placement/{session-limits,close}.spec.ts
+            journey-write:
+              - *journey-browser
+              - e2e/placement/{support,fleet}.ts
+              - e2e/placement/{write-guarantees,region-restore,close}.spec.ts
+              - e2e/fault/support.ts
+            journey-faults:
+              - *journey-browser
+              - e2e/placement/{support,fleet}.ts
+              - e2e/placement/{close,regions}.spec.ts
+              - e2e/placement/forwarding.ts
+              - e2e/clock/replay.c
+              - e2e/fault/**
+            engine:
+              - *journey-shared
+              - src/TerraBase/Engine/**/!(AGENTS.md|CLAUDE.md)
+              - src/vendor/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraBase/Features/Backup/**/!(AGENTS.md|CLAUDE.md)
+              - src/TerraBase/Hosting/Shutdown.cs
+              - src/TerraBase/Hosting/ApplicationRunCompletion.cs
+              - src/TerraBase/Hosting/DatabaseRoute.cs
+              - src/TerraBase/Hosting/DatabaseLifecycleCheckpoint.cs
+              - src/TerraBase/Hosting/BadRequests.cs
+              - src/TerraBase/Hosting/Listeners.cs
+              - src/TerraBase/Features/Health/NodeReadiness.cs
+              - src/TerraBase/Features/Health/ReadyzEndpoint.cs
+              - src/TerraBase/Configuration/TerraBaseOptions.cs
+              - src/TerraBase/Features/Memory/MemoryBudget.cs
+              - src/TerraBase/Features/Memory/IMemoryBudget.cs
+              - src/TerraBase/Features/Qos/QosAdmission.cs
+              - src/TerraBase/Features/Qos/IQosAdmission.cs
+              - src/TerraBase/Features/Qos/QosContext.cs
+              - src/TerraBase/Features/Qos/QosPolicy.cs
+              - src/TerraBase/Features/Qos/QosRequestLease.cs
+              - src/TerraBase/Features/Qos/QosMemoryException.cs
+              - src/TerraBase/Tenancy/TenantContext.cs
+              - src/TerraBase/Tenancy/PlanTierExtensions.cs
+              - src/TerraBase/Program.cs
+              - src/TerraBase/TerraBase.csproj
+              - src/TerraBase/Features/Sql/SqlErrors.cs
+              - src/TerraBase/Features/Sql/SqlService.cs
+              - src/TerraBase/Features/Sql/SqlScript.cs
+              - src/TerraBase/Features/Sql/SqlSocket.cs
+              - src/TerraBase/Features/Postgres/PostgresConnectionHandler.cs
+              - src/TerraBase/Features/Management/CreateDatabaseEndpoint.cs
+              - src/TerraBase/Features/Management/DeleteManagedDatabaseEndpoint.cs
+              - src/TerraBase/Features/Management/EngineManagementService.AddPipeline.cs
+              - src/TerraBase/Features/Management/EngineManagementService.DeletePipeline.cs
+              - src/TerraBase/Features/Management/EngineManagementService.Databases.cs
+              - src/TerraBase/Features/Management/EngineManagementService.Recovery.cs
+              - src/TerraBase/Features/Management/EngineManagementService.Orphans.cs
+              - src/TerraBase/Features/Management/EngineManagementService.Tenants.cs
+              - src/TerraBase/Features/Management/Backups/StorageSweep.cs
+              - src/TerraBase/Features/Management/Backups/EngineManagedBackupService.Restores.cs
+              - src/TerraBase/Features/Replicas/HomeMoves.cs
+              - src/TerraBase/Features/Replicas/HomeLeases.cs
+              - src/TerraBase/Features/Replicas/RegionalHandoff.cs
+              - src/TerraBase/Features/Memory/MemoryBudgetExtensions.cs
+              - src/TerraBase/Primitives/DirectorySync.cs
+              - src/TerraBase/Primitives/EntityIds.cs
+              - src/TerraBase/Primitives/StrictJson.cs
+            frontier:
+              - *journey-server
+              - e2e/replication/**
+            keyring:
+              - *journey-server
+              - e2e/keyring/**
+              - e2e/interactions/keyring.spec.ts
             sdk-dotnet:
               - sdk/dotnet/**/!(AGENTS.md|CLAUDE.md)
               - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md|CLAUDE.md)
@@ -225,14 +286,6 @@ jobs:
               - sdk/rust/**/!(AGENTS.md|CLAUDE.md)
               - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md|CLAUDE.md)
               - Makefile
-              - .github/workflows/ci.yml
-            keyring:
-              - e2e/keyring/**
-              - e2e/interactions/keyring.spec.ts
-              - e2e/env/{build.sh,hostnames,r2.mjs,scrub.py}
-              - e2e/{package.json,package-lock.json,playwright.config.ts,tsconfig.json}
-              - e2e/support/{stack.ts,state.ts}
-              - .github/workflows/journey.yml
               - .github/workflows/ci.yml
             docs:
               - docs-site/**/!(AGENTS.md|CLAUDE.md)
@@ -263,25 +316,17 @@ jobs:
               - Makefile
               - .github/workflows/dashboard-ci.yml
               - .github/workflows/ci.yml
-      - id: journey
-        if: github.event_name == 'pull_request'
-        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
-        with:
-          predicate-quantifier: every
-          filters: |
-            journey:
-              - '!docs-site/**'
-              - '!landing-site/**/!(pricing.json)'
-              - '!status-site/**'
-              - '!docs/**'
-              - '!**/*.md'
-              - '!.github/**/!(ci.yml|journey.yml)'
-              - '!scripts/**/!(check-stripe-dependency.py|download-turso-native.sh|verify-turso-native.sh)'
-              - '!benchmark/**/!(turso-pin.env)'
-              - '!{aspire,ops}/**'
-              - '!{.dockerignore,.gitignore,.legacy-scan-mode,.mcp.json,Dockerfile,TerraScale.slnx,*.slnf,dotnet-tools.json}'
       - id: areas
         env:
+          ALL_LANES: ${{ github.event_name != 'pull_request' }}
+          DESKTOP: ${{ steps.filter.outputs.journey-desktop }}
+          PHONE: ${{ steps.filter.outputs.journey-phone }}
+          SESSION: ${{ steps.filter.outputs.journey-session }}
+          WRITE: ${{ steps.filter.outputs.journey-write }}
+          FAULTS: ${{ steps.filter.outputs.journey-faults }}
+          ENGINE: ${{ steps.filter.outputs.engine }}
+          FRONTIER: ${{ steps.filter.outputs.frontier }}
+          KEYRING: ${{ steps.filter.outputs.keyring }}
           CHANGES: ${{ github.event_name == 'workflow_dispatch' && ((inputs.native_artifacts || inputs.publication == 'release-only') && '[]' || inputs.publication == 'build-only' && '["terrabase"]' || '["libs","auth","terrabase"]') || steps.filter.outputs.changes }}
         run: |
           {
@@ -289,6 +334,18 @@ jobs:
             echo "dotnet=$(jq -c '[.[] | select(. == "libs" or . == "auth" or . == "terrabase")] | unique' <<< "$CHANGES")"
             echo "sdks=$(jq -c '[.[] | select(startswith("sdk-"))]' <<< "$CHANGES")"
           } >> "$GITHUB_OUTPUT"
+          jq -cn '
+            [
+              {shard: "desktop and paid", projects: "--project pages-desktop --project paid-invitation", selected: env.DESKTOP},
+              {shard: "phone and flows", projects: "--project pages-mobile --project hosted --project interactions --project invitation", selected: env.PHONE},
+              {shard: "session limits", projects: "placement/session-limits.spec.ts --project placement --workers 1", regions: 2, nodes: 2, selected: env.SESSION},
+              {shard: "write guarantees", projects: "placement/write-guarantees.spec.ts placement/region-restore.spec.ts --project placement --workers 1", regions: 2, nodes: 1, selected: env.WRITE},
+              {shard: "multi-region faults", projects: "--project fault", regions: 2, nodes: 2, selected: env.FAULTS}
+            ] | map(select(env.ALL_LANES == "true" or .selected == "true") | del(.selected)) as $shards
+            | ($shards | length > 0) as $browser
+            | ($browser or env.ALL_LANES == "true" or env.ENGINE == "true" or env.FRONTIER == "true" or env.KEYRING == "true") as $journey
+            | "shards=\($shards | tojson)\nservices=\((if $browser then ["terrabase", "ts-auth", "dashboard"] elif $journey then ["terrabase"] else [] end) | tojson)\njourney=\($journey)"
+          ' -r >> "$GITHUB_OUTPUT"
 
   checks:
     if: ${{ !inputs.reconcile_auth }}
@@ -935,13 +992,15 @@ jobs:
   journey:
     needs: changes
     if: >-
-      (github.event_name == 'pull_request' && (needs.changes.outputs.journey == 'true' || needs.changes.outputs.engine == 'true'))
+      (github.event_name == 'pull_request' && needs.changes.outputs.journey == 'true')
       || (github.ref == 'refs/heads/main' && (github.event_name == 'push'
       || (github.event_name == 'workflow_dispatch' && !inputs.reconcile_auth && !inputs.native_artifacts && inputs.publication == 'release')))
     uses: ./.github/workflows/journey.yml
     with:
-      keyring: ${{ contains(fromJSON(needs.changes.outputs.dotnet), 'terrabase') || needs.changes.outputs.keyring == 'true' || github.event_name != 'pull_request' }}
-      engine: ${{ needs.changes.outputs.engine == 'true' }}
+      shards: ${{ needs.changes.outputs.shards }}
+      services: ${{ needs.changes.outputs.services }}
+      keyring: ${{ github.event_name != 'pull_request' || needs.changes.outputs.keyring == 'true' }}
+      engine: ${{ github.event_name != 'pull_request' || needs.changes.outputs.engine == 'true' }}
       frontier: ${{ github.event_name != 'pull_request' || needs.changes.outputs.frontier == 'true' }}
 
   all-green:

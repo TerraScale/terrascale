@@ -3,6 +3,12 @@ name: Journey
 on:
   workflow_call:
     inputs:
+      shards:
+        type: string
+        required: true
+      services:
+        type: string
+        required: true
       keyring:
         type: boolean
         required: true
@@ -13,14 +19,19 @@ on:
         type: boolean
         default: false
 
+concurrency:
+  group: journey-ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions: {}
 
 jobs:
   services:
     name: build ${{ matrix.service }}
+    if: inputs.services != '[]'
     strategy:
       matrix:
-        service: [terrabase, ts-auth, dashboard]
+        service: ${{ fromJSON(inputs.services) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -37,6 +48,8 @@ jobs:
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
         with:
           global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         if: matrix.service == 'dashboard'
         with:
@@ -65,7 +78,7 @@ jobs:
       DOTNET_PROCESSOR_COUNT: 4
       DOTNET_CLI_TELEMETRY_OPTOUT: 1
       DOTNET_NOLOGO: 1
-      E2E_REVISION: ${{ github.event.pull_request.base.sha || github.event.before }}
+      E2E_REVISION: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -146,7 +159,7 @@ jobs:
 
   engine-result:
     name: engine crash selection guard
-    if: always()
+    if: always() && inputs.engine
     needs: [engine-baseline, engine-crash]
     runs-on: ubuntu-24.04
     timeout-minutes: 1
@@ -155,6 +168,7 @@ jobs:
 
   runners:
     name: runner ${{ matrix.sdk }}
+    if: inputs.shards != '[]'
     strategy:
       matrix:
         sdk: [go, rust]
@@ -172,7 +186,19 @@ jobs:
         if: matrix.sdk == 'go'
         with:
           go-version-file: sdk/go/.go-version
-          cache: false
+          cache: true
+          cache-dependency-path: |
+            e2e/sdk/go/go.sum
+            sdk/go/go.sum
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        if: matrix.sdk == 'rust'
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            e2e/sdk/rust/target
+          key: journey-rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('e2e/sdk/rust/rust-toolchain.toml', 'e2e/sdk/rust/Cargo.lock', 'sdk/rust/Cargo.lock') }}-${{ hashFiles('e2e/sdk/rust/src/**', 'sdk/rust/src/**', 'e2e/sdk/rust/Cargo.toml', 'sdk/rust/Cargo.toml') }}
+          restore-keys: journey-rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('e2e/sdk/rust/rust-toolchain.toml', 'e2e/sdk/rust/Cargo.lock', 'sdk/rust/Cargo.lock') }}-
       - name: Install the pinned toolchain
         working-directory: e2e/sdk/rust
         run: |
@@ -189,27 +215,12 @@ jobs:
 
   journey:
     name: journey ${{ matrix.shard }}
+    if: inputs.shards != '[]'
     needs: [services, runners]
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - shard: desktop and paid
-            projects: --project pages-desktop --project paid-invitation
-          - shard: phone and flows
-            projects: --project pages-mobile --project hosted --project interactions --project invitation
-          - shard: session limits
-            projects: placement/session-limits.spec.ts --project placement --workers 1
-            regions: 2
-            nodes: 2
-          - shard: write guarantees
-            projects: placement/write-guarantees.spec.ts placement/region-restore.spec.ts --project placement --workers 1
-            regions: 2
-            nodes: 1
-          - shard: multi-region faults
-            projects: --project fault
-            regions: 2
-            nodes: 2
+        include: ${{ fromJSON(inputs.shards) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
