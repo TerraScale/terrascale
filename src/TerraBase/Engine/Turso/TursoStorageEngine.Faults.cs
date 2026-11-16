@@ -14,12 +14,9 @@ internal sealed record ProofPassed : StorageProof;
 internal sealed record ProofDamaged(string Reason) : StorageProof;
 internal sealed record ProofIncomplete(string Reason) : StorageProof;
 
-internal sealed partial class TursoStorageEngine : IStorageCopyFaults
+internal sealed partial class TursoStorageEngine
 {
     private static readonly string[] ProofFiles = ["", "-wal"];
-
-    public ValueTask<bool> RefusedAsync(TenantContext database, Ulid incarnation, CancellationToken cancellationToken) =>
-        Ledger.RefusedAsync(database, incarnation, cancellationToken);
 
     internal string CopyPath(TenantContext database)
     {

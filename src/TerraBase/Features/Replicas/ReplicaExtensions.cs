@@ -19,7 +19,6 @@ public static class ReplicaExtensions
         services.AddSingleton<RemovedReplicaFaults>();
         services.AddSingleton<RegionReplication>();
         services.AddSingleton<HomeSessions>();
-        services.AddSingleton<KeptCopies>();
         services.AddSingleton<HomeMoves>();
         services.AddHostedService(provider => provider.GetRequiredService<HomeMoves>());
         services.AddSingleton<HomeLeases>();

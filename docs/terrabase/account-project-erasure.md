@@ -16,22 +16,6 @@ one already started finishes. The closure stays pending, for the purge passes an
 what is recorded, while a client session holds a database open, a peer region has not confirmed a key destruction, the
 project has more than 100 databases or tracked purges, the 10 seconds ran out, or a purge found only by the
 purge-history scan (a peer's shred, a regional import) is not yet erased and recorded.
-### A holder that is not its region's writer
-
-A database purge names the machines whose erasure receipts it waits for (`expectedHolders`), and receipts do not
-travel when a region's writer role moves to another machine. A holder therefore keeps the receipt of its own erasure
-in its catalog, written only after its own files are deleted and their absence is verified, and serves it on its
-internal listener (`GET /v1/sync/purge-receipts/<databaseId>/receipt`, `404` while it has none). The region's writer
-fetches it: every purge pass (every 2 s) asks each holder of its region that its own purge record names and whose
-receipt it lacks, and records the answer only when that record names the holder for the same deletion. The writer is
-the only side that knows which receipts it waits for, so a writer change, a catalog import that replaces its purge
-record, or an owner record recreated at an earlier epoch all lead to the next pass asking again, and a holder never
-sends evidence to a writer that does not need it. A missing receipt or an unreachable holder authorizes nothing: the
-writer stores no receipt and asks again on the next pass. `terrabase_purge_receipts_undelivered` counts the receipts
-the writer's last pass could not collect, and a warning names the database, the holder and the cause
-(`holder_unknown`, `holder_unavailable`, `receipt_pending`, `receipt_unbound`) once per cause. A receipt that no longer
-waits leaves that log state at the end of the pass.
-
 ## File buckets
 
 Version 2 also erases the project's file buckets: the bucket definitions, every file record (completed, incomplete and deleted but held) and the objects in the object store. The request does it after the databases, inside the same 10 seconds, and each machine's convergence pass (2 s) does it for every closure that is not settled, so a spent budget, a crash or a lost response goes on from what is left. The steps, for one bucket at a time:

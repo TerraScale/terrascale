@@ -22,7 +22,7 @@ public sealed class ReadyzEndpoint(
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        return await readiness.UnreadyAsync(cancellationToken).ConfigureAwait(false) is null
+        return await readiness.IsReadyAsync(cancellationToken).ConfigureAwait(false)
             ? TypedResults.Ok(StatusBody.For(HttpContext, "ready", options))
             : TypedResults.Json(StatusBody.For(HttpContext, "unavailable", options), statusCode: StatusCodes.Status503ServiceUnavailable);
     }

@@ -1,5 +1,4 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync, createWriteStream } from 'node:fs';
 import { homedir } from 'node:os';
@@ -8,7 +7,7 @@ import { createInterface } from 'node:readline';
 import { expect } from '@playwright/test';
 import { stateDir } from '../support/stack';
 import { saveSecret } from '../support/state';
-import { faultId, Kv, nodeRequest } from './support';
+import { faultId, nodeRequest } from './support';
 
 class ReceiptNode {
   readonly process: ChildProcess;
@@ -21,7 +20,7 @@ class ReceiptNode {
       env: { ...environment, E2E_RECEIPT_ROLE: role }, stdio: ['pipe', 'pipe', 'pipe'],
     });
     const log = createWriteStream(join(directory, role + '.log'));
-    this.process.stdout!.pipe(log, { end: false });
+    this.process.stdout!.pipe(log);
     this.process.stderr!.pipe(log, { end: false });
     createInterface({ input: this.process.stdout! }).on('line', line => {
       if (line.startsWith('RECEIPT_NODE ')) this.answers.get(line.slice(13))?.resolve();
@@ -29,8 +28,8 @@ class ReceiptNode {
     this.process.once('exit', (code, signal) => {
       const error = new Error('receipt node exited: ' + role + ' ' + code + ' ' + signal);
       for (const answer of this.answers.values()) answer.reject(error);
+      log.end();
     });
-    this.process.once('close', () => log.end());
     this.process.once('error', error => {
       for (const answer of this.answers.values()) answer.reject(error);
     });
@@ -49,20 +48,10 @@ class ReceiptNode {
 }
 
 export async function receiptHandoff(scenario: string): Promise<void> {
-  const run = 'receipt-handoff-' + faultId();
-  const directory = join(stateDir, run);
-  const logs = join(stateDir, 'logs', run);
+  const directory = join(stateDir, 'receipt-handoff-' + faultId());
   mkdirSync(directory, { recursive: true });
-  mkdirSync(logs, { recursive: true });
   const secrets = readFileSync(join(stateDir, 'secrets'), 'utf8').trim().split('\n');
-  const [peer, master, , , , , , , , cloudflare] = secrets;
-  const access = randomBytes(16).toString('hex');
-  const secret = randomBytes(32).toString('hex');
-  const accounts = join(stateDir, 'r2-accounts');
-  mkdirSync(accounts, { recursive: true, mode: 0o700 });
-  writeFileSync(join(accounts, createHash('sha256').update(access).digest('hex')), `${access}\n${secret}\n`, { mode: 0o600 });
-  saveSecret('receipt-r2-access-' + scenario, access);
-  saveSecret('receipt-r2-secret-' + scenario, secret);
+  const [peer, master, , , , , , , , cloudflare, , , access, secret] = secrets;
   const token = faultId();
   saveSecret('receipt-nats-' + scenario, token);
   const peers = join(directory, 'peers');
@@ -71,7 +60,7 @@ export async function receiptHandoff(scenario: string): Promise<void> {
   const targetName = 'receipt-t-' + suffix;
   writeFileSync(peers, sourceName + ' fra 127.0.0.5\n' + targetName + ' fra 127.0.0.6\n');
   const tools = process.env.E2E_TOOLS ?? join(homedir(), '.cache', 'terrascale-e2e');
-  const natsLog = createWriteStream(join(logs, 'nats.log'));
+  const natsLog = createWriteStream(join(directory, 'nats.log'));
   const configuration = join(directory, 'nats.conf');
   writeFileSync(configuration, 'listen: 127.0.0.1:4322\nhttp: 127.0.0.1:8322\nauthorization { token: ' + JSON.stringify(token) +
     ' }\njetstream { store_dir: ' + join(directory, 'nats') + ' }\n', { mode: 0o600 });
@@ -103,9 +92,8 @@ export async function receiptHandoff(scenario: string): Promise<void> {
       TERRABASE_FILES_S3_ACCESS_KEY_ID: access, TERRABASE_FILES_S3_SECRET_ACCESS_KEY: secret,
     });
     if (scenario === 'retained') environment.E2E_RETAINED_RECEIVER = '1';
-    if (scenario === 'early' || scenario === 'refused') environment.E2E_RECEIPT_DATABASE = suffix.toUpperCase();
     const source = new ReceiptNode({ ...environment, TS_NODE: sourceName, TERRABASE_DATA_DIRECTORY: join(directory, 'source'),
-      TERRABASE_PORT: '8480', TERRABASE_METRICS_PORT: '9491', TERRABASE_POSTGRES_PORT: '6832' }, logs, 'source');
+      TERRABASE_PORT: '8480', TERRABASE_METRICS_PORT: '9491', TERRABASE_POSTGRES_PORT: '6832' }, directory, 'source');
     children.push(source);
     await source.command('ping');
     const sourceAddress = { name: sourceName, address: '127.0.0.5' };
@@ -117,7 +105,7 @@ export async function receiptHandoff(scenario: string): Promise<void> {
     };
     await expect.poll(() => status(sourceAddress)).toMatchObject({ writer: true, owner: sourceAddress.name, ready: true });
     const target = new ReceiptNode({ ...environment, TS_NODE: targetName, TERRABASE_DATA_DIRECTORY: join(directory, 'target'),
-      TERRABASE_PORT: '8580', TERRABASE_METRICS_PORT: '9591', TERRABASE_POSTGRES_PORT: '6932' }, logs, 'target');
+      TERRABASE_PORT: '8580', TERRABASE_METRICS_PORT: '9591', TERRABASE_POSTGRES_PORT: '6932' }, directory, 'target');
     children.push(target);
     await target.command('ping');
     await expect.poll(() => status(targetAddress)).toMatchObject({ writer: false, owner: sourceAddress.name, ready: true });
@@ -135,55 +123,6 @@ export async function receiptHandoff(scenario: string): Promise<void> {
     }
     const primed = await nodeRequest(targetAddress, '/v1/rollout/prime?source=' + sourceName, 'POST');
     expect(primed.status, primed.body).toBe(204);
-    const receipts = async (address: typeof sourceAddress) => {
-      const response = await nodeRequest(address, '/v1/sync/purge-receipts/' + suffix.toUpperCase());
-      expect(response.status, response.body).toBe(200);
-      return JSON.parse(response.body) as { known: boolean; settled: boolean };
-    };
-    if (scenario === 'refused') {
-      await source.command('early-clean');
-      await source.command('early-authority ' + sourceName);
-      await target.command('early-holder ' + targetName);
-      await expect.poll(() => receipts(targetAddress), { message: 'the holder is settled with a writer whose purge record does not name it' })
-        .toEqual({ known: true, settled: true });
-      const drained = await nodeRequest(sourceAddress, '/v1/rollout/drain?target=' + targetName, 'POST');
-      expect(drained.status, drained.body).toBe(204);
-      await expect.poll(() => status(targetAddress)).toMatchObject({ writer: true, owner: targetName, ready: true });
-      await target.command('early-holder ' + targetName);
-      await source.command('early-authority ' + targetName);
-      const kv = await Kv.open(4322, token);
-      try {
-        const owner = await kv.get<{ node: string; epoch: number }>('terrabase-region-owners', 'fra');
-        expect(owner?.value.node, 'the writer role moved to the receipt holder').toBe(targetName);
-        await kv.remove('terrabase-region-owners', 'fra', owner!.seq);
-        await expect.poll(async () => (await kv.get<{ node: string; epoch: number }>('terrabase-region-owners', 'fra'))?.value,
-          { message: 'a deleted owner key brings the refusing node back as writer at epoch 1' }).toMatchObject({ node: sourceName, epoch: 1 });
-      } finally {
-        kv.close();
-      }
-      await expect.poll(() => status(sourceAddress)).toMatchObject({ writer: true, owner: sourceName, ready: true });
-      await expect.poll(() => receipts(sourceAddress), { message: 'the writer that refused the receipt at the same epoch records it once its purge record names the holder' })
-        .toEqual({ known: true, settled: true });
-      await source.command('early-erasure');
-      console.log('REFUSED_RECEIPT: a receipt refused by writer epoch 1 is recorded after the role moved to its holder and back to epoch 1, and backup erasure completes');
-      return;
-    }
-    if (scenario === 'early') {
-      const id = suffix.toUpperCase();
-      await source.command('early-clean');
-      await source.command('early-live');
-      await target.command('early-holder ' + targetName);
-      await expect.poll(() => receipts(targetAddress), { message: 'the holder keeps its erasure receipt for a writer that has no purge record yet' })
-        .toEqual({ known: true, settled: true });
-      await source.command('early-absent');
-      await source.command('early-authority ' + targetName);
-      await expect.poll(() => readFileSync(join(logs, 'source.log'), 'utf8').split('\n').filter(line =>
-        line.includes(id) && line.includes('Recorded the erasure receipt')),
-      { message: 'the same writer fetches the early receipt on a normal maintenance pass after its purge record arrives' }).toHaveLength(1);
-      await source.command('early-erasure');
-      console.log('EARLY_RECEIPT: writer without authority retains live row 73 and no receipt; the same writer later records the receipt and completes backup erasure');
-      return;
-    }
     if (retained) {
       const created = await nodeRequest(sourceAddress, `/v1/projects/${retained.project}/databases`, 'POST',
         { name: 'retained-receiver', regions: ['fra'] }, retained.user);
@@ -239,7 +178,7 @@ export async function receiptHandoff(scenario: string): Promise<void> {
       expect(read.status, read.body).toBe(200);
       expect((JSON.parse(read.body) as { id: string }).id).toBe(id);
       if (scenario !== 'rows' && scenario !== 'bytes') {
-        const targetLog = readFileSync(join(logs, 'target.log'), 'utf8');
+        const targetLog = readFileSync(join(directory, 'target.log'), 'utf8');
         expect(targetLog).toContain('Regional catalog import refused:');
         expect(targetLog).toContain('invalid or conflicting receipt records; catalog unchanged');
         const metricResponse = await fetch('http://127.0.0.6:9591/metrics');

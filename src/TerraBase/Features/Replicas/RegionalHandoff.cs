@@ -5,7 +5,6 @@ using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Net.Http.Headers;
 using System.Text.Json;
-using TerraBase.Features.Platform;
 using TerraBase.Configuration;
 using TerraBase.Engine.Revisions;
 using TerraBase.Engine;
@@ -18,14 +17,9 @@ using ZLogger;
 
 namespace TerraBase.Features.Replicas;
 
-internal sealed record RegionalPosition(string Organization, string Project, string Database, string Home, string Revision, bool Fenced = false);
+internal sealed record RegionalPosition(string Organization, string Project, string Database, string Home, string Revision);
 internal sealed record RegionalPrepare(string Source, IReadOnlyList<RegionalPosition> Positions, long Epoch, RegionalCatalogSnapshot? Catalog = null, string? Operation = null, RetainedManifest? Retained = null);
-internal sealed record UnservedDatabase(string DatabaseId, string Region, string Node, long Epoch, string Cause);
-
-internal sealed record FencedDatabase(string DatabaseId, string Reason, long Epoch, string Detail);
-
-internal sealed record RegionalStatus(string Node, string? Owner, long Epoch, bool Writer, bool Ready, string Session = "",
-    IReadOnlyList<UnservedDatabase>? Unserved = null, IReadOnlyList<KeptCopy>? Kept = null, IReadOnlyList<FencedDatabase>? Fenced = null, string? Unready = null);
+internal sealed record RegionalStatus(string Node, string? Owner, long Epoch, bool Writer, bool Ready, string Session = "");
 internal sealed record RegionalDrain(string Target);
 
 internal readonly union RegionalDrainResult(Done, Unavailable);
@@ -41,7 +35,6 @@ internal sealed partial class RegionalHandoff(
     private readonly Dictionary<string, TenantContext> _promoted = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _prepared = new(StringComparer.Ordinal);
     private long _activeEpoch;
-    private int _retiredSource;
     private long _activatingEpoch;
     private TenantContext? _activationAfter;
     private string? _activationRetainedAfter;
@@ -50,31 +43,13 @@ internal sealed partial class RegionalHandoff(
     private RegionalWriterLease? _writerLease;
     private readonly string _session = Guid.NewGuid().ToString("N");
 
-    internal async Task<RegionalStatus> StatusAsync(string? region, CancellationToken cancellationToken)
-    {
-        var unready = await services.GetRequiredService<Health.INodeReadiness>().UnreadyAsync(cancellationToken).ConfigureAwait(false);
-        return new(options.MachineId, owners.Find(region ?? options.Region)?.Node,
-            owners.Find(region ?? options.Region)?.Epoch ?? 0, (region is null || region == options.Region) && owners.Writer,
-            unready is null, _session,
-            services.GetRequiredService<HomeLeases>().Unserved, services.GetRequiredService<KeptCopies>().List(),
-            region is null || region == options.Region ? Fenced : [],
-            unready is { } condition ? Health.ReadinessConditions.Label(condition) : null);
-    }
-
-    private IReadOnlyList<FencedDatabase> Fenced =>
-        [.. _fenced.Values.Select(fenced => fenced.Status).OrderBy(fenced => fenced.DatabaseId, StringComparer.Ordinal)];
-
-    private IEnumerable<Measurement<int>> FencedMeasurements() => _fenced.Values.GroupBy(fenced => fenced.Status.Reason, StringComparer.Ordinal)
-        .Select(reason => new Measurement<int>(reason.Count(), new KeyValuePair<string, object?>("reason", reason.Key)));
+    internal async Task<RegionalStatus> StatusAsync(string? region, CancellationToken cancellationToken) => new(options.MachineId, owners.Find(region ?? options.Region)?.Node,
+        owners.Find(region ?? options.Region)?.Epoch ?? 0, (region is null || region == options.Region) && owners.Writer,
+        await services.GetRequiredService<Health.INodeReadiness>().IsReadyAsync(cancellationToken).ConfigureAwait(false), _session);
 
     public override Task StartAsync(CancellationToken cancellationToken)
     {
         gate.RegionalWriter = () => owners.Writer;
-        gate.RegionalServing = database => PlatformDatabases.IsPlatformDatabase(database) || owners.Serving(Volatile.Read(ref _activeEpoch));
-        gate.RegionalSource = database => PlatformDatabases.IsPlatformDatabase(database)
-            || owners.Serving(Volatile.Read(ref _activeEpoch)) || Volatile.Read(ref _retiredSource) == 1 && gate.Proven(database);
-        _ = meters.Create(Telemetry.MeterName).CreateObservableGauge("terrabase.regional.fenced", FencedMeasurements, "{database}",
-            "Databases homed in this node's region that refuse writes because the writer's activation check cannot prove their local data holds every acknowledged write, by reason; the rollout status names them.");
         return base.StartAsync(cancellationToken);
     }
 
@@ -166,19 +141,9 @@ internal sealed partial class RegionalHandoff(
         var catalog = services.GetRequiredService<IReplicaCatalog>();
         if (_activatingEpoch != owner.Epoch)
         {
-            Volatile.Write(ref _retiredSource, 0);
-            gate.BeginActivation();
             _activatingEpoch = owner.Epoch;
             _activationAfter = null;
             _activationRetainedAfter = null;
-            _checkedAfter = null;
-            _checked = false;
-            _pageCaughtUp = false;
-            _walkFenced.Clear();
-        }
-        if (!_checked && !await LocalDataCurrentAsync(owner, catalog, cancellationToken).ConfigureAwait(false))
-        {
-            return false;
         }
         do
         {
@@ -188,7 +153,7 @@ internal sealed partial class RegionalHandoff(
             }
             foreach (var database in page.Databases)
             {
-                if (!_fenced.ContainsKey(database.DatabaseId!) && await leases.TakeRegionalAsync(database, source, cancellationToken).ConfigureAwait(false) == HomeLeases.RegionalLeaseResult.Pending)
+                if (!await leases.TakeRegionalAsync(database, source, cancellationToken).ConfigureAwait(false))
                 {
                     return false;
                 }
@@ -219,7 +184,7 @@ internal sealed partial class RegionalHandoff(
             }
         }
         while (true);
-        Volatile.Write(ref _activeEpoch, owner.Epoch);
+        _activeEpoch = owner.Epoch;
         _activatingEpoch = 0;
         _activationAfter = null;
         _activationRetainedAfter = null;
@@ -228,21 +193,7 @@ internal sealed partial class RegionalHandoff(
 
     private void Observe(RegionalOwner owner)
     {
-        var previous = owners.Find(owner.Region);
-        var changed = previous != owner;
-        if (owner.Region == options.Region && (previous?.Node != owner.Node || previous.Epoch != owner.Epoch))
-        {
-            if (owner.Node == options.MachineId)
-            {
-                Volatile.Write(ref _retiredSource, 0);
-            }
-            if (previous is not null && previous.Node == options.MachineId && owner.Node != options.MachineId
-                && Volatile.Read(ref _activeEpoch) == previous.Epoch)
-            {
-                Volatile.Write(ref _retiredSource, 1);
-            }
-            Volatile.Write(ref _activeEpoch, 0);
-        }
+        var changed = owners.Find(owner.Region) != owner;
         owners.Observe(owner);
         if (owner.Region == options.Region && owner.Node == options.MachineId)
         {
@@ -252,7 +203,11 @@ internal sealed partial class RegionalHandoff(
         {
             if (owner.Region == options.Region && owner.Node != options.MachineId && owner.Transfer is null)
             {
-                ResumePromoted();
+                foreach (var database in _promoted.Values)
+                {
+                    services.GetRequiredService<RegionReplication>().Resume(database);
+                }
+                _promoted.Clear();
             }
             return;
         }
@@ -271,48 +226,29 @@ internal sealed partial class RegionalHandoff(
         }
         else
         {
-            Volatile.Write(ref _activeEpoch, 0);
             _prepared.Clear();
-            foreach (var database in _fenced.Keys)
+            foreach (var database in _promoted.Values)
             {
-                gate.Retire(database);
-                _fenced.TryRemove(database, out _);
+                replication.Resume(database);
             }
-            _walkFenced.Clear();
-            ResumePromoted();
+            _promoted.Clear();
         }
-    }
-
-    private void ResumePromoted()
-    {
-        var replication = services.GetRequiredService<RegionReplication>();
-        foreach (var database in _promoted.Values)
-        {
-            replication.Resume(database);
-        }
-        _promoted.Clear();
     }
 
     internal async Task<bool> PrimeAsync(string source, CancellationToken cancellationToken)
     {
+        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        bounded.CancelAfter(DrainBudget);
+        cancellationToken = bounded.Token;
         if (owners.Find(options.Region)?.Node != source || source == options.MachineId)
         {
             return false;
         }
 
-        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        bounded.CancelAfter(DrainBudget);
         var replication = services.GetRequiredService<RegionReplication>();
-        try
-        {
-            await replication.SyncCatalogsAsync(bounded.Token).ConfigureAwait(false);
-            await replication.PullAllAsync(bounded.Token).ConfigureAwait(false);
-            return await services.GetRequiredService<Health.INodeReadiness>().UnreadyAsync(bounded.Token).ConfigureAwait(false) is null;
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            return false;
-        }
+        await replication.SyncCatalogsAsync(cancellationToken).ConfigureAwait(false);
+        await replication.PullAllAsync(cancellationToken).ConfigureAwait(false);
+        return await services.GetRequiredService<Health.INodeReadiness>().IsReadyAsync(cancellationToken).ConfigureAwait(false);
     }
 
     internal async Task<bool> PrepareAsync(RegionalPrepare request, CancellationToken cancellationToken)
@@ -363,7 +299,6 @@ internal sealed partial class RegionalHandoff(
             if (held is not { } current || current.Incarnation != expected.Incarnation
                 || DatabaseRevision.Compare(current, expected) < 0)
             {
-                logger.ZLogInformation($"Regional candidate catches up database {position.Database:@Database} from {held?.ToString() ?? "no position":@Held} to the certified {position.Revision:@SourceRevision}, epoch {request.Epoch:@Epoch}");
                 if (!await replication.CatchUpAsync(database, cancellationToken).ConfigureAwait(false))
                 {
                     return Refuse("replica follower unavailable during preparation");
@@ -398,10 +333,6 @@ internal sealed partial class RegionalHandoff(
                 var imports = services.GetRequiredService<IWalBackup>();
                 await imports.PreserveDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
                 await imports.ImportDatabaseAsync(database, detached, cancellationToken).ConfigureAwait(false);
-                if (!position.Fenced && replicas.ArchiveSetAside(database) is > 0 and var archived)
-                {
-                    logger.ZLogWarning($"Regional candidate archived {archived:@Files} set-aside replica files of database {position.Database:@Database}: its primary file now covers the source's certified position {position.Revision:@SourceRevision}, the highest position acknowledged at epoch {request.Epoch:@Epoch}");
-                }
                 _prepared[position.Database] = position.Revision;
             }
             catch (Exception error)
@@ -492,7 +423,7 @@ internal sealed partial class RegionalHandoff(
             }
         }
 
-        return await services.GetRequiredService<Health.INodeReadiness>().UnreadyAsync(cancellationToken).ConfigureAwait(false) is null;
+        return await services.GetRequiredService<Health.INodeReadiness>().IsReadyAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private enum DrainPhase
@@ -611,7 +542,6 @@ internal sealed partial class RegionalHandoff(
             progress.Phase = DrainPhase.Quiesce;
             admission = await services.GetRequiredService<RegionalIngress>().HoldAsync(cancellationToken).ConfigureAwait(false);
             owners.Drain();
-            owners.BeginHandoff();
             logger.ZLogInformation($"Regional handoff source fenced: {options.MachineId:@Source} to {target:@Target}, epoch {owner.Epoch:@Epoch}");
             progress.Phase = DrainPhase.Collect;
             var catalog = services.GetRequiredService<IReplicaCatalog>();
@@ -656,7 +586,7 @@ internal sealed partial class RegionalHandoff(
 
                         if (position is { } applied)
                         {
-                            positions.Add(new RegionalPosition(database.OrganizationId, database.ProjectId!, database.DatabaseId!, region, applied.ToString(), _fenced.ContainsKey(database.DatabaseId!)));
+                            positions.Add(new RegionalPosition(database.OrganizationId, database.ProjectId!, database.DatabaseId!, region, applied.ToString()));
                         }
                     }
 
@@ -728,7 +658,6 @@ internal sealed partial class RegionalHandoff(
             }
             finally
             {
-                owners.EndHandoff();
                 admission?.Dispose();
                 _changing.Release();
             }

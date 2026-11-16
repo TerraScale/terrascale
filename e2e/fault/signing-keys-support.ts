@@ -166,8 +166,8 @@ export async function signingNode(request: APIRequestContext) {
   };
 }
 
-export async function postgres(database: string, password: string, port = 16780) {
-  const socket = connect(port, '127.0.0.1');
+export async function postgres(database: string, password: string) {
+  const socket = connect(16780, '127.0.0.1');
   const frames: { type: string; body: Buffer }[] = [];
   let buffered = Buffer.alloc(0);
   let signal: (() => void) | undefined;
@@ -211,7 +211,7 @@ export async function postgres(database: string, password: string, port = 16780)
   const authenticated = await read();
   return {
     authenticated, ended: () => ended,
-    query: async (sql = 'SELECT 1') => { send('Q', text(sql)); return read(); },
+    query: async () => { send('Q', text('SELECT 1')); return read(); },
     prepare: async () => {
       send('P', Buffer.concat([text('probe'), text('SELECT 1'), Buffer.alloc(2)]));
       send('B', Buffer.concat([text('probe'), text('probe'), Buffer.alloc(6)]));
