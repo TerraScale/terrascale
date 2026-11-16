@@ -21,6 +21,12 @@ test('snapshot and point-in-time restore run in sjc', async ({ cells }) => {
   let node: RegionProcess | undefined;
   try {
     node = await startRegion('sjc', 0);
+    const metrics = `http://${new URL(node.endpoint).hostname}:${node.metricsPort}/metrics`;
+    await expect.poll(async () => {
+      const response = await cells.get(metrics);
+      expect(response.status(), await response.text()).toBe(200);
+      return (await response.text()).split('\n').find(line => line.startsWith('terrabase_clock_local_writes_allowed{'));
+    }, { message: 'sjc trusts its clock before the source database accepts writes' }).toMatch(/ 1$/);
     await publish('pro');
     await restorePair(cells, node.endpoint, 'sjc', node.endpoint);
   } finally {

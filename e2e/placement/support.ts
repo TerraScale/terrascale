@@ -70,7 +70,8 @@ export const database = (id: string, projectId?: string) => `${project(projectId
 export const name = (prefix: string) => `${prefix}-${randomBytes(6).toString('hex')}`;
 
 export async function status(response: APIResponse, expected: number): Promise<void> {
-  expect(response.status(), new URL(response.url()).pathname).toBe(expected);
+  const failure = response.status() === expected ? '' : '\n' + await response.text();
+  expect(response.status(), new URL(response.url()).pathname + failure).toBe(expected);
 }
 
 export async function json<T>(response: APIResponse, expected = 200): Promise<T> {
