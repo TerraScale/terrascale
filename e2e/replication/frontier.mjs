@@ -288,7 +288,8 @@ try {
     await sql(db, 'INSERT INTO items VALUES (1, 0)');
   }
   const dataKey = randomBytes(32);
-  const keyId = id();
+  const keyMinted = Date.now();
+  const keyId = id(keyMinted);
   for (const db of [first, other]) await putSealedKey({ master, access, secret }, org.id + '/' + project.id + '/' + db.id, keyId, dataKey);
   const transaction = changes => ({ id: id(), region: 'fra', hlc: { physicalMilliseconds: Date.now(), logical: 0, nodeId: 'journey-2' }, changes });
   const effect = value => ({ op: 'update', table: 'items', key: { id: 1 }, values: { value } });
@@ -392,7 +393,7 @@ try {
     rmSync(journeyState + '/r2-unavailable-keys', { force: true });
   };
   const refusedKey = async db => {
-    const key = id(Date.now() - 60_000);
+    const key = id(keyMinted - 60_000);
     await putSealedKey({ master, access, secret }, scope(db), key, dataKey);
     block(db, key);
     return key;

@@ -1044,8 +1044,13 @@ test('a deletion whose holder hands the writer role over before the new writer h
     }).toBeGreaterThan(0);
     expect(logged(partner, 'Backup erasure of database', `"Database":"${ledger.id}"`, '"Reason":"active_copies_pending"', '"Holders":"journey-1"'),
       'once the proof arrives no pass waits on the holder again').toBeLessThanOrEqual(1);
-    await expect.poll(() => logged(gru, 'Erasure receipt of database', `"Database":"${ledger.id}"`, 'recorded by regional writer', '"Writer":"journey-3"'),
-      { message: 'journey-1 hands its proof to the new writer once' }).toBe(1);
+    const receipts = async (target: Node) => {
+      const response = await nodeRequest(target, '/v1/sync/purge-receipts/' + ledger.id);
+      expect(response.status, response.body).toBe(200);
+      return JSON.parse(response.body) as { known: boolean; settled: boolean };
+    };
+    expect(await receipts(partner), 'the new writer recorded the erasure receipt of every holder its purge record names').toEqual({ known: true, settled: true });
+    expect(await receipts(gru), 'journey-1 still holds its own erasure receipt bound to the purge record').toEqual({ known: true, settled: true });
   } catch (error) {
     failure = error;
     throw error;
