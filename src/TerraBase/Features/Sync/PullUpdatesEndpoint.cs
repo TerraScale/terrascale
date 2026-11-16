@@ -15,7 +15,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Sync;
 
 internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRevisions revisions, IReplicaPeers peers,
-    IStorageEngine engine, TerraBaseOptions options, InternalCredential credential) : EndpointWithoutRequest<IResult>, IRevisionPullSink
+    IStorageEngine engine, TerraBaseOptions options, InternalCredential credential, RegionalOwners owners, HomeLeaseGate leaseGate, RegionalHandoff handoff) : EndpointWithoutRequest<IResult>, IRevisionPullSink
 {
     private const string MediaType = PullAnswer.MediaType;
     private const int MaxBodyBytes = 64 * 1024;
@@ -42,6 +42,7 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
     }
 
     private int? _unreadableFormat;
+    private bool _unserved;
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
@@ -68,6 +69,11 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
         if (PullAnswer.Refusal(request) is { } refusal)
         {
             return ErrorResponse.From(new Validation(refusal, "unsupported_pull"));
+        }
+
+        if (!leaseGate.Sources(HttpContext.RouteValue("database")))
+        {
+            return ErrorResponse.From(new Unavailable(DatabaseFencedException.Refusal));
         }
 
         return await tenants.FindDatabaseAsync(HttpContext.RouteValue("organization"), HttpContext.RouteValue("project"), HttpContext.RouteValue("database"), cancellationToken).ConfigureAwait(false) switch
@@ -129,6 +135,10 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
 
     private async ValueTask<IResult> PullAsync(TenantContext database, string clientRevision, CancellationToken cancellationToken)
     {
+        if (!await handoff.SourcesAsync(database, cancellationToken).ConfigureAwait(false))
+        {
+            return ErrorResponse.From(new Unavailable(DatabaseFencedException.Refusal));
+        }
         var meshPeers = await peers.ListAsync(cancellationToken).ConfigureAwait(false);
         var address = HttpContext.Connection.RemoteIpAddress?.MapToIPv4();
         var peer = meshPeers.FirstOrDefault(candidate =>
@@ -136,8 +146,11 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
         if (peer is not null && await tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false)
             is TenantDatabaseRecord { Placement: var placement } && (placement.AllRegions || placement.Replicas.Contains(peer.Region)))
         {
-            IReadOnlyList<string> regions = placement.AllRegions ? [.. meshPeers.Select(candidate => candidate.Region).Distinct()] : placement.Replicas;
-            await revisions.RetainReplicaCdcAsync(database, placement with { Replicas = regions }, peer.Region, clientRevision, cancellationToken).ConfigureAwait(false);
+            if (!owners.HandingOff && leaseGate.Writes(database.DatabaseId!))
+            {
+                IReadOnlyList<string> regions = placement.AllRegions ? [.. meshPeers.Select(candidate => candidate.Region).Distinct()] : placement.Replicas;
+                await revisions.RetainReplicaCdcAsync(database, placement with { Replicas = regions }, peer.Region, clientRevision, cancellationToken).ConfigureAwait(false);
+            }
         }
         else
         {
@@ -170,6 +183,10 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
             return ErrorResponse.From(new Unavailable(
                 $"this node holds the database in storage format {StorageFormat.Name(format)}, which the requesting node does not support yet", "storage_format_unsupported"));
         }
+        if (_unserved)
+        {
+            return ErrorResponse.From(new Unavailable(DatabaseFencedException.Refusal));
+        }
 
         await FlushAsync(HttpContext.Response.BodyWriter, cancellationToken).ConfigureAwait(false);
         if (peer is not null)
@@ -182,6 +199,11 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
 
     async ValueTask<bool> IRevisionPullSink.StartAsync(RevisionPullStart start, CancellationToken cancellationToken)
     {
+        if (!leaseGate.Sources(HttpContext.RouteValue("database")))
+        {
+            _unserved = true;
+            return false;
+        }
         if (!StorageFormat.Accepts(HttpContext.Request.Headers.TryGetValue(StorageFormat.AcceptHeader, out var accepted) ? accepted.ToString() : null, start.Format))
         {
             _unreadableFormat = start.Format;

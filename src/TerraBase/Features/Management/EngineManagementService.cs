@@ -14,6 +14,7 @@ using TerraBase.Features.Platform;
 using TerraBase.Features.Qos;
 using TerraBase.Features.FileStorage;
 using TerraBase.Features.Regions;
+using TerraBase.Features.Replicas;
 using TerraBase.Features.Catalog;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
@@ -27,7 +28,7 @@ internal sealed partial class EngineManagementService(
     IStorageEngine engine, IOrphanDatabaseFiles orphanFiles, TimeProvider time, TerraBaseOptions options, ILogger<EngineManagementService> logger, DatabaseLifecycleCheckpoint checkpoint, IMeterFactory meters,
     IProjectAuthorityVerifier projectAuthority, Lazy<IStorageQuota> quota, IRegionPeers regionPeers,
     Lazy<ICatalogGate> catalogGate, DatabaseAllowance databaseAllowance, Lazy<IBackupKeyShredding> shredding, RemoteDatabases remote,
-    Lazy<IProjectFileErasure> fileErasure, ClosureFanout closureFanout, IAtlasPlacements atlas)
+    Lazy<IProjectFileErasure> fileErasure, ClosureFanout closureFanout, IAtlasPlacements atlas, RegionalOwners regionalOwners)
     : IManagementService, ITenantDirectory, IHostedService, ICatalogGuard, IDatabaseFileCatalog, IShreddedDatabases
 {
     private const string Catalog = ManagementCatalog.Kind;

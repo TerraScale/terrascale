@@ -15,9 +15,11 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using TerraBase.Engine;
+using TerraBase.Features.UserAuth;
 using TerraBase.Features.Memory;
 using TerraBase.Tenancy;
 using Turso.Data.Sqlite;
+using NATS.Client.Core;
 
 public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyValuePair<string, object?>>
 {
@@ -26,6 +28,167 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
     private static readonly ConcurrentQueue<string> Events = new();
     private static readonly List<IDisposable> Kept = [];
     private static readonly List<Task> Running = [];
+    private static Action<string, TenantContext>? RegionalCheckpoint;
+    private static Action? RegionalRelease;
+
+    private static void RegionalBoundary(string step, TenantContext database) => RegionalCheckpoint?.Invoke(step, database);
+
+    private static bool RegionalPublishing() => new StackTrace().GetFrames().Any(frame => frame.GetMethod() is { } method
+        && (method.DeclaringType?.Name.StartsWith("<PublishAsync>", StringComparison.Ordinal) == true
+            || method.Name == "PublishAsync" && method.DeclaringType?.Name == "RegionReplication"));
+
+    private static object RegionalService(IServiceProvider services, IStorageEngine engine, string name) =>
+        services.GetRequiredService(engine.GetType().Assembly.GetType("TerraBase.Features.Replicas." + name)!);
+
+    private static object RegionalOwner(object owners, string region) => owners.GetType().GetMethod("Find", Hidden)!.Invoke(owners, [region])!;
+
+    private static object NextRegionalOwner(object owner, string node)
+    {
+        var next = owner.GetType().GetMethod("<Clone>$")!.Invoke(owner, null)!;
+        next.GetType().GetProperty("Node")!.SetValue(next, node);
+        next.GetType().GetProperty("Epoch")!.SetValue(next, (long)owner.GetType().GetProperty("Epoch")!.GetValue(owner)! + 1);
+        return next;
+    }
+
+    private static void RegionalObserve(object handoff, object owner) => handoff.GetType().GetMethod("Observe", Hidden)!.Invoke(handoff, [owner]);
+
+    private static async Task<string> RegionalAsync(IServiceProvider services, IStorageEngine engine, TenantContext tenant, string operation, CancellationToken cancellationToken)
+    {
+        if (operation == "regional-auth-expiry")
+        {
+            var authority = services.GetRequiredService<IKeyAuthority>();
+            var answers = (IEnumerable)authority.GetType().GetField("_answers", Hidden)!.GetValue(authority)!;
+            var confirmed = answers.Cast<object>().Where(entry =>
+                ((string)entry.GetType().GetProperty("Key")!.GetValue(entry)!).EndsWith(" " + tenant.ProjectId, StringComparison.Ordinal))
+                .Select(entry => entry.GetType().GetProperty("Value")!.GetValue(entry)!)
+                .Select(answer => ((KeyAuthorityResult)answer.GetType().GetProperty("Result")!.GetValue(answer)!).Value)
+                .OfType<KeyActive>().Max(answer => answer.Until);
+            var time = services.GetRequiredService<TimeProvider>();
+            var poll = (TimeSpan)typeof(KeyWatch).GetField("Poll", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+            var remaining = confirmed + poll / 2 - time.GetUtcNow();
+            using var expiry = new CancellationTokenSource(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero, time);
+            var expired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var registration = expiry.Token.Register(() => expired.TrySetResult());
+            await expired.Task.WaitAsync(cancellationToken);
+            return "expired";
+        }
+
+        if (operation == "regional-release")
+        {
+            RegionalRelease!();
+            RegionalRelease = null;
+            return "ok";
+        }
+
+        var handoff = RegionalService(services, engine, "RegionalHandoff");
+        var owners = RegionalService(services, engine, "RegionalOwners");
+        var region = Environment.GetEnvironmentVariable("TS_REGION")!;
+        var owner = RegionalOwner(owners, region);
+        var changing = (SemaphoreSlim)handoff.GetType().GetField("_changing", Hidden)!.GetValue(handoff)!;
+        await changing.WaitAsync(cancellationToken);
+        var store = (await engine.OpenDatabaseAsync(tenant, cancellationToken))!;
+        var gate = engine.GetType().GetProperty("Leases", Hidden)!.GetValue(engine)!;
+        var writerProperty = gate.GetType().GetProperty("RegionalWriter", Hidden)!;
+        var originalWriter = (Func<bool>)writerProperty.GetValue(gate)!;
+        var servingProperty = gate.GetType().GetProperty("RegionalServing", Hidden);
+        var originalServing = (Func<string, bool>?)servingProperty?.GetValue(gate);
+        var checkpointField = engine.GetType().GetField("_checkpoint", Hidden)!;
+        var checkpoint = checkpointField.GetValue(engine);
+        var storeCheckpoint = store.GetType().GetProperty("Checkpoint", Hidden)!;
+        var originalStoreCheckpoint = storeCheckpoint.GetValue(store);
+        var boundary = Delegate.CreateDelegate(checkpointField.FieldType,
+            typeof(StartupHook).GetMethod(nameof(RegionalBoundary), BindingFlags.Static | BindingFlags.NonPublic)!);
+        checkpointField.SetValue(engine, boundary);
+        storeCheckpoint.SetValue(store, boundary);
+        RegionalRelease = () =>
+        {
+            RegionalCheckpoint = null;
+            writerProperty.SetValue(gate, originalWriter);
+            servingProperty?.SetValue(gate, originalServing);
+            checkpointField.SetValue(engine, checkpoint);
+            storeCheckpoint.SetValue(store, originalStoreCheckpoint);
+            RegionalObserve(handoff, owner);
+            changing.Release();
+        };
+
+        if (operation == "regional-writer-arm")
+        {
+            RegionalCheckpoint = (step, database) =>
+            {
+                if (step != "writer.commit" || database.DatabaseId != tenant.DatabaseId) return;
+                RegionalCheckpoint = null;
+                writerProperty.SetValue(gate, (Func<bool>)(() =>
+                {
+                    var held = originalWriter();
+                    writerProperty.SetValue(gate, originalWriter);
+                    var fenceMethod = handoff.GetType().GetMethod("Fence", Hidden)!;
+                    var refusalType = fenceMethod.GetParameters()[1].ParameterType;
+                    var reason = Enum.Parse(refusalType.GetConstructors()[0].GetParameters()[0].ParameterType, "PositionUnknown");
+                    var refusal = Activator.CreateInstance(refusalType, reason, "the writer check is outstanding during activation");
+                    fenceMethod.Invoke(handoff, [tenant, refusal, (long)owner.GetType().GetProperty("Epoch")!.GetValue(owner)!]);
+                    RegionalObserve(handoff, NextRegionalOwner(owner, "journey-3"));
+                    return held;
+                }));
+            };
+            return "ok";
+        }
+
+        try
+        {
+            var replication = RegionalService(services, engine, "RegionReplication");
+            var nats = (NatsConnection)replication.GetType().GetField("_nats", Hidden)!.GetValue(replication)!;
+            await using var subscription = await nats.SubscribeCoreAsync<byte[]>("terrabase.revision.>", cancellationToken: cancellationToken);
+            using var observed = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var subject = "terrabase.revision." + region + "." + region + "." + tenant.DatabaseId;
+            async Task PublishedAsync(CancellationToken token)
+            {
+                await foreach (var message in subscription.Msgs.ReadAllAsync(token))
+                {
+                    if (message.Subject == subject || message.Subject.StartsWith(subject + ".", StringComparison.Ordinal)) return;
+                }
+            }
+            var published = PublishedAsync(observed.Token);
+            var suppressed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (servingProperty is not null)
+            {
+                servingProperty.SetValue(gate, (Func<string, bool>)(database =>
+                {
+                    var serves = originalServing!(database);
+                    if (database == tenant.DatabaseId && !serves && RegionalPublishing()) suppressed.TrySetResult();
+                    return serves;
+                }));
+            }
+            var crossed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            RegionalCheckpoint = (step, database) =>
+            {
+                if (step != "writer.waiting" || database.DatabaseId != tenant.DatabaseId || !RegionalPublishing()) return;
+                RegionalCheckpoint = null;
+                RegionalObserve(handoff, NextRegionalOwner(owner, Environment.GetEnvironmentVariable("TS_NODE")!));
+                crossed.TrySetResult();
+            };
+            var publishedRevisions = replication.GetType().GetField("_published", Hidden)!.GetValue(replication)!;
+            ((IDictionary)publishedRevisions).Remove((tenant.OrganizationId, tenant.ProjectId!, tenant.DatabaseId!));
+            var writer = Writer(store);
+            await writer.WaitAsync(cancellationToken);
+            try
+            {
+                engine.GetType().GetMethod("RaiseRevised", Hidden)!.Invoke(engine, [tenant]);
+                await crossed.Task.WaitAsync(cancellationToken);
+            }
+            finally
+            {
+                writer.Release();
+            }
+            var outcome = await Task.WhenAny(published, suppressed.Task).WaitAsync(cancellationToken);
+            observed.Cancel();
+            return outcome == suppressed.Task ? "suppressed" : "published";
+        }
+        finally
+        {
+            RegionalRelease!();
+            RegionalRelease = null;
+        }
+    }
     private static TaskCompletionSource RecordingSeen = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private static void Observe(string step, TenantContext database)
@@ -451,7 +614,7 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
         var opens = Stopwatch.GetElapsedTime(started).TotalMilliseconds / 1000;
         started = Stopwatch.GetTimestamp();
         var ledger = engine.GetType().GetProperty("Ledger", Hidden)!.GetValue(engine)!;
-        var refused = ledger.GetType().GetMethod("RefusedAsync")!.CreateDelegate<Func<TenantContext, Ulid, CancellationToken, ValueTask<bool>>>(ledger);
+        var refused = ledger.GetType().GetMethod("RefusedAsync", Hidden)!.CreateDelegate<Func<TenantContext, Ulid, CancellationToken, ValueTask<bool>>>(ledger);
         for (var index = 0; index < 1000; index++)
         {
             if (await refused(tenant, store.Incarnation, cancellationToken))
@@ -584,6 +747,12 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
                 {
                     var engine = services.GetRequiredService<IStorageEngine>();
                     var tenant = new TenantContext(parts[1], PlanTier.Hobby, parts[2], parts[3]);
+                    if (parts[0].StartsWith("regional-", StringComparison.Ordinal))
+                    {
+                        var result = await RegionalAsync(services, engine, tenant, parts[0], cancellationToken);
+                        await writer.WriteLineAsync(result.AsMemory(), cancellationToken);
+                        continue;
+                    }
                     if (parts[0] == "latency")
                     {
                         await LatencyAsync(engine, tenant, cancellationToken);
@@ -729,7 +898,7 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
                     {
                         var store = (await engine.OpenDatabaseAsync(tenant, cancellationToken))!;
                         var ledger = Ledger(engine);
-                        var refused = await ledger.GetType().GetMethod("RefusedAsync")!
+                        var refused = await ledger.GetType().GetMethod("RefusedAsync", Hidden)!
                             .CreateDelegate<Func<TenantContext, Ulid, CancellationToken, ValueTask<bool>>>(ledger)(tenant, store.Incarnation, cancellationToken);
                         await writer.WriteLineAsync((refused ? "1" : "0").AsMemory(), cancellationToken);
                         continue;
