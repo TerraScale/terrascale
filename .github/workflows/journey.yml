@@ -326,7 +326,7 @@ jobs:
           node support/quarantine.mjs read
           unset GITHUB_TOKEN
           read -ra projects <<< "$PROJECTS"
-          bash env/local.sh exec npx playwright test "${projects[@]}"
+          bash env/local.sh exec node support/quarantine-run.mjs "${projects[@]}"
       - name: Regional proxy
         if: matrix.shard == 'multi-region faults'
         timeout-minutes: 4
@@ -336,7 +336,7 @@ jobs:
         run: |
           node support/quarantine.mjs read
           unset GITHUB_TOKEN
-          bash env/local.sh exec npx playwright test placement/regions.spec.ts --project placement --grep 'R3 replace'
+          bash env/local.sh exec node support/quarantine-run.mjs placement/regions.spec.ts --project placement --grep 'R3 replace'
       - name: Stop the stack
         if: always() && steps.namespace.outcome == 'success'
         timeout-minutes: 1

@@ -1,6 +1,6 @@
 import { defineConfig } from '@playwright/test';
-import { browserHome, dash, desktop, mailWait, mobile, production, sessionFile } from './support/stack';
 import { quarantineGrep } from './support/quarantine.mjs';
+import { browserHome, dash, desktop, mailWait, mobile, production, sessionFile } from './support/stack';
 
 const placementRequested = process.env.E2E_PLACEMENT_SELECTED === '1' || process.argv.includes('placement') || process.argv.includes('--project=placement');
 if (placementRequested) process.env.E2E_PLACEMENT_SELECTED = '1';
