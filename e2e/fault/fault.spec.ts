@@ -216,7 +216,7 @@ async function killDuringBurst(ledgers: Ledger[], token: string): Promise<{ kill
         const id = ids[next++];
         const ledger = ledgers[id % ledgers.length];
         if (await ledger.direct(writer, token, [[id, `burst-${id}`]]) && ++acknowledged === 45 && !killed) {
-          killed = { killedAt: Date.now(), restart: restartAfterKill(writer) };
+          killed = { killedAt: Date.now(), restart: restartAfterKill(writer, true, { token, path: database(ledgers[0].id) }) };
         }
       }
     }));
@@ -968,7 +968,7 @@ test('a writer that starts with a local replica it has not opened fences that da
     const held = JSON.parse((await nodeRequest(gru, `${route}/held`)).body).revision as string;
     const replicaFile = (holder: Node) => existsSync(join(stateDir, holder.service, '.replicas', lease.organizationId, lease.projectId, `${ledger.id}.db`));
 
-    const restartGru = restartAfterKill(gru, true);
+    const restartGru = restartAfterKill(gru, true, { token, path: database(ledger.id) });
     expect(replicaFile(gru), 'journey-1 keeps its replica file on disk').toBe(true);
     const owner = await kv.get<Record<string, unknown> & { node: string; epoch: number }>(owners, 'gru');
     await kv.put(owners, 'gru', { ...owner!.value, node: 'journey-1', epoch: 1, previous: null, activated: false, transfer: null }, owner!.seq);
@@ -1123,7 +1123,7 @@ test('a writer killed right after an acknowledgement that fra pulled keeps the h
     const before = await Promise.all(ledgers.map(ledger => homeLease(kv, ledger.id)));
     let token = await exchangedToken(request, signedIn);
     const killedAt = Date.now();
-    const restart = restartAfterKill(node('journey-1'));
+    const restart = restartAfterKill(node('journey-1'), true, { token, path: database(ledgers[0].id) });
     try {
       await holdOutage(kv, ledgers, killedAt, before, token);
       for (const ledger of ledgers) expect(await ledger.readNode(node('journey-2'), token), 'fra serves the pulled row while the home is down').toContainEqual([500, 'last-before-kill']);
