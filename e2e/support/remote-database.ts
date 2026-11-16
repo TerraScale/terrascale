@@ -1,4 +1,5 @@
 import { expect, type APIRequestContext, type Page, type Response } from '@playwright/test';
+import { waitForCreatedDatabase } from './database';
 import { test as base, type Audit } from './audit';
 import { auth, dash } from './stack';
 import { keyId } from './api-key';
@@ -64,10 +65,9 @@ async function manageRemoteDatabase(page: Page, request: APIRequestContext, audi
     const answer = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname === path);
     await click();
     const response = await answer;
-    if (action === 'create') id = /\/databases\/([0-9A-HJKMNP-TV-Z]{26})/.exec(response.headers().location ?? '')?.[1] ?? '';
     await answered(response);
-    expect(response.status(), action + ' answers after saving').toBe(action === 'rename' ? 200 : 303);
-    if (action !== 'rename') await page.waitForLoadState('load');
+    expect(response.status(), action + ' answers after saving').toBe(action === 'delete' ? 303 : 200);
+    if (action === 'delete') await page.waitForLoadState('load');
     if (failures.length) await answered(failures[0]);
   }
 
@@ -139,8 +139,11 @@ async function manageRemoteDatabase(page: Page, request: APIRequestContext, audi
         await removeThroughApi();
       }
     });
+    const databasesUrl = page.url();
     await submit('create', () => page.locator('#create-database form').getByRole('button', { name: 'Create database', exact: true }).click());
-    expect(id, 'creation returns the remote database id').toBeTruthy();
+    const created = await waitForCreatedDatabase(page, name, databasesUrl);
+    id = created.id;
+    await created.link.click();
     await page.waitForURL(url => url.pathname === '/databases/' + id);
     await expect(page.locator('.ts-db-head .ts-db-title')).toHaveText(name);
     await expect(page.locator('.ts-db-head .ts-db-region')).toHaveAttribute('data-region', region!.toLowerCase());

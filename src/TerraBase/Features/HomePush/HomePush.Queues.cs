@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Amazon.S3;
@@ -37,6 +38,8 @@ internal partial class HomePush
     private sealed record class PushAway : PushStep;
 
     private sealed record class PushSkip : PushStep;
+
+    private sealed record class PushReady(TenantContext Database, RegionTransaction Transaction) : PushStep;
 
     private readonly record struct Held(string Kind, ulong At);
 
@@ -448,7 +451,8 @@ internal partial class HomePush
             foreach (var replay in replays)
             {
                 var sequence = replay.Metadata!.Value.Sequence.Stream;
-                switch (await ApplyAsync(queue, replay.Subject, sequence, replay.Data, cancellationToken).ConfigureAwait(false))
+                var prepared = await PrepareAsync(queue, replay.Subject, sequence, replay.Data, cancellationToken).ConfigureAwait(false);
+                switch (prepared is PushReady ready ? await ApplyAsync(queue, sequence, ready, cancellationToken).ConfigureAwait(false) : prepared)
                 {
                     case PushWait(var kind):
                         return new Held(kind, sequence);
@@ -481,11 +485,37 @@ internal partial class HomePush
             }
 
             backlog = !ended;
+            var steps = new List<(StoredMessage Stored, PushStep Step)>(chain.Count);
+            ExceptionDispatchInfo? failed = null;
             foreach (var stored in chain)
+            {
+                try
+                {
+                    steps.Add((stored, await PrepareAsync(queue, stored.Subject, stored.Seq, stored.Data.ToArray(), cancellationToken).ConfigureAwait(false)));
+                }
+                catch (Exception error) when (steps.Count > 0 && !cancellationToken.IsCancellationRequested)
+                {
+                    failed = ExceptionDispatchInfo.Capture(error);
+                    break;
+                }
+
+                if (steps[^1].Step is PushWait or PushAway)
+                {
+                    break;
+                }
+            }
+
+            if (steps is [{ Step: not (PushWait or PushAway) }, ..]
+                && await StreamStopAsync(queue, cursor, home, cancellationToken).ConfigureAwait(false) is { } removed)
+            {
+                return new Held(removed, cursor + 1);
+            }
+
+            foreach (var (stored, prepared) in steps)
             {
                 var position = new StreamSequence(queue.Source, stored.Seq);
                 PushDone? applied = null;
-                switch (await ApplyAsync(queue, stored.Subject, stored.Seq, stored.Data.ToArray(), cancellationToken).ConfigureAwait(false))
+                switch (prepared is PushReady ready ? await ApplyAsync(queue, stored.Seq, ready, cancellationToken).ConfigureAwait(false) : prepared)
                 {
                     case PushWait(var kind):
                         return new Held(kind, stored.Seq);
@@ -517,6 +547,8 @@ internal partial class HomePush
                 }
             }
 
+            failed?.Throw();
+
             if (ended)
             {
                 await AckThroughAsync(queue, floor, ulong.MaxValue, cancellationToken).ConfigureAwait(false);
@@ -543,32 +575,9 @@ internal partial class HomePush
         ulong[] starts = [.. wanted];
 
         var reads = await Task.WhenAll(starts.Select(start => NextAsync(stream, queue.Filter, start, cancellationToken))).ConfigureAwait(false);
-        var current = await js.GetStreamAsync(PushNames.Stream(queue.Origin), cancellationToken: cancellationToken).ConfigureAwait(false);
-        if (Source(current) != queue.Source)
+        if (await StreamStopAsync(queue, cursor, home, cancellationToken).ConfigureAwait(false) is { } stop)
         {
-            lock (_queuesGate)
-            {
-                queue.Run.Ended = true;
-            }
-
-            await queue.Run.Stopping.CancelAsync().ConfigureAwait(false);
-            cancellationToken.ThrowIfCancellationRequested();
-        }
-
-        if (current.Info.State.LastSeq < cursor)
-        {
-            return ([], true, "stream_behind");
-        }
-
-        if (home && await PurgedThroughAsync(stream, queue.Origin, queue.Database, cancellationToken).ConfigureAwait(false) > cursor)
-        {
-            return ([], true, "purged");
-        }
-
-        if (home && (current.Info.State.FirstSeq > 1 || current.Info.State.NumDeleted > 0)
-            && !await OriginMarksAsync(stream, queue.Run, cancellationToken).ConfigureAwait(false))
-        {
-            return ([], true, "origin_previous_build");
+            return ([], true, stop);
         }
 
         var next = new Dictionary<ulong, StoredMessage?>(starts.Length);
@@ -591,6 +600,46 @@ internal partial class HomePush
         }
 
         return (chain, false, null);
+    }
+
+    private async Task<string?> StreamStopAsync(PushQueue queue, ulong cursor, bool home, CancellationToken cancellationToken)
+    {
+        var js = _js ?? throw new IOException("the push connection is not open");
+        var current = await js.GetStreamAsync(PushNames.Stream(queue.Origin), cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (Source(current) != queue.Source)
+        {
+            lock (_queuesGate)
+            {
+                queue.Run.Ended = true;
+            }
+
+            await queue.Run.Stopping.CancelAsync().ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
+        if (current.Info.State.LastSeq < cursor)
+        {
+            return "stream_behind";
+        }
+
+        if (!home)
+        {
+            return null;
+        }
+
+        var stream = queue.Stream ?? current;
+        if (await PurgedThroughAsync(stream, queue.Origin, queue.Database, cancellationToken).ConfigureAwait(false) > cursor)
+        {
+            return "purged";
+        }
+
+        if ((current.Info.State.FirstSeq > 1 || current.Info.State.NumDeleted > 0)
+            && !await OriginMarksAsync(stream, queue.Run, cancellationToken).ConfigureAwait(false))
+        {
+            return "origin_previous_build";
+        }
+
+        return null;
     }
 
     private static async Task<StoredMessage?> NextAsync(INatsJSStream stream, string filter, ulong start, CancellationToken cancellationToken)
@@ -725,7 +774,7 @@ internal partial class HomePush
         _applies?.Add(1, new KeyValuePair<string, object?>("state", done.Result.State));
     }
 
-    private async Task<PushStep> ApplyAsync(PushQueue queue, string subject, ulong sequence, byte[]? payload, CancellationToken cancellationToken)
+    private async Task<PushStep> PrepareAsync(PushQueue queue, string subject, ulong sequence, byte[]? payload, CancellationToken cancellationToken)
     {
         if (PushNames.Database(subject) is not { } database)
         {
@@ -774,6 +823,12 @@ internal partial class HomePush
             }
         }
 
+        return new PushReady(database, transaction);
+    }
+
+    private async Task<PushStep> ApplyAsync(PushQueue queue, ulong sequence, PushReady ready, CancellationToken cancellationToken)
+    {
+        var (database, transaction) = ready;
         cancellationToken.ThrowIfCancellationRequested();
         var started = Stopwatch.GetTimestamp();
         await _applying.WaitAsync(cancellationToken).ConfigureAwait(false);

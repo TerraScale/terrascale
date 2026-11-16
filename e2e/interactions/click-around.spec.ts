@@ -500,4 +500,18 @@ test('native dropdowns preserve filters and context while browser popovers dismi
   await page.keyboard.press('Escape');
   await expect(page.locator('.ts-shell')).not.toHaveClass(/nav-open/);
   await expect(page.locator('#ts-nav-toggle')).toBeFocused();
+  await page.goto('/notifications?status=unread');
+  const before = page.url();
+  const main = await page.locator('main').elementHandle();
+  const read = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/notifications/read-all' && response.request().method() === 'POST');
+  await page.locator('#notification-inbox form').evaluate((form: HTMLFormElement) => form.requestSubmit());
+  const response = await read;
+  expect(response.status()).toBe(200);
+  expect(response.request().headers()['datastar-request']).toBe('true');
+  await expect(page.locator('#notification-inbox .ts-notifications-summary')).toContainText('0 unread');
+  await expect(page.locator('#notification-inbox a[aria-current="page"]')).toHaveText(/Unread/);
+  await expect(page).toHaveURL(before);
+  expect(await main!.evaluate(element => element.isConnected)).toBe(true);
+  await audit.check('full notification inbox marked read in place');
+  await main!.dispose();
 });

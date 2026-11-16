@@ -213,7 +213,14 @@ createServer((request, response) => {
     }
     if (request.method !== 'GET' && request.method !== 'HEAD') return unexpected(request, response, 405, 'MethodNotAllowed', 'unsupported method');
     const unavailable = process.env.E2E_STATE + '/r2-unavailable-keys';
-    const refused = platform && existsSync(unavailable) ? JSON.parse(readFileSync(unavailable, 'utf8'))[target[2]] : undefined;
+    let refused;
+    if (platform && existsSync(unavailable)) {
+      try {
+        refused = JSON.parse(readFileSync(unavailable, 'utf8'))[target[2]];
+      } catch (error) {
+        if (error.code !== 'ENOENT') return unexpected(request, response, 500, 'InvalidUnavailableKeys', error instanceof SyntaxError ? 'unavailable keys file is not valid JSON' : (error.code ?? error.name));
+      }
+    }
     if (refused === 403) return fail(response, 403, 'AccessDenied', 'Access Denied');
     if (refused === 503) return fail(response, 503, 'ServiceUnavailable', 'The object is temporarily unavailable.');
     const stored = objects.get(key);

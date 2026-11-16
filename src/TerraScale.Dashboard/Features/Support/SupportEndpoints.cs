@@ -2,8 +2,9 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
-using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Platform.Datastar;
+using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Support
 {
@@ -120,6 +121,15 @@ namespace TerraScale.Dashboard.Features.Support
                     throw new AccountAccessException("Your request could not be delivered. Send again, or email support@terrascale.tech.", 503);
                 }
 
+                if (http.Request.Headers["Datastar-Request"] == "true")
+                {
+                    await DatastarEvents.PatchElementsAsync(http, SupportContent.Create(new(ShellModel.For(http, context, "Support"), Sent: draft.RequestId[^8..])
+                    {
+                        Draft = new(draft.OrganizationId, draft.ProjectId, draft.DatabaseId, "normal", "", "", AccountService.NewId())
+                    }));
+                    return Results.Empty;
+                }
+
                 return HttpRedirects.SeeOther("/support?sent=" + draft.RequestId[^8..]);
             }
             catch (Exception error) when (error is AccountAccessException or HttpRequestException or IOException or JsonException)
@@ -129,9 +139,16 @@ namespace TerraScale.Dashboard.Features.Support
                     logger.ASupportRequestCouldNotBe(error.GetType().Name);
                 }
 
-                var slice = SupportView.Create(new(ShellModel.For(http, context, "Support"),
+                var page = new SupportPage(ShellModel.For(http, context, "Support"),
                     error is AccountAccessException access ? access.Message : "Support email is unavailable. Send again, or email support@terrascale.tech.")
-                { Draft = draft });
+                { Draft = draft };
+                if (http.Request.Headers["Datastar-Request"] == "true")
+                {
+                    await DatastarEvents.PatchElementsAsync(http, SupportContent.Create(page));
+                    return Results.Empty;
+                }
+
+                var slice = SupportView.Create(page);
                 slice.StatusCode = error is AccountAccessException { StatusCode: var code } ? code : 503;
                 return slice;
             }

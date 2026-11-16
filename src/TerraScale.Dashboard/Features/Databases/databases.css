@@ -1,3 +1,8 @@
+#databases-list-state,
+#database-create-result {
+  display: contents;
+}
+
 /* Databases list and detail: search, name cell, region labels, detail header,
    create dialog and its progress, region cards, facts grid, backup switch,
    and the danger zone. */

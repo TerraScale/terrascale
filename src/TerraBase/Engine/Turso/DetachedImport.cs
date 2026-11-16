@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using TerraBase.Engine.Revisions;
 using TerraBase.Primitives;
 using Turso.Data.Sqlite;
 
@@ -97,8 +98,9 @@ internal sealed record DetachedImport(
         DatabaseKeys.RejectLink(path);
         var name = Path.GetFileName(path);
         var files = Directory.EnumerateFiles(Path.GetDirectoryName(path)!, name + "*")
-            .Where(file => file == path || file.StartsWith(path + "-", StringComparison.Ordinal)
-                || file.StartsWith(path + ".", StringComparison.Ordinal)).ToArray();
+            .Where(file => !file.EndsWith(RevisionManifestFile.StagedSuffix, StringComparison.Ordinal)
+                && (file == path || file.StartsWith(path + "-", StringComparison.Ordinal)
+                    || file.StartsWith(path + ".", StringComparison.Ordinal))).ToArray();
         long bytes = 0;
         foreach (var file in files)
         {

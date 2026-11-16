@@ -1,4 +1,5 @@
 import { expect, type Page } from '@playwright/test';
+import { waitForCreatedDatabase } from './database';
 import type { Audit } from './audit';
 import { saveSecret, type Journey } from './state';
 import { stripeStandIn } from './stack';
@@ -37,13 +38,16 @@ export async function createDatabase(page: Page, audit: Audit, name: string, reg
   await expect(page.locator('#create-database[open]')).toBeVisible();
   await audit.check(`${label} dialog`);
   await page.locator('#database-name').fill(name);
+  const databasesUrl = page.url();
   await page.locator('#create-database form').getByRole('button', { name: 'Create database', exact: true }).click();
-  await page.waitForURL(/\/databases\/[0-9A-HJKMNP-TV-Z]{26}(\?|$)/);
+  const { id: databaseId, link } = await waitForCreatedDatabase(page, name, databasesUrl);
+  await link.click();
+  await page.waitForURL(url => url.pathname === `/databases/${databaseId}`);
   await expect(page.locator('.ts-db-title')).toHaveText(name);
   await expect(page.locator('main').getByText('ready', { exact: true }).first()).toBeVisible();
   await expect(page.locator('main').getByText(new RegExp(`^${region}$`, 'i')).first()).toBeVisible();
   await audit.check(label);
-  return new URL(page.url()).pathname.split('/')[2];
+  return databaseId;
 }
 
 export async function createApiKey(page: Page, audit: Audit, name: string, label: string): Promise<string> {
