@@ -1,7 +1,7 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { closeSync, mkdtempSync, openSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { expect } from '@playwright/test';
 import { nodeRequest } from '../fault/support';
 import { holdSync } from '../support/ports';
@@ -28,7 +28,7 @@ export async function startRegion(region: string, index: number): Promise<Region
   const child = `peer${index}`;
   const gate = join(directory, 'network-ready');
   execFileSync('mkfifo', [gate]);
-  const log = join(directory, 'node.log');
+  const log = join(stateDir, 'logs', `${basename(directory)}.log`);
   const output = openSync(log, 'w', 0o600);
   const node = spawn('unshare', ['--net', 'bash', '-c',
     'read -r ready < "$1"; exec dotnet "$2"', 'region', gate, join(process.env.E2E_BUILD!, 'terrabase', 'terrabase.dll')], {
