@@ -28,12 +28,16 @@ on:
         description: 'release-only: the linux/arm64 child digest (sha256:...) a build-only run published for this main revision'
         type: string
         default: ''
+      pr_gate:
+        description: Run the full PR gate on this ref without publication
+        type: boolean
+        default: false
 
 # A new push cancels the older run of the same PR. Every other run has its own group: each main push publishes the
 # images of the areas it changed, so none may be cancelled.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.pr_gate && format('pr-gate-{0}', github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || inputs.pr_gate == true }}
 
 permissions:
   contents: read
@@ -49,7 +53,7 @@ env:
 
 jobs:
   changes:
-    if: ${{ !inputs.reconcile_auth }}
+    if: ${{ inputs.pr_gate || !inputs.reconcile_auth }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -60,16 +64,16 @@ jobs:
       main: ${{ steps.areas.outputs.main }}
       sha: ${{ github.sha }}
       sdks: ${{ steps.areas.outputs.sdks }}
-      docs: ${{ steps.filter.outputs.docs }}
-      landing: ${{ steps.filter.outputs.landing }}
-      status: ${{ steps.filter.outputs.status }}
-      dashboard: ${{ steps.filter.outputs.dashboard }}
+      docs: ${{ inputs.pr_gate && 'true' || steps.filter.outputs.docs }}
+      landing: ${{ inputs.pr_gate && 'true' || steps.filter.outputs.landing }}
+      status: ${{ inputs.pr_gate && 'true' || steps.filter.outputs.status }}
+      dashboard: ${{ inputs.pr_gate && 'true' || steps.filter.outputs.dashboard }}
       journey: ${{ steps.areas.outputs.journey }}
       shards: ${{ steps.areas.outputs.shards }}
       services: ${{ steps.areas.outputs.services }}
-      keyring: ${{ steps.filter.outputs.keyring }}
-      engine: ${{ steps.filter.outputs.engine }}
-      frontier: ${{ steps.filter.outputs.frontier }}
+      keyring: ${{ inputs.pr_gate && 'true' || steps.filter.outputs.keyring }}
+      engine: ${{ inputs.pr_gate && 'true' || steps.filter.outputs.engine }}
+      frontier: ${{ inputs.pr_gate && 'true' || steps.filter.outputs.frontier }}
     steps:
       # Pull requests list files through the API; pushes diff the checkout against the push's `before` commit.
       - if: github.event_name == 'push'
@@ -327,7 +331,7 @@ jobs:
           ENGINE: ${{ steps.filter.outputs.engine }}
           FRONTIER: ${{ steps.filter.outputs.frontier }}
           KEYRING: ${{ steps.filter.outputs.keyring }}
-          CHANGES: ${{ github.event_name == 'workflow_dispatch' && ((inputs.native_artifacts || inputs.publication == 'release-only') && '[]' || inputs.publication == 'build-only' && '["terrabase"]' || '["libs","auth","terrabase"]') || steps.filter.outputs.changes }}
+          CHANGES: ${{ github.event_name == 'workflow_dispatch' && (inputs.pr_gate && '["libs","auth","terrabase","sdk-dotnet","sdk-go","sdk-js","sdk-python","sdk-rust"]' || (inputs.native_artifacts || inputs.publication == 'release-only') && '[]' || inputs.publication == 'build-only' && '["terrabase"]' || '["libs","auth","terrabase"]') || steps.filter.outputs.changes }}
         run: |
           {
             echo "main=$(jq -c '[.[] | select(. == "auth" or . == "terrabase")]' <<< "$CHANGES")"
@@ -348,7 +352,7 @@ jobs:
           ' -r >> "$GITHUB_OUTPUT"
 
   checks:
-    if: ${{ !inputs.reconcile_auth }}
+    if: ${{ inputs.pr_gate || !inputs.reconcile_auth }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -366,7 +370,7 @@ jobs:
             python3 scripts/legacy-scan/scan.py --repo terrascale --output legacy-hits.md > legacy-scan.log 2>&1 || status=$?
             echo "$status" > legacy-scan.exit.tmp && mv legacy-scan.exit.tmp legacy-scan.exit) > /dev/null 2>&1 &
       - name: Lint workflows
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || inputs.pr_gate
         run: |
           curl -fsSL -o "$RUNNER_TEMP/actionlint.tar.gz" https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
           curl -fsSL -o "$RUNNER_TEMP/shellcheck.tar.xz" https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz
@@ -378,10 +382,10 @@ jobs:
           tar -xJf "$RUNNER_TEMP/shellcheck.tar.xz" -C "$RUNNER_TEMP" --strip-components=1 shellcheck-v0.11.0/shellcheck
           "$RUNNER_TEMP/actionlint" -shellcheck "$RUNNER_TEMP/shellcheck"
       - name: Merged EF Core migrations stay unchanged
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || inputs.pr_gate
         run: python3 scripts/ci/migrations-frozen.py HEAD^1
       - name: No test file outside the journey
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || inputs.pr_gate
         run: |
           added=$(git diff --name-only --no-renames --diff-filter=A HEAD^1 HEAD)
           if grep -v '^e2e/' <<< "$added" | grep -E '(^|/)([Tt]ests?|[Tt]esting|__tests__|__mocks__|[^/]*-tests)/|\.(Test[^/]*|E2E)/|(^|/)(tests?|test_[^/]*|conftest)\.py$|(^|/)tests?\.rs$|_tests?\.(go|rs|py)$|\.(test|spec)\.[cm]?[jt]sx?$|([.-]t|T)ests?\.cs$|(^|/)test-[^/]*\.(sh|py|[cm]?js|ts)$|-tests?\.(sh|py|[cm]?js|ts)$|(^|/)(vitest|jest|playwright)[^/]*\.config\.[cm]?[jt]s$'; then
@@ -394,10 +398,11 @@ jobs:
         if: github.event_name != 'push'
         run: '! grep -rniI "fl[y]" .github/workflows | grep -viE "fl[y]\.storage\.tigris\.dev|fl[y] storage"'
       - name: Storage format migrations
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || inputs.pr_gate
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash scripts/check-storage-format.sh HEAD^1 "$GITHUB_REPOSITORY" "${{ github.event.pull_request.number }}"
+          PR: ${{ github.event.pull_request.number }}
+        run: bash scripts/check-storage-format.sh HEAD^1 ${PR:+"$GITHUB_REPOSITORY" "$PR"}
       - name: Scan for legacy terms (fail)
         if: ${{ !cancelled() }}
         run: |
@@ -415,7 +420,7 @@ jobs:
 
   # Native Rust builds stay in explicit maintenance dispatches; every build verifies the pinned release bytes.
   native-build:
-    if: github.event_name == 'workflow_dispatch' && inputs.native_artifacts
+    if: github.event_name == 'workflow_dispatch' && inputs.native_artifacts && !inputs.pr_gate
     strategy:
       fail-fast: false
       matrix:
@@ -569,7 +574,7 @@ jobs:
       !cancelled() && needs.test.result == 'success' && needs.terrabase.result == 'success'
       && needs.journey.result == 'success'
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
-      && contains(fromJSON(needs.changes.outputs.main), 'terrabase') && inputs.publication != 'build-only'
+      && contains(fromJSON(needs.changes.outputs.main), 'terrabase') && inputs.publication != 'build-only' && !inputs.pr_gate
     concurrency:
       group: production-terrabase
       cancel-in-progress: false
@@ -682,6 +687,7 @@ jobs:
     if: >-
       !cancelled() && needs.test.result == 'success' && needs.terrabase.result == 'success'
       && github.event_name == 'workflow_dispatch' && inputs.publication == 'build-only' && github.ref == 'refs/heads/main'
+      && !inputs.pr_gate
     concurrency:
       group: build-${{ github.run_id }}
       cancel-in-progress: false
@@ -700,7 +706,9 @@ jobs:
 
   release-only:
     needs: checks
-    if: github.event_name == 'workflow_dispatch' && inputs.publication == 'release-only' && github.ref == 'refs/heads/main'
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.publication == 'release-only' && github.ref == 'refs/heads/main'
+      && !inputs.pr_gate
     concurrency:
       group: production-terrabase
       cancel-in-progress: false
@@ -754,7 +762,7 @@ jobs:
           exit "$status"
 
   main-auth:
-    if: github.event_name == 'workflow_dispatch' && inputs.reconcile_auth && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && inputs.reconcile_auth && github.ref == 'refs/heads/main' && !inputs.pr_gate
     concurrency:
       group: production-auth
       cancel-in-progress: false
@@ -854,10 +862,10 @@ jobs:
           if-no-files-found: error
           retention-days: 1
   test:
-    name: ${{ github.event_name == 'workflow_dispatch' && inputs.native_artifacts && 'native-maintenance-unqualified' || 'test' }}
+    name: ${{ github.event_name == 'workflow_dispatch' && inputs.native_artifacts && !inputs.pr_gate && 'native-maintenance-unqualified' || 'test' }}
     needs: [changes, checks, libs, auth, terrabase, dashboard, sdk]
     if: >-
-      ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.native_artifacts)
+      ${{ !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.native_artifacts && !inputs.pr_gate)
       && (needs.changes.result != 'success' || needs.checks.result != 'success'
       || needs.changes.outputs.dotnet != '[]' || needs.changes.outputs.sdks != '[]' || needs.dashboard.result != 'skipped'
       || needs.changes.outputs.main != '[]') }}
@@ -866,7 +874,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Every selected leg passed
+      - name: Check upstream results
         env:
           LEGS: ${{ needs.changes.outputs.dotnet }}
           RESULTS: ${{ toJSON(needs) }}
@@ -878,7 +886,7 @@ jobs:
 
   dashboard:
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.dashboard == 'true'
+    if: (github.event_name == 'pull_request' || inputs.pr_gate) && needs.changes.outputs.dashboard == 'true'
     uses: ./.github/workflows/dashboard-ci.yml
 
   sdk:
@@ -926,7 +934,7 @@ jobs:
 
   docs:
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.docs == 'true'
+    if: (github.event_name == 'pull_request' || inputs.pr_gate) && needs.changes.outputs.docs == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -942,7 +950,7 @@ jobs:
 
   landing:
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.landing == 'true'
+    if: (github.event_name == 'pull_request' || inputs.pr_gate) && needs.changes.outputs.landing == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -963,7 +971,7 @@ jobs:
 
   status:
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.status == 'true'
+    if: (github.event_name == 'pull_request' || inputs.pr_gate) && needs.changes.outputs.status == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -995,6 +1003,7 @@ jobs:
       (github.event_name == 'pull_request' && needs.changes.outputs.journey == 'true')
       || (github.ref == 'refs/heads/main' && (github.event_name == 'push'
       || (github.event_name == 'workflow_dispatch' && !inputs.reconcile_auth && !inputs.native_artifacts && inputs.publication == 'release')))
+      || (github.event_name == 'workflow_dispatch' && inputs.pr_gate)
     uses: ./.github/workflows/journey.yml
     with:
       shards: ${{ needs.changes.outputs.shards }}
@@ -1010,6 +1019,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 1
     steps:
-      - run: |
+      - name: Check upstream results
+        run: |
           test "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" = false
           test "${{ needs.changes.outputs.engine != 'true' || needs.journey.result == 'success' }}" = true
