@@ -26,7 +26,7 @@ else
     dotnet build scripts/dashboard/TerraScale.Dashboard.slnx --configuration Release --no-restore
     Configuration=Release make dashboard-lint
     context=$RUNNER_TEMP/dashboard-publish
-    dotnet publish src/TerraScale.Dashboard --configuration Release --no-restore \
+    dotnet publish src/TerraScale.Dashboard --configuration Release --no-restore --runtime linux-arm64 --self-contained false \
       --output "$context" -p:ContinuousIntegrationBuild=true -p:SourceRevisionId="$REVISION"
     dockerfile=scripts/dashboard/ci/Dockerfile.runtime
   fi
