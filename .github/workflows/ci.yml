@@ -366,18 +366,37 @@ jobs:
           (status=0
             python3 scripts/legacy-scan/scan.py --repo terrascale --output legacy-hits.md > legacy-scan.log 2>&1 || status=$?
             echo "$status" > legacy-scan.exit.tmp && mv legacy-scan.exit.tmp legacy-scan.exit) > /dev/null 2>&1 &
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        id: workflow-linter
+        if: github.event_name == 'pull_request'
+        with:
+          path: ~/.cache/terrascale-ci/actionlint
+          key: actionlint-${{ runner.os }}-${{ runner.arch }}-644076a59742c2d1540ebd4686eab3c308f0e562-${{ hashFiles('sdk/go/.go-version') }}
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        if: github.event_name == 'pull_request' && steps.workflow-linter.outputs.cache-hit != 'true'
+        with:
+          go-version-file: sdk/go/.go-version
+          cache: false
+      - name: Build the workflow linter
+        if: github.event_name == 'pull_request' && steps.workflow-linter.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/actionlint.tar.gz" https://github.com/rhysd/actionlint/archive/644076a59742c2d1540ebd4686eab3c308f0e562.tar.gz
+          sha256sum --check --strict <<EOF
+          747636d922cb81e66613ef80c5d08ff748de58d6d5250b9151853e8f680da3e1  $RUNNER_TEMP/actionlint.tar.gz
+          EOF
+          mkdir -p "$RUNNER_TEMP/actionlint-source" "$HOME/.cache/terrascale-ci/actionlint"
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP/actionlint-source" --strip-components=1
+          cd "$RUNNER_TEMP/actionlint-source"
+          CGO_ENABLED=0 GOTOOLCHAIN=local go build -mod=readonly -trimpath -ldflags="-s -w" -o "$HOME/.cache/terrascale-ci/actionlint/actionlint" ./cmd/actionlint
       - name: Lint workflows
         if: github.event_name == 'pull_request'
         run: |
-          curl -fsSL -o "$RUNNER_TEMP/actionlint.tar.gz" https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
           curl -fsSL -o "$RUNNER_TEMP/shellcheck.tar.xz" https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz
           sha256sum --check --strict <<EOF
-          8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $RUNNER_TEMP/actionlint.tar.gz
           8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198  $RUNNER_TEMP/shellcheck.tar.xz
           EOF
-          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
           tar -xJf "$RUNNER_TEMP/shellcheck.tar.xz" -C "$RUNNER_TEMP" --strip-components=1 shellcheck-v0.11.0/shellcheck
-          "$RUNNER_TEMP/actionlint" -shellcheck "$RUNNER_TEMP/shellcheck"
+          "$HOME/.cache/terrascale-ci/actionlint/actionlint" -shellcheck "$RUNNER_TEMP/shellcheck"
       - name: Merged EF Core migrations stay unchanged
         if: github.event_name == 'pull_request'
         run: python3 scripts/ci/migrations-frozen.py HEAD^1
@@ -991,6 +1010,9 @@ jobs:
           fi
 
   journey:
+    permissions:
+      contents: read
+      issues: read
     needs: changes
     if: >-
       (github.event_name == 'pull_request' && needs.changes.outputs.journey == 'true')

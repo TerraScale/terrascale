@@ -225,8 +225,11 @@ jobs:
     timeout-minutes: 25
     permissions:
       contents: read
+      issues: read
     env:
       PROJECTS: ${{ matrix.projects }}
+      JOURNEY_QUARANTINE: ${{ github.workspace }}/e2e/.state/quarantine.json
+      JOURNEY_RESULTS: ${{ github.workspace }}/e2e/.state/quarantine-results
       E2E_REGIONS: ${{ matrix.regions || 1 }}
       E2E_NODES_PER_REGION: ${{ matrix.nodes || 1 }}
       DOTNET_PROCESSOR_COUNT: 4
@@ -328,14 +331,23 @@ jobs:
       - name: Journey
         timeout-minutes: 15
         working-directory: e2e
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
+          node support/quarantine.mjs read
+          unset GITHUB_TOKEN
           read -ra projects <<< "$PROJECTS"
-          bash env/local.sh exec npx playwright test "${projects[@]}"
+          bash env/local.sh exec node support/quarantine-run.mjs "${projects[@]}"
       - name: Regional proxy
         if: matrix.shard == 'multi-region faults'
         timeout-minutes: 4
         working-directory: e2e
-        run: bash env/local.sh exec npx playwright test placement/regions.spec.ts --project placement --grep 'R3 replace'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          node support/quarantine.mjs read
+          unset GITHUB_TOKEN
+          bash env/local.sh exec node support/quarantine-run.mjs placement/regions.spec.ts --project placement --grep 'R3 replace'
       - name: Stop the stack
         if: always() && steps.namespace.outcome == 'success'
         timeout-minutes: 1
@@ -343,7 +355,15 @@ jobs:
       - id: scrub
         name: Redact every generated secret from the files that upload
         if: always()
-        run: python3 e2e/env/scrub.py "$E2E_STATE" e2e/playwright-report e2e/test-results "$E2E_STATE/logs"
+        run: python3 e2e/env/scrub.py "$E2E_STATE" e2e/playwright-report e2e/test-results "$E2E_STATE/logs" "$JOURNEY_RESULTS"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always() && steps.scrub.outcome == 'success'
+        with:
+          name: journey-results-${{ github.run_attempt }}-${{ strategy.job-index }}
+          path: ${{ env.JOURNEY_RESULTS }}
+          include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always() && steps.scrub.outcome == 'success'
         with:
@@ -444,7 +464,10 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+      issues: read
     env:
+      JOURNEY_QUARANTINE: ${{ github.workspace }}/e2e/.state/quarantine.json
+      JOURNEY_RESULTS: ${{ github.workspace }}/e2e/.state/quarantine-results
       DOTNET_PROCESSOR_COUNT: 4
       DOTNET_CLI_TELEMETRY_OPTOUT: 1
       DOTNET_NOLOGO: 1
@@ -488,15 +511,27 @@ jobs:
         if: steps.keyring-baseline.outputs.cache-hit != 'true'
         run: bash e2e/keyring/build.sh
       - name: Prove key retention, rotation and promotion recovery
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           sudo sysctl -q -w kernel.apparmor_restrict_unprivileged_userns=0
           started=$SECONDS
+          node e2e/support/quarantine.mjs read
+          unset GITHUB_TOKEN
           bash e2e/keyring/proof.sh
           echo "keyring proof took $((SECONDS - started)) s"
       - id: keyring-scrub
         name: Redact keyring evidence
         if: always()
-        run: python3 e2e/env/scrub.py "$E2E_STATE"
+        run: python3 e2e/env/scrub.py "$E2E_STATE" "$JOURNEY_RESULTS"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always() && steps.keyring-scrub.outcome == 'success'
+        with:
+          name: journey-results-${{ github.run_attempt }}-keyring
+          path: ${{ env.JOURNEY_RESULTS }}
+          include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: failure() && steps.keyring-scrub.outcome == 'success'
         with:

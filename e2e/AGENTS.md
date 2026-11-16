@@ -9,6 +9,36 @@ under `docs/`, `docs-site/`, `status-site/` or `landing-site/` other than `landi
 `journey` filter of `.github/workflows/ci.yml`). Pushes to `main` and dispatches of `CI` never run it on a local stack;
 after each release the same specs run against production ("The production target" below).
 
+## Quarantine
+
+A flaky journey test failed and then passed on a rerun of the same commit, in code the PR does not touch.
+Quarantine is the only allowed way to skip a flaky journey test. Never weaken an assertion, add a retry,
+sleep or timeout, or add `test.skip` to make a failure pass.
+
+The list is the open issues in `TerraScale/terrascale` labeled `journey-quarantine`. Each issue is one entry:
+`Flaky journey test: <spec path relative to e2e/>` quarantines a spec containing exactly one distinct test; ambiguous file entries quarantine nothing;
+`Flaky journey test: <spec path> › <test title>` quarantines one test, with nested describe titles separated
+by ` › `. Use one issue per test, shared across projects. Automatic entries also store a JSON identity line
+with the spec and title segments in the issue body. Long names use the file-only title with that exact identity;
+this never quarantines sibling tests.
+
+The Journey quarantine workflow compares per-attempt journey result artifacts after a successful CI rerun
+of the same commit. It opens an issue for each failed-then-passed test whose spec the PR did not change,
+or comments on its open issue, with the failing and passing attempt links. It never runs code from the PR.
+For a manual entry, open the issue with the label and both attempt links, then rerun the journey.
+
+Before each CI Playwright invocation, the journey reads the open issues once, following all response pages, and lists them
+in the job summary. An API error warns in the summary and quarantines nothing. PR runs exclude the matching
+tests before execution using Playwright discovery, exact structural resolution and fully anchored filters checked for collisions. The summary names the actual
+excluded tests; ambiguous or tagged identities stay runnable. Main pushes, dispatches and the production journey still run them; their failures
+appear in the summary and the reporting workflow comments on their issues with the run link, without
+failing the gate. Other test failures, global setup/teardown errors, interruption and timeouts still fail.
+Local runs without the CI issue snapshot run every test normally.
+
+Fix the root cause, prove the fix with the journey, and close the issue to leave quarantine. Closing it
+removes the entry on the next invocation; no list file or follow-up PR is needed. Each quarantined test
+still needs its own real-fix backlog item.
+
 ## Run it on your machine (no root)
 
 ```sh
@@ -521,7 +551,7 @@ Paid Checkout session creation must carry allowed_payment_method_types of card a
   step ends them itself ("The production target"). Text is redacted; pixels are not scanned: screenshots mask the
   secret fields by selector and videos are off. The 6-digit codes are not redacted
   (single use, under 16 characters). Every secret of a PR run is generated in that run and dies with the VM: `ci.yml`
-  passes no secret to `journey.yml`, which grants `contents: read` only, checks out with `persist-credentials: false`
+  passes no secret to `journey.yml`, which grants `contents: read` and `issues: read`, checks out with `persist-credentials: false`
   and uses no repository secret. Never print a secret.
 
 

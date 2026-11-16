@@ -1,0 +1,31 @@
+name: Journey quarantine
+on:
+  workflow_run:
+    workflows: [CI, Production journey]
+    types: [completed]
+permissions: {}
+concurrency:
+  group: journey-quarantine
+  queue: max
+jobs:
+  report:
+    if: >-
+      github.event.workflow_run.head_repository.full_name == github.repository
+      && (github.event.workflow_run.event != 'pull_request'
+      || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.run_attempt > 1))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24.21.0'
+      - run: node e2e/support/quarantine.mjs reconcile
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
