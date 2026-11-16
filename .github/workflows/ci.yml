@@ -168,6 +168,7 @@ jobs:
               - sdk/dotnet/**/!(AGENTS.md|CLAUDE.md)
               - landing-site/static/pricing.json
               - e2e/journey/{setup,close}.spec.ts
+              - e2e/pages/inventory.ts
             journey-desktop:
               - *journey-browser
               - e2e/pages/**
@@ -182,6 +183,7 @@ jobs:
               - e2e/hosted/**
               - e2e/interactions/**
               - e2e/clock/**
+              - e2e/replication/push.mjs
               - e2e/storage/**
               - status-site/**/!(AGENTS.md|CLAUDE.md)
               - e2e/social/**
@@ -197,10 +199,13 @@ jobs:
               - *journey-browser
               - e2e/placement/{support,fleet}.ts
               - e2e/placement/{write-guarantees,region-restore,close}.spec.ts
+              - e2e/fault/support.ts
             journey-faults:
               - *journey-browser
               - e2e/placement/{support,fleet}.ts
               - e2e/placement/{close,regions}.spec.ts
+              - e2e/placement/forwarding.ts
+              - e2e/clock/replay.c
               - e2e/fault/**
             engine:
               - *journey-shared
