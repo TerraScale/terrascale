@@ -33,14 +33,16 @@ remaining capacity on each instance. Gauges update on admission checks; add acro
 neither replicas nor time. Tenant IDs never become metric labels.
 
 The relay calls `POST /v1/terrascale/email/admission` over HTTPS with a fresh ULID
-`attemptId`. Its bearer credential is lowercase-hex HMAC-SHA256 using the shared
-SMTP password as key and UTF-8 `terrascale:email-admission:v1:ts-alerts` as input.
+`attemptId`. Its bearer credential is lowercase-hex HMAC-SHA256 using the Cloudflare email token
+(`CLOUDFLARE_EMAIL_TOKEN`, Vault secret `gru-1-cloudflare-email-token`) as key and UTF-8 `terrascale:email-admission:v1:ts-alerts` as input.
 It authorizes only infrastructure alert admission, no recipient, content or priority.
 A 200 `{"status":"admitted","sendBy":"..."}` grants one attempt within ten seconds;
 duplicate IDs, timeouts, expired grants and other responses suppress email, preserving
 push. IDs must be no older than five minutes; receipts outlive this replay window.
-The relay retains its durable hourly cap and deduplication. A holder of the SMTP
+The relay retains its durable hourly cap and deduplication. SMTP configuration never
+changes the admission key. The alert relay is the only HTTP admission caller; ts-auth
+mail and dashboard mail use the in-process admission service. A holder of a provider
 credential still has direct provider authority: this protects cooperating product senders,
-not a compromised provider credential. Rotate the SMTP password on both consumers
-together. Never log either credential. A malformed ledger stops all mail; recovery
+not a compromised provider credential. Rotate the Cloudflare email token on both
+consumers together. Never log the token or its derived proof. A malformed ledger stops all mail; recovery
 requires reviewed repair preserving live reservations, never deletion to reset quota.

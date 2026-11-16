@@ -57,4 +57,4 @@ components:
     mailAdmission:
       type: http
       scheme: bearer
-      description: Lowercase-hex HMAC-SHA256 of UTF-8 terrascale:email-admission:v1:ts-alerts, keyed by the shared SMTP password. Admission-only authority; never log it.
+      description: Lowercase-hex HMAC-SHA256 of UTF-8 terrascale:email-admission:v1:ts-alerts, keyed only by CLOUDFLARE_EMAIL_TOKEN (Vault secret gru-1-cloudflare-email-token). SMTP configuration does not select the admission key. Admission-only authority; never log it.
