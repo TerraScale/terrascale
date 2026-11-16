@@ -75,7 +75,7 @@ internal sealed class TenantReplicaCatalog(ITenantDirectory tenants, IProjectCat
             TenantDatabaseRecord => true,
             Unavailable => false,
         };
-        return applied && (nameApplied || stored is TenantDatabaseRecord current && current.Name == entry.Name);
+        return applied && (nameApplied || stored is NotFound || stored is TenantDatabaseRecord current && current.Name == entry.Name);
     }
 
     public async ValueTask UpdatePlacementAsync(TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken) =>

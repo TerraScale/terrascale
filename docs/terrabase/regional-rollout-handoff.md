@@ -134,7 +134,10 @@ withdraws ingress from the source and drains in-flight responses.
    source process session. Another controller cannot drain the other node.
    Finish draining engine ingress,
    fence the source engine, sample final positions and prove the peer applied
-   every position before importing/promoting its local primary files.
+   every position before importing/promoting its local primary files. A peer
+   behind a sampled position pulls it from the fenced source; until its drain
+   call ends, the source answers those pulls without recording the puller's
+   CDC acknowledgement, so it commits nothing after the positions it certified.
 2. The candidate persists a preparation certificate bound to the source epoch
    and operation. An owner CAS alone cannot authorize an unprepared copy. Abort
    advances the source epoch so a cancelled preparation cannot be replayed.

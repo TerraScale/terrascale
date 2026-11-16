@@ -236,7 +236,7 @@ internal sealed class StorageQuota : IStorageQuota, IDisposable
             Learn(candidate, bytes);
             return new StorageUsage(bytes, 0, false);
         }
-        catch (Exception refused) when (refused is StorageCopyFaultedException or StorageProofPendingException)
+        catch (Exception refused) when (refused is StorageCopyFaultedException or StorageProofPendingException or DatabaseFencedException)
         {
             if (_logical.TryGetValue(Key(candidate), out var recorded))
             {

@@ -151,9 +151,14 @@ A node keeps a fence per database it no longer writes, checked after a write tra
   the committed state before deciding whether to send it again.
 - **Unresolved:** after a restart with a move marker, or when A could not learn the promote outcome, writes fail with
   `tenant_busy` (retry) until A settles the move with B.
+- **Promoting (at B):** from before B imports its replica until the move's commit point, B accepts no write for the
+  database, direct or pushed (`serialization_conflict`, retry); only the move's own prepare and drain pass. The fence
+  is on disk and survives a restart. See `home-failover.md` (`Moving a home`).
 
-A settles an unresolved move by asking B (`POST …/promote/abort` with the move id): B answers whether it promoted. If it
-did, A demotes; if not, B refuses that move id from then on and A lifts the fence. While B is unreachable A stays fenced,
+A settles an unresolved move by asking B (`POST …/promote/abort` with the move id): B answers whether it promoted. A B
+that is still behind its promotion fence first settles it from its lease: committed means promoted; otherwise it rolls
+back and keeps its imported copy; a lease it cannot read answers `503 move_unresolved` and A asks again. If B promoted,
+A demotes; if not, B refuses that move id from then on and A lifts the fence. While B is unreachable A stays fenced,
 so two regions never accept writes for one database. A retries every 5 seconds and at startup.
 
 A delete and a move cannot both win: while A holds the move marker it still owns the record, so `deleteDatabase` (and a

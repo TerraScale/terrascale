@@ -9,7 +9,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Replicas;
 
-internal sealed class ReplicaChecksumEndpoint(ITenantDirectory tenants, IDatabaseRevisions revisions) : EndpointWithoutRequest<IResult>
+internal sealed class ReplicaChecksumEndpoint(ITenantDirectory tenants, IDatabaseRevisions revisions, HomeLeaseGate leaseGate, RegionalHandoff handoff) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
     {
@@ -47,6 +47,11 @@ internal sealed class ReplicaChecksumEndpoint(ITenantDirectory tenants, IDatabas
             cursor = new ChecksumCursor(table, after);
         }
 
+        if (!leaseGate.Sources(HttpContext.RouteValue("database")))
+        {
+            return ErrorResponse.From(new Unavailable(DatabaseFencedException.Refusal));
+        }
+
         return await tenants.FindDatabaseAsync(HttpContext.RouteValue("organization"), HttpContext.RouteValue("project"), HttpContext.RouteValue("database"), cancellationToken).ConfigureAwait(false) switch
         {
             NotFound error => ErrorResponse.From(error),
@@ -57,11 +62,20 @@ internal sealed class ReplicaChecksumEndpoint(ITenantDirectory tenants, IDatabas
 
     private async ValueTask<IResult> RoundAsync(TenantContext database, DatabaseRevision revision, ChecksumCursor? cursor, CancellationToken cancellationToken)
     {
+        if (!await handoff.SourcesAsync(database, cancellationToken).ConfigureAwait(false))
+        {
+            return ErrorResponse.From(new Unavailable(DatabaseFencedException.Refusal));
+        }
         HttpContext.Response.Headers.CacheControl = "no-store";
-        return await revisions.ChecksumAsync(database, revision, cursor, cancellationToken).ConfigureAwait(false) switch
+        var round = await revisions.ChecksumAsync(database, revision, cursor, cancellationToken).ConfigureAwait(false);
+        if (!leaseGate.Sources(database.DatabaseId!))
+        {
+            return ErrorResponse.From(new Unavailable(DatabaseFencedException.Refusal));
+        }
+        return round switch
         {
             null => ErrorResponse.From(new NotFound("the database is not stored on this node")),
-            var round => TypedResults.Json(new ReplicaChecksumPage(round.Revision.ToString(), round.Ranges is null, round.Ranges ?? [], round.Next),
+            var value => TypedResults.Json(new ReplicaChecksumPage(value.Revision.ToString(), value.Ranges is null, value.Ranges ?? [], value.Next),
                 ReplicasJsonContext.Default.ReplicaChecksumPage),
         };
     }
