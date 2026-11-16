@@ -5,6 +5,7 @@ using TerraBase.Errors;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Management;
 using TerraBase.Features.Platform;
+using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -23,6 +24,9 @@ internal sealed partial class EngineManagementService
     private long _purgePassOldestTicks;
     private readonly Counter<long> _purgeErrors = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.purge.errors");
     private readonly ConcurrentDictionary<(string Database, DateTimeOffset RequestedAt), byte> _skippedPurges = new();
+    private readonly ConcurrentDictionary<(string Database, DateTimeOffset RequestedAt, string Holder), string> _receiptWaits = new();
+    private readonly HashSet<(string Database, DateTimeOffset RequestedAt, string Holder)> _receiptPassWaits = [];
+    private long _receiptsUndelivered;
 
     private void RegisterPurgeMetrics()
     {
@@ -33,6 +37,8 @@ internal sealed partial class EngineManagementService
             var ticks = Interlocked.Read(ref _purgeOldestTicks);
             return ticks == 0 ? 0 : Math.Max(0, (time.GetUtcNow() - new DateTimeOffset(ticks, TimeSpan.Zero)).TotalSeconds);
         }, unit: "s");
+        _recoveryMeter.CreateObservableGauge("terrabase.purge.receipts_undelivered", () => Interlocked.Read(ref _receiptsUndelivered),
+            description: "Erasure receipts that this regional writer's purge records wait for and that the last purge pass could not fetch from their holders.");
     }
 
     private async ValueTask RecordDatabasePurgeAsync(IStorageTransaction transaction, TenantContext storage, ManagedDatabase database, CancellationToken cancellationToken)
@@ -157,6 +163,11 @@ internal sealed partial class EngineManagementService
 
                 var absent = await ReadAsync<bool>(transaction => DatabasePurge.AreActiveCopiesAbsentAsync(transaction, record, cancellationToken),
                     static _ => false, cancellationToken).ConfigureAwait(false);
+                if (!absent && regionalOwners.Writer && await CollectReceiptsAsync(record, cancellationToken).ConfigureAwait(false))
+                {
+                    absent = await ReadAsync<bool>(transaction => DatabasePurge.AreActiveCopiesAbsentAsync(transaction, record, cancellationToken),
+                        static _ => false, cancellationToken).ConfigureAwait(false);
+                }
                 if (!absent || record.BackupVerifiedAt is null)
                 {
                     _purgePassPending++;
@@ -182,6 +193,12 @@ internal sealed partial class EngineManagementService
             return;
         }
 
+        foreach (var waiting in _receiptWaits.Keys.Where(key => !_receiptPassWaits.Contains(key)))
+        {
+            _ = _receiptWaits.TryRemove(waiting, out _);
+        }
+        Interlocked.Exchange(ref _receiptsUndelivered, _receiptPassWaits.Count);
+        _receiptPassWaits.Clear();
         Interlocked.Exchange(ref _purgePending, _purgePassPending);
         Interlocked.Exchange(ref _purgeOverdue, _purgePassOverdue);
         Interlocked.Exchange(ref _purgeOldestTicks, _purgePassOldestTicks);
@@ -219,4 +236,94 @@ internal sealed partial class EngineManagementService
             new DatabasePurgeReceipt(database, options.MachineId, time.GetUtcNow(), Authority: purge.RequestedAt), ManagementJsonContext.Default.DatabasePurgeReceipt, cancellationToken).ConfigureAwait(false);
         return true;
     }
+
+    private async ValueTask<bool> CollectReceiptsAsync(DatabasePurgeRecord record, CancellationToken cancellationToken)
+    {
+        var id = record.Database.DatabaseId!;
+        var missing = await ReadAsync<string[]>(transaction => DatabasePurge.UnacknowledgedHoldersAsync(transaction, record, cancellationToken),
+            static _ => [], cancellationToken).ConfigureAwait(false);
+        var peers = missing.Any(holder => holder != options.MachineId) && options.PeersFile is not null
+            ? await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false)
+            : [];
+        var collected = 0;
+        foreach (var holder in missing.Where(holder => holder != options.MachineId))
+        {
+            var key = (id, record.RequestedAt, holder);
+            if (peers.FirstOrDefault(node => node.Name == holder && node.Region == options.Region)?.InternalListener(options.InternalPort) is not { } address)
+            {
+                WaitForHolder(key, "holder_unknown");
+                continue;
+            }
+
+            switch (await remote.FetchPurgeReceiptAsync(address, id, cancellationToken).ConfigureAwait(false))
+            {
+                case HeldReceipt { Receipt: var receipt } when await RecordHolderReceiptAsync(id, holder, receipt, cancellationToken).ConfigureAwait(false):
+                    collected++;
+                    _ = _receiptWaits.TryRemove(key, out _);
+                    logger.ZLogInformation($"Recorded the erasure receipt of database {id:@Database} from holder {holder:@Holder}");
+                    break;
+                case HeldReceipt:
+                    WaitForHolder(key, "receipt_unbound");
+                    break;
+                case NoReceipt:
+                    WaitForHolder(key, "receipt_pending");
+                    break;
+                case HolderUnavailable:
+                    WaitForHolder(key, "holder_unavailable");
+                    break;
+            }
+        }
+
+        return collected > 0;
+    }
+
+    private ValueTask<bool> RecordHolderReceiptAsync(string id, string holder, DatabasePurgeReceipt receipt, CancellationToken cancellationToken) =>
+        WriteAsync<bool>(async transaction =>
+        {
+            if (!regionalOwners.Writer
+                || await GetAsync(transaction, DatabasePurge.Kind, id, ManagementJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false) is not { FormatVersion: 1 } purge
+                || !purge.ExpectedHolders.Contains(holder, StringComparer.Ordinal) || !receipt.Binds(purge, holder))
+            {
+                return false;
+            }
+
+            await PutAsync(transaction, DatabasePurge.Receipts(id), holder, receipt, ManagementJsonContext.Default.DatabasePurgeReceipt, cancellationToken).ConfigureAwait(false);
+            return true;
+        }, static _ => false, cancellationToken);
+
+    private void WaitForHolder((string Database, DateTimeOffset RequestedAt, string Holder) key, string cause)
+    {
+        _ = _receiptPassWaits.Add(key);
+        if (!_receiptWaits.TryGetValue(key, out var logged) || logged != cause)
+        {
+            _receiptWaits[key] = cause;
+            logger.ZLogWarning($"Erasure of database {key.Database:@Database} waits for the receipt of holder {key.Holder:@Holder} ({cause:@Cause}); every maintenance pass of this regional writer asks again");
+        }
+    }
+
+    internal ValueTask<DatabasePurgeReceipt?> HeldReceiptAsync(string id, CancellationToken cancellationToken) =>
+        ReadAsync<DatabasePurgeReceipt?>(transaction =>
+            GetAsync(transaction, DatabasePurge.Receipts(id), options.MachineId, ManagementJsonContext.Default.DatabasePurgeReceipt, cancellationToken),
+            static _ => null, cancellationToken);
+
+    internal ValueTask<PurgeReceiptStatus> PurgeReceiptStatusAsync(string id, CancellationToken cancellationToken) =>
+        ReadAsync<PurgeReceiptStatus>(async transaction =>
+        {
+            var purge = await GetAsync(transaction, DatabasePurge.Kind, id, ManagementJsonContext.Default.DatabasePurgeRecord, cancellationToken).ConfigureAwait(false);
+            if (purge is not { FormatVersion: 1 })
+            {
+                return new(false, false);
+            }
+
+            if (regionalOwners.Writer)
+            {
+                return new(true, await DatabasePurge.AreActiveCopiesAbsentAsync(transaction, purge, cancellationToken).ConfigureAwait(false));
+            }
+
+            return new(true, !purge.ExpectedHolders.Contains(options.MachineId, StringComparer.Ordinal)
+                || await GetAsync(transaction, DatabasePurge.Receipts(id), options.MachineId, ManagementJsonContext.Default.DatabasePurgeReceipt, cancellationToken).ConfigureAwait(false) is { } receipt
+                && receipt.Binds(purge, options.MachineId));
+        }, static _ => new(false, false), cancellationToken);
 }
+
+internal sealed record PurgeReceiptStatus(bool Known, bool Settled);

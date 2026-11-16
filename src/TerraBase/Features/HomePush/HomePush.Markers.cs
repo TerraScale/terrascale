@@ -53,26 +53,26 @@ internal partial class HomePush
         }
     }
 
-    private async Task<bool> OriginMarksAsync(INatsJSStream stream, ConsumeRun run, CancellationToken cancellationToken)
+    private async Task<bool> OriginMarksAsync(INatsJSStream stream, string origin, HashSet<string> marked, CancellationToken cancellationToken)
     {
         IEnumerable<string> nodes = options.PeersFile is null
             ? [options.MachineId]
-            : (await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false)).Where(node => node.Region == run.Origin).Select(node => node.Name);
+            : (await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false)).Where(node => node.Region == origin).Select(node => node.Name);
         foreach (var node in nodes)
         {
             lock (_queuesGate)
             {
-                if (run.Marked.Contains(node))
+                if (marked.Contains(node))
                 {
                     continue;
                 }
             }
 
-            if (await LastAsync(stream, PushNames.Build(run.Origin, node), cancellationToken).ConfigureAwait(false) is not null)
+            if (await LastAsync(stream, PushNames.Build(origin, node), cancellationToken).ConfigureAwait(false) is not null)
             {
                 lock (_queuesGate)
                 {
-                    _ = run.Marked.Add(node);
+                    _ = marked.Add(node);
                 }
 
                 continue;

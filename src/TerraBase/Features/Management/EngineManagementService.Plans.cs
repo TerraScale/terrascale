@@ -17,10 +17,10 @@ internal sealed partial class EngineManagementService
     private static ValueTask PublishPlanAsync(IStorageTransaction transaction, string organizationId, PlanTier plan, CancellationToken cancellationToken) =>
         PutAsync(transaction, Catalog, PublishedPlanKey(organizationId), PlanName(plan), Id, cancellationToken);
 
-    private async ValueTask<TenantPlanResult> AdmissionPlanAsync(IStorageTransaction transaction, string organizationId, CancellationToken cancellationToken)
+    private async ValueTask<TenantPlanResult> AdmissionPlanAsync(IStorageTransaction transaction, string organizationId, bool writer, CancellationToken cancellationToken)
     {
         var organization = await CatalogTables.OrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
-        if (organization is { Plan: not PlanTier.Hobby } or { CreatedBy: not OperatorHandler.KeyId }
+        if (!writer || organization is { Plan: not PlanTier.Hobby } or { CreatedBy: not OperatorHandler.KeyId }
             || await IsPlanPublishedAsync(transaction, organizationId, PlanTier.Hobby, cancellationToken).ConfigureAwait(false)
             || options.PeersFile is null && (await regionPeers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false)).Count == 0)
         {

@@ -16,7 +16,8 @@ using TerraBase.Features.Sql;
 
 namespace TerraBase.Features.HomeApply;
 
-internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock, IHomeWriteLease leases, TerraBaseOptions options, TimeProvider time, ILogger<HomeApplier> logger, IMeterFactory meters)
+internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock, IHomeWriteLease leases, DatabaseFences fences, TerraBaseOptions options, TimeProvider time,
+    ILogger<HomeApplier> logger, IMeterFactory meters)
     : IHomeApply
 {
     private readonly Counter<long> _superseded = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.home_apply.superseded", "{write}");
@@ -33,7 +34,32 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         ConflictTable.Ddl,
     ];
 
-    public async ValueTask<HomeApplyResult?> ApplyAsync(TenantContext database, RegionTransaction transaction, StreamSequence? position, CancellationToken cancellationToken)
+    public ValueTask<HomeApplyResult?> ApplyAsync(TenantContext database, RegionTransaction transaction, StreamSequence? position, long fenceGeneration, CancellationToken cancellationToken) =>
+        ApplyAsync(database, transaction, position, promotion: false, fenceGeneration, cancellationToken);
+
+    public ValueTask<HomeApplyResult?> ApplyPromotingAsync(TenantContext database, RegionTransaction transaction, StreamSequence? position, CancellationToken cancellationToken) =>
+        ApplyAsync(database, transaction, position, promotion: true, fenceGeneration: null, cancellationToken);
+
+    public long FenceGeneration(TenantContext database)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+        return fences.Generation(database.DatabaseId ?? throw new ArgumentException("a home apply names a database", nameof(database)));
+    }
+
+    private void ThrowIfRefenced(TenantContext database, long? fenceGeneration)
+    {
+        if (fenceGeneration is { } seen && FenceGeneration(database) != seen)
+        {
+            throw new DatabaseMovedException(null);
+        }
+    }
+
+    private ValueTask<IStorageTransaction?> BeginAsync(TenantContext database, bool promotion, CancellationToken cancellationToken) => promotion
+        ? engine.BeginPromotionTransactionAsync(database, cancellationToken)
+        : engine.BeginTransactionAsync(database, write: true, cancellationToken);
+
+    private async ValueTask<HomeApplyResult?> ApplyAsync(TenantContext database, RegionTransaction transaction, StreamSequence? position, bool promotion, long? fenceGeneration,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(database);
         ArgumentNullException.ThrowIfNull(transaction);
@@ -47,7 +73,7 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         IStorageTransaction? applying;
         try
         {
-            applying = await engine.BeginTransactionAsync(database, write: true, cancellationToken).ConfigureAwait(false);
+            applying = await BeginAsync(database, promotion, cancellationToken).ConfigureAwait(false);
         }
         catch (SqlStatementException error) when (error.Failure is Busy or Interrupted or StorageFailure)
         {
@@ -61,6 +87,7 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
 
         await using (applying.ConfigureAwait(false))
         {
+            ThrowIfRefenced(database, fenceGeneration);
             await EnsureTablesAsync(applying, cancellationToken).ConfigureAwait(false);
             if (position is not null && !await Frontier.BehindAsync(applying, position, cancellationToken).ConfigureAwait(false))
             {
@@ -121,7 +148,7 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
 
         try
         {
-            return await RevertAsync(database, transaction, rejection, cancellationToken).ConfigureAwait(false);
+            return await RevertAsync(database, transaction, rejection, promotion, fenceGeneration, cancellationToken).ConfigureAwait(false);
         }
         catch (SqlStatementException error) when (error.Failure is Busy or Interrupted or StorageFailure)
         {
@@ -204,7 +231,14 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
             throw new StorageBusyException();
         }
 
-        var preparing = await engine.BeginTransactionAsync(database, write: true, cancellationToken).ConfigureAwait(false);
+        await EnsureTablesAsync(database, promotion: false, cancellationToken).ConfigureAwait(false);
+    }
+
+    public ValueTask PreparePromotingAsync(TenantContext database, CancellationToken cancellationToken) => EnsureTablesAsync(database, promotion: true, cancellationToken);
+
+    private async ValueTask EnsureTablesAsync(TenantContext database, bool promotion, CancellationToken cancellationToken)
+    {
+        var preparing = await BeginAsync(database, promotion, cancellationToken).ConfigureAwait(false);
         if (preparing is null)
         {
             return;
@@ -324,12 +358,14 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         return ApplySql.KeyText(values);
     }
 
-    private async ValueTask<HomeApplyResult> RevertAsync(TenantContext database, RegionTransaction transaction, Rejection rejection, CancellationToken cancellationToken)
+    private async ValueTask<HomeApplyResult> RevertAsync(TenantContext database, RegionTransaction transaction, Rejection rejection, bool promotion, long? fenceGeneration,
+        CancellationToken cancellationToken)
     {
-        var recording = await engine.BeginTransactionAsync(database, write: true, cancellationToken).ConfigureAwait(false)
+        var recording = await BeginAsync(database, promotion, cancellationToken).ConfigureAwait(false)
             ?? throw new StorageBusyException();
         await using (recording.ConfigureAwait(false))
         {
+            ThrowIfRefenced(database, fenceGeneration);
             await EnsureTablesAsync(recording, cancellationToken).ConfigureAwait(false);
             if (await RecordedAsync(recording, transaction.Id!, cancellationToken).ConfigureAwait(false) is { } recorded)
             {

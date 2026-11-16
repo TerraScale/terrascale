@@ -67,7 +67,7 @@ jobs:
 
   engine-baseline:
     name: build engine rollback baseline
-    if: inputs.engine
+    if: inputs.engine || contains(inputs.shards, 'receipt handoffs')
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -215,8 +215,8 @@ jobs:
 
   journey:
     name: journey ${{ matrix.shard }}
-    if: inputs.shards != '[]'
-    needs: [services, runners]
+    if: ${{ !cancelled() && inputs.shards != '[]' && needs.services.result == 'success' && needs.runners.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.engine-baseline.result) }}
+    needs: [services, runners, engine-baseline]
     strategy:
       fail-fast: false
       matrix:
@@ -261,6 +261,17 @@ jobs:
           pattern: runner-*
           merge-multiple: true
           path: ${{ runner.temp }}/sdk
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        if: matrix.shard == 'multi-region home moves and receipt handoffs'
+        with:
+          name: engine-rollback-baseline
+          path: ${{ runner.temp }}
+      - name: Unpack the base revision's TerraBase for the mixed-version case
+        if: matrix.shard == 'multi-region home moves and receipt handoffs'
+        run: |
+          mkdir -p "$RUNNER_TEMP/previous"
+          tar -xzf "$RUNNER_TEMP/engine-baseline.tar.gz" -C "$RUNNER_TEMP/previous"
+          echo "E2E_PREVIOUS_TERRABASE=$RUNNER_TEMP/previous/terrabase/terrabase.dll" >> "$GITHUB_ENV"
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         id: e2e-npm
         with:

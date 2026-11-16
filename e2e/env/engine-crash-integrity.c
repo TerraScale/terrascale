@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <pthread.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 static _Thread_local void *integrity;
 
@@ -33,11 +35,63 @@ static int apply_armed(void *connection, const char *sql) {
     return matches;
 }
 
+static void *hold_statement;
+
+static int hold_armed(void *connection, const char *sql) {
+    const char *control = getenv("ENGINE_INTEGRITY_CONTROL");
+    if (!control || !sql) return 0;
+    FILE *file = fopen(control, "r");
+    if (!file) return 0;
+    char kind[16] = {0};
+    char target[4096] = {0};
+    char needle[256] = {0};
+    int parsed = fscanf(file, "%15s %4095s %255[^\n]", kind, target, needle);
+    fclose(file);
+    if (parsed != 3 || strcmp(kind, "hold") || !strstr(sql, needle)) return 0;
+    int matches = 0;
+    pthread_mutex_lock(&source_gate);
+    for (struct source *source = sources; source; source = source->next)
+        if (source->handle == connection && strstr(source->path, target)) { matches = 1; break; }
+    pthread_mutex_unlock(&source_gate);
+    return matches;
+}
+
 static void remember_apply(void *connection, const char *sql, void *statement) {
-    if (!statement || !apply_armed(connection, sql)) return;
+    if (!statement) return;
+    if (apply_armed(connection, sql)) {
+        pthread_mutex_lock(&apply_gate);
+        apply_statement = statement;
+        pthread_mutex_unlock(&apply_gate);
+    }
+    if (hold_armed(connection, sql)) {
+        pthread_mutex_lock(&apply_gate);
+        hold_statement = statement;
+        pthread_mutex_unlock(&apply_gate);
+        const char *control = getenv("ENGINE_INTEGRITY_CONTROL");
+        if (control) remove(control);
+    }
+}
+
+static void hold_until_released(void *statement) {
     pthread_mutex_lock(&apply_gate);
-    apply_statement = statement;
+    int hit = statement && statement == hold_statement;
+    if (hit) hold_statement = NULL;
     pthread_mutex_unlock(&apply_gate);
+    const char *control = getenv("ENGINE_INTEGRITY_CONTROL");
+    if (!hit || !control) return;
+    char path[4200];
+    snprintf(path, sizeof path, "%s.release", control);
+    int release = open(path, O_RDONLY);
+    if (release < 0) abort();
+    snprintf(path, sizeof path, "%s.held", control);
+    FILE *held = fopen(path, "w");
+    if (!held) abort();
+    fclose(held);
+    fprintf(stderr, "held statement until released\n");
+    char byte;
+    (void)read(release, &byte, 1);
+    close(release);
+    fprintf(stderr, "held statement released\n");
 }
 
 static int take_apply(void *statement) {
@@ -155,6 +209,7 @@ unsigned turso_connection_prepare_first(void *connection, const char *sql, void 
 }
 
 unsigned turso_statement_step(void *statement, void **error) {
+    hold_until_released(statement);
     if (take_apply(statement)) {
         *error = NULL;
         fprintf(stderr, "injected apply engine failure\n");
