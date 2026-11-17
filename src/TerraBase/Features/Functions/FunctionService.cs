@@ -7,6 +7,7 @@ using TerraBase.Features.Functions;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Replicas;
 using TerraBase.Features.Sql;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -23,7 +24,7 @@ public static class FunctionsExtensions
 }
 
 internal sealed partial class FunctionService(SystemCatalog catalog, ISqlService sql, IUsageMeter usage, IMemoryBudget memory,
-    TerraBaseOptions options, TimeProvider time) : BackgroundService, IFunctions, IHostedLifecycleService
+    TerraBaseOptions options, TimeProvider time, RegionalIngress ingress) : BackgroundService, IFunctions, IHostedLifecycleService
 {
     public const string Schedules = "function_schedules";
     private const int MaxFunctions = 32;
@@ -96,7 +97,10 @@ internal sealed partial class FunctionService(SystemCatalog catalog, ISqlService
 
     public async ValueTask<FunctionResult> DeleteAsync(TenantContext tenant, string name, CancellationToken cancellationToken)
     {
-        await FlushAsync(cancellationToken).ConfigureAwait(false);
+        if (await FlushAsync(cancellationToken).ConfigureAwait(false) is { } unavailable)
+        {
+            return unavailable;
+        }
         var result = await catalog.WriteDurableAsync<FunctionResult>(async transaction =>
         {
             if (await GetAsync(transaction, tenant, name, cancellationToken).ConfigureAwait(false) is null)
@@ -115,7 +119,10 @@ internal sealed partial class FunctionService(SystemCatalog catalog, ISqlService
 
     public async ValueTask<FunctionResult> LogsAsync(TenantContext tenant, string name, int limit, CancellationToken cancellationToken)
     {
-        await FlushAsync(cancellationToken).ConfigureAwait(false);
+        if (await FlushAsync(cancellationToken).ConfigureAwait(false) is { } unavailable)
+        {
+            return unavailable;
+        }
         return await catalog.ReadAsync<FunctionResult>(async transaction =>
         {
             if (await GetAsync(transaction, tenant, name, cancellationToken).ConfigureAwait(false) is null)
@@ -138,20 +145,31 @@ internal sealed partial class FunctionService(SystemCatalog catalog, ISqlService
     {
         lock (_recordGate)
         {
-            if (_stopping)
+            var held = _tenantRecords.GetValueOrDefault(tenant.OrganizationId);
+            if (_stopping || _recordCount == RecordCapacity || held is { Count: TenantRecordCapacity })
             {
-                return Busy;
+                return _recordError ?? Busy;
             }
             _running++;
+            _recordCount++;
+            if (held is null)
+            {
+                held = new TenantRecords();
+                _tenantRecords.Add(tenant.OrganizationId, held);
+            }
+            if (++held.Count == TenantRecordCapacity)
+            {
+                held.Space = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
         }
 
-        var admitted = false;
         var queued = false;
         IMemoryReservation? reserved = null;
+        RegionalIngress.Lease? lease = null;
         try
         {
-            admitted = await _recordSlots.WaitAsync(0, cancellationToken).ConfigureAwait(false);
-            if (!admitted)
+            lease = await ingress.EnterAsync(parkWhileHeld: false, cancellationToken).ConfigureAwait(false);
+            if (lease is null)
             {
                 return Busy;
             }
@@ -173,7 +191,8 @@ internal sealed partial class FunctionService(SystemCatalog catalog, ISqlService
             await using (session.ConfigureAwait(false))
             {
                 session.BeginRequest();
-                run = await Task.Run(() => FunctionRunner.RunAsync(source, eventJson, calls, cancellationToken), CancellationToken.None)
+                using var running = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _invocationsStopping.Token);
+                run = await Task.Run(() => FunctionRunner.RunAsync(source, eventJson, calls, running.Token), CancellationToken.None)
                     .ConfigureAwait(false);
             }
 
@@ -188,18 +207,20 @@ internal sealed partial class FunctionService(SystemCatalog catalog, ISqlService
                 calls.SqlCalls, calls.SqlMs, calls.RowsRead, calls.RowsWritten, ResponseBytes: response.Body.LongLength, HttpStatus: trigger == "http" && error is null ? response.Status : null);
             var retainedBytes = 4096L + 2L * (name.Length + tenant.OrganizationId.Length + tenant.ProjectId!.Length + tenant.DatabaseId!.Length
                 + (log.Error?.Length ?? 0) + log.Lines.Sum(line => line.Length));
-            memory.Shrink(reserved, Math.Max(0, reserved.Bytes - retainedBytes));
-            Queue(tenant, name, log, reserved);
+            var space = Queue(tenant, name, log, reserved, lease, retainedBytes);
             queued = true;
             reserved = null;
+            lease = null;
+            await space.ConfigureAwait(false);
             return response;
         }
         finally
         {
             reserved?.Dispose();
-            if (admitted && !queued)
+            lease?.Dispose();
+            if (!queued)
             {
-                _recordSlots.Release();
+                ReleaseRecord(tenant);
             }
             lock (_recordGate)
             {

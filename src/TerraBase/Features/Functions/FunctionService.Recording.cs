@@ -1,6 +1,8 @@
 using System.Threading.Channels;
+using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Replicas;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Functions;
@@ -9,40 +11,79 @@ internal sealed partial class FunctionService
 {
     private const int RecordCapacity = 64;
     private const int RecordBatchSize = 32;
+    private const int TenantRecordCapacity = RecordCapacity / 2;
     private readonly Channel<PendingRecord> _records = Channel.CreateBounded<PendingRecord>(new BoundedChannelOptions(RecordCapacity)
     {
         SingleReader = true,
         FullMode = BoundedChannelFullMode.Wait,
     });
-    private readonly SemaphoreSlim _recordSlots = new(RecordCapacity, RecordCapacity);
+    private readonly CancellationTokenSource _invocationsStopping = new();
+    private readonly Dictionary<string, TenantRecords> _tenantRecords = new(StringComparer.Ordinal);
+    private int _recordCount;
+    private Unavailable? _recordError;
     private readonly Lock _recordGate = new();
     private Task _lastRecord = Task.CompletedTask;
     private int _running;
     private bool _stopping;
 
-    private sealed record PendingRecord(TenantContext Tenant, string Name, FunctionLogBody Log, IMemoryReservation Memory)
+    private sealed class TenantRecords
+    {
+        public int Count { get; set; }
+        public TaskCompletionSource Space { get; set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    private sealed record PendingRecord(TenantContext Tenant, string Name, FunctionLogBody Log, IMemoryReservation Memory, RegionalIngress.Lease Ingress)
     {
         public TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
-    private void Queue(TenantContext tenant, string name, FunctionLogBody log, IMemoryReservation reservation)
+    private Task Queue(TenantContext tenant, string name, FunctionLogBody log, IMemoryReservation reservation, RegionalIngress.Lease lease, long retainedBytes)
     {
-        var pending = new PendingRecord(tenant, name, log, reservation);
+        var pending = new PendingRecord(tenant, name, log, reservation, lease);
         lock (_recordGate)
         {
+            var held = _tenantRecords[tenant.OrganizationId];
+            if (held.Count < TenantRecordCapacity)
+            {
+                memory.Shrink(reservation, Math.Max(0, reservation.Bytes - retainedBytes));
+            }
             if (!_records.Writer.TryWrite(pending))
             {
                 throw new InvalidOperationException("function recording has stopped");
             }
             _lastRecord = pending.Completion.Task;
+            return held.Count == TenantRecordCapacity ? held.Space.Task : Task.CompletedTask;
         }
     }
 
-    private Task FlushAsync(CancellationToken cancellationToken)
+    private async Task<Unavailable?> FlushAsync(CancellationToken cancellationToken)
+    {
+        Task pending;
+        lock (_recordGate)
+        {
+            pending = _lastRecord;
+        }
+        await pending.WaitAsync(cancellationToken).ConfigureAwait(false);
+        lock (_recordGate)
+        {
+            return _recordError;
+        }
+    }
+
+    private void ReleaseRecord(TenantContext tenant)
     {
         lock (_recordGate)
         {
-            return _lastRecord.WaitAsync(cancellationToken);
+            _recordCount--;
+            var held = _tenantRecords[tenant.OrganizationId];
+            if (held.Count-- == TenantRecordCapacity)
+            {
+                held.Space.SetResult();
+            }
+            if (held.Count == 0)
+            {
+                _tenantRecords.Remove(tenant.OrganizationId);
+            }
         }
     }
 
@@ -57,12 +98,24 @@ internal sealed partial class FunctionService
                 {
                     batch.Add(pending);
                 }
-                await RecordBatchAsync(batch, CancellationToken.None).ConfigureAwait(false);
+                if (await RecordBatchAsync(batch, CancellationToken.None).ConfigureAwait(false) is { } unavailable)
+                {
+                    lock (_recordGate)
+                    {
+                        _recordError = unavailable;
+                        _stopping = true;
+                        if (_running == 0)
+                        {
+                            _records.Writer.TryComplete();
+                        }
+                    }
+                }
                 foreach (var pending in batch)
                 {
                     pending.Memory.Dispose();
+                    pending.Ingress.Dispose();
                     pending.Completion.SetResult();
-                    _recordSlots.Release();
+                    ReleaseRecord(pending.Tenant);
                 }
                 batch.Clear();
             }
@@ -81,16 +134,17 @@ internal sealed partial class FunctionService
             foreach (var pending in batch)
             {
                 pending.Memory.Dispose();
+                pending.Ingress.Dispose();
                 pending.Completion.TrySetException(error);
-                _recordSlots.Release();
+                ReleaseRecord(pending.Tenant);
             }
             throw;
         }
     }
 
-    private async Task RecordBatchAsync(IReadOnlyList<PendingRecord> batch, CancellationToken cancellationToken)
+    private async Task<Unavailable?> RecordBatchAsync(IReadOnlyList<PendingRecord> batch, CancellationToken cancellationToken)
     {
-        var recorded = await catalog.WriteAsync(async transaction =>
+        return await catalog.WriteAsync<Unavailable?>(async transaction =>
         {
             foreach (var group in batch.GroupBy(pending => (pending.Tenant, pending.Name)))
             {
@@ -113,12 +167,8 @@ internal sealed partial class FunctionService
                     await transaction.DeleteAsync(Logs(tenant, name), log.Id, cancellationToken).ConfigureAwait(false);
                 }
             }
-            return true;
-        }, static _ => false, cancellationToken).ConfigureAwait(false);
-        if (!recorded)
-        {
-            throw new InvalidOperationException("function invocation records could not be persisted");
-        }
+            return null;
+        }, static error => error, cancellationToken).ConfigureAwait(false);
     }
 
     public Task StartingAsync(CancellationToken cancellationToken) => Task.CompletedTask;
@@ -135,6 +185,7 @@ internal sealed partial class FunctionService
                 _records.Writer.TryComplete();
             }
         }
+        await _invocationsStopping.CancelAsync().ConfigureAwait(false);
         if (ExecuteTask is { } recording)
         {
             await recording.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -145,7 +196,7 @@ internal sealed partial class FunctionService
 
     public override void Dispose()
     {
-        _recordSlots.Dispose();
+        _invocationsStopping.Dispose();
         base.Dispose();
     }
 }

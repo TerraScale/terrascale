@@ -12,7 +12,10 @@ internal sealed partial class FunctionService
             return new Validation("window must be 1h, 24h or 7d");
         }
 
-        await FlushAsync(cancellationToken).ConfigureAwait(false);
+        if (await FlushAsync(cancellationToken).ConfigureAwait(false) is { } unavailable)
+        {
+            return unavailable;
+        }
         return await catalog.ReadAsync<FunctionResult>(async transaction =>
             await GetAsync(transaction, tenant, name, cancellationToken).ConfigureAwait(false) is null
                 ? new NotFound()

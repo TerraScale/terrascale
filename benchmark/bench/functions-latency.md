@@ -1,89 +1,102 @@
 # Function invocation latency
 
-Baseline: origin/main at 1fcffcf12484f8191bbc8e9de8ca1e710b434b73 (2026-11-17).
+## Method and original baseline
 
-## Method
+Original baseline: origin/main at 1fcffcf12484f8191bbc8e9de8ca1e710b434b73, measured before implementation changes on 2026-11-17. The original baseline was committed separately before the implementation and is retained below.
 
-Release build, .NET SDK 11.0.100 / runtime 11.0.0, Jint 4.17.0, on mariogk-dev: Linux x86-64, Intel Xeon E5-2660 v4 @ 2 GHz, 46 visible CPUs, 32 GiB RAM. Shared host; initial load average 12.02 / 14.34 / 17.60. DOTNET_PROCESSOR_COUNT=4, nice -n 19, server GC and repository build settings unchanged.
+Release build, .NET SDK 11.0.100 / runtime 11.0.0, Jint 4.17.0, on mariogk-dev: Linux x86-64, Intel Xeon E5-2660 v4 @ 2 GHz, 46 visible CPUs, 32 GiB RAM. Shared host. All builds and harness processes used DOTNET_PROCESSOR_COUNT=4, DOTNET_ROOT=$HOME/.local/share/mise/dotnet-root, and nice -n 19. Server GC and execution limits were unchanged. Only one harness process ran at a time; no harness overlapped our builds.
 
-An uncommitted harness called the real FunctionService.InvokeAsync in-process, with its real DI graph, encrypted on-disk storage engine, system catalog, SQL sessions, log retention and metrics buckets. It started only the local catalog gate, without HTTP listeners or another journey stack. Each workload had 100 untimed warmups, then three runs of 200 sequential awaited invocations. Every response status and exact JSON value was checked. Percentiles use nearest rank over individual invocation wall times; milliseconds throughout. HTTP, TLS, authentication and network transport are excluded.
+An uncommitted in-process harness called the real FunctionService.InvokeAsync with its real DI graph, encrypted on-disk storage, catalog, SQL sessions, log retention and metric buckets. HTTP/TLS/authentication/network transport are excluded. Each invocation's exact response status and JSON were checked. Percentiles use nearest rank; times are milliseconds.
 
 Workloads:
 
 - constant: function handler(event) { return {ok:true}; }
 - three-sql: async function handler(event) { const a = await sql.query('SELECT 1 AS value'); const b = await sql.query('SELECT 2 AS value'); const c = await sql.query('SELECT 3 AS value'); return {a,b,c}; }
 
-Temporary Stopwatch spans covered fresh engine construction, prelude and customer source parsing/execution, handler execution excluding measured SQL, the raw SQL-binding time, and the awaited log/metrics write including retention. SQL spans use the same boundaries as FunctionSql.SqlMs, before its integer ceiling. Stage values below are arithmetic means, not additive percentiles. The remainder covers lookup, memory admission, scheduling, session disposal and response construction. No harness or instrumentation is committed.
+The original baseline used 100 warmups followed by three runs of 200 sequential invocations per workload:
 
-## Raw runs
+| Workload | Original baseline run | p50 ms | p95 ms | p99 ms |
+| --- | ---: | ---: | ---: | ---: |
+| constant | 1 | 11.1960 | 16.1806 | 31.6951 |
+| constant | 2 | 10.7689 | 14.0529 | 19.2946 |
+| constant | 3 | 8.7319 | 11.9336 | 16.6455 |
+| three-sql | 1 | 9.9393 | 12.5652 | 17.7423 |
+| three-sql | 2 | 10.3984 | 15.9499 | 19.3040 |
+| three-sql | 3 | 9.8962 | 13.6835 | 19.0931 |
 
-The measurement order was baseline, initial implementation, retained baseline again, then the final implementation. The final pair ran after the verification build finished, without overlapping our own builds or another harness process. Each process used a fresh encrypted data directory. No queue flush was inserted between measured runs; pending work and admission pressure carry into the next run. The final after process then drained while eight invocations were still active.
+## Controlled interleaved repeat
 
-A diagnostic baseline repeat during a verification build is excluded from the comparison because our own compilation added competing load. Its constant p50 values were 14.8081, 11.1164 and 9.2867 ms; three-SQL p50 values were 11.2180, 9.7062 and 9.4732 ms.
+This comparison supersedes the initial two-process comparison. Both controls use the same single-run harness and dependency build. The baseline's function implementation was restored from the recorded origin/main revision; the after control contains the final function changes, including retained regional leases, tenant admission and shutdown cancellation. Temporary Stopwatch spans are the only instrumentation. The owning function files match the final rebased implementation except these spans; the final production build has no instrumentation.
 
-| Version | Workload | Run | p50 ms | p95 ms | p99 ms |
+Each process starts a fresh encrypted data directory, provisions a real organization/project/database, performs 100 warmups followed by exactly 200 sequential measured invocations for each workload, verifies all 300 metric records and 100 retained logs, then stops. The three-query workload additionally verifies 900 SQL calls. The final comparison pools 600 measured invocations per workload per version. Logs/stats checks occur after each workload outside the timing window. There is no flush between warmups and measured invocations.
+
+The exact chronological order is B1, A1, B2, A2, B3, A3. All six processes finished successfully. Absolute timings vary with shared-host load and JIT tiering; these are latency measurements, not a production HTTP SLA or throughput claim.
+
+| Sequence | Control | UTC start | Host load average (1 / 5 / 15 min) |
+| ---: | --- | --- | --- |
+| 1 | before-1 | 2026-11-17T07:19:06.707744+00:00 | 8.04 / 14.95 / 17.39 |
+| 2 | after-1 | 2026-11-17T07:19:16.055522+00:00 | 7.91 / 14.69 / 17.28 |
+| 3 | before-2 | 2026-11-17T07:19:20.981042+00:00 | 7.91 / 14.69 / 17.28 |
+| 4 | after-2 | 2026-11-17T07:19:30.789750+00:00 | 8.47 / 14.59 / 17.22 |
+| 5 | before-3 | 2026-11-17T07:19:35.884070+00:00 | 8.75 / 14.54 / 17.19 |
+| 6 | after-3 | 2026-11-17T07:19:45.109009+00:00 | 8.01 / 14.19 / 17.05 |
+
+### Raw interleaved runs
+
+| Control | Workload | Samples | p50 ms | p95 ms | p99 ms |
 | --- | --- | ---: | ---: | ---: | ---: |
-| before | constant | 1 | 11.1960 | 16.1806 | 31.6951 |
-| before | constant | 2 | 10.7689 | 14.0529 | 19.2946 |
-| before | constant | 3 | 8.7319 | 11.9336 | 16.6455 |
-| before | three-sql | 1 | 9.9393 | 12.5652 | 17.7423 |
-| before | three-sql | 2 | 10.3984 | 15.9499 | 19.3040 |
-| before | three-sql | 3 | 9.8962 | 13.6835 | 19.0931 |
-| after | constant | 1 | 2.0856 | 3.3500 | 4.9311 |
-| after | constant | 2 | 2.2180 | 3.0932 | 6.7664 |
-| after | constant | 3 | 2.3959 | 3.2783 | 5.9858 |
-| after | three-sql | 1 | 6.0482 | 8.2806 | 11.7722 |
-| after | three-sql | 2 | 6.1210 | 8.3512 | 14.2961 |
-| after | three-sql | 3 | 6.1449 | 9.2051 | 10.7570 |
-| before-final | constant | 1 | 10.5942 | 15.2549 | 22.4476 |
-| before-final | constant | 2 | 13.2097 | 59.6568 | 97.2669 |
-| before-final | constant | 3 | 9.0031 | 13.9155 | 16.2346 |
-| before-final | three-sql | 1 | 9.8185 | 13.7315 | 20.6433 |
-| before-final | three-sql | 2 | 10.9172 | 15.2185 | 22.5500 |
-| before-final | three-sql | 3 | 10.1571 | 12.7921 | 18.9255 |
-| after-final | constant | 1 | 2.5040 | 4.5985 | 29.4917 |
-| after-final | constant | 2 | 2.5780 | 3.5709 | 18.1959 |
-| after-final | constant | 3 | 2.4895 | 3.3091 | 4.6251 |
-| after-final | three-sql | 1 | 6.3553 | 12.4359 | 16.2598 |
-| after-final | three-sql | 2 | 6.1735 | 8.7410 | 12.6170 |
-| after-final | three-sql | 3 | 4.9135 | 6.8079 | 8.6774 |
+| before-1 | constant | 200 | 10.8781 | 14.3710 | 21.6099 |
+| before-1 | three-sql | 200 | 10.7600 | 14.4280 | 21.4454 |
+| after-1 | constant | 200 | 2.3500 | 3.0723 | 5.0807 |
+| after-1 | three-sql | 200 | 5.8394 | 7.6598 | 8.5573 |
+| before-2 | constant | 200 | 11.0978 | 14.6642 | 19.8509 |
+| before-2 | three-sql | 200 | 11.2949 | 17.3158 | 20.5161 |
+| after-2 | constant | 200 | 2.2413 | 3.2614 | 8.2415 |
+| after-2 | three-sql | 200 | 6.0287 | 8.1998 | 12.1670 |
+| before-3 | constant | 200 | 10.9129 | 14.8830 | 18.8189 |
+| before-3 | three-sql | 200 | 10.5584 | 15.3481 | 18.0767 |
+| after-3 | constant | 200 | 2.0830 | 2.8868 | 4.3045 |
+| after-3 | three-sql | 200 | 5.4619 | 7.7294 | 11.1101 |
 
-## Final before/after comparison
-
-Pooled nearest-rank percentiles over 600 measured invocations per workload per version, from the final adjacent before/after pair. Shared host load and JIT tiering affect absolute values; this is a local in-process latency measurement, not a production HTTP SLA or a throughput claim.
+### Before/after comparison
 
 | Workload | Before p50 / p95 / p99 ms | After p50 / p95 / p99 ms | p50 reduction |
 | --- | ---: | ---: | ---: |
-| constant | 10.6924 / 24.7084 / 89.2082 | 2.5525 / 3.8336 / 18.1959 | 76.1% |
-| three-sql | 10.2894 / 13.9106 / 22.5500 | 5.8178 / 9.0305 / 15.8976 | 43.5% |
+| constant | 10.9795 / 14.6775 / 21.6099 | 2.2023 / 3.0977 / 5.9735 | 79.9% |
+| three-sql | 10.8617 / 15.9440 / 19.6113 | 5.7595 / 7.7294 / 10.8959 | 47.0% |
 
 ## Cause breakdown
 
-Arithmetic means across 600 measured invocations per row. After's recording column is queue admission on the response path; actual background persistence is reported separately below. The handler column excludes SQL-binding spans. Parse + execute includes top-level prelude and customer-source evaluation as well as parsing. Remaining time includes catalog lookup, capacity admission, task scheduling, bindings, session disposal and response construction.
+Arithmetic means across 600 measured invocations per row, not additive percentiles. Parse + execute includes top-level prelude/customer-source evaluation and parsing. Handler time excludes SQL-binding spans. SQL spans match FunctionSql.SqlMs before its integer ceiling. Before's recording span includes catalog writes and retention; after's span is queue publication on the response path. Background writes still run and consume resources. Remaining time includes lookup, tenant/global admission, regional ingress admission, capacity backpressure, scheduling, bindings, disposal and response construction.
 
-| Version | Workload | Engine ms | Parse + execute ms | Handler excluding SQL ms | SQL ms | Recording on response path ms | Total mean ms |
+| Control | Workload | Engine ms | Parse + execute ms | Handler excluding SQL ms | SQL ms | Recording on response path ms | Total mean ms |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| before | constant | 0.0493 | 0.9566 | 0.2878 | 0.0000 | 8.5003 | 10.8409 |
-| before | three-sql | 0.0255 | 0.4056 | 0.7851 | 1.6195 | 7.0285 | 10.5700 |
-| before-final | constant | 0.0625 | 0.9583 | 0.2863 | 0.0000 | 10.9060 | 13.4992 |
-| before-final | three-sql | 0.0233 | 0.3902 | 0.7388 | 1.5507 | 7.7706 | 11.1788 |
-| after-final | constant | 0.0448 | 1.4069 | 0.4345 | 0.0000 | 0.0028 | 3.0879 |
-| after-final | three-sql | 0.0827 | 0.8194 | 1.8481 | 2.5262 | 0.0034 | 6.3247 |
+| original | constant | 0.0493 | 0.9566 | 0.2878 | 0.0000 | 8.5003 | 10.8409 |
+| original | three-sql | 0.0255 | 0.4056 | 0.7851 | 1.6195 | 7.0285 | 10.5700 |
+| before | constant | 0.0486 | 1.2881 | 0.3312 | 0.0000 | 8.8947 | 11.6274 |
+| before | three-sql | 0.0419 | 0.4534 | 1.1395 | 1.7695 | 7.3380 | 11.5652 |
+| after | constant | 0.0494 | 1.1522 | 0.3128 | 0.0000 | 0.0059 | 2.4287 |
+| after | three-sql | 0.0470 | 1.1975 | 1.7523 | 2.0998 | 0.0061 | 6.1396 |
 
-Final recorder and shutdown evidence:
+Synchronous log/metrics persistence dominated the original response path. The fix moves that measured cost to a bounded recorder and shares catalog/metrics/retention work across batches. Fresh engines remain cheap. Parsing and SQL JSON conversion were left unchanged because they were not needed to meet the target.
+
+## Handoff, isolation and shutdown proof
+
+An external, uncommitted harness used the real catalog writer transaction to block persistence. It obtained 31 successful responses for tenant A, held the 32nd response under capacity backpressure, rejected A's 33rd invocation before execution, and obtained a successful response for tenant B while A's backlog remained blocked. Stats reads waited. The same RegionalIngress.HoldAsync used by RegionalHandoff could not finish while those acknowledged records remained queued. After releasing the writer, all 33 logs/metrics were present before the hold completed and RegionalOwners.Drain was called. All 33 handlers returned a fresh JavaScript global counter of 1.
+
+The harness then used the actual Generic Host with Shutdown.HostedBudget (8 seconds), with nine invocations active including an endless JavaScript handler. The function stopping phase stopped admission, canceled running JavaScript, and persisted all nine invocation logs/metrics before host shutdown completed. Canceled invocations have error records, rather than being omitted. A separate real SystemCatalog with an unowned RegionalOwners exercised expected not_writer refusal: the host stayed running, reads/admission returned typed Unavailable, and all ingress leases were released. No fake SQL, storage, owners or ingress implementation was used. An initial quota-only comparison exposed a full tenant queue under fast sequential invocation; accepted-response backpressure fixed that behavior before the final six-cohort comparison.
 
 ```text
-C2 active shutdown + fresh-engine isolation: 8/8 responses count=1
-C2 shutdown proof: constant invocations=700 sqlCalls=0 retainedLogs=100
-C2 shutdown proof: three-sql invocations=700 sqlCalls=2100 retainedLogs=100
-C2 shutdown proof: drain invocations=8 sqlCalls=0 retainedLogs=8
-C2 recording batches=539 records=1408 total_ms=6683.7162 mean_per_record_ms=4.7470
+C2 proof: A has 31 acknowledged records plus record 32 applying backpressure on the real catalog writer; A rejects record 33; B still returns 200; stats and handoff wait
+C2 proof: real RegionalIngress.HoldAsync completed only after all 33 records persisted; then RegionalOwners.Drain ran; recorder healthy=True
+C2 proof: real Generic Host shutdown with production 8-second budget completed in 60.49 ms; all 9 active invocation records persisted, including explicit invocation-cancelled error for endless handler; fresh globals verified on 33 prior responses
+C2 proof: real unowned RegionalOwners caused expected not_writer; stats/admission return Unavailable, host stays alive, all ingress leases released
 ```
 
-## Change and limits
+## Implementation and limits
 
-A bounded channel holds invocation records for a single background writer. A shared limit of 64 slots includes running functions, queued records and the active write batch; capacity is acquired before execution, so overload returns the existing unavailable result. The invocation's tenant memory reservation transfers to its record and shrinks to the retained payload estimate plus bookkeeping. At most 32 records share one catalog transaction; metrics are aggregated once per function and time bucket, and retention runs once per function per batch. Batching matters because a queue alone cannot sustain a faster producer than its writer.
+The recorder holds at most 64 records across running invocations, queued records and its active batch. One organization holds at most 32, so a single tenant cannot occupy the entire recorder pool. Admission is nonblocking and happens before execution. When an accepted invocation fills its organization's share, its response waits for capacity to be released by persistence; this applies producer backpressure without rejecting the next sequential invocation or adding timers. Parallel requests arriving while full are still rejected before execution. The tenant's invocation memory reservation transfers to its record, shrinking to the retained payload estimate plus bookkeeping when no response backpressure is needed. A record whose response awaits capacity keeps its full invocation reservation through persistence, covering the response retained by that call. Each record also retains its RegionalIngress lease through the catalog transaction, so regional handoff drains recording before revoking ownership. A batch contains at most 32 records; metrics are aggregated once per function/time bucket, and retention runs once per function per batch.
 
-Logs, stats and deletion wait for records queued before the read or deletion. The hosted lifecycle stops invocation admission, lets active invocations finish, then drains all records before other hosted services stop. Persistence errors fault the hosted worker and its read barriers rather than silently dropping records. This is memory buffering: abrupt process termination can lose queued records; normal shutdown drains them. No persisted format, storage engine, API shape, JavaScript engine reuse or execution limit changed. Every invocation still constructs and disposes its own engine with the existing 10-second deadline, 32-MiB memory limit, recursion limit of 256 and 10,000,000-statement limit.
+Logs, stats and deletion wait for prior queued records. An expected catalog refusal is returned as Unavailable; the recorder closes further function admission and retains the error for subsequent barriers, so a later successful batch cannot hide an acknowledged record failure. Other services stay running. Unexpected exceptions still fault the hosted worker. Normal shutdown stops function admission, signals cancellation to active invocations and drains their records before hosted dependencies stop. There is no increased timeout. The recorder is memory buffered: abrupt process termination can lose admitted records. Full HTTP/auth/TLS behavior and a complete multi-node NATS handoff were not run locally; the targeted handoff admission boundary and production Generic Host shutdown budget were exercised above.
 
-The measured dominant cause was synchronous log/metrics persistence and repeated per-record retention/aggregation work. The fix addresses that cause; parsed-source caching and SQL JSON-binding changes were not needed to meet the latency target and were left untouched.
+Every invocation still constructs and disposes its own Engine. The existing 10-second deadline, 32-MiB memory limit, recursion limit of 256 and 10,000,000-statement limit are unchanged. No storage format, storage engine or native dependency changed. The pre-existing delete/recreate name-identity race noted in review is outside this change.
