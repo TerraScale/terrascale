@@ -17,6 +17,11 @@ internal sealed class RulesService(IStorageEngine engine, IShapeStorage storage,
     private static readonly Unavailable StorageBusy = new("rules storage changed or is busy; retry later");
     private static readonly Unavailable CatchingUp = new("the region replica is catching up; retry later");
 
+    public ValueTask<RulesTestResult> TestAsync(TenantContext database, RulesTestRequest request, CancellationToken cancellationToken) =>
+        ReadAsync<RulesTestResult>(database, async rules => await rules.TestRulesAsync(request,
+            request.Rules ?? (await rules.ReadRulesAsync(null, cancellationToken).ConfigureAwait(false))?.Rules ?? new RulesSet(new Dictionary<string, RulesTable>()),
+            cancellationToken).ConfigureAwait(false), error => error, error => error, cancellationToken);
+
     public ValueTask<RulesCurrentResult> GetAsync(TenantContext database, CancellationToken cancellationToken) =>
         ReadAsync<RulesCurrentResult>(database, async rules => await rules.ReadRulesAsync(null, cancellationToken).ConfigureAwait(false) is { } current
             ? new CurrentRules(current, await rules.CheckRulesAsync(current.Rules, cancellationToken).ConfigureAwait(false))

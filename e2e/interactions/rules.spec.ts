@@ -1,11 +1,14 @@
 import { randomBytes } from 'node:crypto';
 import { expect, test, type APIRequestContext, type APIResponse } from '@playwright/test';
+import { signInToken } from '../support/auth-management';
 import { auth } from '../support/stack';
 import { journey, saveSecret } from '../support/state';
 
 const api = 'https://api.terrascale.tech';
 
 type Problem = { table: string; field: string; code: string; message: string };
+type Simulation = { allowed: boolean; decidedBy: string; clause: string | null; results: { rule: string; value: boolean }[]; columns: string[]; problems: Problem[] };
+
 type RulesBody = { version: string; tables: Record<string, Record<string, unknown>>; problems?: Problem[]; warnings?: Problem[]; updatedAt: string; updatedBy: string };
 
 async function ownerToken(request: APIRequestContext): Promise<string> {
@@ -29,7 +32,7 @@ async function answer<T>(response: APIResponse, status: number, code?: string): 
   return body as T;
 }
 
-test('rules deploy only after compiling against the schema, keep versions and restore an earlier one', async ({ request }) => {
+test('rules compile, keep versions, simulate deployed and draft requests and restore an earlier version', async ({ request, page }) => {
   const current = journey();
   const database = `${api}/v1/projects/${current.projectId}/databases/${current.databaseId}`;
   const table = 'rules_todos_' + randomBytes(4).toString('hex');
@@ -111,6 +114,61 @@ test('rules deploy only after compiling against the schema, keep versions and re
 
     const second = await answer<RulesBody>(await put({ tables: { [table]: owners } }, { 'if-match': `"${first.version}"` }), 200);
     expect(second.warnings).toEqual([]);
+
+    const simulate = (data: unknown, credential = owner) => request.post(database + '/rules:test', {
+      headers: { authorization: 'Bearer ' + credential }, data,
+    });
+    const subject = '01ARZ3NDEKTSV4RRFFQ69G5FAE';
+    const simulated = {
+      operation: 'update', table, auth: { uid: subject, claims: { roles: ['editor'] }, org_id: null, org_role: null, is_anonymous: false },
+      row: { owner_id: subject, title: 'a', done: 0 }, new: { title: "b'); DROP TABLE todos; --" }, time: 1763337600000,
+    };
+    const allowed = await answer<Simulation>(await simulate(simulated), 200);
+    expect(allowed).toEqual({
+      allowed: true, decidedBy: 'update', clause: owners.update,
+      results: [{ rule: 'update', value: true }, ...owners.validate.map((_, index) => ({ rule: `validate[${index}]`, value: true }))],
+      columns: owners.columns, problems: [],
+    });
+    console.log('POST /rules:test allowed -> 200 ' + JSON.stringify(allowed));
+    const denied = await answer<Simulation>(await simulate({ ...simulated, auth: { ...simulated.auth, uid: 'someone-else' } }), 200);
+    expect(denied).toEqual({
+      allowed: false, decidedBy: 'update', clause: owners.update, results: [{ rule: 'update', value: false }], columns: owners.columns, problems: [],
+    });
+    console.log('POST /rules:test denied -> 200 ' + JSON.stringify(denied));
+    console.log('rules simulator request: ' + JSON.stringify(simulated));
+
+    const validation = await answer<Simulation>(await simulate({ ...simulated, new: { title: '' } }), 200);
+    expect(validation).toMatchObject({ allowed: false, decidedBy: 'validate[0]', clause: owners.validate[0] });
+    const stamped = {
+      tables: { [table]: { ...owners, update: owners.update + ' AND new.secret = request.time', set: { ...owners.set, update: { secret: 'request.time' } } } },
+    };
+    expect((await answer<Simulation>(await simulate({ ...simulated, rules: stamped }), 200)).allowed).toBe(true);
+    expect((await answer<Simulation>(await simulate({ ...simulated, operation: 'create', new: { title: 'created', done: 0 } }), 200)).allowed).toBe(true);
+    const readable = await answer<Simulation>(await simulate({ ...simulated, operation: 'read', auth: { uid: 'another-user', claims: { roles: ['admin'] } } }), 200);
+    expect(readable).toMatchObject({ allowed: true, columns: owners.columns });
+    expect((await answer<Simulation>(await simulate({ ...simulated, operation: 'read', auth: { uid: 'another-user', claims: { roles: 'admin' } } }), 200)).allowed).toBe(false);
+    const unwritable = await answer<Simulation>(await simulate({ ...simulated, new: { owner_id: subject } }), 200);
+    expect(unwritable).toMatchObject({ allowed: false, decidedBy: 'writable', clause: 'owner_id' });
+
+    const problem = await answer<Simulation>(await simulate({ ...simulated, rules: { tables: { [table]: { update: 'new.missing = 1' } } } }), 200);
+    expect(problem).toMatchObject({ allowed: false, results: [], problems: [{ table, field: 'update', code: 'unknown_column', message: expect.any(String) }] });
+    console.log('POST /rules:test draft problem -> 200 ' + JSON.stringify(problem));
+
+    const signedIn = await signInToken(page.request, 'rules-simulator-owner');
+    const createdKey = await request.post(`${auth}/v1/terrascale/organizations/${current.organizationId}/projects/${current.projectId}/api-keys`, {
+      headers: { authorization: 'Bearer ' + signedIn }, data: { name: 'Rules simulator mint', scopes: ['auth:tokens:mint'] },
+    });
+    const mintKey = (await answer<{ key: string }>(createdKey, 201)).key;
+    saveSecret('rules-simulator-mint-key', mintKey);
+    const minted = await request.post(`${auth}/v1/terrascale/projects/${current.projectId}/end-user-tokens`, {
+      headers: { authorization: 'Bearer ' + mintKey }, data: { user_id: subject },
+    });
+    const endUser = (await answer<{ access_token: string }>(minted, 200)).access_token;
+    saveSecret('rules-simulator-end-user', endUser);
+    expect((await simulate(simulated, endUser)).status()).toBe(403);
+    console.log('POST /rules:test end-user token -> 403');
+    const count = await request.post(database + '/sql/execute', { headers: headers(), data: { statements: [{ sql: `SELECT count(*) AS total FROM ${table}` }] } });
+    expect((await answer<{ results: { rows: number[][] }[] }>(count, 200)).results[0].rows).toEqual([[0]]);
 
     const versions = await answer<{ items: { version: string; digest: string }[]; next: string | null }>(await get('/versions?limit=1'), 200);
     expect(versions.items.map(item => item.version)).toEqual([second.version]);
