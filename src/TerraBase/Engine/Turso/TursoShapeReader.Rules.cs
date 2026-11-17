@@ -107,6 +107,7 @@ internal sealed partial class TursoShapeReader : IRulesSchema
 
         var command = TableCommand($"PRAGMA table_xinfo({Quote(table)});");
         List<string> columns = [];
+        List<(string Name, string Type)> keys = [];
         CountRead("shape");
         using var reader = command.ExecuteReader();
         while (reader.Read())
@@ -115,9 +116,15 @@ internal sealed partial class TursoShapeReader : IRulesSchema
             {
                 columns.Add(reader.GetString(1));
             }
+
+            if (reader.GetInt64(5) > 0)
+            {
+                keys.Add((reader.GetString(1), reader.IsDBNull(2) ? "" : reader.GetString(2)));
+            }
         }
 
-        return new RulesTableSchema(ShapeTableStatus.Current, columns);
+        var rowId = keys is [var key] && string.Equals(key.Type, "INTEGER", StringComparison.OrdinalIgnoreCase) ? key.Name : null;
+        return new RulesTableSchema(ShapeTableStatus.Current, columns, rowId);
     }
 
     public bool Runs(RulesTableSchema table, CompiledCondition condition)

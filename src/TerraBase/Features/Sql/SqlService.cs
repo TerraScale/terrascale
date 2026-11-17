@@ -559,14 +559,86 @@ internal sealed class SqlSession(
         }
     }
 
-    private async ValueTask<SqlError?> AllowedAsync(SqlStatementPlan plan, CancellationToken cancellationToken)
+    internal async ValueTask<SqlError?> WriteAsync(
+        Func<IStorageTransaction, TimeSpan, CancellationToken, ValueTask<IReadOnlyList<string>?>> work, CancellationToken cancellationToken)
     {
-        MeteredOperation? metered = plan.Kind switch
+        ArgumentNullException.ThrowIfNull(work);
+        _ = await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (!canWrite || _inTransaction)
+            {
+                throw new InvalidOperationException("row writes run in their own write session");
+            }
+
+            if (await AllowedAsync(MeteredOperation.Write, cancellationToken).ConfigureAwait(false) is { } capped)
+            {
+                return capped;
+            }
+
+            var (transaction, lease, failed) = await OpenAsync(write: true, cancellationToken).ConfigureAwait(false);
+            if (transaction is null)
+            {
+                return failed;
+            }
+
+            using (lease)
+            {
+                await using (transaction.ConfigureAwait(false))
+                {
+                    long baseline;
+                    IReadOnlyList<string>? written;
+                    Volatile.Write(ref _running, transaction);
+                    try
+                    {
+                        baseline = await ChargedAsync(() => transaction.MeasureSqlStorageAsync(cancellationToken)).ConfigureAwait(false);
+                        written = await ChargedAsync(() => work(transaction, StatementTimeout(), cancellationToken)).ConfigureAwait(false);
+                    }
+                    catch (SqlStatementException error)
+                    {
+                        return error.Failure is Interrupted && RequestExpired ? SqlErrors.Deadline : Map(error);
+                    }
+                    catch (Exception error) when (Failure(error) is { } failure)
+                    {
+                        return failure;
+                    }
+                    finally
+                    {
+                        Volatile.Write(ref _running, null);
+                    }
+
+                    if (written is null)
+                    {
+                        return null;
+                    }
+
+                    var tally = new Tally();
+                    foreach (var kind in written)
+                    {
+                        tally.Add(kind);
+                    }
+
+                    return await CommitAsync(transaction, lease, tally, baseline, cancellationToken).ConfigureAwait(false);
+                }
+            }
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private ValueTask<SqlError?> AllowedAsync(SqlStatementPlan plan, CancellationToken cancellationToken) =>
+        AllowedAsync(plan.Kind switch
         {
             SqlStatementKind.Write => MeteredOperation.Write,
             SqlStatementKind.Read when plan.ReadsTables => MeteredOperation.SqlRead,
-            _ => null,
-        };
+            _ => (MeteredOperation?)null,
+        }, cancellationToken);
+
+    private async ValueTask<SqlError?> AllowedAsync(MeteredOperation? metered, CancellationToken cancellationToken)
+    {
         if (metered is not { } operation)
         {
             return null;
@@ -1187,6 +1259,14 @@ internal sealed class SqlSession(
             Rows = snapshot.Rows;
             Wrote = snapshot.Wrote;
             Operations = new Dictionary<string, int>(snapshot.Operations, StringComparer.Ordinal);
+        }
+
+        public void Add(string kind)
+        {
+            Rows++;
+            Work++;
+            Wrote = true;
+            Operations[kind] = Operations.GetValueOrDefault(kind) + 1;
         }
 
         public void Add(SqlStatementPlan plan, SqlStatementResult result)

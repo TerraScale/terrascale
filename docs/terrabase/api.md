@@ -32,6 +32,26 @@ SQL requires `sql:read`; writes and DDL also require `sql:write`. End-user token
 schema and answers `400 invalid_rules` with every problem in `details.problems`; `PUT` and restore run in the home region
 and answer `421 wrong_region` elsewhere.
 
+## Rows
+
+| Method | Suffix | Scope | Contract |
+|---|---|---|---|
+| POST | `/tables/{table}/rows` | `sql:write` | `{"row":{…}}`; `201 {"key","row"}` |
+| PATCH | `/tables/{table}/rows/{key}` | `sql:write` | `{"row":{…}}` with the columns to change; `200 {"key","row"}` |
+| DELETE | `/tables/{table}/rows/{key}` | `sql:write` | `204` |
+| POST | `/rows:batch` | `sql:write` | `{"operations":[…]}`, 1 to 100, one transaction; `200 {"results":[…]}` |
+
+`key` is the row id. Values are null, numbers, booleans (1 or 0), strings and `{"base64":"…"}` blobs, in a UTF-8 JSON body of
+at most 1 MiB. Creates use `INSERT OR ABORT` and updates `UPDATE OR ABORT`, never an upsert or replace. A tenant end user is
+checked by the database's [rules](rules.md) section 5.2 in the home write transaction, and the answer's `row` is cut to the
+rule's `columns`, or `null` when `read` is false for it; project credentials write every row and column and receive the whole
+row. A region holding a replica forwards the write to the home; any other region answers `421 wrong_region` with nothing
+applied. Errors are `{"error":{"code","message","details"}}`: `400 unknown_column`, `constraint_failed`, `validation_failed`
+(`details.clause`) or `invalid_request`; `403 rule_denied` (`details.operation`, `details.table`), `column_not_writable`
+(`details.column`) or `rules_invalid`; `404 row_not_found`, `unknown_table` or `unknown_database`; `409 row_exists`
+(`details.key` when the caller may read that row). A failed batch answers its first failing operation's error with
+`details.index` and applies nothing. Writes count against the monthly write allowance like SQL writes.
+
 ## Management
 
 [Management](management-api.md) owns database lifecycle, placement, backups, recovery and usage. Identity, organizations, projects and customer API credentials belong to ts-auth. Dashboard owns its UI, plans, subscriptions and billing. Each service calls the owning service's API.

@@ -243,6 +243,11 @@
       "operation": "getRestoreOperation"
     },
     {
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/rows:batch",
+      "operation": "batchRows"
+    },
+    {
       "method": "GET",
       "path": "/v1/projects/{project}/databases/{database}/rules",
       "operation": "getDatabaseRules"
@@ -296,6 +301,21 @@
       "method": "PUT",
       "path": "/v1/projects/{project}/databases/{database}/tables/{table}/read-grant",
       "operation": "putReadGrant"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/tables/{table}/rows",
+      "operation": "createRow"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/projects/{project}/databases/{database}/tables/{table}/rows/{key}",
+      "operation": "deleteRow"
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/projects/{project}/databases/{database}/tables/{table}/rows/{key}",
+      "operation": "updateRow"
     },
     {
       "method": "GET",

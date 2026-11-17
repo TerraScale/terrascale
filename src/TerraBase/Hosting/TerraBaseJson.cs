@@ -13,6 +13,7 @@ using TerraBase.Features.Platform;
 using TerraBase.Features.Pressure;
 using TerraBase.Features.Regions;
 using TerraBase.Features.Replicas;
+using TerraBase.Features.Rows;
 using TerraBase.Features.Rules;
 using TerraBase.Features.Shapes;
 using TerraBase.Features.Sql;
@@ -36,6 +37,7 @@ internal static class TerraBaseJson
         PressureJsonContext.Default,
         RegionsJsonContext.Default,
         ReplicasJsonContext.Default,
+        RowsJsonContext.Default,
         RulesJsonContext.Default,
         ShapesJsonContext.Default,
         SqlJsonContext.Default,

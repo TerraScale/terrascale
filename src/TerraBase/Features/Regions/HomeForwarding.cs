@@ -178,6 +178,11 @@ internal static class HomeForwarding
                 return await AuthorizedHomeAtAsync(shapeHome).ConfigureAwait(false);
             }
 
+            if (context.GetEndpoint()?.Metadata.GetMetadata<DatabaseRegions.HomeWrites>() is not null)
+            {
+                return null;
+            }
+
             if (database is not null
                 && await management.FindDatabaseRecordAsync(found, project, database, cancellationToken).ConfigureAwait(false) is ManagedDatabase routedDatabase
                 && (!routedDatabase.Placement(options.Region).PlacedIn(options.Region)
