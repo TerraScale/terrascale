@@ -17,6 +17,20 @@ TerraBase serves SQL databases under `/v1/projects/{project}/databases/{database
 
 SQL requires `sql:read`; writes and DDL also require `sql:write`. End-user tokens can read authorized shapes through [table read grants](shape-read-grants.md). They do not grant general SQL or management access.
 
+## Rules
+
+| Method | Suffix | Scope | Contract |
+|---|---|---|---|
+| GET | `/rules` | `databases:read` | The deployed rules with `ETag: "<version>"` and the current `problems`; `404 no_rules` |
+| PUT | `/rules` | `databases:write` | Deploys a whole rules set; needs `If-Match` or `If-None-Match: *` |
+| GET | `/rules/versions?after=&limit=` | `databases:read` | The last 100 versions, newest first |
+| GET | `/rules/versions/{version}` | `databases:read` | One version's rules; `404 unknown_version` |
+| POST | `/rules/versions/{version}/restore` | `databases:write` | Deploys that version's body as a new version |
+
+[Rules](rules.md) section 7 specifies the routes, preconditions and storage. A deploy compiles every condition against the current
+schema and answers `400 invalid_rules` with every problem in `details.problems`; `PUT` and restore run in the home region
+and answer `421 wrong_region` elsewhere.
+
 ## Management
 
 [Management](management-api.md) owns database lifecycle, placement, backups, recovery and usage. Identity, organizations, projects and customer API credentials belong to ts-auth. Dashboard owns its UI, plans, subscriptions and billing. Each service calls the owning service's API.

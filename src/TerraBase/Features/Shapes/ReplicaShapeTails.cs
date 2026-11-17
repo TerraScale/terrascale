@@ -8,7 +8,7 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Shapes;
 
-internal interface IReplicaShapeReader : IAsyncDisposable
+internal interface IReplicaShapeReader : IAsyncDisposable, Rules.IRulesStorage
 {
     ValueTask<LineageResult> ResolveAsync(string table, ShapeQuery query, CancellationToken cancellationToken);
 
@@ -45,6 +45,9 @@ internal sealed class ReplicaShapeTails(IDatabaseReplicas replicas, IMemoryBudge
                 : await reader.ResolveAsync(table, query, token).ConfigureAwait(false);
         }
     }
+
+    internal ValueTask<IReplicaShapeReader?> BeginReadAsync(TenantContext database, CancellationToken cancellationToken) =>
+        replicas.BeginShapeReadAsync(database, cancellationToken);
 
     internal async ValueTask<ShapeGrantRead> GrantAsync(TenantContext database, string table, CancellationToken cancellationToken)
     {
