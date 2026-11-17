@@ -11,6 +11,7 @@ import { test, home, project, name, json, removeDatabase } from '../../placement
 export function databaseFunctions(): void {
   for (const region of ['gru', 'fra']) for (const surface of ['REST', 'WebSocket', 'Postgres']) {
     test(`SQL functions through ${region} ${surface}`, async ({ cells }) => {
+      await publish('pro');
       const created = await json<{ id: string }>(await cells.post(home + project() + '/databases', {
         data: { name: name('db-functions'), regions: ['gru', 'fra'] },
       }), 201);
@@ -18,6 +19,7 @@ export function databaseFunctions(): void {
         await run('run.mjs', created.id, region, surface);
       } finally {
         await removeDatabase(cells, created.id);
+        await publish('hobby');
       }
     });
   }

@@ -29,8 +29,7 @@ export async function runManagement(state, target, executable) {
       process.stdout.write(JSON.stringify(results.at(-1)) + '\n');
       return true;
     } catch (error) {
-      const status = error.ddl && (error.code === 'serialization_conflict' || error.sqlstate === '40001') ? 'C34' : 'FAIL';
-      results.push({ target, region, surface, name, status, detail: (error.code ?? error.name) + ': ' + error.message.slice(0, 300) });
+      results.push({ target, region, surface, name, status: 'FAIL', detail: (error.code ?? error.name) + ': ' + error.message.slice(0, 300) });
       process.stdout.write(JSON.stringify(results.at(-1)) + '\n');
       return false;
     }
@@ -70,7 +69,7 @@ export async function runManagement(state, target, executable) {
       [['index', 'c35_recovery_index'], ['trigger', 'c35_recovery_trigger']]);
   };
   try {
-    const prepared = await check('recovery-source', async () => {
+    await check('recovery-source', async () => {
       await sql('CREATE TABLE c35_recovery(id INTEGER PRIMARY KEY,value TEXT NOT NULL)');
       await sql('CREATE TABLE c35_audit(value TEXT)');
       await sql('CREATE INDEX c35_recovery_index ON c35_recovery(value)');
@@ -78,7 +77,6 @@ export async function runManagement(state, target, executable) {
       await sql("CREATE TRIGGER c35_recovery_trigger AFTER UPDATE ON c35_recovery BEGIN INSERT INTO c35_audit VALUES(CASE WHEN new.value IS NOT NULL THEN new.value ELSE '' END); END");
       await sql("INSERT INTO c35_recovery VALUES(1,'before')");
     });
-    if (!prepared) return results;
     await check('fork-and-ttl', async () => {
       const copy = await request(home, source, '/branches', 'POST', { name: 'c35-fork-' + source.toLowerCase(), ttlSeconds: 3600 });
       copies.push(copy.id);
@@ -142,34 +140,32 @@ export async function runManagement(state, target, executable) {
       assert.equal(plan.historyCheck, 'metadata');
       assert(Date.parse(plan.snapshotAt) <= Date.parse(at));
     });
-    if (at) {
-      await check('pitr-restore-and-rewind', async () => {
-        await sql("UPDATE c35_recovery SET value='later'");
-        const operation = await request(home, source, '/point-in-time/restore', 'POST', { pointInTime: at, name: 'c35-pitr-' + source.toLowerCase() });
-        await matching(await completed(operation), 'before');
-        await matching(source, 'later');
-        const shapeUrl = origin(home) + root + source + '/tables/c35_recovery/shape';
-        const snapshot = await fetch(shapeUrl + '?offset=-1&where=id%20%3D%201&columns=id,value', {
-          headers: { authorization: 'Bearer ' + credential.token }, signal: AbortSignal.timeout(15000),
-        });
-        assert.equal(snapshot.status, 200);
-        const oldHandle = snapshot.headers.get('tb-shape-handle');
-        assert(oldHandle);
-        await snapshot.arrayBuffer();
-        const rewound = await request(home, source, '/point-in-time/rewind', 'POST', { pointInTime: at });
-        assert.equal(rewound.id, source);
-        const stale = await fetch(shapeUrl + '?offset=0&handle=' + oldHandle + '&where=id%20%3D%201&columns=id,value', {
-          headers: { authorization: 'Bearer ' + credential.token }, signal: AbortSignal.timeout(15000),
-        });
-        assert.equal(stale.status, 409);
-        assert.equal((await stale.json()).error.code, 'must_refetch');
-        assert.notEqual(stale.headers.get('tb-shape-handle'), oldHandle);
-        await matching(source, 'before');
-        assert.deepEqual(await sql('SELECT value FROM c35_audit'), []);
-        await sql("UPDATE c35_recovery SET value='rewound'");
-        assert.deepEqual(await sql('SELECT value FROM c35_audit'), [['rewound']]);
+    await check('pitr-restore-and-rewind', async () => {
+      await sql("UPDATE c35_recovery SET value='later'");
+      const operation = await request(home, source, '/point-in-time/restore', 'POST', { pointInTime: at, name: 'c35-pitr-' + source.toLowerCase() });
+      await matching(await completed(operation), 'before');
+      await matching(source, 'later');
+      const shapeUrl = origin(home) + root + source + '/tables/c35_recovery/shape';
+      const snapshot = await fetch(shapeUrl + '?offset=-1&where=id%20%3D%201&columns=id,value', {
+        headers: { authorization: 'Bearer ' + credential.token }, signal: AbortSignal.timeout(15000),
       });
-    }
+      assert.equal(snapshot.status, 200);
+      const oldHandle = snapshot.headers.get('tb-shape-handle');
+      assert(oldHandle);
+      await snapshot.arrayBuffer();
+      const rewound = await request(home, source, '/point-in-time/rewind', 'POST', { pointInTime: at });
+      assert.equal(rewound.id, source);
+      const stale = await fetch(shapeUrl + '?offset=0&handle=' + oldHandle + '&where=id%20%3D%201&columns=id,value', {
+        headers: { authorization: 'Bearer ' + credential.token }, signal: AbortSignal.timeout(15000),
+      });
+      assert.equal(stale.status, 409);
+      assert.equal((await stale.json()).error.code, 'must_refetch');
+      assert.notEqual(stale.headers.get('tb-shape-handle'), oldHandle);
+      await matching(source, 'before');
+      assert.deepEqual(await sql('SELECT value FROM c35_audit'), []);
+      await sql("UPDATE c35_recovery SET value='rewound'");
+      assert.deepEqual(await sql('SELECT value FROM c35_audit'), [['rewound']]);
+    });
     await check('shape-raw-bootstrap', async () => {
       const response = await fetch(origin(home) + root + source + '/tables/c35_recovery/shape?offset=-1&where=id%20%3D%201&columns=id,value', {
         headers: { authorization: 'Bearer ' + credential.token }, signal: AbortSignal.timeout(15000),
@@ -297,10 +293,10 @@ export async function runManagement(state, target, executable) {
     await client.close();
 
   }
-  process.stdout.write('| Target | Region | Surface | Pass | Fail | C34 |\n| --- | --- | --- | ---: | ---: | ---: |\n');
+  process.stdout.write('| Target | Region | Surface | Pass | Fail |\n| --- | --- | --- | ---: | ---: |\n');
   for (const region of [...new Set(results.map(cell => cell.region))]) for (const surface of ['Management', 'REST', 'WebSocket', 'Postgres', 'SDK', 'Operator']) {
     const cells = results.filter(cell => cell.region === region && cell.surface === surface);
-    if (cells.length) process.stdout.write(`| ${target} | ${region} | ${surface} | ${['PASS', 'FAIL', 'C34'].map(status => cells.filter(cell => cell.status === status).length).join(' | ')} |\n`);
+    if (cells.length) process.stdout.write(`| ${target} | ${region} | ${surface} | ${['PASS', 'FAIL'].map(status => cells.filter(cell => cell.status === status).length).join(' | ')} |\n`);
   }
   return results;
 }

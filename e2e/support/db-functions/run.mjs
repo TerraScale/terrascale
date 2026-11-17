@@ -40,8 +40,7 @@ export async function runMatrix(state, target, selection) {
       return true;
     } catch (error) {
       const code = error.code ?? error.sqlstate ?? error.name;
-      const status = error.ddl && (error.code === 'serialization_conflict' || error.sqlstate === '40001') ? 'C34' : 'FAIL';
-      record(region, surface, name, status, String(code) + ': ' + error.message.slice(0, 400));
+      record(region, surface, name, 'FAIL', String(code) + ': ' + error.message.slice(0, 400));
       return false;
     }
   };
@@ -60,20 +59,10 @@ export async function runMatrix(state, target, selection) {
       }
       try {
         for (const item of cases) {
-          if (surface === 'Postgres' && item.name === 'json-text-arrow') {
-            record(region, surface, item.name, 'C35b', 'upstream tokenizer; owned by C35b');
-            continue;
-          }
           let failure;
           let answer;
           try { answer = await client.execute([{ sql: item.sql, ...(item.args && { args: item.args }), ...(item.named && { named: item.named }) }]); }
           catch (error) { failure = error; }
-          if (/^(CREATE|ALTER|DROP) /.test(item.sql) && (failure?.code === 'serialization_conflict' || failure?.sqlstate === '40001')) {
-            record(region, surface, item.name, 'C34', failure.sqlstate);
-            const at = cases.indexOf(item);
-            for (const dependent of cases.slice(at + 1)) record(region, surface, dependent.name, 'C34', 'DDL prerequisite owned by C34');
-            break;
-          }
           await check(region, surface, item.name, async () => {
             if (item.error) {
               assert(failure, 'expected refusal');
@@ -86,41 +75,39 @@ export async function runMatrix(state, target, selection) {
           });
         }
         const t = prefix + '_transactions';
-        const prepared = await check(region, surface, 'transaction-table', () => client.execute([{ sql: `CREATE TABLE ${t}(id INTEGER PRIMARY KEY)` }]));
-        if (prepared) {
-          if (surface !== 'Postgres') {
-            await check(region, surface, 'batch-commit', async () => {
-              await client.execute([{ sql: `INSERT INTO ${t} VALUES(1)` }, { sql: `INSERT INTO ${t} VALUES(2)` }]);
-              assert.deepEqual(normalize((await client.execute([{ sql: `SELECT id FROM ${t} ORDER BY id` }]))[0].rows), [['1'], ['2']]);
-            });
-            await check(region, surface, 'refused-request-rolls-back', async () => {
-              await assert.rejects(client.execute([{ sql: `INSERT INTO ${t} VALUES(3)` }, { sql: "ATTACH DATABASE ':memory:' AS other" }]));
-              assert.deepEqual(normalize((await client.execute([{ sql: `SELECT count(*) FROM ${t} WHERE id=3` }]))[0].rows), [['0']]);
-            });
-          }
-          if (client.control) {
-            for (const end of ['commit', 'rollback']) await check(region, surface, 'transaction-' + end, async () => {
-              await client.control('begin');
-              await client.execute([{ sql: `INSERT INTO ${t} VALUES(10)` }]);
-              await client.control(end);
-              assert.deepEqual(normalize((await client.execute([{ sql: `SELECT count(*) FROM ${t} WHERE id=10` }]))[0].rows), [[end === 'commit' ? '1' : '0']]);
-              await client.execute([{ sql: `DELETE FROM ${t} WHERE id=10` }]);
-            });
-          }
-          await check(region, surface, 'read-only-refusal', async () => {
-            const readonly = await transport(surface, region, state.projectId, state.databaseId, read, ports);
-            try {
-              await readonly.execute([{ sql: 'SELECT 1' }]);
-              await assert.rejects(readonly.execute([{ sql: `INSERT INTO ${t} VALUES(99)` }]), error => {
-                assert.equal(error.sqlstate, '42501');
-                if (surface !== 'Postgres') assert.equal(error.code, 'forbidden_scope');
-                if (surface === 'REST') assert.equal(error.status, 403);
-                return true;
-              });
-              assert.deepEqual(normalize((await client.execute([{ sql: `SELECT count(*) FROM ${t} WHERE id=99` }]))[0].rows), [['0']]);
-            } finally { await readonly.close(); }
+        await check(region, surface, 'transaction-table', () => client.execute([{ sql: `CREATE TABLE ${t}(id INTEGER PRIMARY KEY)` }]));
+        if (surface !== 'Postgres') {
+          await check(region, surface, 'batch-commit', async () => {
+            await client.execute([{ sql: `INSERT INTO ${t} VALUES(1)` }, { sql: `INSERT INTO ${t} VALUES(2)` }]);
+            assert.deepEqual(normalize((await client.execute([{ sql: `SELECT id FROM ${t} ORDER BY id` }]))[0].rows), [['1'], ['2']]);
+          });
+          await check(region, surface, 'refused-request-rolls-back', async () => {
+            await assert.rejects(client.execute([{ sql: `INSERT INTO ${t} VALUES(3)` }, { sql: "ATTACH DATABASE ':memory:' AS other" }]));
+            assert.deepEqual(normalize((await client.execute([{ sql: `SELECT count(*) FROM ${t} WHERE id=3` }]))[0].rows), [['0']]);
           });
         }
+        if (client.control) {
+          for (const end of ['commit', 'rollback']) await check(region, surface, 'transaction-' + end, async () => {
+            await client.control('begin');
+            await client.execute([{ sql: `INSERT INTO ${t} VALUES(10)` }]);
+            await client.control(end);
+            assert.deepEqual(normalize((await client.execute([{ sql: `SELECT count(*) FROM ${t} WHERE id=10` }]))[0].rows), [[end === 'commit' ? '1' : '0']]);
+            await client.execute([{ sql: `DELETE FROM ${t} WHERE id=10` }]);
+          });
+        }
+        await check(region, surface, 'read-only-refusal', async () => {
+          const readonly = await transport(surface, region, state.projectId, state.databaseId, read, ports);
+          try {
+            await readonly.execute([{ sql: 'SELECT 1' }]);
+            await assert.rejects(readonly.execute([{ sql: `INSERT INTO ${t} VALUES(99)` }]), error => {
+              assert.equal(error.sqlstate, '42501');
+              if (surface !== 'Postgres') assert.equal(error.code, 'forbidden_scope');
+              if (surface === 'REST') assert.equal(error.status, 403);
+              return true;
+            });
+            assert.deepEqual(normalize((await client.execute([{ sql: `SELECT count(*) FROM ${t} WHERE id=99` }]))[0].rows), [['0']]);
+          } finally { await readonly.close(); }
+        });
         await advanced(client, surface, prefix, (name, action) => check(region, surface, name, action));
         if (surface === 'Postgres') await binaryParameters(client, (name, action) => check(region, surface, name, action));
         await requestLimits(() => transport(surface, region, state.projectId, state.databaseId, credential, ports),
@@ -142,10 +129,10 @@ export async function runMatrix(state, target, selection) {
     assert.match(dump, /COMMIT/);
     });
   }
-  process.stdout.write('| Target | Region | Surface | Pass | Fail | C34 | C35b | Blocked |\n| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |\n');
+  process.stdout.write('| Target | Region | Surface | Pass | Fail | Blocked |\n| --- | --- | --- | ---: | ---: | ---: |\n');
   for (const region of regions) for (const surface of [...surfaces, 'SDK']) {
     const cells = results.filter(cell => cell.region === region && cell.surface === surface);
-    if (cells.length) process.stdout.write(`| ${target} | ${region} | ${surface} | ${['PASS', 'FAIL', 'C34', 'C35b', 'BLOCKED'].map(status => cells.filter(cell => cell.status === status).length).join(' | ')} |\n`);
+    if (cells.length) process.stdout.write(`| ${target} | ${region} | ${surface} | ${['PASS', 'FAIL', 'BLOCKED'].map(status => cells.filter(cell => cell.status === status).length).join(' | ')} |\n`);
   }
   return results;
 }

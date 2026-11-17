@@ -315,6 +315,9 @@ internal static partial class PostgresStatements
         }
     }
 
+    public static bool NeedsParameterSchema(PgStatement statement) =>
+        new Tokenizer().Tokenize(statement.Text, Dialect).Any(token => token is Word { QuoteStyle: null, Keyword: Keyword.FROM or Keyword.JOIN or Keyword.INTO or Keyword.UPDATE });
+
     public static void InferParameters(PgStatement statement, int[] oids, IReadOnlyList<SqlTableInfo> tables)
     {
         var tokens = new Tokenizer().Tokenize(statement.Text, Dialect).Where(token => token is not Whitespace).ToList();

@@ -21,7 +21,7 @@ function cli(args, json = true) {
   if (result.error || result.status !== 0) {
     const code = /\b(serialization_conflict|quota_exceeded|forbidden_scope|invalid_key|key_expired|plan_unpublished|replica_not_ready)\b/.exec(result.stderr ?? '')?.[1];
     throw Object.assign(new Error('operator CLI failed: ' + args[0] + ' ' + (args[1] ?? '')), {
-      code: code ?? 'operator_cli', status: result.status, ddl: args[0] === 'sql' && /^(CREATE|ALTER|DROP) /.test(args[2]),
+      code: code ?? 'operator_cli', status: result.status,
     });
   }
   return json && result.stdout.trim() ? JSON.parse(result.stdout) : result.stdout;
@@ -33,7 +33,7 @@ async function check(name, action) {
     rows.push({ name, status: 'PASS' });
     return true;
   } catch (error) {
-    rows.push({ name, status: error.code === 'serialization_conflict' && error.ddl ? 'C34' : 'FAIL', code: error.code ?? error.name });
+    rows.push({ name, status: 'FAIL', code: error.code ?? error.name });
     return false;
   }
 }
@@ -75,7 +75,7 @@ try {
   if (cleaned) rmSync(directory, { recursive: true });
   else process.stderr.write('cleanup journal: ' + join(directory, 'cleanup.json') + '\n');
   for (const row of rows) process.stdout.write(JSON.stringify({ target: 'production', surface: 'operator', ...row }) + '\n');
-  process.stdout.write('| Target | Surface | Pass | Fail | C34 | Blocked |\n| --- | --- | ---: | ---: | ---: | ---: |\n');
-  process.stdout.write('| production | operator | ' + ['PASS', 'FAIL', 'C34', 'BLOCKED'].map(status => rows.filter(row => row.status === status).length).join(' | ') + ' |\n');
+  process.stdout.write('| Target | Surface | Pass | Fail | Blocked |\n| --- | --- | ---: | ---: | ---: |\n');
+  process.stdout.write('| production | operator | ' + ['PASS', 'FAIL', 'BLOCKED'].map(status => rows.filter(row => row.status === status).length).join(' | ') + ' |\n');
   if (rows.some(row => row.status !== 'PASS')) process.exitCode = 1;
 }

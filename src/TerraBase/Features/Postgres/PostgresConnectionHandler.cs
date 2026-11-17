@@ -768,7 +768,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 var parsedStatement = parsed is [var single] ? single : new PgStatement(PgKind.Empty, "", "", 0);
                 oids.AddRange(Enumerable.Repeat(0, Math.Max(0, parsedStatement.Parameters - oids.Count)));
                 var prepared = new Prepared(parsedStatement, [.. oids]);
-                if (parsedStatement.Kind == PgKind.Sql && Array.Exists(prepared.Oids, oid => oid == 0))
+                if (parsedStatement.Kind == PgKind.Sql && Array.Exists(prepared.Oids, oid => oid == 0) && PostgresStatements.NeedsParameterSchema(parsedStatement))
                 {
                     if (await GuardAsync(session, async (_, token) =>
                     {

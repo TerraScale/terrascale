@@ -23,7 +23,7 @@ export async function transport(surface, region, project, database, credential, 
         body: JSON.stringify({ statements }), signal: AbortSignal.timeout(30000), redirect: 'error',
       });
       const body = await response.json();
-      if (body.error) throw Object.assign(new Error('SQL response'), body.error, { status: response.status, ddl: statements.some(item => /^(CREATE|ALTER|DROP) /i.test(item.sql)) });
+      if (body.error) throw Object.assign(new Error('SQL response'), body.error, { status: response.status });
       if (!response.ok || !Array.isArray(body.results)) throw new Error('SQL response HTTP ' + response.status);
       return Object.assign(body.results, { region: response.headers.get('x-terrabase-region'), route: response.headers.get('terrascale-write-route') });
     },
@@ -63,7 +63,7 @@ export async function transport(surface, region, project, database, credential, 
       socket.close();
       throw error;
     }
-    return { execute: statements => send('execute', { statements }).catch(error => { throw Object.assign(error, { ddl: statements.some(item => /^(CREATE|ALTER|DROP) /i.test(item.sql)) }); }), control: type => send(type), close: async () => { socket.close(); } };
+    return { execute: statements => send('execute', { statements }), control: type => send(type), close: async () => { socket.close(); } };
   }
   const { default: pg } = await import('pg');
   const address = ports ? { address: '127.0.0.1' } : await lookup(region + '.api.terrascale.tech', { family: 4 });
@@ -93,10 +93,31 @@ export async function transport(surface, region, project, database, credential, 
         const result = await client.query({ text: sql, values, types, rowMode: 'array' });
         for (const part of Array.isArray(result) ? result : [result]) results.push({ rows: part.rows });
       } catch (error) {
-        throw Object.assign(new Error(error.message), { sqlstate: error.code, ddl: /^(CREATE|ALTER|DROP) /i.test(statement.sql) });
+        throw Object.assign(new Error(error.message), { sqlstate: error.code });
       }
     }
     return results;
   };
-  return { execute, control: type => execute([{ sql: type.toUpperCase() }]), close: async () => { await client.end(); if (broken) throw Object.assign(new Error(broken.message), { sqlstate: broken.code }); }, address: address.address };
+  const describeBind = (name, text, values) => new Promise((resolve, reject) => {
+    let oids;
+    const parameters = message => { oids = message.dataTypeIDs; };
+    const query = new pg.Query({ name, text, values, types: [0], rowMode: 'array' }, undefined, (error, result) => {
+      client.connection.removeListener('parameterDescription', parameters);
+      if (error) reject(Object.assign(new Error(error.message), { sqlstate: error.code }));
+      else resolve({ oids, rows: result.rows });
+    });
+    query.prepare = connection => {
+      if (!query.hasBeenParsed(connection)) {
+        connection.parse({ name, text, types: [0] });
+        connection.submittedNamedStatements[name] = text;
+      }
+      connection.describe({ type: 'S', name });
+      connection.bind({ statement: name, values });
+      connection.execute({ portal: '', rows: 0 });
+      connection.sync();
+    };
+    client.connection.on('parameterDescription', parameters);
+    client.query(query);
+  });
+  return { execute, describeBind, control: type => execute([{ sql: type.toUpperCase() }]), close: async () => { await client.end(); if (broken) throw Object.assign(new Error(broken.message), { sqlstate: broken.code }); }, address: address.address };
 }

@@ -1,6 +1,6 @@
 # C35 database function matrix
 
-This is a capability inventory and a repeatable database journey. A generated table reports executed assertions, not a declaration that production is healthy. `C34` identifies a DDL serialization conflict; its dependent assertions carry the same owner. PostgreSQL json-text-arrow cells belong to C35b and do not run here. No request is retried by the raw SQL transports. REST corpus reads use `TerraScale-Write: home` because independent replica reads are eventually consistent; WebSocket and PostgreSQL sessions exercise their read-your-writes contract.
+This is a capability inventory and a repeatable database journey. A generated table reports executed assertions, not a declaration that production is healthy. Every SQL cell runs, including PostgreSQL json-text-arrow. Every unexpected error is FAIL, including DDL serialization conflicts; later cells continue running and any FAIL or BLOCKED cell makes the process fail. There are no passing ownership exclusions. No request is retried by the raw SQL transports. REST corpus reads use `TerraScale-Write: home` because independent replica reads are eventually consistent; WebSocket and PostgreSQL sessions exercise their read-your-writes contract.
 
 ## Run
 
@@ -16,7 +16,7 @@ bash env/local.sh exec npx playwright test placement/write-guarantees.spec.ts --
 bash env/local.sh stop
 ```
 
-On NixOS wrap the commands with `nix shell nixpkgs#nss.tools nixpkgs#postgresql -c`. The placement fixture owns the scratch database and the setup/close projects own its scratch account. The runner takes credentials only on stdin and registers generated local secrets with the journey scrubber. Local Postgres connections use the journey's registered listener ports; production connections use TLS with certificate verification.
+On NixOS wrap the commands with `nix shell nixpkgs#nss.tools nixpkgs#postgresql -c`. The local fixture publishes its scratch organization's Pro request budget for each SQL lane and restores Hobby afterward; production requires an existing Pro organization. The placement fixture owns the scratch database and the setup/close projects own its scratch account. The runner takes credentials only on stdin and registers generated local secrets with the journey scrubber. Local Postgres connections use the journey's registered listener ports; production connections use TLS with certificate verification.
 
 After operator sign-in, `node e2e/support/db-functions/production.mjs` creates its own uniquely named scratch project, three-region database and read-write key. It runs the SQL matrix, runs the management, fork, recovery, shape, export/import and replication corpus, compares the recovered data and deletes all databases in its own project before deleting that project. It captures CLI secrets in memory. A cleanup failure leaves a private journal containing only the project and organization IDs. An optional positional argument selects a CLI executable built from this checkout when the installed CLI is older.
 
@@ -58,7 +58,7 @@ SQL corpus cases are in `cases.mjs` and `advanced.mjs`; management, recovery, sh
 
 ## Evidence still required
 
-No production SQL assertion has run yet: the pool hosts lack a signed-in operator CLI. COS is arranging sign-in on delta. Production database lifecycle, ingress identity, post-deploy qualification and final scratch-data cleanup receipts must be completed before this work can leave draft.
+No production SQL assertion has run yet: the pool hosts lack a signed-in operator CLI. COS is arranging sign-in on delta. Production database lifecycle, ingress identity, post-deploy qualification and final scratch-data cleanup receipts run in this thread after merge and release, once operator sign-in is available.
 
 ## Reproduced roots
 
@@ -66,10 +66,14 @@ PostgreSQL trigger splitting treated every semicolon as a statement boundary, in
 
 PostgreSQL inferred parameter OIDs only in Describe. Drivers that send Parse/Bind/Describe(portal)/Execute therefore decoded a binary blob as untyped text. Inference now runs during Parse, before Bind, and the journey verifies every stored parameter type and the blob bytes. The earlier two-region run exposed a separate fra root: `ListTablesAsync` opens a separate replica snapshot without the session position, so it can miss the table just created by that session. The session metadata reader now uses the session position or its existing transaction without opening a user transaction. Both fra parameter cells pass, as do metadata reads before the first user write and inside uncommitted DDL.
 
-SQL JSON `->>` still fails on PostgreSQL. SqlParserCS 0.6.5's upstream `Tokenizer.TokenizeLongArrow` advances past the operator, then `ConsumeForBinOp` advances again, consuming the following character. With a directly adjacent quoted JSON path, the producer reports an unterminated string. The package has no newer stable release. COS assigned the source/import and upstream fix to C35b. The PostgreSQL cells are marked C35b; the parser is unchanged here.
+SQL JSON `->>` still fails on PostgreSQL. SqlParserCS 0.6.5's upstream `Tokenizer.TokenizeLongArrow` advances past the operator, then `ConsumeForBinOp` advances again, consuming the following character. With a directly adjacent quoted JSON path, the producer reports an unterminated string. The package has no newer stable release. COS assigned the source/import and upstream fix to C35b. The PostgreSQL cells now execute and fail until C35b lands; the parser is unchanged here.
 
 CLI export/import had three roots: API-key dispatch bypassed export/import, exported BEGIN/COMMIT conflicted with the REST batch transaction, and statement splitting broke trigger bodies. Shared dispatch, a validated dump envelope and the existing schema tokenizer now preserve the complete round trip.
 
 Rewind treated commit_offset as user data, replacing the target incarnation with the recovery database incarnation while keeping the target store identity. It also bypassed commit notification, retaining cached shape lineage. Rewind now preserves the target counter, atomically renews the incarnation and publishes the commit; the journey checks stale-handle rejection and fresh snapshot/live data.
 
-Local SQL evidence: 542 assertions passed across gru/fra REST, WebSocket, PostgreSQL and the JS SDK; two PostgreSQL JSON cells are C35b. The management/recovery corpus adds 16 passing assertions, including rewind shape invalidation and fresh live data. Production evidence remains pending.
+Historical head 6d0f237 recorded 542 SQL passes and two nonexecuted JSON ownership cells. Review round 1 removes those exclusions; use the current receipts and PR table for executable pass/fail counts. The management/recovery corpus adds 16 passing assertions, including rewind shape invalidation and fresh live data. Production evidence remains pending.
+
+Review coverage includes supported pg_catalog table/column introspection, uncommitted DDL visibility and rollback, an explicit 0A000 refusal for unsupported information_schema.columns, Parse/Describe(statement)/binary Bind/Execute with named-statement reuse, and simple-query trigger bodies with quoted semicolons and line/block comments followed by additional statements. PgCatalog.Answer intentionally supports psql's catalog queries, not arbitrary information_schema SQL.
+
+The PostgreSQL lane also reports three latency samples for parameterized scalar reads inside home-routed transactions with 200 tables. Such statements now avoid schema lookup because they have no table reference; table-dependent inference remains session-consistent. Replica reader connections set foreign_keys=ON before query_only so their documented PRAGMA agrees with enforced write semantics.

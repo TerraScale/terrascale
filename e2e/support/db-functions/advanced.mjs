@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 
 const rows = result => result[0].rows.map(row => row.map(value => value === null ? null : String(value)));
 const refused = (action, sqlstate) => assert.rejects(action, error => {
-  assert.equal(error.sqlstate, sqlstate);
+  assert.equal(error.sqlstate, sqlstate, 'observed ' + (error.code ?? error.name) + ': ' + error.message);
   return true;
 });
 
@@ -87,6 +87,60 @@ export async function advanced(client, surface, prefix, check) {
   }
   if (client.control) {
     if (surface === 'Postgres') {
+      await check('catalog-columns', async () => {
+        const listed = rows(await execute(`SELECT c.oid, n.nspname, c.relname FROM pg_catalog.pg_class c WHERE c.relname = '${t}'`));
+        const table = listed.find(row => row[2] === t);
+        assert(table);
+        const columns = rows(await execute(`SELECT a.attname, pg_catalog.format_type(a.atttypid,a.atttypmod) FROM pg_catalog.pg_attribute a WHERE a.attrelid = '${table[0]}'`));
+        assert.deepEqual(columns.map(row => row.slice(0, 2)), [['id', 'integer']]);
+      });
+      await check('information-schema-refusal', () => refused(execute(`SELECT column_name FROM information_schema.columns WHERE table_name = '${t}'`), '0A000'));
+      await check('catalog-uncommitted-schema-and-rollback', async () => {
+        const table = prefix + '_catalog';
+        const catalog = () => execute(`SELECT c.oid, n.nspname, c.relname FROM pg_catalog.pg_class c WHERE c.relname = '${table}'`);
+        await client.control('begin');
+        try {
+          await execute(`CREATE TABLE ${table}(payload BLOB)`);
+          assert(rows(await catalog()).some(row => row[2] === table));
+        } finally { await client.control('rollback'); }
+        assert(!rows(await catalog()).some(row => row[2] === table));
+      });
+      await check('describe-statement-before-binary-bind-and-reuse', async () => {
+        const table = prefix + '_describe';
+        await execute(`CREATE TABLE ${table}(payload BLOB)`);
+        const sql = `INSERT INTO ${table}(payload) VALUES($1)`;
+        for (const bytes of [Buffer.from([0, 255]), Buffer.from([1, 254])]) {
+          const answer = await client.describeBind('c35_described_blob', sql, [bytes]);
+          assert.deepEqual(answer.oids, [17]);
+        }
+        assert.deepEqual(rows(await execute(`SELECT hex(payload) FROM ${table} ORDER BY rowid`)), [['00FF'], ['01FE']]);
+      });
+      await check('trigger-quoted-semicolons-comments-and-trailing-statements', async () => {
+        const source = prefix + '_trigger_source';
+        const audit = prefix + '_trigger_strings';
+        await execute(`CREATE TABLE ${source}(id INTEGER PRIMARY KEY)`);
+        await execute(`CREATE TABLE ${audit}(value TEXT)`);
+        const blockComment = String.fromCharCode(47, 42) + ' ; ' + String.fromCharCode(42, 47);
+        const lineComment = String.fromCharCode(45, 45) + ' ;\n';
+        await execute(`CREATE TRIGGER ${prefix}_strings AFTER INSERT ON ${source} BEGIN INSERT INTO ${audit} VALUES('x;y'); ${blockComment} ${lineComment} INSERT INTO ${audit} VALUES('a'';b'); END; INSERT INTO ${source} VALUES(1); INSERT INTO ${source} VALUES(2)`);
+        assert.deepEqual(rows(await execute(`SELECT value FROM ${audit} ORDER BY rowid`)), [['x;y'], ["a';b"], ['x;y'], ["a';b"]]);
+        assert.deepEqual(rows(await execute(`SELECT id FROM ${source} ORDER BY id`)), [['1'], ['2']]);
+      });
+      await check('parameter-metadata-latency', async () => {
+        await execute(Array.from({ length: 200 }, (_, i) => `CREATE TABLE ${prefix}_latency_${i}(value INTEGER)`).join(';'));
+        await execute('SET terrascale.write=home');
+        try {
+          for (let sample = 0; sample < 3; sample++) {
+            await client.control('begin');
+            try {
+              await execute(`SELECT count(*) FROM ${t}`);
+              const started = performance.now();
+              for (let i = 0; i < 10; i++) assert.deepEqual(rows(await execute('SELECT ?', [i])), [[String(i)]]);
+              process.stdout.write(JSON.stringify({ surface, stage: 'parameter-metadata-latency', tables: 200, sample, millisecondsPerQuery: (performance.now() - started) / 10 }) + '\n');
+            } finally { await client.control('rollback'); }
+          }
+        } finally { await execute('SET terrascale.write=auto'); }
+      });
       await check('metadata-does-not-promote-transaction', async () => {
         await client.control('begin');
         await execute(`INSERT INTO ${t} VALUES(?)`, [21]);
@@ -127,7 +181,7 @@ export async function advanced(client, surface, prefix, check) {
     }
   }
   await check('work-budget', () => refused(execute('WITH RECURSIVE r(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM r WHERE x<1000000000) SELECT SUM(x) FROM r'), '57014'));
-  assert.deepEqual(rows(await execute('SELECT 1')), [['1']]);
+  await check('work-budget-recovery', async () => { assert.deepEqual(rows(await execute('SELECT 1')), [['1']]); });
 }
 
 export async function binaryParameters(client, check) {
