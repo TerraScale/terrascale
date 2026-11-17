@@ -25,7 +25,8 @@ internal sealed class TenantKeys(TerraBaseOptions options, IHttpClientFactory ht
     public static string Issuer(TerraBaseOptions options, string project) =>
         new Uri(options.AuthIssuer ?? throw new InvalidOperationException("auth-issuer is not configured")).GetLeftPart(UriPartial.Authority) + "/" + project;
 
-    public static string Audience(string project) => TerraBaseOptions.PlatformAuthAudience + "/v1/projects/" + project;
+    public static IReadOnlyList<string> Audiences(TerraBaseOptions options, string project) =>
+        [.. options.AuthAudiences.Select(audience => audience + "/v1/projects/" + project)];
 
     public static string? ProjectOf(TerraBaseOptions options, string? issuer)
     {

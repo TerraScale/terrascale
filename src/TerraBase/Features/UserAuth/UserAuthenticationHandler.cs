@@ -44,7 +44,7 @@ internal sealed class UserAuthenticationHandler(
     private static readonly string[] TenantTypes = ["at+jwt"];
 
     private static readonly string[] TenantRefusedClaims =
-        ["scope", "project_id", "instance_id", Platform.PlatformExplore.RoleClaim, "key_id", "key_gen", .. IpAllowlists.Claims];
+        ["scope", "project_id", "instance_id", "token_kind", Platform.PlatformExplore.RoleClaim, "key_id", "key_gen", .. IpAllowlists.Claims];
 
     private const string EndUserScope = "sql:read sql:write";
 
@@ -266,7 +266,7 @@ internal sealed class UserAuthenticationHandler(
         if (unverified.IsEncrypted || string.IsNullOrEmpty(unverified.EncodedSignature) || string.IsNullOrEmpty(unverified.Kid)
             || !TenantTypes.Contains(unverified.Typ, StringComparer.Ordinal) || !TenantAlgorithms.Contains(unverified.Alg, StringComparer.Ordinal)
             || !unverified.TryGetPayloadValue<string>(JwtRegisteredClaimNames.Sub, out var user) || !EntityIds.IsValid(user)
-            || !unverified.Audiences.Contains(TenantKeys.Audience(project), StringComparer.Ordinal)
+            || !unverified.Audiences.Intersect(TenantKeys.Audiences(terraBase, project), StringComparer.Ordinal).Any()
             || TenantRefusedClaims.Any(name => unverified.TryGetPayloadValue<object>(name, out _)))
         {
             return AuthenticateResult.Fail("invalid project tenant token");
@@ -314,12 +314,11 @@ internal sealed class UserAuthenticationHandler(
 
         using var payload = JsonDocument.Parse(Base64UrlEncoder.DecodeBytes(jwt.EncodedPayload));
         var root = payload.RootElement;
-        var custom = root.TryGetProperty("token_kind", out var kind) && kind.ValueKind == JsonValueKind.String && kind.GetString() == "custom";
-        var interactive = root.TryGetProperty("token_use", out var use) && use.ValueKind == JsonValueKind.String && use.GetString() == "user";
+        var use = root.TryGetProperty("token_use", out var named) && named.ValueKind == JsonValueKind.String ? named.GetString() : null;
+        var custom = use == "custom";
         string? database = null;
-        if (root.TryGetProperty("token_kind", out _) && !custom
-            || !custom && !interactive || custom && root.TryGetProperty("token_use", out _) && !interactive
-            || root.TryGetProperty("database", out var named) && (!custom || named.ValueKind != JsonValueKind.String || !EntityIds.IsValid(database = named.GetString()))
+        if (use is not ("user" or "custom")
+            || root.TryGetProperty("database", out var restriction) && (!custom || restriction.ValueKind != JsonValueKind.String || !EntityIds.IsValid(database = restriction.GetString()))
             || RulesAuth.Read(user, root, custom) is not { } auth)
         {
             return AuthenticateResult.Fail("invalid project tenant token claims");
@@ -338,7 +337,7 @@ internal sealed class UserAuthenticationHandler(
     }
 
     private TokenValidationParameters TenantParameters(string project, IReadOnlyList<SecurityKey> keys) =>
-        Parameters(TenantKeys.Issuer(terraBase, project), [TenantKeys.Audience(project)], keys, TenantAlgorithms, TenantTypes, time);
+        Parameters(TenantKeys.Issuer(terraBase, project), TenantKeys.Audiences(terraBase, project), keys, TenantAlgorithms, TenantTypes, time);
 
     private AuthenticateResult Success(ValidatedTokens.Accepted accepted, string token)
     {
