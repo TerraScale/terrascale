@@ -3,6 +3,7 @@ using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Tenancy;
+using TerraScale.TerraBase.Contracts.Functions;
 
 namespace TerraBase.Features.Functions;
 
@@ -56,6 +57,7 @@ internal static class FunctionRoute
         FunctionBody function => TypedResults.Ok(function),
         FunctionBody[] functions => TypedResults.Ok(functions),
         FunctionLogBody[] logs => TypedResults.Ok(logs),
+        TerraBaseFunctionStats stats => TypedResults.Ok(stats),
         FunctionResponse response => new Answer(response),
         Done => TypedResults.NoContent(),
         Validation error => ErrorResponse.From(error),

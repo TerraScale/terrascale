@@ -155,3 +155,45 @@ test('a handler status is the test-run result', async ({ page }) => {
   await expect(page.locator('#function-event-error')).toHaveCount(0);
   console.log('Functions test run: a handler 404 and its JSON body are the result.');
 });
+
+test('function metrics include SQL calls and zero-filled latency buckets', async ({ request }) => {
+  const headers = await functionAccess(request);
+  const name = unique('metrics');
+  const url = functionUrl(name);
+  const source = 'async function handler() { await sql.query("SELECT 1 AS ok"); return { status: 201, body: { ok: true } }; }';
+  expect((await request.put(url, { headers, data: { source } })).status()).toBe(200);
+  const empty = await request.get(`${url}/stats`, { headers });
+  expect(empty.status()).toBe(200);
+  expect(await empty.json()).toMatchObject({ window: '24h', invocations: 0, p50Ms: 0 });
+  for (let i = 0; i < 2; i++) {
+    const invoked = await request.post(`${url}/invoke`, { headers, data: {} });
+    expect(invoked.status()).toBe(201);
+    expect(await invoked.json()).toEqual({ ok: true });
+  }
+  for (const [window, count] of [['1h', 60], ['24h', 24], ['7d', 168]] as const) {
+    const response = await request.get(`${url}/stats?window=${window}`, { headers });
+    expect(response.status()).toBe(200);
+    const stats = await response.json();
+    expect(stats.window).toBe(window);
+    expect(stats.invocations).toBeGreaterThanOrEqual(2);
+    expect(stats.p50Ms).toBeGreaterThan(0);
+    expect(stats.p95Ms).toBeGreaterThanOrEqual(stats.p50Ms);
+    expect(stats.p99Ms).toBeGreaterThanOrEqual(stats.p95Ms);
+    expect(stats.sqlCalls).toBe(2);
+    expect(stats.buckets).toHaveLength(count);
+    expect(stats.buckets.reduce((sum: number, bucket: { invocations: number }) => sum + bucket.invocations, 0)).toBe(stats.invocations);
+    expect(stats.buckets.map((bucket: { at: string }) => bucket.at)).toEqual(stats.buckets.map((bucket: { at: string }) => bucket.at).sort());
+    expect(stats.buckets.filter((bucket: { invocations: number }) => bucket.invocations === 0).every((bucket: { p50Ms: number; p95Ms: number }) => bucket.p50Ms === 0 && bucket.p95Ms === 0)).toBe(true);
+  }
+  const logsResponse = await request.get(`${url}/logs`, { headers });
+  expect(logsResponse.status()).toBe(200);
+  const logs = await logsResponse.json();
+  expect(logs).toHaveLength(2);
+  expect(logs[0]).toMatchObject({ sqlCalls: 1, rowsRead: 0, rowsWritten: 0, responseBytes: 11, httpStatus: 201 });
+  expect(logs[0].sqlMs).toBeGreaterThanOrEqual(0);
+  const invalid = await request.get(`${url}/stats?window=2h`, { headers });
+  expect(invalid.status()).toBe(400);
+  expect((await invalid.json()).error.code).toBe('invalid_request');
+  expect((await request.delete(url, { headers })).status()).toBe(204);
+  expect((await request.get(`${url}/stats`, { headers })).status()).toBe(404);
+});
