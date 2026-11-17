@@ -98,9 +98,10 @@ async function setSource(page: Page, source: string, id = '#function-editor'): P
 async function sqlCompletion(page: Page, id: string, screen: string): Promise<void> {
   const editor = page.locator('ts-code-editor').filter({ has: page.locator(id) });
   await expect(editor).toHaveAttribute('data-ready', '');
-  await editor.locator('.inputarea').focus();
+  await editor.locator('.monaco-editor').click();
   await page.keyboard.press('ControlOrMeta+End');
-  await page.keyboard.insertText('\nsql.');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('sql.');
   await expect(page.locator('.suggest-widget.visible')).toContainText('transaction');
   if (!production) {
     for (const colorScheme of ['light', 'dark'] as const) {
@@ -120,9 +121,9 @@ async function sqlCompletion(page: Page, id: string, screen: string): Promise<vo
     'sql.transaction(async connection => { await connection.batch([{ sql: "',
   ]) {
     await setSource(page, `const handler = async event => { await ${sql}`, id);
-    await editor.locator('.inputarea').focus();
+    await editor.locator('.monaco-editor').click();
     await page.keyboard.press('ControlOrMeta+End');
-    await page.keyboard.insertText('SEL');
+    await page.keyboard.type('SEL');
     await expect(page.locator('.suggest-widget.visible')).toContainText('SELECT');
     await page.keyboard.press('Escape');
   }
