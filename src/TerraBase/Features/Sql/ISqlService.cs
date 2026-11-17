@@ -81,6 +81,8 @@ internal interface ISqlSession : IAsyncDisposable
 
     ValueTask<SqlDescribeOutcome> DescribeAsync(SqlStatementPlan plan, SqlCommand command, CancellationToken cancellationToken);
 
+    ValueTask<SqlTablesOutcome> ListTablesAsync(CancellationToken cancellationToken);
+
     ValueTask EndRequestAsync();
 
     void Prefer(WriteOverride preference);
@@ -96,6 +98,8 @@ internal sealed record SqlTableColumn(string Name, string? DeclType, bool NotNul
 
 internal sealed record SqlTableInfo(string Name, IReadOnlyList<SqlTableColumn> Columns);
 
+internal readonly union SqlTablesOutcome(IReadOnlyList<SqlTableInfo>, SqlError);
+
 internal sealed record ReplicaSqlFailure(SqlError Error, int Statement);
 
 internal readonly union ReplicaSqlOutcome(IReadOnlyList<SqlResult>, ReplicaSqlFailure);
@@ -110,8 +114,6 @@ internal interface ISqlService
         bool write, CancellationToken cancellationToken, Action<string, double>? timing = null);
 
     void RecordLocalWrites(TenantContext database, long rows);
-
-    ValueTask<IReadOnlyList<SqlTableInfo>> ListTablesAsync(TenantContext database, CancellationToken cancellationToken);
 
     ISqlSession Open(TenantContext database, bool canWrite);
 }

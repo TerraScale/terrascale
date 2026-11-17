@@ -26,7 +26,7 @@ internal sealed record HomeSessionCall(
 internal sealed record HomeSessionResult(IReadOnlyList<SqlColumn> Columns, IReadOnlyList<IReadOnlyList<SqlValue>> Rows, long RowsAffected, long? LastInsertRowid);
 
 internal sealed record HomeSessionAnswer(
-    bool Autocommit, SqlError? Error = null, HomeSessionResult? Result = null, SqlDescription? Description = null, IReadOnlyList<HomeSessionResult>? Batch = null, int Statement = 0,
+    bool Autocommit, SqlError? Error = null, HomeSessionResult? Result = null, SqlDescription? Description = null, IReadOnlyList<HomeSessionResult>? Batch = null, int Statement = 0, IReadOnlyList<SqlTableInfo>? Tables = null,
     bool Ended = false);
 
 internal static class HomeSessionFrames
@@ -345,6 +345,14 @@ internal sealed class HomeSqlSession(
             _ => _unreachable,
         };
     }
+
+    public async ValueTask<SqlTablesOutcome> ListTablesAsync(CancellationToken cancellationToken) =>
+        await CallAsync(new HomeSessionCall("tables", "", [], NoNamed), commits: false, cancellationToken).ConfigureAwait(false) switch
+        {
+            { Error: { } error } => error,
+            { Tables: { } tables } => tables,
+            _ => _unreachable,
+        };
 
     public ValueTask EndRequestAsync() => ValueTask.CompletedTask;
 

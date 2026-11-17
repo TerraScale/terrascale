@@ -1,5 +1,6 @@
 using System.Data.Common;
 using Turso;
+using Turso.Data.Sqlite;
 
 namespace TerraBase.Engine.Turso;
 
@@ -13,11 +14,12 @@ internal sealed partial class TursoDatabaseStore
             using var from = new TursoConnection(source);
             TursoSession.OpenExisting(from, sourcePath);
             writer.Settings(queryOnly: false, full: true);
-            Rewind(writer.Connection, from, cancellationToken);
+            _incarnation = new(Rewind(writer.Connection, from, cancellationToken));
+            Committed();
             return true;
         }, "a point-in-time rewind", cancellationToken);
 
-    private static void Rewind(DbConnection target, TursoConnection source, CancellationToken cancellationToken)
+    private static Ulid Rewind(SqliteConnection target, TursoConnection source, CancellationToken cancellationToken)
     {
         var current = UserObjects(target);
         var restored = UserObjects(source);
@@ -46,7 +48,9 @@ internal sealed partial class TursoDatabaseStore
                     RewindExecute(target, sql);
                 }
 
+                var incarnation = RenewIncarnation(target, null);
                 RewindExecute(target, "COMMIT;");
+                return incarnation;
             }
             catch
             {
@@ -78,7 +82,7 @@ internal sealed partial class TursoDatabaseStore
         return objects;
     }
 
-    private static bool UserName(string name) => !ChangeLog.EngineTable(name) && !name.StartsWith("_tb_", StringComparison.Ordinal);
+    private static bool UserName(string name) => name != "commit_offset" && !ChangeLog.EngineTable(name) && !name.StartsWith("_tb_", StringComparison.Ordinal);
 
     private static void RewindExecute(DbConnection connection, string sql)
     {

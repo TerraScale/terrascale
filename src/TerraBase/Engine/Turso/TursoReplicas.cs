@@ -1222,6 +1222,7 @@ internal sealed partial class TursoReplicas(
                 native = await sync.ConnectHandleAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
+                    Run(native, "PRAGMA foreign_keys = ON;");
                     Run(native, "PRAGMA query_only = 1;");
                 }
                 catch

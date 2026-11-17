@@ -11,6 +11,7 @@ case $sdk in
     ;;
   go)
     (cd "$here/go" && go build -trimpath -o "$out/go/runner" .)
+    (cd "$repo/sdk/go" && go build -trimpath -o "$out/go/ts" ./cmd/ts)
     ;;
   rust)
     (cd "$here/rust" && cargo build --release --locked)

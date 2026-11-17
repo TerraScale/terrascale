@@ -299,7 +299,7 @@ jobs:
         working-directory: e2e
         run: |
           mv "$E2E_BUILD/sdk/dotnet" "$E2E_SDK_BUILD/dotnet"
-          chmod +x "$E2E_SDK_BUILD/go/runner" "$E2E_SDK_BUILD/rust/runner"
+          chmod +x "$E2E_SDK_BUILD/go/runner" "$E2E_SDK_BUILD/go/ts" "$E2E_SDK_BUILD/rust/runner"
           bash env/tools.sh
           bash sdk/build.sh python > "$RUNNER_TEMP/python-runner.log" 2>&1 &
           python=$!

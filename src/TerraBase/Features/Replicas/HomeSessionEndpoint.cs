@@ -195,8 +195,13 @@ internal sealed class HomeSessionEndpoint(
                                     SqlError error => new HomeSessionAnswer(session.IsAutocommit, error),
                                 },
                             },
+                            "tables" => await session.ListTablesAsync(lifetime.ApplicationStopping).ConfigureAwait(false) switch
+                            {
+                                IReadOnlyList<SqlTableInfo> tables => new HomeSessionAnswer(session.IsAutocommit, Tables: tables),
+                                SqlError error => new HomeSessionAnswer(session.IsAutocommit, error),
+                            },
                             "batch" => await BatchAsync(session, call.Batch, lifetime.ApplicationStopping).ConfigureAwait(false),
-                            _ => new HomeSessionAnswer(session.IsAutocommit, new SqlError(SqlErrors.InvalidRequest, "op is execute, describe or batch")),
+                            _ => new HomeSessionAnswer(session.IsAutocommit, new SqlError(SqlErrors.InvalidRequest, "op is execute, describe, tables or batch")),
                         };
                     }
                     catch (QosMemoryException)
