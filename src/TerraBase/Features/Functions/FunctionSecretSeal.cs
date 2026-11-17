@@ -1,8 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
-using TerraBase.Engine;
+using System.Text.Json;
 using TerraBase.Features.Backup;
-using TerraBase.Primitives;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Functions;
@@ -15,8 +14,8 @@ internal sealed class FunctionSecretSeal(IKeyring keyring)
     public static bool IsKind(string kind) =>
         kind.StartsWith("databases/", StringComparison.Ordinal) && kind.Contains("/function_secrets/", StringComparison.Ordinal);
 
-    public static FunctionSecretRecord Read(StoredRecord stored) =>
-        EntityPayload.Read(stored, FunctionsJsonContext.Default.FunctionSecretRecord) is { Format: 1, WrappedKey.Length: > 0, Sealed.Length: > 0 } record
+    public static FunctionSecretRecord Read(ReadOnlySpan<byte> json) =>
+        JsonSerializer.Deserialize(json, FunctionsJsonContext.Default.FunctionSecretRecord) is { Format: 1, WrappedKey.Length: > 0, Sealed.Length: > 0 } record
             ? record
             : throw new InvalidDataException("a function secret record is malformed");
 

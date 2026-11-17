@@ -35,17 +35,18 @@ internal sealed partial class TursoStorageEngine
                 command.Transaction = transaction;
                 using var cancel = cancellationToken.Register(command.Cancel);
                 command.CommandText = """
-                    SELECT body FROM _tb_records
+                    SELECT kind, body FROM _tb_records
                     WHERE kind GLOB 'backup_destination_history/*' OR kind GLOB 'projects/*/backup_destination'
+                        OR kind GLOB 'databases/*/function_secrets/*'
                     """;
                 using (var rows = command.ExecuteReader())
                 {
                     while (rows.Read())
                     {
                         cancellationToken.ThrowIfCancellationRequested();
-                        if (rows.GetValue(0) is string body)
+                        if (rows.GetValue(0) is string kind && rows.GetValue(1) is string body)
                         {
-                            CountCredential(Encoding.UTF8.GetBytes(body), startup, counts, missing);
+                            CountCredential(kind, Encoding.UTF8.GetBytes(body), startup, counts, missing);
                         }
                         else
                         {
@@ -100,9 +101,9 @@ internal sealed partial class TursoStorageEngine
             {
                 throw new InvalidDataException("retained credential image is malformed");
             }
-            if (TursoStorageTransaction.CredentialKind(kind))
+            if (TursoStorageTransaction.EnvelopeKind(kind))
             {
-                CountCredential(Encoding.UTF8.GetBytes(body), startup, counts, missing);
+                CountCredential(kind, Encoding.UTF8.GetBytes(body), startup, counts, missing);
             }
         }
         catch (Exception error) when (error is InvalidDataException or ArgumentException or OverflowException)

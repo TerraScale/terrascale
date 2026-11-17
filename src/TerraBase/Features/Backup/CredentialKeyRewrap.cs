@@ -51,9 +51,9 @@ internal sealed class CredentialKeyRewrap(SystemCatalog catalog, IKeyring keyrin
         });
 
     private static readonly Envelope FunctionSecrets = new(
-        static stored => FunctionSecretSeal.Read(stored).WrappedKey,
+        static stored => FunctionSecretSeal.Read(stored.Json.Span).WrappedKey,
         static (transaction, kind, stored, wrapped, cancellationToken) => PutAsync(transaction, kind, stored.Id,
-            FunctionSecretSeal.Read(stored) with { WrappedKey = wrapped }, FunctionsJsonContext.Default.FunctionSecretRecord, cancellationToken));
+            FunctionSecretSeal.Read(stored.Json.Span) with { WrappedKey = wrapped }, FunctionsJsonContext.Default.FunctionSecretRecord, cancellationToken));
 
     private async Task RewrapKindAsync(string kind, Envelope envelope, KeyInventory inventory, CancellationToken cancellationToken)
     {

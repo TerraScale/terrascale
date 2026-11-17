@@ -92,8 +92,9 @@ Each value is sealed before it reaches the system catalog, the same way backup d
 `TERRABASE_MASTER_KEYS_FILE`) wraps that data key. The record stores the wrapped key and the ciphertext. The
 associated data binds the database scope, function name and secret name, so a sealed value copied to another secret,
 function or database fails to open. When the active master key changes, the key rewrap pass rewraps these data keys
-with the credential records and counts them in the key inventory, so a master key still wrapping a secret is not
-reported unused. Deleting a function deletes its secret records; deleting the database deletes every function's.
+with the credential records. The local key inventory counts their wrappers, in current records and retained change
+images, so a master key still wrapping a secret is not reported unused, startup refuses a missing key id, and a write
+whose wrapper does not unwrap fails. Deleting a function deletes its secret records; deleting the database deletes every function's.
 
 Every invocation (HTTP, cron, dashboard, RPC and MCP invoke all run through the same path) reads the function and its
 secrets in one catalog read and opens them, so a change applies from the next invocation without a redeploy. A
