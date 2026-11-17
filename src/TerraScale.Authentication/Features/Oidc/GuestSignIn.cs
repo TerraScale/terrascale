@@ -129,8 +129,8 @@ public sealed class GuestSignInEndpoint(Users users, AttemptLimiter limiter, Pro
         }
 
         var address = HostedAuth.Subject(this.HttpContext.Connection.RemoteIpAddress?.ToString()) ?? "unknown";
-        if ((await limiter.AcquireAsync(tenant, "guest-client", clientId, GuestSignIn.ClientMinuteBudget, TimeSpan.FromMinutes(1), cancellationToken)
-            ?? await limiter.AcquireAsync(tenant, "guest-ip", limiter.Fold(address), GuestSignIn.AddressMinuteBudget, TimeSpan.FromMinutes(1), cancellationToken)) is { } wait)
+        if ((await limiter.AcquireAsync(tenant, "guest-ip", limiter.Fold(address), GuestSignIn.AddressMinuteBudget, TimeSpan.FromMinutes(1), cancellationToken)
+            ?? await limiter.AcquireAsync(tenant, "guest-client", clientId, GuestSignIn.ClientMinuteBudget, TimeSpan.FromMinutes(1), cancellationToken)) is { } wait)
         {
             return HostedAuth.TooMany(wait);
         }
