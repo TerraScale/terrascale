@@ -177,6 +177,7 @@ test.describe('project usernames and browser-bound magic links', () => {
     await passwordAudit.check('username signs in case-insensitively');
 
     await passwordAudit.finish();
+    await passwordPage.close();
   });
 
   test('redeems a magic link only in its browser and rejects link and code replay', async ({}, info) => {
@@ -236,6 +237,7 @@ test.describe('project usernames and browser-bound magic links', () => {
     await audit.finish();
     await adminAudit.finish();
     await passwordAudit.finish();
+    await passwordPage.close();
   });
 });
 

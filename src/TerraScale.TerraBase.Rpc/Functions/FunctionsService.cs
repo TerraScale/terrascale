@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.Json;
 using MagicOnion;
 using MagicOnion.Server;
 using TerraScale.TerraBase.Contracts.Functions;
@@ -72,38 +71,7 @@ namespace TerraScale.TerraBase.Rpc.Functions
             return RestPaths.Database(projectId, database) + "/functions/" + Uri.EscapeDataString(name);
         }
 
-        private static bool IsFunctionAnswer(RestAnswer answer)
-        {
-            if (answer.Status is >= 200 and <= 299)
-            {
-                return true;
-            }
-
-            var media = answer.Headers.TryGetValue("Content-Type", out var values) ? values.ToString() : "";
-            if (media.StartsWith("text/plain", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-
-            if (!media.StartsWith("application/json", StringComparison.OrdinalIgnoreCase) || answer.Body.IsEmpty)
-            {
-                return media.StartsWith("application/json", StringComparison.OrdinalIgnoreCase);
-            }
-
-            try
-            {
-                using var json = JsonDocument.Parse(answer.Body);
-                return json.RootElement.ValueKind != JsonValueKind.Object
-                    || !json.RootElement.TryGetProperty("error", out var error)
-                    || error.ValueKind != JsonValueKind.Object
-                    || !error.TryGetProperty("code", out var code)
-                    || code.ValueKind != JsonValueKind.String
-                    || string.IsNullOrEmpty(code.GetString());
-            }
-            catch (JsonException)
-            {
-                return false;
-            }
-        }
+        private static bool IsFunctionAnswer(RestAnswer answer) =>
+            answer.Headers.TryGetValue("X-TerraScale-Function-Response", out var marker) && marker.ToString() == "1";
     }
 }

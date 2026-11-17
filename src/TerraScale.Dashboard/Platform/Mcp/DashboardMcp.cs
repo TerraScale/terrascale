@@ -13,6 +13,7 @@ using ModelContextProtocol.AspNetCore;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Features.Functions;
 using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Common.Validation;
@@ -31,6 +32,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
         {
             var serializer = new JsonSerializerOptions(McpJsonUtilities.DefaultOptions);
             serializer.TypeInfoResolverChain.Insert(0, TerraScale.Dashboard.Features.Databases.DatabaseConflictJson.Default);
+            serializer.TypeInfoResolverChain.Insert(0, FunctionMcpJson.Default);
             Type[] toolTypes =
             [
                 typeof(DashboardMcpTools),

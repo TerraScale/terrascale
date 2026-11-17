@@ -18,7 +18,7 @@ per-database storage and usage metering. Running functions there adds no new ser
 
 v1 runs **JavaScript** (ES2023, one source file) in [Jint](https://github.com/sebastienros/jint), a pure managed
 interpreter: no native dependency, single-file compatible, and no CLR, file, network or environment access (CLR interop
-stays off). Each invocation gets a fresh engine. The function defines `handler(event)`, usually `async`. Its only I/O is
+stays off). JavaScript runs in strict mode; assigning an undeclared variable throws. SQL uses the SQLite dialect. Each invocation gets a fresh engine. The function defines `handler(event)`, usually `async`. Its only I/O is
 the `sql` binding on its own database, which runs through the same SQL session as `POST .../sql/execute`: the same
 dialect, SQL sandbox, per-tenant limits, metering and errors.
 
@@ -73,7 +73,7 @@ for moving execution onto dedicated function hosts; v1 shares the TerraBase proc
 | `GET /functions/{name}/logs` | Invocation logs |
 
 Cron events are
-`{trigger: "cron", scheduledAt}`. A handler returns `{status, body}` or any JSON value (status 200).
+`{trigger: "cron", scheduledAt}`. Any returned object with an integer `status` from 200 to 599 is treated as the response wrapper: only `status` and `body` are used, and other properties are discarded. For example, `return {status: 200, items: rows}` produces an empty response. Preserve a data object's own `status` field by returning `{status: 200, body: {id: 1, status: 404}}`. Values without a top-level `status` property use HTTP 200; `undefined` becomes JSON null. Treat top-level `status` as reserved and wrap data containing that field inside `body`.
 
 Function names are lowercase, at most 63 characters. Deleting the database deletes its functions.
 
@@ -106,3 +106,9 @@ exact samples. Minute data expires outside the current 60-minute bucket window a
 168-hour bucket window. Expired slots are excluded by their timestamp and overwritten on reuse, so idle functions
 retain bounded expired records without exposing them in stats. Log and aggregate updates share one catalog
 transaction and add no customer-database SQL query. Deleting a function or its database deletes its aggregates.
+
+## Dashboard MCP
+
+Call `get_functions_reference` first for the complete runtime contract and examples. Both signed-in and project API-key MCP connections expose `deploy_function`, `invoke_function`, `list_functions`, `get_function` and `list_function_logs`. Deploy returns structured runner validation errors. Invoke requires only `sql:read` and returns status, content type and body; it includes the newest log only when the caller also has SQL write access. Otherwise `log: null` and `log_note` describe that requirement. Concurrent invocations or cron may make that newest log belong to another run. MCP and dashboard test runs send an empty `event.query`; use the direct HTTPS invoke URL for query parameters. `delete_function` returns a dashboard confirmation URL and leaves the function intact.
+
+A completed MCP invocation retains its status and body if the subsequent log read fails; `log` is null and `log_note` identifies the log retrieval failure. Read existing logs instead of invoking the function again.

@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from '../support/audit';
 import { deployFunction, functionAccess, functionSource, functionTool, functionUrl } from '../support/functions';
-import { deletionHandoff } from '../support/mcp';
+import { deletionHandoff, mcpTool } from '../support/mcp';
 import { confirmWithPassword } from '../support/hosted';
 import { journey, saveSecret } from '../support/state';
 import { production } from '../support/stack';
@@ -55,14 +55,84 @@ test('functions list, detail, invocation logs and deletion work through the page
   const token = await page.locator('#access-token-secret').inputValue();
   saveSecret('functions-mcp-token', token);
   const scope = { databaseId: current.databaseId, organizationId: current.organizationId, projectId: current.projectId };
+  for (const [index, credential] of [current.apiKey, token].entries()) {
+    const reference = await functionTool(page.request, credential, 'get_functions_reference', {});
+    expect(reference.reference).toContain('sql.transaction');
+    expect(reference.reference).toContain('event.query is empty');
+    expect(reference.reference).toContain('strict mode');
+    expect(reference.reference).toContain('SQLite dialect');
+    expect(reference.reference).toContain('ALWAYS a response wrapper');
+    const args = { ...scope, name: `${mcpName}-${index}`, source: 'async function handler(event) { console.log("MCP debug", event.body); return { status: 201, body: { echo: event.body, query: event.query } }; }' };
+    const deployed = await functionTool(page.request, credential, 'deploy_function', args);
+    expect(deployed.name).toBe(args.name);
+    expect(deployed.cron).toBeNull();
+    expect(Date.parse(deployed.updated_at)).toBeGreaterThan(0);
+    expect(new URL(deployed.invoke_url).protocol).toBe('https:');
+    const invoked = await functionTool(page.request, credential, 'invoke_function', { ...scope, name: args.name, body: { hello: 'agent' } });
+    expect(invoked.status).toBe(201);
+    expect(invoked.content_type).toContain('application/json');
+    expect(invoked.body).toEqual({ echo: { hello: 'agent' }, query: {} });
+    expect(invoked.log?.status).toBe('ok');
+    expect(invoked.log?.duration_ms).toBeGreaterThanOrEqual(0);
+    expect(invoked.log?.lines).toContain('MCP debug {"hello":"agent"}');
+    const inventory = await functionTool(page.request, credential, 'list_functions', scope);
+    expect(inventory.functions.map((item) => item.name)).toContain(args.name);
+    const saved = await functionTool(page.request, credential, 'get_function', { ...scope, name: args.name });
+    expect(saved.function.source).toBe(args.source);
+    const debug = await functionTool(page.request, credential, 'list_function_logs', { ...scope, name: args.name });
+    expect(debug.logs[0].lines).toContain('MCP debug {"hello":"agent"}');
+    const invalid = await functionTool(page.request, credential, 'deploy_function', { ...args, source: 'function (' }, true);
+    expect(invalid.error?.message).toContain('JavaScript');
+    expect(invalid.error?.line).toBe(1);
+    expect(invalid.error?.column).toBe(10);
+    await functionTool(page.request, credential, 'deploy_function', { ...args, source: 'function handler() { console.error("debug failure"); throw new Error("MCP failure"); }' });
+    const failed = await functionTool(page.request, credential, 'invoke_function', { ...scope, name: args.name });
+    expect(failed.status).toBe(500);
+    expect(failed.log?.status).toBe('error');
+    expect(failed.log?.error).toContain('MCP failure');
+    expect(failed.log?.lines).toContain('debug failure');
+    await functionTool(page.request, credential, 'deploy_function', { ...args, source: 'function handler(event) { return { status: event.body.status, body: { error: { code: "conflict", message: "taken" }, requested: event.body.status } }; }' });
+    for (const status of [403, 404, 409, 500, 503]) {
+      const answer = await functionTool(page.request, credential, 'invoke_function', { ...scope, name: args.name, body: { status } });
+      expect(answer.status).toBe(status);
+      expect(answer.content_type).toContain('application/json');
+      expect(answer.body).toEqual({ error: { code: 'conflict', message: 'taken' }, requested: status });
+      expect(answer.log?.status).toBe('ok');
+    }
+    await functionTool(page.request, credential, 'deploy_function', { ...args, source: 'function handler() { return { status: 404, items: [1] }; }' });
+    const wrapper = await functionTool(page.request, credential, 'invoke_function', { ...scope, name: args.name });
+    expect(wrapper.status).toBe(404);
+    expect(wrapper.body).toBe('');
+    expect(wrapper.log?.status).toBe('ok');
+    await functionTool(page.request, credential, 'deploy_function', { ...args, source: 'function handler() { return { status: 200, body: { id: 1, status: 404 } }; }' });
+    const row = await functionTool(page.request, credential, 'invoke_function', { ...scope, name: args.name });
+    expect(row.status).toBe(200);
+    expect(row.body).toEqual({ id: 1, status: 404 });
+    await functionTool(page.request, credential, 'deploy_function', { ...args, source: 'function handler() { undeclared = 1; return {}; }' });
+    const strict = await functionTool(page.request, credential, 'invoke_function', { ...scope, name: args.name });
+    expect(strict.status).toBe(500);
+    expect(strict.log?.error).toContain('undeclared');
+    await mcpTool(page.request, credential, 'invoke_function', { ...scope, name: unique('missing') }, 'The requested resource is unavailable.');
+  }
+  const read = await mcpTool(page.request, current.apiKey, 'create_scoped_key', { ...scope, access: 'read', ttlSeconds: 3600 });
+  saveSecret('functions-read-key', read.key);
+  await mcpTool(page.request, read.key, 'deploy_function', { ...scope, name: mcpName, source: functionSource }, 'The API key does not grant sql:write.');
+  await mcpTool(page.request, read.key, 'list_function_logs', { ...scope, name: mcpName }, 'The API key does not grant sql:write.');
+  await mcpTool(page.request, read.key, 'invoke_function', { ...scope, databaseId: current.projectId, name: mcpName }, 'Database was not found in this project.');
+  await mcpTool(page.request, read.key, 'invoke_function', { ...scope, projectId: current.organizationId, name: mcpName }, 'Project is unavailable.');
+  const noLog = await functionTool(page.request, read.key, 'invoke_function', { ...scope, name: mcpName });
+  expect(noLog.status).toBe(200);
+  expect(noLog.body).toEqual({ ok: true });
+  expect(noLog.log).toBeNull();
+  expect(noLog.log_note).toBe('Log lines need SQL write access; call list_function_logs with a key that has it.');
   const listed = await functionTool(page.request, token, 'list_functions', scope);
   expect(listed.functions.map((item: { name: string }) => item.name)).toContain(mcpName);
   const detail = await functionTool(page.request, token, 'get_function', { ...scope, name: mcpName });
   expect(detail.function.source).toBe(functionSource);
   expect(detail.invokeUrl).toBe(`${functionUrl(mcpName)}/invoke`);
-  expect((await page.request.post(`${functionUrl(mcpName)}/invoke`, { headers, data: {} })).status()).toBe(200);
+  expect((await page.request.post(`${functionUrl(mcpName)}/invoke`, { headers: await functionAccess(page.request), data: {} })).status()).toBe(200);
   const logs = await functionTool(page.request, token, 'list_function_logs', { ...scope, name: mcpName });
-  expect(logs.logs).toHaveLength(1);
+  expect(logs.logs).toHaveLength(2);
   expect(logs.logs[0].lines).toContain('functions journey');
   for (const credential of [current.apiKey, token]) {
     const confirmation = await deletionHandoff(page.request, credential, 'delete_function', mcpName, `/databases/${current.databaseId}/functions`, { ...scope, name: mcpName, confirmName: mcpName });
@@ -70,7 +140,7 @@ test('functions list, detail, invocation logs and deletion work through the page
   }
   const remaining = await functionTool(page.request, token, 'list_functions', scope);
   expect(remaining.functions.map((item: { name: string }) => item.name)).toContain(mcpName);
-  console.log('Functions owner: page list/read/logs/delete OK; MCP list/read/logs OK; API-key and signed-in deletion require dashboard confirmation (real REST deployment and invocation).');
+  console.log('Functions owner: page list/read/logs/delete OK; MCP reference/deploy/invoke/debug and read-key boundaries OK; API-key and signed-in deletion require dashboard confirmation (real REST deployment and invocation).');
 });
 
 test('failed function deletion preserves the selection and confirmation dialog with an alert', async ({ page, audit }) => {

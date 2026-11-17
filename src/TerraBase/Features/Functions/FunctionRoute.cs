@@ -70,6 +70,7 @@ internal static class FunctionRoute
     {
         public async Task ExecuteAsync(HttpContext httpContext)
         {
+            httpContext.Response.Headers["X-TerraScale-Function-Response"] = "1";
             httpContext.Response.StatusCode = response.Status;
             httpContext.Response.ContentType = response.ContentType;
             httpContext.Response.ContentLength = response.Body.Length;

@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -12,7 +11,7 @@ namespace TerraScale.Dashboard.Features.Functions
     public sealed record FunctionRecord(string Name, string? Source, string? Cron, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
     public sealed record FunctionInvocation(string Id, DateTimeOffset At, string Trigger, string Status, double DurationMs, IReadOnlyList<string> Lines, string? Error, int SqlCalls, long SqlMs, long RowsRead, long RowsWritten, long ResponseBytes, int? HttpStatus);
 
-    public sealed partial class FunctionBackend(DatabaseService databases, IProjectAccessTokens tokens, TerraBaseRpcClient rpc)
+    public sealed partial class FunctionBackend(DatabaseService databases, IProjectAccessTokens tokens, TerraBaseRpcClient rpc, ILogger<FunctionBackend> logger, TimeProvider time)
     {
         public const string NameInputPattern = "[a-z][a-z0-9_-]{0,62}";
 
@@ -64,8 +63,7 @@ namespace TerraScale.Dashboard.Features.Functions
             CheckName(name);
             var target = await ClientAsync(context, database, false, WriteScopes, ct);
             var result = await target.Client.LogsAsync(target.ProjectId, target.Database, name, 25);
-            IReadOnlyList<FunctionInvocation> logs = [.. result.Select(item => new FunctionInvocation(item.Id, item.At, item.Trigger,
-                item.Status, item.DurationMs, item.Lines, item.Error, item.SqlCalls, item.SqlMs, item.RowsRead, item.RowsWritten, item.ResponseBytes, item.HttpStatus))];
+            IReadOnlyList<FunctionInvocation> logs = [.. result.Select(Invocation)];
             Validate(logs);
             return logs;
         }
@@ -105,6 +103,23 @@ namespace TerraScale.Dashboard.Features.Functions
 
         public async Task<FunctionRecord> DeployAsync(AccountContext context, DatabaseRecord database, string name, string source, string? cron, CancellationToken ct)
         {
+            ValidateDeploy(name, source);
+
+            var target = await ClientAsync(context, database, true, WriteScopes, ct);
+            var result = Record(await target.Client.DeployAsync(target.ProjectId, target.Database, name, new TerraBaseFunctionDeploy(source, cron)));
+            Validate(result);
+            return result;
+        }
+
+        public async Task<TerraBaseFunctionCall> InvokeAsync(AccountContext context, DatabaseRecord database, string name, string body, CancellationToken ct)
+        {
+            CheckName(name);
+            var target = await ClientAsync(context, database, false, ReadScopes, ct);
+            return await target.Client.InvokeAsync(target.ProjectId, target.Database, name, body);
+        }
+
+        internal static void ValidateDeploy(string name, string source)
+        {
             if (!DeployName(name))
             {
                 throw new AccountAccessException("Function names start with a lowercase letter and use at most 63 lowercase letters, digits, underscores or hyphens.", 400);
@@ -114,22 +129,23 @@ namespace TerraScale.Dashboard.Features.Functions
             {
                 throw new AccountAccessException("source is required and at most 256 KiB", 400);
             }
-
-            var target = await ClientAsync(context, database, true, WriteScopes, ct);
-            var result = Record(await target.Client.DeployAsync(target.ProjectId, target.Database, name, new TerraBaseFunctionDeploy(source, cron)));
-            Validate(result);
-            return result;
         }
 
-        public async Task<string> InvokeAsync(AccountContext context, DatabaseRecord database, string name, string body, CancellationToken ct)
+        internal async Task<McpFunctionRun> InvokeForMcpAsync(AccountContext context, DatabaseRecord database, string name, string body, CancellationToken ct)
         {
             CheckName(name);
             var target = await ClientAsync(context, database, false, ReadScopes, ct);
-            var result = await target.Client.InvokeAsync(target.ProjectId, target.Database, name, body);
-            return string.Concat(result.Status.ToString(CultureInfo.InvariantCulture), "\n", result.ContentType, "\n", result.Body);
+            var call = await target.Client.InvokeAsync(target.ProjectId, target.Database, name, body);
+            return await FunctionMcpOutput.CompleteAsync(call, target.Context.CanWriteProjectData, ReadNewestAsync, logger, ct);
+
+            async Task<IReadOnlyList<FunctionInvocation>> ReadNewestAsync(CancellationToken cancellationToken)
+            {
+                var logs = await ClientAsync(target.Context, database, false, WriteScopes, cancellationToken);
+                return [.. (await logs.Client.LogsAsync(logs.ProjectId, logs.Database, name, 1)).Select(Invocation)];
+            }
         }
 
-        private async Task<(IFunctionsService Client, string ProjectId, string Database)> ClientAsync(AccountContext context, DatabaseRecord database, bool write, IReadOnlyList<string> scopes, CancellationToken ct)
+        private async Task<(IFunctionsService Client, string ProjectId, string Database, AccountContext Context)> ClientAsync(AccountContext context, DatabaseRecord database, bool write, IReadOnlyList<string> scopes, CancellationToken ct)
         {
             context = await databases.CurrentAsync(context, ct);
             database = DatabaseService.Database(context, database.Id);
@@ -146,10 +162,14 @@ namespace TerraScale.Dashboard.Features.Functions
 
             var home = await databases.HomeAsync(context, database, ct);
             var access = await tokens.GetAsync(context.Session, scope.OrganizationId, scope.ProjectId, scopes, ct);
-            return (rpc.User<IFunctionsService>(access, home.Id).WithCancellationToken(ct).WithDeadline(DateTime.UtcNow.AddSeconds(30)), scope.ProjectId, database.Name);
+            return (rpc.User<IFunctionsService>(access, home.Id).WithCancellationToken(ct).WithDeadline(time.GetUtcNow().UtcDateTime.AddSeconds(30)), scope.ProjectId, database.Name, context);
         }
 
-        private static FunctionRecord Record(TerraBaseFunctionInfo function)
+        internal static FunctionInvocation Invocation(TerraBaseFunctionInvocation item) =>
+            new(item.Id, item.At, item.Trigger, item.Status, item.DurationMs, item.Lines, item.Error, item.SqlCalls, item.SqlMs,
+                item.RowsRead, item.RowsWritten, item.ResponseBytes, item.HttpStatus);
+
+        internal static FunctionRecord Record(TerraBaseFunctionInfo function)
         {
             return new(function.Name, function.Source, function.Cron, function.CreatedAt, function.UpdatedAt);
         }
