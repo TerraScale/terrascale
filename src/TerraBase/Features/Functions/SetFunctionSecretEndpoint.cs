@@ -12,7 +12,7 @@ internal sealed class SetFunctionSecretEndpoint(IManagementService management, I
         Put(FunctionRoute.Secret);
         Name("setFunctionSecret");
         Summary("Sets or replaces a function secret");
-        Description(FunctionRoute.Description + " Body {value}: at most 4 KiB of UTF-8, encrypted at rest with the database key and readable only by the handler "
+        Description(FunctionRoute.Description + " Body {value}: at most 4 KiB of UTF-8, sealed at rest under the master keyring and readable only by the handler "
             + "as event.secrets from the next invocation. Names match ^[A-Z_][A-Z0-9_]{0,63}$; at most 50 secrets per function. The response never contains the value.");
         Tags("Functions");
         Metadata(new RequestBodyMetadata(typeof(SetFunctionSecretRequest), "application/json"));

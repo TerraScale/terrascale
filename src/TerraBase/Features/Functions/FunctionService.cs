@@ -2,7 +2,6 @@ using System.Text.Json;
 using System.Text;
 using TerraBase.Configuration;
 using TerraBase.Engine;
-using TerraBase.Features.Backup;
 using TerraBase.Errors;
 using TerraBase.Features.Functions;
 using TerraBase.Features.Management.Usage;
@@ -19,7 +18,7 @@ namespace TerraBase.Features.Functions;
 public static class FunctionsExtensions
 {
     public static IServiceCollection AddTerraBaseFunctions(this IServiceCollection services) =>
-        services.AddSingleton(provider => new FunctionSecretSeal(provider.GetService<DataKeys>())).AddSingleton<FunctionService>().AddSingleton<IFunctions>(provider => provider.GetRequiredService<FunctionService>())
+        services.AddSingleton<FunctionSecretSeal>().AddSingleton<FunctionService>().AddSingleton<IFunctions>(provider => provider.GetRequiredService<FunctionService>())
             .AddHostedService(provider => provider.GetRequiredService<FunctionService>())
             .AddSingleton<FunctionScheduler>().AddHostedService(provider => provider.GetRequiredService<FunctionScheduler>());
 }

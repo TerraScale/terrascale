@@ -87,12 +87,13 @@ A function's secrets are a write-only map of name to string. Names match `^[A-Z_
 Set, list and delete need the same authority as deploy (`sql:read` and `sql:write`). Responses carry only `name` and
 `updatedAt`; no REST, RPC, dashboard or MCP response, log, stat or error contains a value.
 
-Each value is sealed before it reaches the system catalog with AES-256-GCM under a key derived (HKDF-SHA256, random
-salt) from the database's current data key, the per-database key in the backup key store that also seals its backups and
-home-push transactions. The sealed record names its data key id and binds the database, function and secret name as associated data,
-so it cannot be moved to another secret. Data-key rotation keeps old ids readable; deleting the database shreds its
-keys, which makes its secrets unreadable everywhere, and deletes their catalog records. Deleting a function deletes
-its secrets. A node without the database key store (local development without backups) refuses writes with 503.
+Each value is sealed before it reaches the system catalog, the same way backup destination credentials are: a fresh
+256-bit data key per value encrypts it with AES-256-GCM, and the master keyring (`TERRABASE_MASTER_KEY` or
+`TERRABASE_MASTER_KEYS_FILE`) wraps that data key. The record stores the wrapped key and the ciphertext. The
+associated data binds the database scope, function name and secret name, so a sealed value copied to another secret,
+function or database fails to open. When the active master key changes, the key rewrap pass rewraps these data keys
+with the credential records and counts them in the key inventory, so a master key still wrapping a secret is not
+reported unused. Deleting a function deletes its secret records; deleting the database deletes every function's.
 
 Every invocation (HTTP, cron, dashboard, RPC and MCP invoke all run through the same path) reads the function and its
 secrets in one catalog read and opens them, so a change applies from the next invocation without a redeploy. A

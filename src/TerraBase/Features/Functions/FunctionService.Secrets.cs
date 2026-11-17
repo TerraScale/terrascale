@@ -34,13 +34,7 @@ internal sealed partial class FunctionService
             return new Validation("value is required and at most 4 KiB");
         }
 
-        if (!secrets.Available)
-        {
-            return new Unavailable("function secrets need the database key store");
-        }
-
-        var sealedValue = await secrets.SealAsync(tenant, name, secret, value, cancellationToken).ConfigureAwait(false);
-        var record = new FunctionSecretRecord(1, secret, sealedValue, time.GetUtcNow());
+        var record = await secrets.SealAsync(tenant, name, secret, value, time.GetUtcNow(), cancellationToken).ConfigureAwait(false);
         return await catalog.WriteDurableAsync<FunctionResult>(async transaction =>
         {
             if (await CatalogTables.DatabaseAsync(transaction, tenant.ProjectId!, tenant.DatabaseId!, cancellationToken).ConfigureAwait(false) is null
@@ -92,7 +86,7 @@ internal sealed partial class FunctionService
         var values = new Dictionary<string, string>(stored.Count, StringComparer.Ordinal);
         foreach (var record in stored)
         {
-            values[record.Name] = await secrets.OpenAsync(tenant, name, record.Name, record.Sealed, cancellationToken).ConfigureAwait(false);
+            values[record.Name] = await secrets.OpenAsync(tenant, name, record, cancellationToken).ConfigureAwait(false);
         }
 
         return JsonSerializer.Serialize<IReadOnlyDictionary<string, string>>(values, FunctionsJsonContext.Default.IReadOnlyDictionaryStringString);

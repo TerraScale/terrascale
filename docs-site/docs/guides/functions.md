@@ -95,7 +95,7 @@ async function handler(event) {
 
 Values are write-only: listing (`GET .../functions/notify/secrets`) returns names and update times, never values. A
 change applies from the next invocation without redeploying, and deleting the function deletes its secrets. Values are
-encrypted at rest with the database's key. `event.secrets` is frozen and left out of `JSON.stringify(event)`; don't log
+encrypted at rest under TerraScale's master keyring. `event.secrets` is frozen and left out of `JSON.stringify(event)`; don't log
 or return a value yourself.
 
 ## Limits

@@ -46,7 +46,7 @@ public interface IFunctions
 internal sealed record FunctionRecord(int Format, string Name, string Source, string Machine, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt,
     string? Cron = null);
 
-internal sealed record FunctionSecretRecord(int Format, string Name, string Sealed, DateTimeOffset UpdatedAt);
+internal sealed record FunctionSecretRecord(int Format, string Name, string WrappedKey, string Sealed, DateTimeOffset UpdatedAt);
 
 internal sealed record FunctionCode(string Source, IReadOnlyList<FunctionSecretRecord> Secrets);
 
