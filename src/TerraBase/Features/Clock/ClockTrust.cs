@@ -56,6 +56,15 @@ internal sealed class ClockTrust(TerraBaseOptions options, InternalCredential cr
 
     private HttpClient Http => _http ??= PeerHttp.Create(credential);
 
+    public TimeSpan? RoundTrip(string region)
+    {
+        lock (_gate)
+        {
+            var trips = _answers.Values.OfType<Answered>().Where(answer => answer.Region == region).Select(answer => answer.RoundTripMilliseconds).ToList();
+            return trips.Count == 0 ? null : TimeSpan.FromMilliseconds(trips.Max());
+        }
+    }
+
     public override void Dispose()
     {
         _http?.Dispose();
@@ -308,7 +317,7 @@ internal sealed class ClockTrust(TerraBaseOptions options, InternalCredential cr
             var half = _monotonic.GetElapsedTime(sent, received).TotalMilliseconds / 2;
             var offset = clock.UtcMilliseconds - (sentWall + half);
             var uncertainty = half + 1;
-            return new Answered(received, offset, uncertainty, Math.Abs(offset) <= BudgetMilliseconds + uncertainty);
+            return new Answered(received, offset, uncertainty, Math.Abs(offset) <= BudgetMilliseconds + uncertainty, peer.Region, half * 2);
         }
         catch (Exception error) when (error is HttpRequestException or JsonException or OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {
@@ -320,7 +329,8 @@ internal sealed class ClockTrust(TerraBaseOptions options, InternalCredential cr
 
     private closed record class PeerAnswer(long At);
 
-    private sealed record class Answered(long At, double OffsetMilliseconds, double UncertaintyMilliseconds, bool Agrees) : PeerAnswer(At);
+    private sealed record class Answered(long At, double OffsetMilliseconds, double UncertaintyMilliseconds, bool Agrees, string Region, double RoundTripMilliseconds)
+        : PeerAnswer(At);
 
     private sealed record class RouteUnknown(long At) : PeerAnswer(At);
 

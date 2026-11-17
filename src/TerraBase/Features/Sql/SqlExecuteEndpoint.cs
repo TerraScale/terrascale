@@ -131,6 +131,11 @@ internal sealed class SqlExecuteEndpoint(
             }
 
             session.BeginRequest();
+            if (forwarded && session is SqlSession answering)
+            {
+                answering.AnswerWithin(ProxyRequestBudget.For(HttpContext).AnswerRemaining);
+            }
+
             var outcome = await SqlBatch.RunAsync(session, commands, cancellationToken);
             await session.EndRequestAsync();
             if (outcome is SqlExecuteBody && all && !await holds.WaitAllAsync(database, cancellationToken))

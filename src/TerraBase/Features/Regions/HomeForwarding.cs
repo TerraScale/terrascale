@@ -16,6 +16,7 @@ using TerraBase.Tenancy;
 using TerraBase.Features.Management;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
+using TerraBase.Features.Clock;
 
 namespace TerraBase.Features.Regions;
 
@@ -40,7 +41,7 @@ internal static class HomeForwarding
     {
         "Host", "Connection", "Keep-Alive", "Transfer-Encoding", "TE", "Trailer", "Upgrade", "Proxy-Connection", "Proxy-Authorization",
         "X-TerraScale-Caller", "Content-Length", "Content-Type", "X-TerraScale-Region-Pin", "ts-replay-src", "ts-replay-failed", "X-Forwarded-For", "X-Forwarded-Host",
-        "X-Forwarded-Proto", "Forwarded", ForwardedForHeader, PushThroughHeader, PublishIdHeader, InternalCredential.HeaderName, Management.Usage.PeerUsage.ScopeHeader, ProxyRequestBudget.RemainingHeader, PlacementMissHeader, AccountingHeader,
+        "X-Forwarded-Proto", "Forwarded", ForwardedForHeader, PushThroughHeader, PublishIdHeader, InternalCredential.HeaderName, Management.Usage.PeerUsage.ScopeHeader, ProxyRequestBudget.RemainingHeader, ProxyRequestBudget.AnswerHeader, PlacementMissHeader, AccountingHeader,
     };
 
     private static readonly HashSet<string> Unreturned = new(StringComparer.OrdinalIgnoreCase)
@@ -253,7 +254,10 @@ internal static class HomeForwarding
 
         request.Headers.Host = Host(region);
         request.Headers.TryAddWithoutValidation(ForwardedForHeader, (IpAllowlists.ClientOf(context) ?? IPAddress.None).ToString());
-        request.Headers.TryAddWithoutValidation(ProxyRequestBudget.RemainingHeader, ProxyRequestBudget.For(context).Milliseconds);
+        var budget = ProxyRequestBudget.For(context);
+        request.Headers.TryAddWithoutValidation(ProxyRequestBudget.RemainingHeader, budget.Milliseconds);
+        request.Headers.TryAddWithoutValidation(ProxyRequestBudget.AnswerHeader,
+            budget.AnswerMilliseconds(context.RequestServices.GetRequiredService<ClockTrust>().RoundTrip(region) ?? TimeSpan.Zero));
         context.RequestServices.GetRequiredService<InternalCredential>().Sign(request.Headers);
     }
 

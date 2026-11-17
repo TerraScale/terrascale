@@ -65,6 +65,11 @@ once. A push stream that returns NATS error 10074 is not retried, because the st
 
 ## Unanswered forwards
 
+A forwarder tells the home how long it still waits and when the home must answer: that wait minus the measured round
+trip to the home region and a 250 ms answer allowance. A forwarded SQL request stops its statements at that point and
+the home answers `query_canceled` (SQLSTATE `57014`) itself, so a query refused for its budget reaches the client as
+`57014` through every forwarding path. Only a home that does not answer at all gets the classifications below.
+
 A forwarded request that gets no answer from the home (or, inside a region, from the regional writer) answers by what
 the home could have done with it:
 
