@@ -49,13 +49,13 @@ internal sealed record RulesAuth(string Uid, IReadOnlyDictionary<string, RulesCl
         {
             string role => FrozenSet.Create(StringComparer.Ordinal, role),
             IReadOnlyList<RulesScalar> items => items.Select(Text).OfType<string>().ToFrozenSet(StringComparer.Ordinal),
-            _ => FrozenSet<string>.Empty,
+            long or double => FrozenSet<string>.Empty,
         } : FrozenSet<string>.Empty;
 
     private static string? Text(RulesScalar item) => item switch
     {
         string text => text,
-        _ => null,
+        long or double => null,
     };
 
     private static bool OptionalText(JsonElement payload, string name, out string? value)

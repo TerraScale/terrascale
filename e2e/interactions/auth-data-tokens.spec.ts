@@ -7,7 +7,7 @@ import { confirmWithPassword, hostedReady } from '../support/hosted';
 import { newAddress, nextMail } from '../support/inbox';
 import { enterSecret } from '../support/secret';
 import { auth, dash, desktop } from '../support/stack';
-import { saveSecret } from '../support/state';
+import { journey, saveSecret } from '../support/state';
 
 type Jwt = { header: Record<string, unknown>; claims: Record<string, unknown> };
 
@@ -192,6 +192,11 @@ test('tenant tokens name the project data audience, carry trusted claims, and cu
     const restricted = { Authorization: 'Bearer ' + elsewhere.access_token };
     expect((await logged('GET', '…/tables/notes/rows/{key} restricted to another database', await request.get(home + '/tables/notes/rows/' + written.key, { headers: restricted }), 404)).error.code).toBe('unknown_database');
     expect((await logged('POST', '…/tables/notes/rows restricted to another database', await request.post(home + '/tables/notes/rows', { headers: restricted, data: { row: { title: 'x' } } }), 404)).error.code).toBe('unknown_database');
+    const otherProject = journey().projectId;
+    expect(otherProject).not.toBe(project);
+    expect((await logged('POST', '/v1/{other project}/custom-tokens', await request.post(auth + '/v1/' + otherProject + '/custom-tokens', { headers: { Authorization: 'Bearer ' + mintKey }, data: minting }), 404)).error.code).toBe('not_found');
+    const otherRows = 'https://api.terrascale.tech/v1/projects/' + otherProject + '/databases/' + journey().databaseId + '/tables/notes/rows';
+    await logged('POST', '{other project}/tables/notes/rows', await request.post(otherRows, { headers: bearer, data: { row: { title: 'x' } } }), 401);
     await logged('GET', '/{project}/oauth/userinfo', await request.get(auth + '/' + project + '/oauth/userinfo', { headers: bearer }), 401);
 
     const manage = await ownerPage.request.get(auth + '/v1/' + project + '/users', { headers: { Authorization: 'Bearer ' + mintKey } });
