@@ -51,10 +51,10 @@ internal sealed class FunctionSql(ISqlSession session, string? requestId, TimePr
         {
             return op switch
             {
-            "begin" => await ControlAsync("BEGIN", cancellationToken).ConfigureAwait(false),
-            "commit" => await ControlAsync("COMMIT", cancellationToken).ConfigureAwait(false),
-            "rollback" => await ControlAsync("ROLLBACK", cancellationToken).ConfigureAwait(false),
-            _ => await ExecuteAsync(json, cancellationToken).ConfigureAwait(false),
+                "begin" => await ControlAsync("BEGIN", cancellationToken).ConfigureAwait(false),
+                "commit" => await ControlAsync("COMMIT", cancellationToken).ConfigureAwait(false),
+                "rollback" => await ControlAsync("ROLLBACK", cancellationToken).ConfigureAwait(false),
+                _ => await ExecuteAsync(json, cancellationToken).ConfigureAwait(false),
             };
         }
         finally
