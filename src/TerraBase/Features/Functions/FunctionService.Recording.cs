@@ -20,9 +20,9 @@ internal sealed partial class FunctionService
     private readonly CancellationTokenSource _invocationsStopping = new();
     private readonly Dictionary<string, TenantRecords> _tenantRecords = new(StringComparer.Ordinal);
     private int _recordCount;
-    private Unavailable? _recordError;
     private readonly Lock _recordGate = new();
-    private Task _lastRecord = Task.CompletedTask;
+    private Task<Unavailable?> _lastRecord = Task.FromResult<Unavailable?>(null);
+    private readonly HashSet<Task<Unavailable?>> _pendingRecords = [];
     private int _running;
     private bool _stopping;
 
@@ -34,10 +34,10 @@ internal sealed partial class FunctionService
 
     private sealed record PendingRecord(TenantContext Tenant, string Name, FunctionLogBody Log, IMemoryReservation Memory, RegionalIngress.Lease Ingress)
     {
-        public TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<Unavailable?> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
-    private Task Queue(TenantContext tenant, string name, FunctionLogBody log, IMemoryReservation reservation, RegionalIngress.Lease lease, long retainedBytes)
+    private Task<Unavailable?> Queue(TenantContext tenant, string name, FunctionLogBody log, IMemoryReservation reservation, RegionalIngress.Lease lease, long retainedBytes)
     {
         var pending = new PendingRecord(tenant, name, log, reservation, lease);
         lock (_recordGate)
@@ -52,22 +52,26 @@ internal sealed partial class FunctionService
                 throw new InvalidOperationException("function recording has stopped");
             }
             _lastRecord = pending.Completion.Task;
-            return held.Count == TenantRecordCapacity ? held.Space.Task : Task.CompletedTask;
+            _pendingRecords.Add(_lastRecord);
+            return held.Count == TenantRecordCapacity ? WaitForSpaceAsync(held.Space.Task, pending) : Task.FromResult<Unavailable?>(null);
         }
+    }
+
+    private static async Task<Unavailable?> WaitForSpaceAsync(Task space, PendingRecord pending)
+    {
+        await space.ConfigureAwait(false);
+        return await pending.Completion.Task.ConfigureAwait(false);
     }
 
     private async Task<Unavailable?> FlushAsync(CancellationToken cancellationToken)
     {
-        Task pending;
+        Task<Unavailable?>[] pending;
         lock (_recordGate)
         {
-            pending = _lastRecord;
+            pending = _pendingRecords.Count == 0 ? [_lastRecord] : [.. _pendingRecords];
         }
-        await pending.WaitAsync(cancellationToken).ConfigureAwait(false);
-        lock (_recordGate)
-        {
-            return _recordError;
-        }
+        var results = await Task.WhenAll(pending).WaitAsync(cancellationToken).ConfigureAwait(false);
+        return results.FirstOrDefault(error => error is not null);
     }
 
     private void ReleaseRecord(TenantContext tenant)
@@ -90,57 +94,44 @@ internal sealed partial class FunctionService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var batch = new List<PendingRecord>(RecordBatchSize);
-        try
+        while (await _records.Reader.WaitToReadAsync(CancellationToken.None).ConfigureAwait(false))
         {
-            while (await _records.Reader.WaitToReadAsync(CancellationToken.None).ConfigureAwait(false))
-            {
-                while (batch.Count < RecordBatchSize && _records.Reader.TryRead(out var pending))
-                {
-                    batch.Add(pending);
-                }
-                if (await RecordBatchAsync(batch, CancellationToken.None).ConfigureAwait(false) is { } unavailable)
-                {
-                    lock (_recordGate)
-                    {
-                        _recordError = unavailable;
-                        _stopping = true;
-                        if (_running == 0)
-                        {
-                            _records.Writer.TryComplete();
-                        }
-                    }
-                }
-                foreach (var pending in batch)
-                {
-                    pending.Memory.Dispose();
-                    pending.Ingress.Dispose();
-                    pending.Completion.SetResult();
-                    ReleaseRecord(pending.Tenant);
-                }
-                batch.Clear();
-            }
-        }
-        catch (Exception error)
-        {
-            _records.Writer.TryComplete(error);
-            lock (_recordGate)
-            {
-                _stopping = true;
-            }
-            while (_records.Reader.TryRead(out var pending))
+            while (batch.Count < RecordBatchSize && _records.Reader.TryRead(out var pending))
             {
                 batch.Add(pending);
+            }
+            Unavailable? unavailable;
+            Exception? failure = null;
+            try
+            {
+                unavailable = await RecordBatchAsync(batch, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception error)
+            {
+                unavailable = new Unavailable("function invocation recording failed", "function_recording_failed");
+                failure = error;
+            }
+            if (unavailable is not null)
+            {
+                LogRecordingFailed(logger, batch.Count, unavailable.Code, failure);
             }
             foreach (var pending in batch)
             {
                 pending.Memory.Dispose();
                 pending.Ingress.Dispose();
-                pending.Completion.TrySetException(error);
+                lock (_recordGate)
+                {
+                    pending.Completion.SetResult(unavailable);
+                    _pendingRecords.Remove(pending.Completion.Task);
+                }
                 ReleaseRecord(pending.Tenant);
             }
-            throw;
+            batch.Clear();
         }
     }
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Function recording failed for {Count} records: {Code}")]
+    private static partial void LogRecordingFailed(ILogger logger, int count, string code, Exception? exception);
 
     private async Task<Unavailable?> RecordBatchAsync(IReadOnlyList<PendingRecord> batch, CancellationToken cancellationToken)
     {

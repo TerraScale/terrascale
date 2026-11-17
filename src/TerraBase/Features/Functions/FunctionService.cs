@@ -24,7 +24,7 @@ public static class FunctionsExtensions
 }
 
 internal sealed partial class FunctionService(SystemCatalog catalog, ISqlService sql, IUsageMeter usage, IMemoryBudget memory,
-    TerraBaseOptions options, TimeProvider time, RegionalIngress ingress) : BackgroundService, IFunctions, IHostedLifecycleService
+    TerraBaseOptions options, TimeProvider time, RegionalIngress ingress, ILogger<FunctionService> logger) : BackgroundService, IFunctions, IHostedLifecycleService
 {
     public const string Schedules = "function_schedules";
     private const int MaxFunctions = 32;
@@ -148,7 +148,7 @@ internal sealed partial class FunctionService(SystemCatalog catalog, ISqlService
             var held = _tenantRecords.GetValueOrDefault(tenant.OrganizationId);
             if (_stopping || _recordCount == RecordCapacity || held is { Count: TenantRecordCapacity })
             {
-                return _recordError ?? Busy;
+                return Busy;
             }
             _running++;
             _recordCount++;
@@ -211,7 +211,10 @@ internal sealed partial class FunctionService(SystemCatalog catalog, ISqlService
             queued = true;
             reserved = null;
             lease = null;
-            await space.ConfigureAwait(false);
+            if (await space.ConfigureAwait(false) is { } unavailable)
+            {
+                return unavailable;
+            }
             return response;
         }
         finally
