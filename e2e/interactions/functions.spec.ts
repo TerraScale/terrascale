@@ -33,9 +33,14 @@ test('functions list, detail, invocation logs and deletion work through the page
     await page.getByRole('link', { name: window, exact: true }).click();
     await expect(page.locator('#function-stats .ts-stat').filter({ hasText: 'Invocations' }).locator('dd')).toHaveText('2');
   }
+  const failedFilter = page.waitForURL(url => url.searchParams.get('function') === name && url.searchParams.get('status') === 'error');
   await page.locator('#function-logs-status').selectOption('error');
+  await failedFilter;
   await expect(page.locator('#function-logs-card')).toContainText('No invocations match these filters.');
+  const succeededFilter = page.waitForURL(url => url.searchParams.get('function') === name && url.searchParams.get('status') === 'ok');
   await page.locator('#function-logs-status').selectOption('ok');
+  await succeededFilter;
+  await expect(page.locator('#function-logs li')).toHaveCount(2);
   await page.locator('#function-logs summary').first().click();
   await expect(page.locator('#function-logs')).toContainText('functions journey');
   await audit.check('function detail and real invocation logs');
@@ -448,11 +453,12 @@ test('function metrics include SQL calls and zero-filled latency buckets', async
     await expect(page.locator('#function-logs summary')).toContainText('Failed');
     await audit.check(`${action} retains invocation filters when switching windows`);
   }
-  const invalid = await request.get(`${url}/stats?window=2h`, { headers });
+  const validationHeaders = await functionAccess(request);
+  const invalid = await request.get(`${url}/stats?window=2h`, { headers: validationHeaders });
   expect(invalid.status()).toBe(400);
   expect((await invalid.json()).error.code).toBe('invalid_request');
-  expect((await request.delete(url, { headers })).status()).toBe(204);
-  expect((await request.get(`${url}/stats`, { headers })).status()).toBe(404);
+  expect((await request.delete(url, { headers: validationHeaders })).status()).toBe(204);
+  expect((await request.get(`${url}/stats`, { headers: validationHeaders })).status()).toBe(404);
 });
 
 test('function secrets are write-only, reach the next invocation and go away with delete', async ({ request, page, audit }) => {
