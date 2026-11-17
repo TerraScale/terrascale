@@ -1,12 +1,13 @@
 import { test, expect } from '../support/audit';
 import { authenticatedCells } from '../placement/support';
+import { request as clientRequest } from '../support/client-address';
 import { journey } from '../support/state';
 
-test('request logs append live and a selected status filter stays still', async ({ page, playwright, request, audit }) => {
+test('request logs append live and a selected status filter stays still', async ({ page, request, audit }) => {
   const current = journey();
-  const cells = await authenticatedCells(playwright.request, request, current.apiKey, current.projectId);
+  const cells = await authenticatedCells(clientRequest, request, current.apiKey, current.projectId);
   const path = `/databases/${current.databaseId}/logs`;
-  const endpoint = `https://${current.databaseRegion}.api.terrascale.tech/v1/projects/${current.projectId}/databases/${current.databaseId}/sql/execute`;
+  const endpoint = `https://api.terrascale.tech/v1/projects/${current.projectId}/databases/${current.databaseId}/sql/execute`;
   try {
     await page.goto(path);
     const url = page.url();
