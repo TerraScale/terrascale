@@ -21,6 +21,7 @@
     "esbuild": "0.28.2",
     "lightningcss": "1.33.0",
     "modern-monaco": "0.4.2",
-    "tm-grammars": "1.31.15"
+    "tm-grammars": "1.31.15",
+    "typescript": "6.0.3"
   }
 }

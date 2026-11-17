@@ -102,6 +102,13 @@ test('create, deploy, test run, edit and redeploy a function from the editor', a
   await page.goto(`/databases/${current.databaseId}/functions?edit=new`);
   await expect(page.locator('#function-editor')).toHaveValue(/async function handler\(event\)/);
   await expect(page.locator('#function-editor')).toHaveValue(/sql\.query\("SELECT 1 AS ok"\)/);
+  const editor = page.locator('ts-code-editor').filter({ has: page.locator('#function-editor') });
+  await expect(editor).toHaveAttribute('data-ready', '');
+  await editor.locator('.inputarea').focus();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.insertText('\nsql.');
+  await expect(page.locator('.suggest-widget.visible')).toContainText('transaction');
+  await page.keyboard.press('Escape');
   await page.locator('#function-name').fill(name);
   await setSource(page, 'function (');
   await page.getByRole('button', { name: 'Deploy function', exact: true }).click();

@@ -1,101 +1,147 @@
-const documented = (text, signature) => `/** ${text} */ ${signature}`;
+const documented = (text, example, signature) => `/** ${text}\n * @example ${example}\n */ ${signature}`;
+const sqlLimit = 'Shares the invocation budget of 256 SQL calls and 10 s wall time.';
+const logLimit = 'Shares the invocation limit of 50 lines, each truncated to 1,024 characters.';
 
-const extraLib = [
-  'interface SqlExecuteResult { columns: string[]; rows: unknown[][]; rowsAffected: number; lastInsertRowid: number | null; }',
-  'interface SqlStatement { sql: string; args?: unknown[] | Record<string, unknown>; named?: boolean; }',
+export const extraLib = [
+  documented('A JSON value returned by a handler.', '{ ok: true }', 'type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };'),
+  documented('A SQL value; binary values use base64.', '{ base64: "aGk=" }', 'type SqlValue = null | boolean | number | string | { base64: string };'),
+  documented('Positional or named bindings; placeholders accept :name, @name or $name.', '[42]; ({ name: "Ada" })', 'type SqlArgs = SqlValue[] | Record<string, SqlValue> | null;'),
+  'interface SqlExecuteResult {',
+  documented('Column names in result order.', 'result.columns[0]', 'columns: string[];'),
+  documented('Rows as arrays in column order.', 'result.rows[0][0]', 'rows: SqlValue[][];'),
+  documented('Number of rows changed.', 'result.rowsAffected', 'rowsAffected: number;'),
+  documented('Last inserted row ID, or null.', 'result.lastInsertRowid', 'lastInsertRowid: number | null;'),
+  '}',
+  'interface SqlStatement {',
+  documented('SQL text for one statement.', '({ sql: "SELECT ?", args: [42] })', 'sql: string;'),
+  documented('Positional bindings in placeholder order.', '({ sql: "SELECT ?", args: [42] })', 'args?: SqlValue[];'),
+  documented('Named bindings without the placeholder prefix.', '({ sql: "SELECT :name", named: { name: "Ada" } })', 'named?: Record<string, SqlValue>;'),
+  '}',
   'interface SqlTransaction {',
-  'execute(text: string, args?: unknown[] | Record<string, unknown>): Promise<SqlExecuteResult>;',
-  'query(text: string, args?: unknown[] | Record<string, unknown>): Promise<Record<string, unknown>[]>;',
-  'batch(statements: readonly SqlStatement[]): Promise<SqlExecuteResult[]>;',
+  documented(`Run a statement; rows are arrays. Commits on its own outside a transaction. ${sqlLimit}`, 'await sql.execute("INSERT INTO items (name) VALUES (?)", ["Ada"])', 'execute(text: string | SqlStatement, args?: SqlArgs): Promise<SqlExecuteResult>;'),
+  documented(`Read rows as objects keyed by column name. ${sqlLimit}`, 'await sql.query("SELECT :name AS name", { name: "Ada" })', 'query(text: string | SqlStatement, args?: SqlArgs): Promise<Record<string, SqlValue>[]>;'),
+  documented(`Run statements together in one transaction. ${sqlLimit}`, 'await sql.batch([{ sql: "SELECT 1" }])', 'batch(statements: Iterable<SqlStatement>): Promise<SqlExecuteResult[]>;'),
   '}',
-  'interface Sql {',
-  documented('Runs one statement. rows are arrays. Commits on its own outside a transaction.', 'execute(text: string, args?: unknown[] | Record<string, unknown>): Promise<SqlExecuteResult>;'),
-  documented('Runs a query. Rows are objects keyed by column name.', 'query(text: string, args?: unknown[] | Record<string, unknown>): Promise<Record<string, unknown>[]>;'),
-  documented('Runs every statement in one transaction and returns one result per statement.', 'batch(statements: readonly SqlStatement[]): Promise<SqlExecuteResult[]>;'),
-  documented('Runs tx.execute, tx.query and tx.batch in one transaction. Commits when the callback returns and rolls back when it throws.', 'transaction(run: (tx: SqlTransaction) => Promise<unknown>): Promise<unknown>;'),
+  'interface Sql extends SqlTransaction {',
+  documented(`Commit when the callback returns; roll back when it throws. Begin, commit and rollback each consume a SQL call. ${sqlLimit}`, 'await sql.transaction(async tx => { await tx.execute("INSERT INTO items (name) VALUES (?)", ["Ada"]); })', 'transaction<T>(work: (tx: SqlTransaction) => T | Promise<T>): Promise<T>;'),
   '}',
-  'interface FunctionEvent { trigger: "http" | "cron"; body: unknown; query: Record<string, string>; scheduledAt?: string; }',
-  'declare const sql: Sql;',
-  'declare const event: FunctionEvent;',
+  'interface SqlError extends Error {',
+  documented('Identifies an error from SQL.', 'error.name === "SqlError"', 'name: "SqlError";'),
+  documented('Stable SQL error code.', 'error.code === "sql_sandbox"', 'code: string;'),
+  documented('Reason the SQL call failed.', 'console.error(error.message)', 'message: string;'),
+  documented('Zero-based index of the failed statement.', 'error.statement === 0', 'statement: number;'),
+  documented('SQLSTATE supplied by the SQL engine.', 'error.sqlstate === "42501"', 'sqlstate: string;'),
+  '}',
+  'interface HttpEvent {',
+  documented('An invocation through POST …/invoke.', 'event.trigger === "http"', 'trigger: "http";'),
+  documented('Parsed JSON, otherwise text; null for an empty body. Request limit: 1 MiB.', 'event.body', 'body: JsonValue;'),
+  documented('Query string values; repeated values are comma-joined.', 'event.query.name', 'query: Record<string, string>;'),
+  '}',
+  'interface CronEvent {',
+  documented('An invocation from the UTC schedule.', 'event.trigger === "cron"', 'trigger: "cron";'),
+  documented('Planned execution time as an ISO timestamp.', 'console.log(event.scheduledAt)', 'scheduledAt: string;'),
+  '}',
+  documented('Narrow by trigger to read HTTP or cron fields.', 'if (event.trigger === "http") console.log(event.body)', 'type FunctionEvent = HttpEvent | CronEvent;'),
+  'interface FunctionResponse {',
+  documented('HTTP status from 200 to 599; other values leave the result as ordinary JSON with status 200.', 'return { status: 201, body: { ok: true } }', 'status: number;'),
+  documented('Strings are plain text, null is empty, other values are JSON. Serialized handler result limit: 1,048,576 characters.', 'return { status: 200, body: { ok: true } }', 'body: JsonValue;'),
+  '}',
+  documented('Handle an HTTP or cron event within 10 s; return JSON or {status, body}. Response limit: 1 MiB.', 'async function handler(event) { return { ok: true }; }', 'type FunctionHandler = (event: FunctionEvent) => JsonValue | FunctionResponse | void | Promise<JsonValue | FunctionResponse | void>;'),
+  documented('The runtime calls this entry point once per invocation. Wall time: 10 s; response limit: 1 MiB.', 'async function handler(event) { return { ok: true }; }', 'declare function handler(event: FunctionEvent): ReturnType<FunctionHandler>;'),
+  documented(`SQL on this function's database. ${sqlLimit}`, 'await sql.query("SELECT 1 AS ok")', 'declare const sql: Sql;'),
+  'declare const console: {',
+  ...['log', 'info', 'warn', 'error'].map(level => documented(`Write values to the invocation log. ${logLimit}`, `console.${level}("rows", 3)`, `${level}(...values: unknown[]): void;`)),
+  '};',
 ].join('\n');
 
-const members = [...extraLib.matchAll(/\/\*\*\s*([\s\S]*?)\s*\*\/\s*(\w+)\(([\s\S]*?)\)\s*:/g)].map(match => ({
-  name: match[2],
-  signature: `${match[2]}(${match[3]})`,
-  doc: match[1].replaceAll(/^\s*\*\s?/gm, '').replaceAll(/\s+/g, ' ').trim(),
-}));
-
+const typedHandler = '/** @param {FunctionEvent} event */\nasync function handler(event) {\n';
 const snippets = [
-  ['handler', 'async function handler(event) {\n  const rows = await sql.query("SELECT 1 AS ok");\n  return { rows };\n}'],
-  ['query rows', 'const rows = await sql.query("SELECT 1 AS ok");'],
-  ['insert with args', 'await sql.execute("INSERT INTO items (name) VALUES (?)", ["demo"]);'],
-  ['batch', 'await sql.batch([{ sql: "INSERT INTO items (name) VALUES (?)", args: ["demo"] }]);'],
-  ['transaction', 'await sql.transaction(async (tx) => {\n  await tx.execute("INSERT INTO items (name) VALUES (?)", ["demo"]);\n});'],
-  ['return JSON response', 'return { status: 200, body: { ok: true } };'],
+  ['HTTP handler', 'Respond to POST …/invoke with JSON', typedHandler + '  if (event.trigger !== "http") return;\n  return { status: ${1:200}, body: { ${2:ok}: ${3:true} } };\n}\n$0'],
+  ['Cron handler', 'Run on a schedule; event.scheduledAt is the planned time', typedHandler + '  if (event.trigger !== "cron") return;\n  console.log(event.scheduledAt);\n  ${1:await sql.query("SELECT 1 AS ok");}\n}\n$0'],
+  ['Query rows', 'Rows as objects keyed by column name', 'const ${1:rows} = await sql.query("SELECT * FROM ${2:items} WHERE ${3:id} = ?", [${4:1}]);$0'],
+  ['Query with named args', 'Bind :name, @name or $name from an object', 'const ${1:rows} = await sql.query("SELECT * FROM ${2:items} WHERE name = :name", { name: "${3:Ada}" });$0'],
+  ['Batch', 'Run statements in one transaction', 'const ${1:results} = await sql.batch([\n  { sql: "INSERT INTO ${2:items} (name) VALUES (?)", args: ["${3:Ada}"] },\n  { sql: "SELECT * FROM ${2:items} WHERE name = :name", named: { name: "${3:Ada}" } },\n]);$0'],
+  ['Transaction', 'Commit when the callback returns, roll back when it throws', 'const ${1:result} = await sql.transaction(async tx => {\n  const rows = await tx.query("SELECT * FROM ${2:items} WHERE id = ?", [${3:1}]);\n  if (rows.length === 0) throw new Error("${4:Item not found}");\n  await tx.execute("UPDATE ${2:items} SET name = ? WHERE id = ?", ["${5:Ada}", ${3:1}]);\n  return rows;\n});$0'],
+  ['Handle SQL error', 'Catch SqlError and branch on its code', 'try {\n  ${1:await sql.query("SELECT 1");}\n} catch (error) {\n  if (!(error instanceof Error) || error.name !== "SqlError") throw error;\n  const sqlError = /** @type {SqlError} */ (error);\n  if (sqlError.code !== "${2:sql_sandbox}") throw error;\n  console.error(sqlError.message);\n  $0\n}'],
+  ['Custom response', 'Return a status code and JSON body', 'return { status: ${1:201}, body: { ${2:ok}: ${3:true} } };$0'],
+  ['Read request', 'Use event.body and event.query', 'if (event.trigger === "http") {\n  const ${1:body} = event.body;\n  const ${2:name} = event.query.${3:name};\n  $0\n}'],
 ];
 
+const keywords = ['SELECT', 'FROM', 'WHERE', 'AND', 'OR', 'NOT', 'IN', 'IS', 'NULL', 'ORDER BY', 'ASC', 'DESC', 'LIMIT', 'TRUE', 'FALSE', 'INSERT INTO', 'VALUES', 'UPDATE', 'SET', 'DELETE FROM', 'JOIN', 'ON', 'GROUP BY', 'HAVING', 'AS', 'CREATE TABLE', 'RETURNING'];
+const eventFields = [...extraLib.matchAll(/\/\*\* ((?:(?!\*\/)[\s\S])*?)\*\/ (trigger|body|query|scheduledAt): ([^;]+);/g)]
+  .map(match => ({ name: match[2], type: match[2] === 'trigger' ? '"http" | "cron"' : match[3], doc: match[1].replaceAll(/^ \* ?/gm, '').trim() }))
+  .filter((field, index, fields) => fields.findIndex(other => other.name === field.name) === index);
+const tokens = /\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)|"(?:\\[\s\S]|[^"\\])*"?|'(?:\\[\s\S]|[^'\\])*'?|`(?:\\[\s\S]|[^`\\])*`?/g;
+const models = new WeakSet();
+let languageService;
 let registered = false;
 
-export function attach(api, editor) {
+export async function attach(api, editor) {
+  const model = editor.getModel();
+  languageService ??= import('modern-monaco/lsp/typescript/setup').then(module => module.setup(api, 'javascript', {
+    compilerOptions: { allowJs: true, checkJs: true, strict: true, noImplicitAny: false, useUnknownInCatchVariables: false, lib: ['es2023'], target: 'es2023', moduleDetection: 'legacy' },
+    extraLibs: { 'file:///terrascale-function.d.ts': { content: extraLib, version: 1 } },
+  }, { tabSize: 2, insertSpaces: true }));
+  await languageService;
+  if (model.isDisposed()) return () => {};
   register(api);
-  editor.updateOptions({ wordBasedSuggestions: 'off', quickSuggestions: { other: true, comments: false, strings: false } });
-  return () => {};
+  models.add(model);
+  editor.updateOptions({
+    wordBasedSuggestions: 'off',
+    snippetSuggestions: 'top',
+    quickSuggestions: { other: true, comments: false, strings: true },
+    bracketPairColorization: { enabled: true },
+  });
+  const save = editor.getOption(api.editor.EditorOption.readOnly) ? null : editor.addAction({
+    id: 'terrascale.saveFunction',
+    label: 'Deploy function',
+    keybindings: [api.KeyMod.CtrlCmd | api.KeyCode.KeyS],
+    run: () => editor.getDomNode().closest('ts-code-editor').querySelector('textarea').form?.requestSubmit(),
+  });
+  return () => {
+    models.delete(model);
+    save?.dispose();
+  };
 }
 
 function register(api) {
-  if (registered) {
-    return;
-  }
+  if (registered) return;
   registered = true;
-  const defaults = api.languages.typescript?.javascriptDefaults;
-  const languageService = Boolean(defaults?.addExtraLib);
-  if (languageService) {
-    defaults.addExtraLib(extraLib, 'file:///terrascale-function.d.ts');
-  }
-  const { CompletionItemKind: Kind } = api.languages;
+  const { CompletionItemKind: Kind, CompletionItemInsertTextRule: Rule } = api.languages;
   api.languages.registerCompletionItemProvider('javascript', {
-    triggerCharacters: ['.'],
+    triggerCharacters: ['.', ' ', '"', "'"],
     provideCompletionItems(model, position) {
-      const before = model.getLineContent(position.lineNumber).slice(0, position.column - 1);
-      const call = before.match(/(?:^|[^\w$])sql\.(\w*)$/);
-      if (call) {
-        if (languageService) {
-          return { suggestions: [] };
-        }
-        const range = rangeEnding(position, call[1].length);
-        return {
-          suggestions: members.map(member => ({
-            label: member.name,
-            kind: Kind.Method,
-            detail: member.signature,
-            documentation: member.doc,
-            insertText: member.name,
-            range,
-          })),
-        };
+      if (!models.has(model)) return { suggestions: [] };
+      const before = model.getValue().slice(0, model.getOffsetAt(position));
+      const last = [...before.matchAll(tokens)].at(-1);
+      const inLiteral = last && last.index + last[0].length === before.length;
+      const sqlString = inLiteral && /^["'`]/.test(last[0]) && (last[0].length === 1 || !last[0].endsWith(last[0][0]))
+        && /\b(?:sql|tx)\.(?:execute|query)\(\s*$/.test(before.slice(0, last.index)) && !last[0].includes('${');
+      const word = model.getWordAtPosition(position) ?? model.getWordUntilPosition(position);
+      const range = { startLineNumber: position.lineNumber, startColumn: word.startColumn, endLineNumber: position.lineNumber, endColumn: word.endColumn };
+      if (sqlString) {
+        return { suggestions: keywords.map(keyword => ({ label: keyword, kind: Kind.Keyword, insertText: keyword, range })) };
       }
-      if (before.endsWith('.')) {
-        return { suggestions: [] };
+      if (inLiteral) return { suggestions: [] };
+      if (/\bevent\.\w*$/.test(before) && !/\/\*\*[^]*?@param\s*\{[^}]+\}\s*event/.test(before)) {
+        return { suggestions: eventFields.map(field => ({ label: field.name, detail: field.type, documentation: field.doc, kind: Kind.Property, insertText: field.name, range })) };
       }
-      const word = before.match(/[A-Za-z]*$/)[0];
-      const range = rangeEnding(position, word.length);
+      if (/\.\w*$/.test(before)) return { suggestions: [] };
       return {
-        suggestions: snippets.map(([label, insertText]) => ({
-          label,
-          kind: Kind.Snippet,
-          insertText,
-          range,
+        suggestions: snippets.map(([label, detail, insertText]) => ({
+          label, detail, documentation: detail, kind: Kind.Snippet, insertText,
+          insertTextRules: Rule.InsertAsSnippet, range,
         })),
       };
     },
   });
-}
-
-function rangeEnding(position, length) {
-  return {
-    startLineNumber: position.lineNumber,
-    startColumn: position.column - length,
-    endLineNumber: position.lineNumber,
-    endColumn: position.column,
-  };
+  api.languages.registerHoverProvider('javascript', {
+    provideHover(model, position) {
+      if (!models.has(model)) return null;
+      const word = model.getWordAtPosition(position);
+      if (!word || !/\bevent\.$/.test(model.getLineContent(position.lineNumber).slice(0, word.startColumn - 1))) return null;
+      const field = eventFields.find(field => field.name === word.word);
+      return field ? { contents: [{ value: `\`\`\`typescript\n${field.name}: ${field.type}\n\`\`\`` }, { value: field.doc }] } : null;
+    },
+  });
 }
