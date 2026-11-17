@@ -139,7 +139,11 @@ transaction and add no customer-database SQL query. Deleting a function or its d
 
 ## Dashboard MCP
 
-Call `get_functions_reference` first for the complete runtime contract and examples. Both signed-in and project API-key MCP connections expose `deploy_function`, `invoke_function`, `list_functions`, `get_function`, `list_function_logs`, `get_function_stats`, `set_function_secret`, `delete_function_secret` and `list_function_secrets`. Deploy returns structured runner validation errors. Invoke requires only `sql:read` and returns status, content type and body; it includes the newest log only when the caller also has SQL write access. Otherwise `log: null` and `log_note` describe that requirement. Concurrent invocations or cron may make that newest log belong to another run. MCP and dashboard test runs send an empty `event.query`; use the direct HTTPS invoke URL for query parameters. `delete_function` returns a dashboard confirmation URL and leaves the function intact.
+Call `get_functions_reference` first for the complete runtime contract and examples. Both signed-in and project API-key MCP connections expose `deploy_function`, `invoke_function`, `list_functions`, `get_function`, `list_function_logs`, `get_function_stats`, `set_function_secret`, `delete_function_secret` and `list_function_secrets`. Deploy returns structured runner validation errors. Invoke requires only `sql:read` and returns status, content type and body; it includes the newest log only when the caller also has SQL write access. Otherwise `log: null` and `log_note` describe that requirement. Concurrent invocations or cron may make that newest log belong to another run.
+
+MCP `invoke_function` accepts an optional `query` object mapping string keys to string values. The dashboard test run accepts a URL query string in the Query parameters field. Both populate `event.query` through the HTTPS invoke route, which decodes keys and values and joins repeated values with commas. Omitting query parameters produces an empty `event.query` object.
+
+`delete_function` returns a dashboard confirmation URL and leaves the function intact.
 
 A completed MCP invocation retains its status and body if the subsequent log read fails; `log` is null and `log_note` identifies the log retrieval failure. Read existing logs instead of invoking the function again.
 
