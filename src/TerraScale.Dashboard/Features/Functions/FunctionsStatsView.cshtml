@@ -1,9 +1,40 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Functions.FunctionsPage>
 @using System.Globalization
-<dl class="ts-stats" id="function-stats" aria-label="Function status">
-@if(Model.Selected is { } selected){
-<div class="ts-stat"><dt class="ts-stat-label">Status</dt><dd class="ts-stat-value"><span class="ts-dot" data-tone="success" aria-hidden="true"></span>Deployed</dd><dd class="ts-stat-meta">@(selected.Cron is { Length: > 0 } cron ? "Cron " + cron + " UTC" : "HTTPS calls")</dd></div>
-<div class="ts-stat"><dt class="ts-stat-label">Last deploy</dt><dd class="ts-stat-value">@ValueFormat.UtcDate(selected.UpdatedAt)</dd><dd class="ts-stat-meta">Created @ValueFormat.UtcDate(selected.CreatedAt)</dd></div>
-<div class="ts-stat"><dt class="ts-stat-label">Invocations</dt><dd class="ts-stat-value">@Model.Logs.Count.ToString(CultureInfo.InvariantCulture)</dd><dd class="ts-stat-meta">@(Model.Logs.Count > 0 ? "Latest " + Model.Logs[0].At.UtcDateTime.ToString("MMM d HH:mm 'UTC'", CultureInfo.InvariantCulture) : "No runs yet")</dd></div>
+@using TerraScale.Dashboard.Features.Analytics
+@{
+    var list = DatabaseService.Path(Model.Database.Id, "functions");
 }
+<div id="function-stats" class="ts-stack">
+@if(Model.Stats is { } stats){
+<input type="hidden" name="window" value="@Model.Window" form="function-code-form" />
+<input type="hidden" name="window" value="@Model.Window" form="function-trigger-form" />
+<input type="hidden" name="window" value="@Model.Window" form="function-run-form" />
+<nav class="ts-home-ranges" aria-label="Function metrics window">
+@foreach(var (window, label) in Windows){<a href="@(list + "?function=" + Uri.EscapeDataString(Model.Selected!.Name) + "&window=" + window + "&trigger=" + Model.LogsTrigger + "&status=" + Model.LogsStatus)" aria-current="@(window == Model.Window ? "page" : null)">@label</a>}
+</nav>
+<dl class="ts-stats ts-functions-stats" aria-label="Function metrics">
+<div class="ts-stat"><dt class="ts-stat-label">Invocations</dt><dd class="ts-stat-value">@stats.Invocations.ToString("N0", CultureInfo.InvariantCulture)</dd></div>
+<div class="ts-stat"><dt class="ts-stat-label">Error rate</dt><dd class="ts-stat-value">@(stats.Invocations == 0 ? "—" : ((decimal)stats.Errors / stats.Invocations).ToString("0.#%", CultureInfo.InvariantCulture))</dd></div>
+<div class="ts-stat"><dt class="ts-stat-label">p50 latency</dt><dd class="ts-stat-value">@stats.P50Ms.ToString(CultureInfo.InvariantCulture) ms</dd></div>
+<div class="ts-stat"><dt class="ts-stat-label">p95 latency</dt><dd class="ts-stat-value">@stats.P95Ms.ToString(CultureInfo.InvariantCulture) ms</dd></div>
+<div class="ts-stat"><dt class="ts-stat-label">p99 latency</dt><dd class="ts-stat-value">@stats.P99Ms.ToString(CultureInfo.InvariantCulture) ms</dd></div>
+<div class="ts-stat"><dt class="ts-stat-label">SQL calls</dt><dd class="ts-stat-value">@stats.SqlCalls.ToString("N0", CultureInfo.InvariantCulture)</dd></div>
 </dl>
+    var starts = stats.Buckets.Select(bucket => bucket.At).ToArray();
+    var volume = AnalyticsLinePlot.For("Invocations and errors", stats.Window, starts, [
+        new("Invocations", [.. stats.Buckets.Select(bucket => (decimal)bucket.Invocations)]),
+        new("Errors", [.. stats.Buckets.Select(bucket => (decimal)bucket.Errors)])]);
+    var latency = AnalyticsLinePlot.For("p95 latency (ms)", stats.Window, starts, [
+        new("p95 latency (ms)", [.. stats.Buckets.Select(bucket => (decimal)bucket.P95Ms)])]);
+foreach(var plot in new[] { volume, latency }){
+<section class="ts-card"><header class="ts-card-head"><h2 class="ts-card-title">@plot.Label</h2></header><div class="ts-card-body">
+<ul class="ts-chart-legend" aria-label="Chart series">@foreach(var path in plot.Paths){<li class="ts-chart-legend-item"><svg class="ts-chart-swatch @path.Class" viewBox="0 0 32 8" aria-hidden="true"><line x1="0" x2="32" y1="4" y2="4"></line></svg>@path.Name</li>}</ul>
+<div class="ts-chart-shell" role="region" aria-label="@(plot.Label + " chart")" tabindex="0">@(await RenderPartialAsync<AnalyticsLineView, AnalyticsLinePlot>(plot))</div>
+</div></section>
+}
+}
+else if(Model.Selected is not null){<div class="ts-alert ts-alert-danger" role="status"><p class="ts-alert-body">Function metrics are unavailable.</p></div>}
+</div>
+@functions {
+    private static readonly (string Window, string Label)[] Windows = [("1h", "Last hour"), ("24h", "Last 24 hours"), ("7d", "Last 7 days")];
+}

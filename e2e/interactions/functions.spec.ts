@@ -19,13 +19,24 @@ test('functions list, detail, invocation logs and deletion work through the page
   expect(invoked.status(), 'invoke the real function to produce logs').toBe(200);
   expect(await invoked.json()).toEqual({ ok: true });
 
+  expect((await page.request.post(`${functionUrl(name)}/invoke`, { headers, data: {} })).status()).toBe(200);
   await page.goto(`/databases/${current.databaseId}/functions`);
   const row = page.locator('#functions li').filter({ hasText: name });
   await expect(row).toHaveCount(1);
   await row.getByRole('link', { name: 'Open', exact: true }).click();
   await expect(page.locator('#function-source')).toHaveValue(functionSource);
   await expect(page.locator('#function-invoke')).toContainText(functionUrl(name));
-  await expect(page.locator('#function-logs li')).toHaveCount(1);
+  await expect(page.locator('#function-logs li')).toHaveCount(2);
+  await expect(page.locator('#function-stats .ts-stat').filter({ hasText: 'Invocations' }).locator('dd')).toHaveText('2');
+  await expect(page.locator('#function-stats .ts-stat').filter({ hasText: 'p50 latency' }).locator('dd')).toHaveText(/^\d+ ms$/);
+  for (const window of ['Last hour', 'Last 7 days', 'Last 24 hours']) {
+    await page.getByRole('link', { name: window, exact: true }).click();
+    await expect(page.locator('#function-stats .ts-stat').filter({ hasText: 'Invocations' }).locator('dd')).toHaveText('2');
+  }
+  await page.locator('#function-logs-status').selectOption('error');
+  await expect(page.locator('#function-logs-card')).toContainText('No invocations match these filters.');
+  await page.locator('#function-logs-status').selectOption('ok');
+  await page.locator('#function-logs summary').first().click();
   await expect(page.locator('#function-logs')).toContainText('functions journey');
   await audit.check('function detail and real invocation logs');
   await page.getByRole('button', { name: 'Delete function', exact: true }).click();
@@ -152,12 +163,16 @@ test('create, deploy, test run, edit and redeploy a function from the editor', a
   await sqlCompletion(page, '#function-source', 'edit');
   await setSource(page, created, '#function-source');
   await expect(page.getByText('HTTPS calls', { exact: true }).first()).toBeVisible();
+  await page.getByRole('link', { name: 'Last 7 days', exact: true }).click();
   const detailUrl = page.url();
   await page.locator('#function-event').fill('{"hello":"world"}');
   await page.getByRole('button', { name: 'Run', exact: true }).click();
   await expect(page.locator('#function-result')).toContainText('world');
+  await expect(page.locator('#function-stats .ts-stat').filter({ hasText: 'Invocations' }).locator('dd')).toHaveText('1');
+  await expect(page.getByRole('link', { name: 'Last 7 days', exact: true })).toHaveAttribute('aria-current', 'page');
   await expect(page).toHaveURL(detailUrl);
   await expect(page.locator('#function-source')).toHaveValue(created);
+  await page.locator('#function-logs summary').first().click();
   await expect(page.locator('#function-logs')).toContainText('editor journey');
   await page.locator('#function-event').fill('{');
   await page.getByRole('button', { name: 'Run', exact: true }).click();
@@ -195,7 +210,7 @@ test('a handler status is the test-run result', async ({ page }) => {
   console.log('Functions test run: a handler 404 and its JSON body are the result.');
 });
 
-test('function metrics include SQL calls and zero-filled latency buckets', async ({ request }) => {
+test('function metrics include SQL calls and zero-filled latency buckets', async ({ request, page, audit }) => {
   const headers = await functionAccess(request);
   const name = unique('metrics');
   const url = functionUrl(name);
@@ -212,6 +227,11 @@ test('function metrics include SQL calls and zero-filled latency buckets', async
   const empty = await request.get(`${url}/stats`, { headers });
   expect(empty.status()).toBe(200);
   expect(await empty.json()).toMatchObject({ window: '24h', invocations: 0, p50Ms: 0 });
+  const dashboard = `/databases/${journey().databaseId}/functions?function=${name}`;
+  await page.goto(dashboard);
+  await expect(page.locator('#function-logs-card')).toContainText('No invocations in this window yet. Run it from the Test tab or call its HTTPS URL.');
+  await expect(page.locator('#function-stats .ts-stat').filter({ hasText: 'Error rate' }).locator('dd')).toHaveText('—');
+  await audit.check('empty invocation metrics');
   for (let i = 0; i < 2; i++) {
     const invoked = await request.post(`${url}/invoke`, { headers, data: {} });
     expect(invoked.status()).toBe(201);
@@ -253,6 +273,14 @@ test('function metrics include SQL calls and zero-filled latency buckets', async
   const failedStats = await request.get(`${url}/stats`, { headers });
   expect(failedStats.status()).toBe(200);
   expect(await failedStats.json()).toMatchObject({ invocations: 3, errors: 1, sqlCalls: 11, rowsRead: 3 });
+  await page.goto(`${dashboard}&window=1h&status=error`);
+  await expect(page.locator('#function-logs li')).toHaveCount(1);
+  await page.locator('#function-logs summary').click();
+  await expect(page.locator('#function-logs details[open]')).toContainText('metrics failure');
+  await expect(page.locator('#function-logs details[open]')).toContainText('SQL calls');
+  await expect(page.locator('#function-stats .ts-stat').filter({ hasText: 'Invocations' }).locator('dd')).toHaveText('3');
+  await expect(page.locator('#function-stats .ts-stat').filter({ hasText: 'Error rate' }).locator('dd')).toHaveText('33.3%');
+  await audit.check('expanded failed invocation and window metrics');
   const invalid = await request.get(`${url}/stats?window=2h`, { headers });
   expect(invalid.status()).toBe(400);
   expect((await invalid.json()).error.code).toBe('invalid_request');

@@ -10,7 +10,7 @@ using TerraScale.TerraBase.Contracts;
 namespace TerraScale.Dashboard.Features.Functions
 {
     public sealed record FunctionRecord(string Name, string? Source, string? Cron, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
-    public sealed record FunctionInvocation(string Id, DateTimeOffset At, string Trigger, string Status, double DurationMs, IReadOnlyList<string> Lines, string? Error);
+    public sealed record FunctionInvocation(string Id, DateTimeOffset At, string Trigger, string Status, double DurationMs, IReadOnlyList<string> Lines, string? Error, int SqlCalls, long SqlMs, long RowsRead, long RowsWritten, long ResponseBytes, int? HttpStatus);
 
     public sealed partial class FunctionBackend(DatabaseService databases, IProjectAccessTokens tokens, TerraBaseRpcClient rpc)
     {
@@ -65,9 +65,28 @@ namespace TerraScale.Dashboard.Features.Functions
             var target = await ClientAsync(context, database, false, WriteScopes, ct);
             var result = await target.Client.LogsAsync(target.ProjectId, target.Database, name, 25);
             IReadOnlyList<FunctionInvocation> logs = [.. result.Select(item => new FunctionInvocation(item.Id, item.At, item.Trigger,
-                item.Status, item.DurationMs, item.Lines, item.Error))];
+                item.Status, item.DurationMs, item.Lines, item.Error, item.SqlCalls, item.SqlMs, item.RowsRead, item.RowsWritten, item.ResponseBytes, item.HttpStatus))];
             Validate(logs);
             return logs;
+        }
+
+        public async Task<TerraBaseFunctionStats> StatsAsync(AccountContext context, DatabaseRecord database, string name, string window, CancellationToken cancellationToken)
+        {
+            CheckName(name);
+            if (window is not ("1h" or "24h" or "7d"))
+            {
+                throw new AccountAccessException("window must be 1h, 24h or 7d", 400);
+            }
+
+            var target = await ClientAsync(context, database, false, WriteScopes, cancellationToken);
+            var stats = await target.Client.StatsAsync(target.ProjectId, target.Database, name, window);
+            Validate(stats);
+            if (stats.Window != window)
+            {
+                throw new JsonException("Functions returned the wrong stats window.");
+            }
+
+            return stats;
         }
 
         public async Task<bool> DeleteAsync(AccountContext context, DatabaseRecord database, string name, CancellationToken ct)
@@ -151,8 +170,19 @@ namespace TerraScale.Dashboard.Features.Functions
                 IReadOnlyList<FunctionRecord> functions => functions.Count <= 32 && functions.All(item => item is not null && Valid(item)),
                 IReadOnlyList<FunctionInvocation> logs => logs.Count <= 100 && logs.All(item => item is not null && TerraScaleIds.IsValid(item.Id) &&
                     item.Trigger is "http" or "cron" && item.Status is "ok" or "error" && double.IsFinite(item.DurationMs) && item.DurationMs >= 0 &&
+                    item.SqlCalls >= 0 && item.SqlMs >= 0 && item.SqlMs <= item.DurationMs && item.RowsRead >= 0 &&
+                    item.RowsWritten >= 0 && item.ResponseBytes >= 0 && (item.HttpStatus is null or >= 100 and <= 599) &&
                     item.Lines is { Count: <= 50 } && item.Lines.All(line => line is not null)) &&
                     logs.SequenceEqual(logs.OrderByDescending(item => item.At).ThenByDescending(item => item.Id, StringComparer.Ordinal)),
+                TerraBaseFunctionStats stats => stats.Window is "1h" or "24h" or "7d" && stats.Invocations >= 0 &&
+                    stats.Errors >= 0 && stats.Errors <= stats.Invocations && stats.P50Ms >= 0 && stats.P95Ms >= stats.P50Ms &&
+                    stats.P99Ms >= stats.P95Ms && stats.MaxMs >= 0 && stats.SqlCalls >= 0 && stats.RowsRead >= 0 && stats.RowsWritten >= 0 &&
+                    stats.Buckets is not null && stats.Buckets.Count == (stats.Window == "1h" ? 60 : stats.Window == "24h" ? 24 : 168) &&
+                    stats.Buckets.All(bucket => bucket is not null && bucket.Invocations >= 0 && bucket.Errors >= 0 &&
+                        bucket.Errors <= bucket.Invocations && bucket.P50Ms >= 0 && bucket.P95Ms >= bucket.P50Ms) &&
+                    stats.Buckets.Zip(stats.Buckets.Skip(1)).All(pair => pair.Second.At - pair.First.At == TimeSpan.FromMinutes(stats.Window == "1h" ? 1 : 60)) &&
+                    stats.Buckets.Sum(bucket => (decimal)bucket.Invocations) == stats.Invocations &&
+                    stats.Buckets.Sum(bucket => (decimal)bucket.Errors) == stats.Errors,
                 _ => false
             };
             if (!valid)

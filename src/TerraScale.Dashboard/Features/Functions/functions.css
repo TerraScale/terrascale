@@ -8,3 +8,64 @@
 .ts-functions-endpoint .ts-mono {
   overflow-wrap: anywhere;
 }
+
+.ts-functions-stats {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.ts-functions-invocations {
+  display: grid;
+  gap: var(--ts-s3);
+  padding: 0;
+  list-style: none;
+}
+
+.ts-functions-invocations details {
+  border-bottom: 1px solid var(--ts-line);
+  padding-block: var(--ts-s3);
+}
+
+.ts-functions-invocations summary {
+  cursor: pointer;
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-sm);
+  font-variant-numeric: tabular-nums;
+  line-height: 2;
+}
+
+.ts-functions-invocation-summary {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ts-s2) var(--ts-s3);
+  width: calc(100% - var(--ts-s5));
+  vertical-align: top;
+}
+
+.ts-functions-invocations summary::marker {
+  color: var(--ts-ink-2);
+}
+
+.ts-functions-invocations summary:focus-visible {
+  outline: var(--ts-ring);
+  outline-offset: 2px;
+}
+
+.ts-functions-invocations details > div {
+  padding-top: var(--ts-s3);
+}
+
+.ts-functions-invocations .ts-code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ts-functions-error {
+  color: var(--ts-danger);
+}
+
+@media (max-width: 40rem) {
+  .ts-functions-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
