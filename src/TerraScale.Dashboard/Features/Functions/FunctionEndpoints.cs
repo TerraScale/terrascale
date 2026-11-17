@@ -137,6 +137,8 @@ namespace TerraScale.Dashboard.Features.Functions
             var cron = form["cron"].ToString().Trim();
             var source = form["source"].ToString();
             var intent = form["intent"].ToString();
+            var trigger = form["trigger"].ToString() is "http" or "cron" ? form["trigger"].ToString() : "";
+            var status = form["status"].ToString() is "ok" or "error" ? form["status"].ToString() : "";
             var inPlace = intent is "trigger" or "code" && http.Request.IsDatastarRequest;
             FunctionRecord? before = null;
             try
@@ -154,8 +156,8 @@ namespace TerraScale.Dashboard.Features.Functions
                 var saved = await functions.DeployAsync(context, database, name, source, cron.Length == 0 ? null : cron, http.RequestAborted);
                 if (inPlace)
                 {
-                    var logs = Filter(await functions.LogsAsync(context, database, name, http.RequestAborted), form["trigger"].ToString(), form["status"].ToString());
-                    await PatchDeployAsync(http, functions, context, database, saved, logs, "Function deployed.", "");
+                    var logs = Filter(await functions.LogsAsync(context, database, name, http.RequestAborted), trigger, status);
+                    await PatchDeployAsync(http, functions, context, database, saved, logs, "Function deployed.", "", trigger, status);
                     return Results.Empty;
                 }
 
@@ -165,8 +167,8 @@ namespace TerraScale.Dashboard.Features.Functions
             {
                 if (inPlace)
                 {
-                    var logs = before is null ? [] : Filter(await functions.LogsAsync(context, database, name, http.RequestAborted), form["trigger"].ToString(), form["status"].ToString());
-                    await PatchDeployAsync(http, functions, context, database, before, logs, "", FailureText(error));
+                    var logs = before is null ? [] : Filter(await functions.LogsAsync(context, database, name, http.RequestAborted), trigger, status);
+                    await PatchDeployAsync(http, functions, context, database, before, logs, "", FailureText(error), trigger, status);
                     return Results.Empty;
                 }
 
@@ -176,11 +178,11 @@ namespace TerraScale.Dashboard.Features.Functions
         }
 
         private static async Task PatchDeployAsync(HttpContext http, FunctionBackend functions, AccountContext context, DatabaseRecord database, FunctionRecord? saved,
-            IReadOnlyList<FunctionInvocation> logs, string notice, string error)
+            IReadOnlyList<FunctionInvocation> logs, string notice, string error, string trigger, string status)
         {
             var stats = saved is null ? null : await ReadStatsAsync(http, functions, context, database, saved.Name);
             var page = new FunctionsPage(ShellModel.For(http, context, database.Name + " · Functions"), database, [], saved,
-                saved is null ? null : FunctionBackend.InvokeUrl(context, database, saved.Name), logs, "", false, "", notice, null, "", "", "", DeployError: error, Stats: stats);
+                saved is null ? null : FunctionBackend.InvokeUrl(context, database, saved.Name), logs, "", false, "", notice, null, "", "", "", LogsTrigger: trigger, LogsStatus: status, DeployError: error, Stats: stats);
             await DatastarEvents.PatchElementsAsync(http, FunctionsDeployView.Create(page));
         }
 

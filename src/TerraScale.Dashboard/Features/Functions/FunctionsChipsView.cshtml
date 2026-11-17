@@ -1,11 +1,11 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Functions.FunctionTriggerChips>
 @using System.Globalization
 <fieldset class="ts-chips" data-signals="@("{_fnTrigger: '" + TriggerValue(Model.Cron) + "', _fnCustom: '" + SignalValue(IsCustom(Model.Cron) ? Model.Cron : "") + "', _fnHour: '" + DailyHour(Model.Cron) + "'}")"><legend class="ts-label">Runs on</legend>
-<label class="ts-chip"><input type="radio" name="trigger" value="http" checked="@(Model.Cron.Length == 0)" data-on:change="$_fnTrigger = el.value" /><span>HTTP</span></label>
-<label class="ts-chip"><input type="radio" name="trigger" value="*/5 * * * *" checked="@(Model.Cron == "*/5 * * * *")" data-on:change="$_fnTrigger = el.value" /><span>Every 5 min</span></label>
-<label class="ts-chip"><input type="radio" name="trigger" value="0 * * * *" checked="@(Model.Cron == "0 * * * *")" data-on:change="$_fnTrigger = el.value" /><span>Hourly</span></label>
-<label class="ts-chip"><input type="radio" name="trigger" value="daily" checked="@(IsDaily(Model.Cron))" data-on:change="$_fnTrigger = el.value" /><span>Daily</span></label>
-<label class="ts-chip"><input type="radio" name="trigger" value="custom" checked="@(IsCustom(Model.Cron))" data-on:change="$_fnTrigger = el.value" /><span>Custom</span></label>
+<label class="ts-chip"><input type="radio" name="schedule" value="http" checked="@(Model.Cron.Length == 0)" data-on:change="$_fnTrigger = el.value" /><span>HTTP</span></label>
+<label class="ts-chip"><input type="radio" name="schedule" value="*/5 * * * *" checked="@(Model.Cron == "*/5 * * * *")" data-on:change="$_fnTrigger = el.value" /><span>Every 5 min</span></label>
+<label class="ts-chip"><input type="radio" name="schedule" value="0 * * * *" checked="@(Model.Cron == "0 * * * *")" data-on:change="$_fnTrigger = el.value" /><span>Hourly</span></label>
+<label class="ts-chip"><input type="radio" name="schedule" value="daily" checked="@(IsDaily(Model.Cron))" data-on:change="$_fnTrigger = el.value" /><span>Daily</span></label>
+<label class="ts-chip"><input type="radio" name="schedule" value="custom" checked="@(IsCustom(Model.Cron))" data-on:change="$_fnTrigger = el.value" /><span>Custom</span></label>
 </fieldset>
 <div class="ts-field" data-show="$_fnTrigger === 'daily'"><label class="ts-label" for="function-hour">Hour (UTC)</label><select class="ts-select" id="function-hour" data-bind="_fnHour">@for(var hour = 0; hour < 24; hour++){var value = hour.ToString("00", CultureInfo.InvariantCulture);<option value="@value" selected="@(value == DailyHour(Model.Cron))">@value:00</option>}</select></div>
 <div class="ts-field" data-show="$_fnTrigger === 'custom'"><label class="ts-label" for="function-cron">Cron</label><input class="ts-input ts-mono" id="function-cron" data-bind="_fnCustom" maxlength="128" autocomplete="off" spellcheck="false" /></div>

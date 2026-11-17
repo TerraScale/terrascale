@@ -273,7 +273,7 @@ test('function metrics include SQL calls and zero-filled latency buckets', async
   const failedStats = await request.get(`${url}/stats`, { headers });
   expect(failedStats.status()).toBe(200);
   expect(await failedStats.json()).toMatchObject({ invocations: 3, errors: 1, sqlCalls: 11, rowsRead: 3 });
-  await page.goto(`${dashboard}&window=1h&status=error`);
+  await page.goto(`${dashboard}&window=1h&status=error&trigger=http`);
   await expect(page.locator('#function-logs li')).toHaveCount(1);
   await page.locator('#function-logs summary').click();
   await expect(page.locator('#function-logs details[open]')).toContainText('metrics failure');
@@ -281,6 +281,23 @@ test('function metrics include SQL calls and zero-filled latency buckets', async
   await expect(page.locator('#function-stats .ts-stat').filter({ hasText: 'Invocations' }).locator('dd')).toHaveText('3');
   await expect(page.locator('#function-stats .ts-stat').filter({ hasText: 'Error rate' }).locator('dd')).toHaveText('33.3%');
   await audit.check('expanded failed invocation and window metrics');
+  for (const action of ['Deploy', 'Save trigger']) {
+    const deployed = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/v1/dashboard/functions/deploy' && response.request().method() === 'POST');
+    await page.getByRole('button', { name: action, exact: true }).click();
+    expect((await deployed).status()).toBe(200);
+    await expect(page.locator('#function-notice')).toHaveText('Function deployed.');
+    await expect(page.locator('#function-trigger-form input[name="status"]')).toHaveValue('error');
+    await expect(page.locator('#function-trigger-form input[type="hidden"][name="trigger"]')).toHaveValue('http');
+    await page.getByRole('link', { name: 'Last 7 days', exact: true }).click();
+    expect(new URL(page.url()).searchParams.get('window')).toBe('7d');
+    expect(new URL(page.url()).searchParams.get('status')).toBe('error');
+    expect(new URL(page.url()).searchParams.get('trigger')).toBe('http');
+    await expect(page.locator('#function-logs-status')).toHaveValue('error');
+    await expect(page.locator('#function-logs-trigger')).toHaveValue('http');
+    await expect(page.locator('#function-logs li')).toHaveCount(1);
+    await expect(page.locator('#function-logs summary')).toContainText('Failed');
+    await audit.check(`${action} retains invocation filters when switching windows`);
+  }
   const invalid = await request.get(`${url}/stats?window=2h`, { headers });
   expect(invalid.status()).toBe(400);
   expect((await invalid.json()).error.code).toBe('invalid_request');
