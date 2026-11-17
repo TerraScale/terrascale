@@ -354,6 +354,10 @@ jobs:
           ' -r >> "$GITHUB_OUTPUT"
 
   checks:
+    services:
+      registry:
+        image: registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+        ports: [5000:5000]
     if: ${{ inputs.pr_gate || !inputs.reconcile_auth }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -402,6 +406,13 @@ jobs:
           EOF
           tar -xJf "$RUNNER_TEMP/shellcheck.tar.xz" -C "$RUNNER_TEMP" --strip-components=1 shellcheck-v0.11.0/shellcheck
           "$HOME/.cache/terrascale-ci/actionlint/actionlint" -shellcheck "$RUNNER_TEMP/shellcheck"
+      - uses: oras-project/setup-oras@6c7c53b4590464855840e6196435c3af71140f64
+        if: github.event_name == 'pull_request' || inputs.pr_gate
+        with:
+          version: 1.3.6
+      - name: Prove OCI fallback publication and release ordering
+        if: github.event_name == 'pull_request' || inputs.pr_gate
+        run: bash scripts/ci/prove-image-transport.sh
       - name: Merged EF Core migrations stay unchanged
         if: github.event_name == 'pull_request' || inputs.pr_gate
         run: python3 scripts/ci/migrations-frozen.py HEAD^1
@@ -603,6 +614,10 @@ jobs:
       AREA: terrabase
       SERVICE: terrabase
     runs-on: ubuntu-24.04
+    services: &image-registry
+      registry:
+        image: registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+        ports: [5000:5000]
     timeout-minutes: 15
     permissions:
       contents: read
@@ -677,7 +692,8 @@ jobs:
           INDEX: ${{ steps.image.outputs.digest }}
           ARM64: ${{ steps.digest.outputs.arm64 }}
         run: echo "BUILD_ONLY ${SERVICE} revision=${GITHUB_SHA} index=${INDEX} arm64=${ARM64}" | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Attest build provenance (linux/arm64 child)
+      - id: provenance
+        name: Attest build provenance (linux/arm64 child)
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ghcr.io/terrascale/${{ env.SERVICE }}
@@ -690,7 +706,8 @@ jobs:
           format: spdx-json
           output-file: ${{ runner.temp }}/sbom.spdx.json
           upload-artifact: false
-      - name: Attest the SBOM
+      - id: sbom
+        name: Attest the SBOM
         uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
         with:
           subject-name: ghcr.io/terrascale/${{ env.SERVICE }}
@@ -702,6 +719,34 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ARM64: ${{ steps.digest.outputs.arm64 }}
         run: gh attestation verify "oci://ghcr.io/terrascale/${SERVICE}@${ARM64}" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main --bundle-from-oci
+      - uses: oras-project/setup-oras@6c7c53b4590464855840e6196435c3af71140f64
+        with:
+          version: 1.3.6
+      - name: Prove signed image publication through a local registry
+        working-directory: terrascale
+        env:
+          SOURCE: ghcr.io/terrascale/${{ env.SERVICE }}@${{ steps.digest.outputs.arm64 }}
+          PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
+          SBOM: ${{ steps.sbom.outputs.bundle-path }}
+        run: bash scripts/ci/prove-image-publication.sh "$SOURCE" "$PROVENANCE" "$SBOM"
+      - name: Authenticate to OCIR with GitHub OIDC
+        uses: TerraScale/ts-orchestrator/.github/actions/ocir-login@0142407115eb66e6487764644b97ab1ec859a79d
+        with:
+          regions: us-sanjose-1 eu-frankfurt-1 sa-saopaulo-1
+          domain-url: ${{ vars.OCI_IDENTITY_DOMAIN_URL }}
+          client-id: ${{ vars.OCI_TOKEN_EXCHANGE_CLIENT_ID }}
+          client-secret: ${{ secrets.OCI_TOKEN_EXCHANGE_CLIENT_SECRET }}
+      - name: Publish and verify the same image and bundles in every OCIR region
+        working-directory: terrascale
+        env:
+          SOURCE: ghcr.io/terrascale/${{ env.SERVICE }}@${{ steps.digest.outputs.arm64 }}
+          PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
+          SBOM: ${{ steps.sbom.outputs.bundle-path }}
+          PUBLICATION: ${{ inputs.publication }}
+        run: |
+          tags=$GITHUB_SHA
+          if [[ $PUBLICATION != build-only ]]; then tags+=,main; fi
+          bash scripts/ci/publish-ocir.sh "$SOURCE" "$tags" "$PROVENANCE" "$SBOM"
 
   main-build-only:
     needs: [changes, terrabase, test]
@@ -716,6 +761,7 @@ jobs:
       AREA: terrabase
       SERVICE: terrabase
     runs-on: ubuntu-24.04
+    services: *image-registry
     timeout-minutes: 15
     permissions:
       contents: read
@@ -738,9 +784,7 @@ jobs:
     permissions:
       contents: read
       actions: read
-      # Reads the private TerraBase image to check its revision label.
-      packages: read
-      # ts-orch accepts this job's OIDC token to release the pinned digest.
+      packages: write
       id-token: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -758,6 +802,17 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
+      - uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad
+      - uses: oras-project/setup-oras@6c7c53b4590464855840e6196435c3af71140f64
+        with:
+          version: 1.3.6
+      - name: Authenticate to OCIR with GitHub OIDC
+        uses: TerraScale/ts-orchestrator/.github/actions/ocir-login@0142407115eb66e6487764644b97ab1ec859a79d
+        with:
+          regions: us-sanjose-1 eu-frankfurt-1 sa-saopaulo-1
+          domain-url: ${{ vars.OCI_IDENTITY_DOMAIN_URL }}
+          client-id: ${{ vars.OCI_TOKEN_EXCHANGE_CLIENT_ID }}
+          client-secret: ${{ secrets.OCI_TOKEN_EXCHANGE_CLIENT_SECRET }}
       - name: Release the pinned arm64 digest to each region
         env:
           GH_TOKEN: ${{ github.token }}
@@ -768,19 +823,8 @@ jobs:
           image="ghcr.io/terrascale/terrabase@${ARM64}"
           docker buildx imagetools inspect "$image" --format '{{json .Image}}' |
             jq -e --arg revision "$GITHUB_SHA" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
-          bash scripts/ci/fetch-ts-orch.sh "${RUNNER_TEMP}/ts-orch"
-          status=0
-          for i in $(jq -r 'to_entries | sort_by(.value.region == "gru", .value.region != "sjc", .value.region) | .[].key' "${RUNNER_TEMP}/ts-orch/regions.json"); do
-            jq -c "[.[$i]]" "${RUNNER_TEMP}/ts-orch/regions.json" > "${RUNNER_TEMP}/region.json"
-            echo "Region $(jq -r '.[0].region' "${RUNNER_TEMP}/region.json")" | tee -a "$GITHUB_STEP_SUMMARY"
-            out=$("${RUNNER_TEMP}/ts-orch/terrascale-orchestrator-linux-amd64" release app --service terrabase \
-              --image "$image" --regions "${RUNNER_TEMP}/region.json" 2>&1) || status=1
-            tee -a "$GITHUB_STEP_SUMMARY" <<< "$out"
-            # A superseded release exits 0 without this digest: require this region's own done state.
-            tail -1 <<< "$out" | jq -e '.state == "done" and (.error // "") == ""' > /dev/null || status=1
-            [ "$status" -eq 0 ] || break
-          done
-          exit "$status"
+          gh attestation verify "oci://${image}" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main --source-digest "$GITHUB_SHA" --bundle-from-oci
+          bash scripts/ci/release-app.sh terrabase "$image"
 
   main-auth:
     if: github.event_name == 'workflow_dispatch' && inputs.reconcile_auth && github.ref == 'refs/heads/main' && !inputs.pr_gate
@@ -788,10 +832,7 @@ jobs:
       group: production-auth
       cancel-in-progress: false
     runs-on: ubuntu-24.04
-    services:
-      registry:
-        image: registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
-        ports: [5000:5000]
+    services: *image-registry
     timeout-minutes: 25
     permissions:
       contents: read
