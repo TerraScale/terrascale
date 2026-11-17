@@ -1,7 +1,7 @@
 # A burst of token requests is answered at once
 
-A token request (`/terrascale/oauth/token`, `/terrascale/oauth/device`, a project's `oauth/token` and the end-user token
-endpoint) is charged against these per-minute budgets, in this order:
+A token request (`/terrascale/oauth/token`, `/terrascale/oauth/device`, a project's `oauth/token` and
+`/v1/{project}/custom-tokens`) is charged against these per-minute budgets, in this order:
 
 1. The client's address: `TS_AUTH_RATE_LIMIT` requests (default 1000), an IPv6 address per /64. Behind ts-orch's edge it
    is the address the edge writes into `X-Forwarded-For` (`token-client-ip`). A peer that is not a trusted proxy is

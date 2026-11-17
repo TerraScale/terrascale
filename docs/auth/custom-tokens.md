@@ -1,103 +1,69 @@
-# Scoped end-user access tokens (TS-827)
+# Custom tokens
 
-A customer backend authenticates its own users and asserts their identity to
-ts-auth using an existing project API key. No hosted sign-in, tenant user
-provisioning, session cookie or HA1 route is required.
+A project backend that signs in its own users asserts their identity to TerraBase with a custom token: a short-lived
+access token signed by the project's ts-auth tenant, minted with a project API key. No hosted sign-in, tenant user,
+session or OAuth client is needed. TerraBase evaluates the database's [rules](../terrabase/rules.md) against it.
 
-## Backend mint contract
-
-The standalone [OpenAPI contract](scoped-end-user-tokens.openapi.yaml) supplements
-the platform API contract and declares the `projectApiKey` Bearer security scheme.
+## Mint
 
 ```http
-POST /v1/terrascale/projects/{project}/end-user-tokens
+POST /v1/{project}/custom-tokens
 Authorization: Bearer <whole project API key>
 Content-Type: application/json
 
-{"user_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","database":"01ARZ3NDEKTSV4RRFFQ69G5FAW","tables":["notes"],"claims":{"roles":["reader"]}}
+{"user_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","database":"01ARZ3NDEKTSV4RRFFQ69G5FAW","claims":{"roles":["editor"],"plan":"pro"}}
 ```
 
 ```json
-{"access_token":"<signed JWT>","token_type":"Bearer","expires_in":900}
+{"access_token":"<signed JWT>","token_type":"Bearer","expires_in":300}
 ```
 
-`project` and `user_id` must be canonical uppercase ULIDs. The asserted user ID
-need not name a ts-auth account. The project backend is responsible for verifying
-its caller and choosing their ID and roles; it must never relay browser-submitted
-identity or role fields without authorization. Send only the resulting short-lived
-JWT to the browser. Keep the project API key on the backend.
+- `user_id` is a canonical uppercase ULID. It may name a tenant user or not: the backend vouches for it and owns any
+  mapping from its own user IDs.
+- `database` is optional, a canonical ULID. It restricts the token to that database; any other database answers
+  `404 unknown_database`.
+- `claims` is optional, with the trusted-claims limits of [rules section 3.3](../terrabase/rules.md#33-trusted-claims):
+  a JSON object of at most 32 members and 1000 bytes serialized, names `[a-z][a-z0-9_]{0,62}`, values strings of at
+  most 256 characters, finite numbers, booleans, or arrays of at most 64 strings or numbers. Rules read it as
+  `auth.claims`; roles are `claims.roles`, which file-bucket role policies also read.
+- Unknown members are rejected. Bodies are UTF-8 JSON of at most 16 KiB and four levels deep.
 
-`database` (canonical ULID) and `tables` (at most 32 table names) are optional. `database`
-narrows the token to that database. TerraBase does not read `tables`: the database's
-[rules](../terrabase/rules.md) decide which rows and columns an end user reads. `claims` and `claims.roles` are optional. Roles are case-sensitive ordinal strings:
-at most 64 entries, each 1–128 characters, not all whitespace and without control
-characters. Duplicates are removed ordinally. **Only roles are supported.** Unknown
-members at either level are rejected, including JWT, project, organization,
-administrator and scope claims. Arbitrary claims have no rule consumer
-and would add an unnecessary trust boundary. Bodies must be UTF-8 JSON, at most
-16 KiB and four levels deep. The complete signed compact JWT, including its
-signature, must fit **8192 ASCII bytes**. Even within the per-role limits, a role
-set whose final encoded token exceeds this cap returns `400 invalid_request`;
-reduce the roles. The cap applies after JSON/Unicode encoding and signing.
+The key belongs to the route's project, has no database restriction and holds `auth:tokens:mint`; it needs no other
+scope. Only a project admin can give a key that scope. The key's and the project's IP allowlists apply. A mint-only
+key can neither run SQL nor manage ts-auth, yet it can act as any end user of the project, so keep it on the backend
+and send only the minted token to the browser. Never relay a browser-supplied user ID or claims without checking them.
 
-The key must belong to the exact route project, have no database restriction,
-and include `auth:tokens:mint`; it needs no other scope. Only a project admin can
-give a key `auth:tokens:mint`. A mint-only key can neither run SQL nor manage
-ts-auth, yet it can act as any end user of the project, so keep it on the backend.
-Keys without the scope, database-narrowed and organization keys are refused, as
-are platform JWTs and cookies. ts-auth reads the current stored key and constant-time digest, expiry,
-project and organization linkage before minting, rechecking immediately before
-signing. Deleted projects/organizations and revoked, expired or tampered keys
-cannot mint. Existing API-key rotation grace applies.
+| Answer | When |
+| --- | --- |
+| 200 | Minted. `Cache-Control: no-store`. |
+| 400 `invalid_request` | Malformed body, non-canonical ULID, claims over the limits or an unknown member. |
+| 401 `unauthorized` | Missing, malformed, revoked or expired key, with a Bearer challenge. |
+| 403 `insufficient_scope` | The key lacks `auth:tokens:mint`. |
+| 403 `ip_not_allowed` | The key's or project's IP allowlist refuses the caller. |
+| 404 | The project is unknown, the key is of another project or organization, or the key is restricted to a database. |
+| 429 `rate_limited` | The OAuth token IP budget or the 1000 a minute budget of the key is spent, with `Retry-After`. |
+| 503 | Storage is unavailable. |
 
-Every response has `Cache-Control: no-store`. Authentication runs before body
-parsing. Missing/invalid authority returns 401 with a Bearer challenge; malformed
-input returns 400. Those responses use `{"error":{"code":"…","message":"…"}}`.
-Storage admission failures return 503 with the same envelope. Requests share the
-OAuth token peer/client IP budget (default 1000/minute), charged before credential
-checks, plus a 1000/minute budget per authenticated key. Rate limits return 429,
-`Retry-After` and the OAuth envelope
-`{"error":"rate_limited","error_description":"…"}`. This is a server-to-server
-Bearer endpoint: it accepts no cookie authentication and adds no browser CORS
-allowlist or hosted UI flow.
-
-## Signed identity and rule enforcement
+## Token
 
 | Field | Value |
 | --- | --- |
-| `typ`, `alg`, `kid` | `at+jwt`, `ES256`, published platform-ring key ID |
-| `iss`, `aud` | Configured platform issuer and access-token audiences |
-| `sub` | Backend-asserted canonical end-user ULID |
-| `token_kind` | `end_user` |
-| `instance_id`, `project_id` | The exact authenticated project ULID |
-| `roles` | Bounded array of backend-asserted roles, compared ordinally |
-| `database`, `tables` | Present when requested: the database ULID and the tables the token may read as shapes |
-| Lifetime | At most 15 minutes, capped at the API key's expiry |
+| `typ`, `alg`, `kid` | `at+jwt`, `ES256`, a key of the project tenant's ring |
+| `iss` | The project tenant issuer, `https://auth.terrascale.tech/{project}` |
+| `aud` | The project's data audiences, `https://api.terrascale.tech/v1/projects/{project}`, and nothing else |
+| `sub` | `user_id` |
+| `token_use` | `custom` |
+| `database`, `claims` | Present when given |
+| `iat`, `nbf`, `exp` | Issued now, expires after 5 minutes |
 
-No `scope`, `org_id` or `platform_role` claim is issued. TerraBase
-validates the platform signature, exact issuer and audience, access token type,
-lifetime, ULID subject and equality of `instance_id`/`project_id`. It rejects
-unknown token kinds, malformed roles, anonymous identities and end-user tokens
-carrying administrator or scope claims. A `database` claim narrows the token to that database.
+A custom token carries no organization, so `auth.org_id` and `auth.org_role` are NULL, and `auth.is_anonymous` is 0.
+TerraBase validates it offline against the tenant's published keys, like a project sign-in token, and refuses a
+custom token that names an organization or a guest. It reaches only its own project's routes.
 
-Authenticated end users read shapes and rows only as the database's rules allow. SQL execution and management require project credentials. A token's database claim narrows its reach; it never replaces the rules. Rules see `auth.uid` as the token's `sub`, no claims, no organization and `auth.is_anonymous = 0`.
-Anonymous requests remain unauthenticated. Existing project grant tokens keep
-their current validation and scope behavior. TerraBase stores no copy of end-user
-accounts or role membership.
+ts-auth's own endpoints refuse it: it carries no ts-auth audience and no session, so userinfo and every OAuth
+endpoint answer 401. The platform APIs refuse the tenant issuer.
 
-## Revocation and readiness
+## Revocation
 
-Issued JWTs validate **offline**: revoking a key or deleting its project stops
-future issuance but does not revoke an already-issued token. Rotated old key
-strings may still mint during their configured grace period. Backend user/role
-revocation must stop issuance in the customer's backend. An issued token can
-remain usable for its remaining 15-minute
-lifetime, plus TerraBase's 30-second validation clock skew. Use a shorter key
-expiry when a shorter maximum mint lifetime is needed. `expires_in` is the whole
-number of seconds remaining at issuance and never exceeds 900.
-
-This route removes the HA1 producer dependency for customer backends. Integration
-tests use synthetic keys and the same-commit TerraBase through the SDK. Production
-browser proof still requires a deployed customer backend that verifies its users,
-delivers minted tokens safely and exercises configured rules. This change creates
-no production credentials, provisioning, permission expansion or deployment.
+Tokens are not refreshable; the backend mints again. Revoking or expiring the key, or deleting the project, stops
+minting at once. An issued token stays valid for the rest of its 5 minutes plus TerraBase's validation clock skew.

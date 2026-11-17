@@ -52,8 +52,8 @@ person-only because it replaces external sign-in credentials and can redirect
 identity trust to a different OAuth application.
 Only project admins can issue, rotate or change allowlists on keys with
 `auth:write` or `auth:tokens:mint`; members can issue `auth:read` keys. A key
-with `auth:tokens:mint` only mints end-user tokens
-([scoped end-user tokens](scoped-end-user-tokens.md)); it manages nothing here. Viewers cannot issue auth keys.
+with `auth:tokens:mint` only mints custom tokens
+([custom tokens](custom-tokens.md)); it manages nothing here. Viewers cannot issue auth keys.
 Authentication scopes are never included in TerraBase token-exchange grants.
 
 The five SDKs use their existing credential pattern:
