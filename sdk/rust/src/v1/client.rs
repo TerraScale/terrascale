@@ -803,23 +803,12 @@ impl Client {
         subprotocol: &'static str,
         max_message: usize,
     ) -> Result<WebSocket> {
-        self.open_socket_query(segments, &[], subprotocol, max_message)
-            .await
-    }
-
-    pub(super) async fn open_socket_query(
-        &self,
-        segments: Vec<&str>,
-        query: &[(&str, String)],
-        subprotocol: &'static str,
-        max_message: usize,
-    ) -> Result<WebSocket> {
         if self.inner.project.is_none() {
             return Err(Error::InvalidInput(
                 "this operation requires a C# TerraBase project client".into(),
             ));
         }
-        let mut url = self.url(&self.inner.base, &segments, query)?;
+        let mut url = self.url(&self.inner.base, &segments, &[])?;
         let tls = url.scheme() == "https";
         url.set_scheme(if tls { "wss" } else { "ws" })
             .map_err(|()| Error::InvalidInput("base URL cannot carry a WebSocket".into()))?;
@@ -855,8 +844,7 @@ impl Client {
                     }
                 }
                 let config = tungstenite::protocol::WebSocketConfig::default()
-                    .max_message_size(Some(max_message))
-                    .max_frame_size(Some(max_message));
+                    .max_message_size(Some(max_message));
                 let response =
                     match tokio_tungstenite::client_async_with_config(request, io, Some(config))
                         .await
@@ -962,46 +950,6 @@ impl Client {
             .await
             .map_err(transport)?;
         Ok(Box::new(stream))
-    }
-
-    pub(super) async fn read_shape(&self, req: Req<'_>) -> Result<Resp> {
-        if self.inner.project.is_none() {
-            return Err(Error::InvalidInput(
-                "shapes require a project client".into(),
-            ));
-        }
-        let url = self.url(&self.inner.base, &req.segments, &req.query)?;
-        let response = match self
-            .attempt(
-                &req,
-                &url,
-                self.inner.region_pin.as_deref(),
-                None,
-                true,
-                &mut false,
-            )
-            .await
-        {
-            Attempt::Done(response) => response,
-            Attempt::Failed(error, _) => return Err(error),
-        };
-        if response.status == StatusCode::TEMPORARY_REDIRECT {
-            let location = response
-                .header("Location")
-                .and_then(|value| url.join(value).ok())
-                .filter(|target| {
-                    target.origin() == url.origin()
-                        && target.path() == url.path()
-                        && target.username().is_empty()
-                        && target.password().is_none()
-                });
-            if location.is_none() {
-                return Err(response.invalid("invalid shape bootstrap redirect".into()));
-            }
-        } else {
-            response.check_status(&[StatusCode::OK])?;
-        }
-        Ok(response)
     }
 
     pub(crate) async fn probe(&self, segments: Vec<&str>) -> Result<Resp> {
