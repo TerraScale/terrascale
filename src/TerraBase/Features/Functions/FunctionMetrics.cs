@@ -39,22 +39,28 @@ internal static class FunctionMetrics
     private static readonly int[] Resolutions = [1, 60];
     public static string Kind(TenantContext tenant, string name) => SystemCatalog.DatabaseState(tenant.DatabaseId!) + "function_stats/" + name;
 
-    public static async Task RecordAsync(IStorageTransaction transaction, TenantContext tenant, string name, FunctionLogBody log,
+    public static async Task RecordAsync(IStorageTransaction transaction, TenantContext tenant, string name, IReadOnlyList<FunctionLogBody> logs,
         CancellationToken cancellationToken)
     {
-        long[] histogram = new long[64];
-        histogram[log.DurationMs <= 1 ? 0 : BitOperations.Log2((ulong)(log.DurationMs - 1)) + 1] = 1;
-        var sample = new FunctionAggregate(log.At, 1, 1, log.Error is null ? 0 : 1, log.DurationMs, log.SqlCalls,
-            log.RowsRead, log.RowsWritten, histogram);
         foreach (var minutes in Resolutions)
         {
-            var at = Floor(log.At, minutes);
-            var id = Slot(at, minutes);
-            var stored = await SystemCatalog.GetAsync(transaction, Kind(tenant, name), id,
-                FunctionsJsonContext.Default.FunctionAggregate, cancellationToken).ConfigureAwait(false);
-            var bucket = stored is not null && stored.At == at ? stored : FunctionAggregate.Empty(at, minutes);
-            await SystemCatalog.PutAsync(transaction, Kind(tenant, name), id, bucket.Add(sample),
-                FunctionsJsonContext.Default.FunctionAggregate, cancellationToken).ConfigureAwait(false);
+            foreach (var group in logs.GroupBy(log => Floor(log.At, minutes)))
+            {
+                var at = group.Key;
+                var id = Slot(at, minutes);
+                var stored = await SystemCatalog.GetAsync(transaction, Kind(tenant, name), id,
+                    FunctionsJsonContext.Default.FunctionAggregate, cancellationToken).ConfigureAwait(false);
+                var bucket = stored is not null && stored.At == at ? stored : FunctionAggregate.Empty(at, minutes);
+                foreach (var log in group)
+                {
+                    long[] histogram = new long[64];
+                    histogram[log.DurationMs <= 1 ? 0 : BitOperations.Log2((ulong)(log.DurationMs - 1)) + 1] = 1;
+                    bucket = bucket.Add(new FunctionAggregate(at, minutes, 1, log.Error is null ? 0 : 1, log.DurationMs, log.SqlCalls,
+                        log.RowsRead, log.RowsWritten, histogram));
+                }
+                await SystemCatalog.PutAsync(transaction, Kind(tenant, name), id, bucket,
+                    FunctionsJsonContext.Default.FunctionAggregate, cancellationToken).ConfigureAwait(false);
+            }
         }
     }
 

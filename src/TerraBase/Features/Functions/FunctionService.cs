@@ -18,11 +18,12 @@ public static class FunctionsExtensions
 {
     public static IServiceCollection AddTerraBaseFunctions(this IServiceCollection services) =>
         services.AddSingleton<FunctionService>().AddSingleton<IFunctions>(provider => provider.GetRequiredService<FunctionService>())
+            .AddHostedService(provider => provider.GetRequiredService<FunctionService>())
             .AddSingleton<FunctionScheduler>().AddHostedService(provider => provider.GetRequiredService<FunctionScheduler>());
 }
 
 internal sealed partial class FunctionService(SystemCatalog catalog, ISqlService sql, IUsageMeter usage, IMemoryBudget memory,
-    TerraBaseOptions options, TimeProvider time) : IFunctions
+    TerraBaseOptions options, TimeProvider time) : BackgroundService, IFunctions, IHostedLifecycleService
 {
     public const string Schedules = "function_schedules";
     private const int MaxFunctions = 32;
@@ -95,6 +96,7 @@ internal sealed partial class FunctionService(SystemCatalog catalog, ISqlService
 
     public async ValueTask<FunctionResult> DeleteAsync(TenantContext tenant, string name, CancellationToken cancellationToken)
     {
+        await FlushAsync(cancellationToken).ConfigureAwait(false);
         var result = await catalog.WriteDurableAsync<FunctionResult>(async transaction =>
         {
             if (await GetAsync(transaction, tenant, name, cancellationToken).ConfigureAwait(false) is null)
@@ -111,8 +113,10 @@ internal sealed partial class FunctionService(SystemCatalog catalog, ISqlService
         return result;
     }
 
-    public async ValueTask<FunctionResult> LogsAsync(TenantContext tenant, string name, int limit, CancellationToken cancellationToken) =>
-        await catalog.ReadAsync<FunctionResult>(async transaction =>
+    public async ValueTask<FunctionResult> LogsAsync(TenantContext tenant, string name, int limit, CancellationToken cancellationToken)
+    {
+        await FlushAsync(cancellationToken).ConfigureAwait(false);
+        return await catalog.ReadAsync<FunctionResult>(async transaction =>
         {
             if (await GetAsync(transaction, tenant, name, cancellationToken).ConfigureAwait(false) is null)
             {
@@ -123,6 +127,7 @@ internal sealed partial class FunctionService(SystemCatalog catalog, ISqlService
                 .ConfigureAwait(false);
             return logs.AsEnumerable().Reverse().Take(limit).ToArray();
         }, static error => error, cancellationToken).ConfigureAwait(false);
+    }
 
     public async ValueTask<FunctionResult> InvokeAsync(TenantContext tenant, string name, string trigger, string eventJson, string? requestId,
         CancellationToken cancellationToken) =>
@@ -131,59 +136,80 @@ internal sealed partial class FunctionService(SystemCatalog catalog, ISqlService
     internal async ValueTask<FunctionResult> RunAsync(TenantContext tenant, string name, string trigger, string eventJson,
         CancellationToken cancellationToken, string? requestId = null)
     {
-        if (await GetAsync(tenant, name, cancellationToken).ConfigureAwait(false) is not FunctionBody { Source: { } source })
+        lock (_recordGate)
         {
-            return new NotFound();
-        }
-        using var reserved = memory.TryReserve(FunctionRunner.MemoryBytes + 2 * eventJson.Length, tenant);
-        if (reserved is null)
-        {
-            return Busy;
-        }
-
-        var started = time.GetUtcNow();
-        var clock = time.GetTimestamp();
-        FunctionRun run;
-        var session = sql.Open(tenant, canWrite: true);
-        var calls = new FunctionSql(session, requestId, time);
-        await using (session.ConfigureAwait(false))
-        {
-            session.BeginRequest();
-            run = await Task.Run(() => FunctionRunner.RunAsync(source, eventJson, calls, cancellationToken), CancellationToken.None)
-                .ConfigureAwait(false);
+            if (_stopping)
+            {
+                return Busy;
+            }
+            _running++;
         }
 
-        var error = run.Error;
+        var admitted = false;
+        var queued = false;
+        IMemoryReservation? reserved = null;
+        try
+        {
+            admitted = await _recordSlots.WaitAsync(0, cancellationToken).ConfigureAwait(false);
+            if (!admitted)
+            {
+                return Busy;
+            }
+            if (await GetAsync(tenant, name, cancellationToken).ConfigureAwait(false) is not FunctionBody { Source: { } source })
+            {
+                return new NotFound();
+            }
+            reserved = memory.TryReserve(FunctionRunner.MemoryBytes + 2 * eventJson.Length, tenant);
+            if (reserved is null)
+            {
+                return Busy;
+            }
 
-        usage.RecordOperation(tenant, "invoke", 1);
-        var response = error is null ? Response(run.Result!) : new FunctionResponse(500, "application/json",
-            JsonSerializer.SerializeToUtf8Bytes(new ErrorBody(new ErrorDetail("function_error", error, RequestId: requestId,
-                DocsUrl: ErrorDocs.Url("function_error"))), TerraBaseJsonContext.Default.ErrorBody));
-        var log = new FunctionLogBody(EntityIds.New().ToString(), started, trigger, error is null ? "ok" : "error",
-            (long)Math.Ceiling(time.GetElapsedTime(clock).TotalMilliseconds), [.. run.Lines], error,
-            calls.SqlCalls, calls.SqlMs, calls.RowsRead, calls.RowsWritten, ResponseBytes: response.Body.LongLength, HttpStatus: trigger == "http" && error is null ? response.Status : null);
-        return await RecordAsync(tenant, name, log, CancellationToken.None).ConfigureAwait(false) ? response : Busy;
+            var started = time.GetUtcNow();
+            var clock = time.GetTimestamp();
+            FunctionRun run;
+            var session = sql.Open(tenant, canWrite: true);
+            var calls = new FunctionSql(session, requestId, time);
+            await using (session.ConfigureAwait(false))
+            {
+                session.BeginRequest();
+                run = await Task.Run(() => FunctionRunner.RunAsync(source, eventJson, calls, cancellationToken), CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+
+            var error = run.Error;
+
+            usage.RecordOperation(tenant, "invoke", 1);
+            var response = error is null ? Response(run.Result!) : new FunctionResponse(500, "application/json",
+                JsonSerializer.SerializeToUtf8Bytes(new ErrorBody(new ErrorDetail("function_error", error, RequestId: requestId,
+                    DocsUrl: ErrorDocs.Url("function_error"))), TerraBaseJsonContext.Default.ErrorBody));
+            var log = new FunctionLogBody(EntityIds.New().ToString(), started, trigger, error is null ? "ok" : "error",
+                (long)Math.Ceiling(time.GetElapsedTime(clock).TotalMilliseconds), [.. run.Lines], error,
+                calls.SqlCalls, calls.SqlMs, calls.RowsRead, calls.RowsWritten, ResponseBytes: response.Body.LongLength, HttpStatus: trigger == "http" && error is null ? response.Status : null);
+            var retainedBytes = 4096L + 2L * (name.Length + tenant.OrganizationId.Length + tenant.ProjectId!.Length + tenant.DatabaseId!.Length
+                + (log.Error?.Length ?? 0) + log.Lines.Sum(line => line.Length));
+            memory.Shrink(reserved, Math.Max(0, reserved.Bytes - retainedBytes));
+            Queue(tenant, name, log, reserved);
+            queued = true;
+            reserved = null;
+            return response;
+        }
+        finally
+        {
+            reserved?.Dispose();
+            if (admitted && !queued)
+            {
+                _recordSlots.Release();
+            }
+            lock (_recordGate)
+            {
+                if (--_running == 0 && _stopping)
+                {
+                    _records.Writer.TryComplete();
+                }
+            }
+        }
     }
-
-    private async ValueTask<bool> RecordAsync(TenantContext tenant, string name, FunctionLogBody log, CancellationToken cancellationToken) =>
-        await catalog.WriteAsync(async transaction =>
-        {
-            if (await GetAsync(transaction, tenant, name, cancellationToken).ConfigureAwait(false) is null)
-            {
-                return false;
-            }
-
-            await SystemCatalog.PutAsync(transaction, Logs(tenant, name), log.Id, log, FunctionsJsonContext.Default.FunctionLogBody, cancellationToken)
-                .ConfigureAwait(false);
-            await FunctionMetrics.RecordAsync(transaction, tenant, name, log, cancellationToken).ConfigureAwait(false);
-            var kept = await transaction.ListAsync(Logs(tenant, name), null, KeptLogs + 1, 8 * 1024 * 1024, cancellationToken).ConfigureAwait(false);
-            if (kept.Records.Count > KeptLogs)
-            {
-                await transaction.DeleteAsync(Logs(tenant, name), kept.Records[0].Id, cancellationToken).ConfigureAwait(false);
-            }
-
-            return true;
-        }, static _ => false, cancellationToken).ConfigureAwait(false);
 
     private static FunctionResponse Response(string json)
     {
