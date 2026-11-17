@@ -101,7 +101,6 @@ email unverified. Project-tenant sign-ups have their own tenant-scoped budgets; 
 | `interactions/auth-organizations.spec.ts` | 1 | 20/hour |
 | `interactions/auth-data-tokens.spec.ts` | 1 | 20/hour |
 | `interactions/rows.spec.ts` | 1 | 20/hour |
-| `interactions/database-tabs.spec.ts` | 1 | 20/hour |
 | `interactions/auth-webhooks.spec.ts` | 7 | 20/hour |
 | `journey/invitation.spec.ts` | 1 | 20/hour |
 | `journey/finish.spec.ts` | 1 | 20/hour |
