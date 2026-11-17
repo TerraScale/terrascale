@@ -106,7 +106,61 @@ function sqlContext(source) {
     || (context?.token === '(' && context.argument === 0 && ['execute', 'query'].includes(context.method)));
 }
 
-const models = new WeakSet();
+async function loadSchema(url) {
+  if (!url) return [];
+  try {
+    const response = await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store' });
+    if (!response.ok) return [];
+    const catalog = await response.json();
+    if (!Array.isArray(catalog.tables) || !catalog.tables.every(table => typeof table.name === 'string'
+      && Array.isArray(table.fields) && table.fields.every(field => typeof field.path === 'string' && typeof field.type === 'string'))) return [];
+    return catalog.tables;
+  } catch {
+    return [];
+  }
+}
+
+const schemaTokens = /--[^\n]*|\/\*[\s\S]*?(?:\*\/|$)|'(?:[^']|'')*'?|"(?:[^"]|"")*"?|`(?:[^`]|``)*`?|\[(?:[^\]]|\]\])*\]?|[\p{L}_][\p{L}\p{N}_$]*|\S/gu;
+const identifier = value => value?.replace(/^(["`\[])|(["`\]])$/g, '').replaceAll('""', '"').replaceAll('``', '`').replaceAll(']]', ']');
+const unescape = text => text.replace(/\\(["'`\\nrt])/g, (_, value) => ({ n: '\n', r: '\r', t: '\t' }[value] ?? value));
+const tableClauses = ['FROM', 'JOIN', 'INTO', 'UPDATE'];
+const columnClauses = ['SELECT', 'WHERE', 'SET', 'ON', 'ORDER', 'GROUP', 'HAVING', 'RETURNING'];
+const reserved = new Set([...tableClauses, ...columnClauses, 'AS', 'LEFT', 'RIGHT', 'INNER', 'OUTER', 'CROSS', 'FULL', 'UNION', 'OFFSET', 'LIMIT', 'VALUES', 'AND', 'OR', 'NOT', 'IS', 'IN', 'NULL', 'TRUE', 'FALSE', 'BY', 'ASC', 'DESC']);
+const code = text => [...text.matchAll(schemaTokens)].filter(token => !token[0].startsWith('--') && !token[0].startsWith('/*'));
+
+function completeSchema(prefix, text, tables, delimiter, Kind, range) {
+  const before = unescape(prefix);
+  const last = [...before.matchAll(schemaTokens)].at(-1);
+  if (last && last.index + last[0].length === before.length
+    && (last[0].startsWith('--') || (last[0].startsWith('/*') && !last[0].endsWith('*/')) || last[0].startsWith("'"))) return [];
+  const word = before.match(/[\p{L}\p{N}_$]*$/u)[0];
+  const prior = code(before.slice(0, before.length - word.length));
+  const previous = prior.at(-1)?.[0].toUpperCase();
+  const quote = name => `"${name.replaceAll('"', '""')}"`;
+  const insert = name => quote(name).replaceAll('\\', '\\\\').replaceAll(delimiter, `\\${delimiter}`).replaceAll('${', delimiter === '`' ? '\\${' : '${');
+  const item = (name, kind, detail) => ({ label: name, kind, detail, insertText: insert(name), sortText: `0-${name}`, range });
+  if (tableClauses.includes(previous)) return tables.map(table => item(table.name, Kind.Struct, 'Table'));
+  const current = prior.slice(prior.findLastIndex(token => token[0] === ';') + 1);
+  const statement = code(unescape(text)).filter(token => token.index >= (current[0]?.index ?? before.length));
+  const end = statement.findIndex(token => token[0] === ';');
+  const names = (end < 0 ? statement : statement.slice(0, end)).map(token => token[0]);
+  const references = new Map();
+  for (let index = 0; index < names.length - 1; index++) {
+    if (!tableClauses.includes(names[index].toUpperCase())) continue;
+    const table = tables.find(table => table.name.toLowerCase() === identifier(names[index + 1]).toLowerCase());
+    if (!table) continue;
+    references.set(table.name.toLowerCase(), table);
+    const alias = names[index + (names[index + 2]?.toUpperCase() === 'AS' ? 3 : 2)];
+    if (alias && /^(?:[\p{L}_]|["`\[])/u.test(alias) && !reserved.has(alias.toUpperCase())) references.set(identifier(alias).toLowerCase(), table);
+  }
+  const qualifier = previous === '.' ? identifier(prior.at(-2)?.[0])?.toLowerCase() : null;
+  const clause = current.findLast(token => [...tableClauses, ...columnClauses, 'VALUES'].includes(token[0].toUpperCase()))?.[0].toUpperCase();
+  if (!qualifier && !columnClauses.includes(clause)) return [];
+  const selected = qualifier ? [references.get(qualifier)].filter(Boolean) : [...new Set(references.values())];
+  return selected.flatMap(table => table.fields.map(field => item(field.path, Kind.Field, `${field.type} · ${table.name}`)));
+}
+
+const models = new WeakMap();
 let languageService;
 let registered = false;
 
@@ -119,7 +173,9 @@ export async function attach(api, editor) {
   await languageService;
   if (model.isDisposed()) return () => {};
   register(api);
-  models.add(model);
+  const schema = loadSchema(editor.getDomNode().closest('ts-code-editor').dataset.sqlSchema);
+  models.set(model, []);
+  schema.then(tables => { if (models.has(model)) models.set(model, tables); });
   editor.updateOptions({
     wordBasedSuggestions: 'off',
     snippetSuggestions: 'top',
@@ -154,7 +210,11 @@ function register(api) {
       const word = model.getWordAtPosition(position) ?? model.getWordUntilPosition(position);
       const range = { startLineNumber: position.lineNumber, startColumn: word.startColumn, endLineNumber: position.lineNumber, endColumn: word.endColumn };
       if (sqlString) {
-        return { suggestions: keywords.map(keyword => ({ label: keyword, kind: Kind.Keyword, insertText: keyword, range })) };
+        const literal = [...model.getValue().slice(last.index).matchAll(tokens)][0]?.[0] ?? last[0];
+        const closed = literal.length > 1 && literal.endsWith(literal[0]);
+        const text = literal.slice(1, closed ? -1 : undefined);
+        const suggestions = completeSchema(last[0].slice(1), text, models.get(model), last[0][0], Kind, range);
+        return { suggestions: [...suggestions, ...keywords.map(keyword => ({ label: keyword, kind: Kind.Keyword, insertText: keyword, range }))] };
       }
       if (inLiteral) return { suggestions: [] };
       if (/\bevent\.\w*$/.test(before) && !/\/\*\*[^]*?@param\s*\{[^}]+\}\s*event/.test(before)) {
