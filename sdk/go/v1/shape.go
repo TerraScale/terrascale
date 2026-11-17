@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"maps"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -18,13 +19,11 @@ import (
 	"github.com/coder/websocket"
 )
 
-// ShapeOptions selects the rows and columns of a live table shape.
 type ShapeOptions struct {
 	Where   string
 	Columns []string
 }
 
-// ShapeStatus describes snapshot loading, caught-up data or transport recovery.
 type ShapeStatus string
 
 const (
@@ -33,24 +32,20 @@ const (
 	Reconnecting ShapeStatus = "Reconnecting"
 )
 
-// ShapeView owns a snapshot; later updates never modify its rows or blob values.
 type ShapeView struct {
 	Rows   map[string]Row
 	Status ShapeStatus
 	Offset string
 }
 
-// Shape streams table snapshots until its context ends or a terminal error occurs.
 type Shape struct {
 	updates chan ShapeView
 	mu      sync.Mutex
 	err     error
 }
 
-// Updates yields an independent snapshot after each applied page or status change.
 func (s *Shape) Updates() <-chan ShapeView { return s.updates }
 
-// Err returns the terminal error, including context cancellation, after Updates closes.
 func (s *Shape) Err() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -62,7 +57,6 @@ var shapeHandle = regexp.MustCompile(`^h1-[a-f0-9]{16}$`)
 var shapeBoundary = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
 var shapeSnapshot = regexp.MustCompile(`^snap\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 
-// Shape starts a paged snapshot followed by commit-ordered changes with automatic resume.
 func (d *Database) Shape(ctx context.Context, table string, options ShapeOptions) (*Shape, error) {
 	if !shapeName.MatchString(table) || len(table) > 63 {
 		return nil, errors.New("terrabase: invalid shape table")
@@ -95,7 +89,7 @@ func (d *Database) Shape(ctx context.Context, table string, options ShapeOptions
 	if err != nil {
 		return nil, err
 	}
-	s := &Shape{updates: make(chan ShapeView)}
+	s := &Shape{updates: make(chan ShapeView, 1)}
 	go func() {
 		err := s.run(ctx, c, path, query)
 		s.mu.Lock()
@@ -182,6 +176,10 @@ func (s *Shape) publish(ctx context.Context, rows map[string]Row, pending []shap
 			}
 		}
 		view.Rows[key] = row
+	}
+	select {
+	case <-s.updates:
+	default:
 	}
 	select {
 	case s.updates <- view:
@@ -322,7 +320,8 @@ func shapeRetryable(err error) bool {
 	var api *APIError
 	if !errors.As(err, &api) {
 		var transport *url.Error
-		return errors.As(err, &transport) || errors.Is(err, context.DeadlineExceeded)
+		var network net.Error
+		return errors.As(err, &transport) || errors.As(err, &network) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, context.DeadlineExceeded)
 	}
 	switch api.Code {
 	case "invalid_request", "unsupported_table", "unknown_database", "unknown_table", "invalid_key", "key_revoked", "key_expired", "forbidden_scope", "not_granted", "column_not_granted", "grant_invalid":

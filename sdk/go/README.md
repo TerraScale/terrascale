@@ -129,6 +129,9 @@ return shape.Err()
 Cancel `ctx` to stop the subscription and close its receive-only updates channel.
 Views own their rows, including blobs, so later updates never change an earlier
 snapshot. Rows are the same `Row` type returned by `Database.Query`.
+Updates holds at most one pending view, replacing it with the latest snapshot
+when consumption is slow, while the transport continues applying changes.
+An incomplete HTTP response reconnects from the last fully applied page.
 `Loading` covers the paged snapshot, `Live` means caught up, and `Reconnecting`
 retains the last data during transport recovery. WebSocket hints use a bearer
 header and trigger HTTP catch-up from the applied offset; HTTP long-polling
