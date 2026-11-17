@@ -96,7 +96,7 @@ internal sealed class RowsService(ISqlService sql, TimeProvider time)
             RulesTable? rule = null;
             if (auth is not null)
             {
-                rule = stored?.Rules.Tables.GetValueOrDefault(operation.Table);
+                rule = stored?.Rules.Table(operation.Table);
                 if (rule is null || Condition(rule, kind) is null)
                 {
                     return Denied(name, operation.Table);
@@ -416,7 +416,6 @@ internal sealed class RowsService(ISqlService sql, TimeProvider time)
                     ConditionSource.ClaimList => List(parameter.Key!),
                     ConditionSource.RequestTime => now,
                     ConditionSource.Row => before![IndexOf(columns, parameter.Key!)],
-                    ConditionSource.Subject => throw new UnreachableException(),
                     _ => throw new UnreachableException(),
                 };
             }

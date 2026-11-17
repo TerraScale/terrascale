@@ -14,7 +14,7 @@ internal static class RulesReads
     internal static object Filter(ShapeQuery query, string table, IReadOnlyList<string> tableColumns, StoredRules? rules, IRulesSchema schema)
     {
         var viewer = query.Viewer ?? throw new ArgumentException("a rules read needs a viewer", nameof(query));
-        if (rules is null || Rule(rules.Rules, table) is not { Read: { } read } rule)
+        if (rules is null || rules.Rules.Table(table) is not { Read: { } read } rule)
         {
             return Refusal("the rules do not allow reading this table", "rule_denied", table);
         }
@@ -90,11 +90,6 @@ internal static class RulesReads
 
     private static Forbidden Refusal(string message, string code, string table) =>
         new(message, code, new Dictionary<string, string> { ["operation"] = "read", ["table"] = table });
-
-    private static RulesTable? Rule(RulesSet rules, string table) =>
-        rules.Tables.TryGetValue(table, out var exact)
-            ? exact
-            : rules.Tables.FirstOrDefault(pair => string.Equals(pair.Key, table, StringComparison.OrdinalIgnoreCase)).Value;
 
     private static List<string>? Readable(IReadOnlyList<string>? names, IReadOnlyList<string> tableColumns)
     {

@@ -45,7 +45,7 @@ internal static class RulesSimulator
             "delete" => RulesOperation.Delete,
             _ => throw new UnreachableException(),
         };
-        rules.Tables.TryGetValue(request.Table, out var rule);
+        var rule = rules.Table(request.Table);
         var checkedRules = request.Rules is not null ? rules : new RulesSet(rule is null
             ? new Dictionary<string, RulesTable>()
             : new Dictionary<string, RulesTable> { [request.Table] = Required(rule, operation) });

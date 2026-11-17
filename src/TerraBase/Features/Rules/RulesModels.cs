@@ -5,7 +5,13 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Rules;
 
-internal sealed record RulesSet(IReadOnlyDictionary<string, RulesTable> Tables);
+internal sealed record RulesSet(IReadOnlyDictionary<string, RulesTable> Tables)
+{
+    public RulesTable? Table(string name) =>
+        Tables.TryGetValue(name, out var exact)
+            ? exact
+            : Tables.FirstOrDefault(pair => string.Equals(pair.Key, name, StringComparison.OrdinalIgnoreCase)).Value;
+}
 
 internal sealed record RulesTable(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Read = null,
