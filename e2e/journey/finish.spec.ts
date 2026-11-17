@@ -123,7 +123,8 @@ test('JSON text arrows preserve adjacent SQL tokens over REST, WebSocket and Pos
 
   const url = `postgresql://any@pg.terrascale.tech:5432/${current.projectId}/${current.databaseId}?sslmode=verify-full&sslrootcert=system`;
   const pg = spawn('psql', ['-X', '-v', 'ON_ERROR_STOP=1', '-At', url], {
-    env: { ...process.env, PGPASSWORD: current.apiKey }, stdio: ['pipe', 'pipe', 'pipe'],
+    env: { PATH: process.env.PATH, HOME: process.env.HOME, SSL_CERT_FILE: process.env.SSL_CERT_FILE, PGPASSWORD: current.apiKey },
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
   let stdout = '';
   let stderr = '';
