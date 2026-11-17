@@ -1,16 +1,19 @@
 {
   "producer": "TerraScale/terrascale",
-  "revision": "1d823d8534fc5035859a47e263691d0c7cb7b744",
+  "revision": "43886fc7a8427cfe54f31c8e6d78a942b4333058",
   "inputs": {
-    "src/TerraBase/Features/Functions/ListFunctionsEndpoint.cs": "67da2dccfa21ad4a8a298130a4f39a14915558702c95ac59ca4c65d4195fbe4c",
-    "src/TerraBase/Features/Functions/DeployFunctionEndpoint.cs": "ca0e4919810c1419a42ed79a673c027ad1b084fee39de2d51d10689b86f83008",
-    "src/TerraBase/Features/Functions/GetFunctionEndpoint.cs": "2bd938d51b4371ef6f654fece80e89f9e10194e0cbbde56bfa0b5ff52312d586",
-    "src/TerraBase/Features/Functions/DeleteFunctionEndpoint.cs": "7c6bbe03b90f29f5f359a2656549ea66aa6b01b0cad000a30f2adfac0b8fa14b",
-    "src/TerraBase/Features/Functions/InvokeFunctionEndpoint.cs": "6efde44e9198c7f25e6575b77265ac7ae8b81f36f0d5671e1370652f1226b16d",
-    "src/TerraBase/Features/Functions/ListFunctionLogsEndpoint.cs": "ec74794e84847e6e30ac2ea9740613fdc300c130bbfd47e420504637742c93db",
-    "src/TerraBase/Features/Functions/FunctionRoute.cs": "b5ceb4be880749ffed5fc7666a9c58108b778d87a88291cd5cf3b4076fd62fe9",
-    "src/TerraBase/Features/Functions/Functions.cs": "0061891a2f27f41ba44092970ae03f68d3ec4e860efd58fe672bc8b75d6568a1",
-    "src/TerraBase/Features/Functions/FunctionService.cs": "170bf5318eb2464b96643d634b46b938e3663e05694ec23847f6aa89d4d38aa0"
+    "src/TerraBase/Features/Functions/ListFunctionsEndpoint.cs": "54a3bc70dbe3d22f1147d22d6af8ac99a2314c9e3df983ea842dab4a521ef385",
+    "src/TerraBase/Features/Functions/DeployFunctionEndpoint.cs": "a85b596c088346db57037f8d51959083ac3ac6366e6ee0387f5864e8358bfaf6",
+    "src/TerraBase/Features/Functions/GetFunctionEndpoint.cs": "76a87c5a6fb75e7c58cf8116f551f85e7b60795d4bd735c5090da4c672afa1b4",
+    "src/TerraBase/Features/Functions/DeleteFunctionEndpoint.cs": "dcdff886a632e0e43921e47b70a13c54fef8b765077b040b891f594c0f2fb2d3",
+    "src/TerraBase/Features/Functions/InvokeFunctionEndpoint.cs": "64d4f89ba39455e8b2f9906c37df1172c6a5e38ac83e86d37897018c0a766aa8",
+    "src/TerraBase/Features/Functions/ListFunctionLogsEndpoint.cs": "59e010d434a95334b1d0067cf4e2e50f6c6ba8c4a1f89ca080b663e150dd79d1",
+    "src/TerraBase/Features/Functions/FunctionRoute.cs": "f0e297a0a510f3f2bea413d172f202ce0e236aec8be512cffb4d9ddfa8483e07",
+    "src/TerraBase/Features/Functions/Functions.cs": "87e84fa280e2a13e58583cdb776708d84740cc493b5759a5151e37879cccb6e9",
+    "src/TerraBase/Features/Functions/FunctionService.cs": "eaa2205b087427aa4e86a5c6080d0af7c6844678a44887301c952245b2a5713f",
+    "src/TerraBase/Features/Functions/FunctionMetrics.cs": "b5dea2a7f2a260921e55e44740b641b71ab85f155d91a86efc64ca7863f9e6d1",
+    "src/TerraBase/Features/Functions/FunctionService.Stats.cs": "1f89ef4ac68cbe2c14fb61695dab2c38d0d3ae929ec47296384618b211d47bf8",
+    "src/TerraBase/Features/Functions/GetFunctionStatsEndpoint.cs": "1195486b47b586acf949ba36a8308ee58aaa308e4ffc2a694297d65abbb95b36"
   },
   "security": "Bearer project credential; both listed scopes required; anonymous/end-user refused",
   "mediaType": "application/json",
@@ -19,13 +22,14 @@
   "request": "Deploy: source required string; optional cron:string. Replacement clears an omitted cron.",
   "response": "Function: name:string, source:string|null (omitted in list), cron:string|null, createdAt:date-time, updatedAt:date-time. Delete: empty 204.",
   "errors": "400 validation, 401/403 credential/scope, 404 database/function, 409 function_limit (deploy), 503 unavailable",
-  "remaining": "Invoke returns handler status/body or JSON 200; 500 function_error; input <=1MiB. Logs direct array newest-first limit 1..100 default 50; last 100. Missed cron runs are skipped.",
+  "remaining": "Invoke returns handler status/body or JSON 200; 500 function_error; input <=1MiB. Logs direct array newest-first limit 1..100 default 50; last 100. Missed cron runs are skipped. Stats: window 1h|24h|7d, default 24h; zero-filled UTC minute/hour buckets; histogram percentiles, 7-day hourly retention. Logs add sqlCalls, sqlMs, rowsRead, rowsWritten, responseBytes, httpStatus; row counters currently zero. Stats SDK operation follows in C7.",
   "operations": [
     {"operation":"listFunctions","method":"GET","path":"/v1/projects/{project}/databases/{database}/functions","scopes":["sql:read","sql:write"],"success":200,"implemented":true},
     {"operation":"deployFunction","method":"PUT","path":"/v1/projects/{project}/databases/{database}/functions/{function}","scopes":["sql:read","sql:write"],"success":200,"implemented":true},
     {"operation":"getFunction","method":"GET","path":"/v1/projects/{project}/databases/{database}/functions/{function}","scopes":["sql:read","sql:write"],"success":200,"implemented":true},
     {"operation":"deleteFunction","method":"DELETE","path":"/v1/projects/{project}/databases/{database}/functions/{function}","scopes":["sql:read","sql:write"],"success":204,"implemented":true},
     {"operation":"invokeFunction","method":"POST","path":"/v1/projects/{project}/databases/{database}/functions/{function}/invoke","scopes":["sql:read"],"success":200,"implemented":true},
-    {"operation":"listFunctionLogs","method":"GET","path":"/v1/projects/{project}/databases/{database}/functions/{function}/logs","scopes":["sql:read","sql:write"],"success":200,"implemented":true}
+    {"operation":"listFunctionLogs","method":"GET","path":"/v1/projects/{project}/databases/{database}/functions/{function}/logs","scopes":["sql:read","sql:write"],"success":200,"implemented":true},
+    {"operation":"getFunctionStats","method":"GET","path":"/v1/projects/{project}/databases/{database}/functions/{function}/stats","scopes":["sql:read","sql:write"],"success":200,"implemented":false}
   ]
 }

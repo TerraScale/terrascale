@@ -1,5 +1,5 @@
 {
-  "serverCommit": "d95bbb36b55acfdf90ca0232cea7a80daaf07dd5",
+  "serverCommit": "43886fc7a8427cfe54f31c8e6d78a942b4333058",
   "scope": "TerraBase /openapi/v1.json public inventory (ApiReferenceExtensions.ShouldInclude) at serverCommit",
   "operations": [
     {
@@ -186,6 +186,11 @@
       "method": "GET",
       "path": "/v1/projects/{project}/databases/{database}/functions/{function}/logs",
       "operation": "listFunctionLogs"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/functions/{function}/stats",
+      "operation": "getFunctionStats"
     },
     {
       "method": "DELETE",
