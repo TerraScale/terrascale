@@ -683,9 +683,14 @@ internal sealed class HomeMoves(
     internal async Task FollowServingRegionsAsync(CancellationToken cancellationToken)
     {
         var serving = await regions.ServingAsync(cancellationToken).ConfigureAwait(false);
-        if (await moves.FollowServingRegionsAsync(serving, cancellationToken).ConfigureAwait(false) is > 0 and var changed)
+        var changed = await moves.FollowServingRegionsAsync(serving, leaseGate.Holds, cancellationToken).ConfigureAwait(false);
+        foreach (var database in changed)
         {
-            logger.ZLogInformation($"All-region databases follow the serving regions ({string.Join(",", serving):@Regions}): {changed:@Changed} changed");
+            _ = await leases.PrepareAsync(database, cancellationToken).ConfigureAwait(false);
+        }
+        if (changed.Count > 0)
+        {
+            logger.ZLogInformation($"All-region databases follow the serving regions ({string.Join(",", serving):@Regions}): {changed.Count:@Changed} changed");
         }
     }
 

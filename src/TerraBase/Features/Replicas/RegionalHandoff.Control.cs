@@ -462,6 +462,9 @@ internal sealed partial class RegionalHandoff
         }
     }
 
+    internal async Task<string?> AppliedRefusalAsync(TenantContext database, CancellationToken token) =>
+        (await RefusalAsync(database, token).ConfigureAwait(false))?.Detail;
+
     private async Task<LocalDataRefusal?> RefusalAsync(TenantContext database, CancellationToken token)
     {
         try

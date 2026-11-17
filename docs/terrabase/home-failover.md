@@ -31,6 +31,16 @@ ts-orchestrator): file storage, history 1, three replicas (one per region) in th
   activation after a certified drain. A node confirming its leases renews or rewrites only a lease that names itself;
   when the lease names another node at an epoch below its own placement version it writes nothing, refuses writes and
   logs `Home lease not taken over` (`terrabase.home.refusals{scope="home",reason="unproven"}`).
+- A placement change that keeps the home (a replica-set change, or an all-regions database following the serving
+  regions) happens only on the home node while it holds the lease, and that node rewrites its lease at the new placement
+  version in the same step. A regions change on a node that does not hold the lease answers 503 `unavailable`; an
+  all-regions database waits for the next pass. A node confirming a lease that names itself at an epoch below the
+  placement version rewrites it at the placement version.
+- A region's new writer takes a lease of its own region whose epoch is below the placement version, written by the
+  previous writer or by itself, only when the activation proved that database's applied position; the new lease's epoch
+  is the placement version. Without that proof the lease is isolated, as before. A lease of another region below the
+  placement version is never taken automatically: the database is unserved (`stale_lease`, below) until an operator
+  repairs it.
 
 ## Holding a lease
 
@@ -73,17 +83,40 @@ The lost home's acknowledged writes that no replica pulled cannot be recovered b
 ## A lease that names a node that cannot serve
 
 Every node checks every lease it watches on each 15 s scan. A lease whose node has no live `node.<node>` key
-(`lapsed`), or is not the current writer of the lease's region (`not_writer`), leaves the database unserved:
+(`lapsed`), or is not the current writer of the lease's region (`not_writer`), or that names another region than the
+catalog's home at an epoch below the placement version (`stale_lease`), leaves the database unserved:
 
 - nothing serves it as home and nothing claims it; a write that needs its home answers the retryable refusal above;
-- each node logs `Database <id> is unserved` once per change of that state, and `is served again` when it ends;
+- each node logs `Database <id> is unserved` once per change of that state, naming the lease's node, region and epoch
+  and the catalog's placement version and home, and `is served again` when it ends;
 - `terrabase.home.unserved{region}` counts such databases by the lease's region, and `/v1/rollout/status` lists them
   (`unserved`: database, region, node, epoch, cause);
 - the old home, if it still holds a file, keeps it in place and fenced, does not serve it and does not take the lease
   back: the lease carries no `adopted`, so nothing proves which copy holds the acknowledged writes. It logs
   `keeps its file in place and fenced` once per lease epoch, and its catalog keeps naming its own region.
 
-This build has no path that serves such a database again.
+## Repairing a stale home lease
+
+An operator repairs a lease that keeps the home writer from serving its database with
+`POST /admin/organizations/{organization}/projects/{project}/databases/{database}/home-lease` on the internal listener
+of the home region's writer (peer credential or an `admin` caller key):
+`ssh <home writer host> 'bash -s' -- ORGANIZATION PROJECT DATABASE < scripts/terrabase/home-lease-repair.sh`.
+It changes only `home.<databaseId>`, never table data, and rewrites it with one compare-and-set to this node at epoch
+= the placement version. It answers 409 with a code, writing nothing, unless all of these hold:
+
+- this node is its region's writer and the catalog homes the database here with replicas (`not_writer`, `not_home`,
+  `not_leased`);
+- the lease is older than the placement version, or missing (`lease_newer`);
+- the confirmed writer of every other region records the same home and placement version (`writer_unknown`,
+  `placement_disagrees`);
+- the node the lease names answers that it is not its region's writer, or records an older placement or another home
+  (`lease_node_unknown`, `lease_node_disagrees`);
+- this node's applied-position proof for the database passes (`unproven`);
+- the lease did not change while it checked (`lease_changed`).
+
+A lease this node already holds at the placement version answers 200 `unchanged`; a rewrite answers 200 `restamped`
+with the previous node and epoch. Every call is logged once with the caller and counted in
+`terrabase.home.repairs{result}`.
 
 ## Moving a home (one commit point)
 

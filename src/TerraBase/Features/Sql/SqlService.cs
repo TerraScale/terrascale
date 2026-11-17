@@ -9,6 +9,7 @@ using TerraBase.Features.Qos;
 using TerraBase.Features.Replicas;
 using TerraBase.Tenancy;
 using TerraBase.Features.Sql.Routing;
+using ZLogger;
 
 using TerraBase.Features.Sql;
 
@@ -17,14 +18,14 @@ namespace TerraBase.Features.Sql;
 internal sealed class SqlService(
     IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, IOperationAllowance allowance, TimeProvider time,
     IDatabaseReplicas replicas, IReplicaCatalog placements, HomeSessions homes, RegionReplication replication, TerraBaseOptions options, IHomeApply apply,
-    WriteRouter router, DatabaseFences fences, RegionalOwners owners) : ISqlService
+    WriteRouter router, DatabaseFences fences, RegionalOwners owners, ILogger<SqlSession> logger) : ISqlService
 {
     private const int MaxTables = 10_000;
 
     public ISqlSession Open(TenantContext database, bool canWrite)
     {
         ArgumentNullException.ThrowIfNull(database);
-        ISqlSession Local() => new SqlSession(engine, quota, usage, allowance, time, database, canWrite, apply, fences);
+        ISqlSession Local() => new SqlSession(engine, quota, usage, allowance, time, database, canWrite, apply, fences, logger);
         return replicas.Holds(database)
             ? new ReplicaSqlSession(this, replicas, placements, homes, replication, router, options, time, database, canWrite, Local)
             : Local();
@@ -197,7 +198,7 @@ internal sealed class SqlService(
 
 internal sealed class SqlSession(
     IStorageEngine engine, IStorageQuota quota, IUsageMeter usage, IOperationAllowance allowance, TimeProvider time,
-    TenantContext database, bool canWrite, IHomeApply apply, DatabaseFences fences)
+    TenantContext database, bool canWrite, IHomeApply apply, DatabaseFences fences, ILogger<SqlSession> logger)
     : ISqlSession
 {
     internal const int MaxStatements = 256;
@@ -1045,10 +1046,10 @@ internal sealed class SqlSession(
             lease?.Dispose();
             return (null, SqlErrors.Fenced(fenced));
         }
-        catch (StorageBusyException)
+        catch (StorageBusyException busy)
         {
             lease?.Dispose();
-            return (null, SqlErrors.Busy("the database is busy; retry"));
+            return (null, StorageRefused(busy));
         }
         catch
         {
@@ -1150,10 +1151,10 @@ internal sealed class SqlSession(
             lease?.Dispose();
             return (null, null, SqlErrors.Fenced(fenced));
         }
-        catch (StorageBusyException)
+        catch (StorageBusyException busy)
         {
             lease?.Dispose();
-            return (null, null, SqlErrors.Busy("the database is busy; retry"));
+            return (null, null, StorageRefused(busy));
         }
         catch
         {
@@ -1205,11 +1206,17 @@ internal sealed class SqlSession(
         StorageError => new SqlError(SqlErrors.InternalError, error.Message),
     };
 
-    private static SqlError? Failure(Exception error) => error switch
+    private SqlError StorageRefused(StorageBusyException busy)
+    {
+        logger.ZLogWarning($"Database {database.DatabaseId:@Database} answered serialization_conflict: storage refused at {busy.At:@At}");
+        return SqlErrors.Busy("the database is busy; retry");
+    }
+
+    private SqlError? Failure(Exception error) => error switch
     {
         StorageCopyFaultedException => new SqlError(SqlErrors.CopyFaulted, "copy_faulted: Storage requires recovery."),
         StorageProofPendingException => new SqlError(SqlErrors.RecoveryPending, "recovery_pending: Storage recovery proof is pending; retry."),
-        StorageBusyException => SqlErrors.Busy("the database is busy; retry"),
+        StorageBusyException busy => StorageRefused(busy),
         DatabaseFencedException fenced => SqlErrors.Fenced(fenced),
         DatabaseMovedException moved => SqlErrors.Moved(moved),
         QueryCapacityException => SqlErrors.Interrupt,

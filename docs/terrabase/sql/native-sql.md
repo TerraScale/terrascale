@@ -75,6 +75,9 @@ SELECT terrascale_expect_changes(changes(), 1);
 
 The served [API reference](../api-reference.md) includes HTTP statuses and the complete response schemas.
 
+A `serialization_conflict` or `storage_busy` answered because storage refused the transaction logs one warning with the
+database id and the source file and line that refused it, and no SQL text.
+
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 
 ## Metering and storage

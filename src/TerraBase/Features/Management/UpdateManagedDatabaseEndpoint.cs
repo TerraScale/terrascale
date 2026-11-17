@@ -1,4 +1,5 @@
 using TerraBase.Configuration;
+using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Regions;
@@ -9,7 +10,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-internal sealed class UpdateManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options, IRegionCatalog regions, IHomeApply apply, RegionSetPlacement placement) : Endpoint<DatabaseRegionsRequest, IResult>
+internal sealed class UpdateManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options, IRegionCatalog regions, IHomeApply apply, RegionSetPlacement placement, HomeLeaseGate leaseGate) : Endpoint<DatabaseRegionsRequest, IResult>
 {
     public override void Configure()
     {
@@ -78,6 +79,11 @@ internal sealed class UpdateManagedDatabaseEndpoint(IManagementService managemen
             return ErrorResponse.From(invalidSelection);
         }
 
+        if (!leaseGate.Holds(database.Id))
+        {
+            return ErrorResponse.From(HomeLeasePending);
+        }
+
         if (request.Regions is { } selected)
         {
             return await placement.UpdateAsync(HttpContext, database, selected, cancellationToken).ConfigureAwait(false);
@@ -98,6 +104,8 @@ internal sealed class UpdateManagedDatabaseEndpoint(IManagementService managemen
                 await management.SetDatabaseRegionsAsync(user, organization, project, id, accepted, cancellationToken, all), cancellationToken)),
         };
     }
+
+    private static readonly Unavailable HomeLeasePending = new("this node does not hold the database's home lease yet, so its placement cannot change; retry");
 
     private IResult Answer(SetDatabaseRegionsResult result) => result switch
     {
