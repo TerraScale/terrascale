@@ -4,9 +4,9 @@ using TerraBase.Errors;
 
 namespace TerraBase.Features.Shapes;
 
-public sealed record ShapeFilter(string? Where, IReadOnlyList<string> Columns)
+public sealed record ShapeFilter(string? Where, IReadOnlyList<string> Columns, string? Binding = null)
 {
-    public string Key => (Where ?? "") + "\0" + string.Join('\u001f', Columns);
+    public string Key => (Where ?? "") + "\0" + string.Join('\u001f', Columns) + (Binding is { } binding ? "\0" + binding : "");
 }
 
 internal sealed record ShapeQuery(string? Where, string? Columns, ShapeGrantRule? Grant = null)
@@ -16,7 +16,7 @@ internal sealed record ShapeQuery(string? Where, string? Columns, ShapeGrantRule
     internal bool IsEmpty => Where is null && Columns is null && Grant is null;
 }
 
-internal sealed record ShapeGrantRule(string? Where, string? Columns);
+internal sealed record ShapeGrantRule(string? Where, string? Columns, string Binding);
 
 internal static class ShapeFilters
 {
@@ -39,6 +39,8 @@ internal static class ShapeFilters
         "substr", "substring", "instr", "replace", "round", "typeof", "hex", "like", "glob",
     ];
 
+    private static readonly Forbidden ColumnNotGranted = new("where names a column the read grant does not allow", "column_not_granted");
+
     internal static Validation Refused(string message) => new(message, "unsafe_where");
 
     internal static object Parse(ShapeQuery query, IReadOnlyList<string> tableColumns)
@@ -55,10 +57,11 @@ internal static class ShapeFilters
             columns = names;
         }
 
-        if (query.Grant?.Columns is { } granted)
+        IReadOnlyList<string>? granted = null;
+        if (query.Grant?.Columns is { } grantedList)
         {
-            var allowed = granted.Split(',').Select(name => Column(tableColumns, name.Trim())).OfType<string>().ToHashSet(StringComparer.Ordinal);
-            columns = [.. columns.Where(allowed.Contains)];
+            granted = [.. grantedList.Split(',').Select(name => Column(tableColumns, name.Trim())).OfType<string>().Distinct(StringComparer.Ordinal)];
+            columns = [.. columns.Where(granted.Contains)];
             if (columns.Count == 0)
             {
                 return new Forbidden("the read grant allows none of the requested columns", "column_not_granted");
@@ -68,7 +71,7 @@ internal static class ShapeFilters
         string? condition = null;
         if (query.Where is { } where)
         {
-            var checkedWhere = Where(where, tableColumns);
+            var checkedWhere = Where(where, granted ?? tableColumns, granted is null ? null : ColumnNotGranted);
             if (checkedWhere is not string text)
             {
                 return checkedWhere;
@@ -79,7 +82,7 @@ internal static class ShapeFilters
 
         if (query.Grant?.Where is { } rule)
         {
-            if (Where(rule, tableColumns) is not string checkedRule)
+            if (Where(rule, tableColumns, null) is not string checkedRule)
             {
                 return new Forbidden("the table's read grant no longer applies to its columns", "grant_invalid");
             }
@@ -87,7 +90,7 @@ internal static class ShapeFilters
             condition = condition is null ? checkedRule : $"({checkedRule}) AND ({condition})";
         }
 
-        return new ShapeFilter(condition, columns);
+        return new ShapeFilter(condition, columns, query.Grant?.Binding);
     }
 
     private static object Columns(string list, IReadOnlyList<string> tableColumns)
@@ -137,7 +140,7 @@ internal static class ShapeFilters
 
     internal const string Subject = ":sub";
 
-    private static object Where(string where, IReadOnlyList<string> tableColumns)
+    private static object Where(string where, IReadOnlyList<string> tableColumns, Forbidden? hiddenColumn)
     {
         if (where.Length > MaxWhere || !SqlText.TryTokenize(where, out var tokens) || tokens.Count == 0)
         {
@@ -164,6 +167,12 @@ internal static class ShapeFilters
                 SqlTokenKind.Word or SqlTokenKind.Quoted when !opens && Column(tableColumns, token.Value) is { } column => "+" + Quote(column),
                 _ => null,
             };
+            if (part is null && hiddenColumn is not null && token.Kind is SqlTokenKind.Word or SqlTokenKind.Quoted && !opens && !previous.Is("AS")
+                && !previous.Is("COLLATE") && !Operators.Contains(token.Value))
+            {
+                return hiddenColumn;
+            }
+
             if (part is null)
             {
                 return Refused(token.Kind switch
