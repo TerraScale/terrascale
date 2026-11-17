@@ -6,4 +6,4 @@ Cancellation without a canceled request token remains a server error. Function e
 
 Dashboard request timing logs use 499 for the same client-abort condition. Dashboard service telemetry excludes those abandoned requests even when a dependency wraps cancellation in an exception carrying a different token. Other failures and server-side cancellation remain failures.
 
-The journey interrupts an authenticated SQL upload after the server requests its body and checks the exact request's 499 log entry and absence from the 5xx filter. The existing database-tab and mobile-page assertions continue checking their server-error views.
+The journey invokes a real function that writes a marker before awaiting a pending promise, waits for the marker, and aborts the caller. It checks the exact request's 499 log entry and absence from the 5xx filter, and confirms no function error log or invocation errors were recorded. The existing database-tab and mobile-page assertions continue checking their server-error views.
