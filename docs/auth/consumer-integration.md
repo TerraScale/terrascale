@@ -41,6 +41,11 @@ CORS headers, so a browser sees it as a network error.
 
 ## Guest sign-in
 
+The [Browser apps with Rules todo walkthrough](../../sdk/js/README.md#browser-apps-with-rules) includes the
+one-time table and Rules setup and an executable browser module using `BrowserAuth` and `createTerraBaseClient`.
+It signs in a guest, creates, reads and updates its own todo directly, with no app backend or project key.
+The same client supports tenant PKCE redirects, hosted magic links, live shapes and replaceable secure storage.
+
 1. POST the form field `client_id` to `/{project}/oauth/anonymous`. The client needs `allow_anonymous`; a
    confidential client also authenticates. `grant_type`, `scope` and other parameters are refused. The response is
    the token endpoint's: access, refresh and ID tokens for the scopes `openid offline_access`. Both JWTs carry

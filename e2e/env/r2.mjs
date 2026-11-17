@@ -159,6 +159,16 @@ createServer((request, response) => {
     response.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(text) });
     return response.end(text);
   }
+  if (request.headers.host === 'shapes-ts-terrabase-shapes-prod.terrascale.tech' && request.method === 'GET'
+      && /^\/v1\/shapes\/h1-[0-9a-f]{16}\/[0-9a-f]{64}$/.test(rawPath) && rawQuery === '') {
+    const account = readFileSync(`${process.env.E2E_STATE}/r2`, 'utf8').split('\n')[0];
+    const stored = objects.get(`${account}/ts-terrabase-shapes-prod${rawPath}`);
+    log.calls.push('GET /ts-terrabase-shapes-prod/<ciphertext>');
+    response.setHeader('access-control-allow-origin', '*');
+    if (!stored) { response.writeHead(404); return response.end(); }
+    response.writeHead(200, { 'content-type': stored.type, 'content-length': stored.body.length, etag: stored.etag });
+    return response.end(stored.body);
+  }
   const query = new URLSearchParams();
   for (const pair of rawQuery.split('&').filter(Boolean)) {
     const at = pair.indexOf('=');

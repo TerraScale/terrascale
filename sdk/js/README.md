@@ -172,6 +172,21 @@ app's exact origin in `allowed_origins`, its callback in `redirect_uris`, and gu
 Deploy [Rules](../../docs/terrabase/rules.md) before serving data; no rules denies end users.
 The browser needs the public project and client IDs. Keep project keys out of the app.
 
+For this guest todo app, an administrator creates a database and runs this SQL once in the dashboard:
+
+```sql
+CREATE TABLE todos (id INTEGER PRIMARY KEY, owner_id TEXT NOT NULL, title TEXT NOT NULL);
+```
+
+Deploy this Rules JSON on that database's Rules page. Guests can create todos; each user can read, update and
+delete only their own. Rules supply the owner; the browser cannot change it.
+
+```json
+{"tables":{"todos":{"read":"row.owner_id = auth.uid","create":"auth.is_anonymous = 1","update":"row.owner_id = auth.uid","delete":"row.owner_id = auth.uid","columns":["id","owner_id","title"],"writable":["title"],"set":{"create":{"owner_id":"auth.uid"}}}}}
+```
+
+Serve the following module from the registered browser origin, with the public project, client and database IDs:
+
 ```js
 import { BrowserAuth, createTerraBaseClient } from "@terrascale/sdk";
 
@@ -185,8 +200,12 @@ const db = createTerraBaseClient({
 
 const signedIn = await auth.signInGuest();
 if (!signedIn.ok) throw new Error(signedIn.error.code);
-const created = await db.rows("notes").create({ title: "SDK guest note" });
+const created = await db.rows("todos").create({ title: "Ship it" });
 if (!created.ok) throw new Error(created.error.code);
+const read = await db.rows("todos").get(created.value.key, { columns: ["id", "title"] });
+if (!read.ok) throw new Error(read.error.code);
+const updated = await db.rows("todos").update(created.value.key, { title: "Shipped" });
+if (!updated.ok) throw new Error(updated.error.code);
 ```
 
 For hosted sign-in, call `await auth.signIn()`; on the registered callback page recreate `auth` and call
@@ -202,6 +221,12 @@ request; concurrent refresh calls share one rotation. A refused or failed refres
 to end the separate hosted cookie session through ts-auth's confirmation page. Already issued access tokens
 remain usable until their expiry, subject to the [revocation limits](../../docs/terrabase/rules.md#35-revocation).
 
+`storage` and `pkceStorage` accept replaceable `BrowserAuthStorage` adapters with `getItem`, `setItem` and
+`removeItem` (synchronous or asynchronous). The default keeps credentials only in memory and PKCE in session
+storage. Supply `storage` only for a secure credential store; call `await auth.restore()` after recreating the
+client to validate stored credentials through userinfo. Storage cleanup failures return `storage_unavailable`
+after still attempting refresh-family revocation. Never use Web Storage for reusable credentials.
+
 `db.rows(table).get(key, { columns })` reads one row; `create(row)`, `update(key, row)` and `delete(key)` write rows.
 `db.batchRows([{ op: "create", table: "notes", row: { title: "Next" } }])` writes 1–100 operations atomically,
 including updates and deletes across tables. Row methods return `TerraScaleResult`: check `ok`, then `value` or
@@ -215,7 +240,9 @@ reads an authorized snapshot then live changes. Close the returned subscription 
 A `409 must_refetch`, including after a Rules deploy, discards its handle and refetches with current authorization.
 Close subscriptions and discard displayed data when changing users or signing out.
 
-A `421 wrong_region` means nothing was applied. Chrome and Edge can resend a buffered request once after 421;
+A `421 wrong_region` means nothing was applied. Row operations follow its `error.url` once when it names the same
+route on an HTTPS TerraScale regional API; explicit region pins stay pinned. No uncertain write is replayed.
+Chrome and Edge can resend a buffered request once after 421;
 the browser SDK cannot prevent that native resend. A timeout or `503 write_outcome_unknown` can mean a write
 committed: never automatically replay it. For creates that need reconciliation, choose a client ULID in a writable,
 UNIQUE `id` column instead of `set.create.id: request.ulid`. A subsequent `409 row_exists` identifies that create;

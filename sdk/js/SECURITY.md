@@ -12,7 +12,9 @@ For suspected exposed secrets, report their location without copying the value.
 
 ## Browser credentials
 
-BrowserAuth keeps access, refresh and ID tokens only in memory and clears them on sign-out or failed refresh.
+BrowserAuth defaults to keeping access, refresh and ID tokens only in memory, clearing them on sign-out or failed refresh.
 Do not persist these tokens in local storage, session storage, URLs or application logs. Reloading starts a new
 sign-in. Session storage holds only the one-use PKCE verifier and state for up to ten minutes across the hosted
 redirect. Never bundle a project key, client secret or management credential in a browser app.
+Replaceable `storage` and `pkceStorage` adapters may use a platform's secure credential storage. Reusable tokens
+must never use Web Storage. Cleanup errors cannot prevent the SDK from attempting refresh-family revocation.

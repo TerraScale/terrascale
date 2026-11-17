@@ -24,7 +24,7 @@ export const rowRoutes = [
   idempotencyKey: "none", replaySafe: method === "GET", contract: "docs/terrabase/rules.md", contractText: [],
 }));
 
-/** Row operations return typed results and never replay mutations. */
+/** Row operations return typed results; only explicit wrong_region refusals may be routed. */
 export class V1Rows {
   #transport;
   #params;

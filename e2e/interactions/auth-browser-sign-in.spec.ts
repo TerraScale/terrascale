@@ -71,18 +71,22 @@ browserTest('a browser app on an allowed origin signs in guests and users with n
   const ownerToken = (await exchanged.json()).access_token as string;
   saveSecret('browser-owner-token', ownerToken);
   const owner = { authorization: 'Bearer ' + ownerToken };
-  const created = await request.post(`${api}/v1/projects/${project}/databases`, { headers: owner, data: { name: 'browser-' + randomBytes(4).toString('hex') } });
+  const created = await request.post(`${api}/v1/projects/${project}/databases`, { headers: owner, data: { name: 'browser-' + randomBytes(4).toString('hex'), regions: ['gru'] } });
   expect(created.status(), await created.text()).toBe(201);
   const database = `${api}/v1/projects/${project}/databases/${(await created.json()).id}`;
   const rows = `${database}/tables/notes/rows`;
+  const walkthrough = readFileSync(resolve(__dirname, '../../sdk/js/README.md'), 'utf8').split('## Browser apps with Rules')[1];
+  const todoSql = /```sql\n([\s\S]*?)```/.exec(walkthrough)![1];
+  const todoRules = JSON.parse(/```json\n([\s\S]*?)```/.exec(walkthrough)![1]);
   const sql = await request.post(database + '/sql/execute', { headers: owner, data: { statements: [
+    { sql: todoSql },
     { sql: 'CREATE TABLE notes (id INTEGER PRIMARY KEY, owner_id TEXT NOT NULL, title TEXT NOT NULL)' },
     { sql: "INSERT INTO notes (owner_id, title) VALUES ('someone-else', 'not yours')" },
   ] } });
   expect(sql.status(), await sql.text()).toBe(200);
   const deployed = await request.put(database + '/rules', {
     headers: { ...owner, 'if-none-match': '*' },
-    data: { tables: { notes: {
+    data: { tables: { ...todoRules.tables, notes: {
       read: 'row.owner_id = auth.uid', create: 'auth.is_anonymous = 1', update: 'row.owner_id = auth.uid', delete: 'row.owner_id = auth.uid',
       columns: ['id', 'owner_id', 'title'], writable: ['title'], set: { create: { owner_id: 'auth.uid' } },
     } } },
@@ -103,9 +107,9 @@ browserTest('a browser app on an allowed origin signs in guests and users with n
   const client = await registered.json() as { client_id: string; allowed_origins: string[]; allow_anonymous: boolean };
   expect(client).toMatchObject({ allowed_origins: [app], allow_anonymous: true });
 
-  const example = /```js\n([\s\S]*?)```/.exec(readFileSync(resolve(__dirname, '../../sdk/js/README.md'), 'utf8').split('## Browser apps with Rules')[1])![1];
+  const example = /```js\n([\s\S]*?)```/.exec(walkthrough)![1];
   const exampleModule = 'const { project, clientId, database } = ' + JSON.stringify({ project, clientId: client.client_id, database: database.split('/').at(-1) }) + ';\n'
-    + example + '\nexport { auth, signedIn, created };';
+    + example + '\nexport { auth, signedIn, created, read, updated };';
   site.example(exampleModule);
   const context = await auditedContext(browser, { viewport: desktop, storageState: { cookies: [], origins: [] } });
   await context.route(url => url.origin === app, route => route.continue());
@@ -155,10 +159,19 @@ browserTest('a browser app on an allowed origin signs in guests and users with n
     expect(proof.retained.row.title).toBe('SDK batch update');
     expect(proof.refreshed.sub).toBe(proof.user.sub);
     console.log('Browser SDK: guest sign-in, own create/read/update/delete/batch, foreign update 404, refresh and live insert passed');
+    if (process.env.E2E_REGIONS === '2') {
+      let refused = 0;
+      context.on('response', response => { if (response.url().startsWith('https://fra.api.terrascale.tech/') && response.status() === 421) refused++; });
+      expect(await sdk('routingProof')).toEqual([201, 200, 200, 200, 204]);
+      expect(refused).toBe(4);
+      console.log('Browser SDK: four row mutations followed explicit FRA 421 wrong_region to GRU exactly once; row read passed');
+    }
+    expect(await sdk('storageProof')).toMatchObject({ restored: true, cleared: true, cleanup: 'storage_unavailable', revoked: 'invalid_grant' });
+    console.log('Browser SDK: replaceable async storage restored a user; cleanup failure still revoked the refresh family');
     await sdk('watchRulesReset');
     const rulesUpdate = await request.put(database + '/rules', {
       headers: { ...owner, 'if-match': deployed.headers().etag },
-      data: { tables: { notes: {
+      data: { tables: { ...todoRules.tables, notes: {
         read: "row.owner_id = auth.uid AND row.title <> 'SDK batch update'", create: 'auth.is_anonymous = 1',
         update: 'row.owner_id = auth.uid', delete: 'row.owner_id = auth.uid',
         columns: ['id', 'owner_id', 'title'], writable: ['title'], set: { create: { owner_id: 'auth.uid' } },
@@ -171,12 +184,14 @@ browserTest('a browser app on an allowed origin signs in guests and users with n
     const sample = await browserApp.evaluate(async () => {
       const example = await import(location.origin + '/readme.mjs');
       const signedOut = await example.auth.signOut();
-      return { signedIn: example.signedIn, created: example.created, signedOut };
+      return { signedIn: example.signedIn, created: example.created, read: example.read, updated: example.updated, signedOut };
     });
     expect(sample.signedIn).toMatchObject({ ok: true, value: { is_anonymous: true } });
-    expect(sample.created).toMatchObject({ ok: true, status: 201, value: { row: { title: 'SDK guest note' } } });
+    expect(sample.created).toMatchObject({ ok: true, status: 201, value: { row: { title: 'Ship it' } } });
+    expect(sample.read).toMatchObject({ ok: true, value: { row: { title: 'Ship it' } } });
+    expect(sample.updated).toMatchObject({ ok: true, value: { row: { title: 'Shipped' } } });
     expect(sample.signedOut.ok).toBe(true);
-    console.log('README Browser apps with Rules sample: guest sign-in -> ok; notes.create -> 201');
+    console.log('README todo schema, Rules and browser sample: guest -> ok; create -> 201; read/update -> 200');
     const fetched = (path: string, init: { method: string; form?: Record<string, string>; bearer?: string }) =>
       browserApp.evaluate(async ({ url, init }) => {
         const response = await fetch(url, {

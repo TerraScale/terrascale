@@ -69,6 +69,36 @@ export async function guestProof() {
 }
 
 export function watchRulesReset() { reset = waitFor(rows => rows.length === 0); }
+
+export async function routingProof() {
+  const remote = createTerraBaseClient({ project: config.project, baseUrl: "https://fra.api.terrascale.tech", token: () => auth.accessToken() }).database(config.database);
+  const notes = remote.rows("notes");
+  const created = await notes.create({ title: "Routing note" });
+  const key = value(created).key;
+  const read = await notes.get(key);
+  const updated = await notes.update(key, { title: "Routed update" });
+  const batch = await remote.batchRows([{ op: "update", table: "notes", key, row: { title: "Routed batch" } }]);
+  const removed = await notes.delete(key);
+  return [created, read, updated, batch, removed].map(result => { value(result); return result.status; });
+}
+
+export async function storageProof() {
+  const stored = new Map();
+  let blocked = false;
+  const storage = { getItem: async key => stored.get(key) ?? null, setItem: async (key, item) => { stored.set(key, item); },
+    removeItem: async key => { if (blocked) throw new DOMException("Storage is blocked", "SecurityError"); stored.delete(key); } };
+  const options = { ...config, storage, pkceStorage: { ...storage, removeItem: () => { throw new DOMException("Storage is blocked", "SecurityError"); } } };
+  const first = new BrowserAuth(options);
+  const user = value(await first.signInGuest());
+  const restored = new BrowserAuth(options);
+  const same = value(await restored.restore()).sub === user.sub;
+  blocked = true;
+  const signedOut = await first.signOut();
+  blocked = false;
+  const refused = await restored.refresh();
+  return { restored: same, cleared: first.currentUser === null && restored.currentUser === null && stored.size === 0,
+    cleanup: signedOut.ok ? null : signedOut.error.code, revoked: refused.ok ? null : refused.error.code };
+}
 export async function rulesReset() { return reset; }
 
 export async function stop() {

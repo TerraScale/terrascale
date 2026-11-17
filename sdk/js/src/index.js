@@ -1,5 +1,6 @@
 export { BrowserAuth } from "./browser-auth.js";
 /** @typedef {import("./browser-auth.js").BrowserAuthConfig} BrowserAuthConfig */
+/** @typedef {import("./browser-auth.js").BrowserAuthStorage} BrowserAuthStorage */
 /** @typedef {import("./browser-auth.js").BrowserUser} BrowserUser */
 /** @template TValue @typedef {import("./result.js").TerraScaleResult<TValue>} TerraScaleResult */
 /** @typedef {import("./result.js").TerraScaleError} TerraScaleError */
