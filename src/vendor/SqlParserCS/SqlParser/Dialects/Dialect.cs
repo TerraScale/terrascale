@@ -132,8 +132,8 @@ public abstract partial class Dialect
             Word { Keyword: Keyword.XOR } => GetPrecedence(Precedence.Xor),
             Word { Keyword: Keyword.AT } => GetAtPrecedence(),
             Word { Keyword: Keyword.NOT } => GetNotPrecedence(),
-            Word { Keyword: Keyword.IS } => GetPrecedence(Precedence.Is),
-            Word { Keyword: Keyword.IN or Keyword.BETWEEN or Keyword.OPERATOR } => GetPrecedence(Precedence.Between),
+            Word { Keyword: Keyword.IS or Keyword.NOTNULL } => GetPrecedence(Precedence.Is),
+            Word { Keyword: Keyword.IN or Keyword.BETWEEN or Keyword.OPERATOR or Keyword.MEMBER or Keyword.OVERLAPS } => GetPrecedence(Precedence.Between),
             Word {
                 Keyword: Keyword.LIKE 
                 or Keyword.ILIKE 
@@ -231,7 +231,8 @@ public abstract partial class Dialect
                 Word
                 {
                     Keyword: Keyword.LIKE or Keyword.ILIKE or Keyword.SIMILAR or Keyword.REGEXP or Keyword.RLIKE
-                } => GetPrecedence(Precedence.Like), // LikePrecedence,
+                } => GetPrecedence(Precedence.Like),
+                Word { Keyword: Keyword.NULL } when !parser.InColumnDefinition => GetPrecedence(Precedence.Is),
                 _ => 0
             };
         }
@@ -247,6 +248,17 @@ public abstract partial class Dialect
     }
 
     public virtual ColumnOption? ParseColumnOption(Parser parser) => null;
+    /// <summary>
+    /// Returns true if the specified keyword should be parsed as a table factor alias;
+    /// When explicit is true, the keyword is preceded by an `AS` word. Parser is provided
+    /// to enable looking ahead if needed.
+    /// </summary>
+    /// <param name="explicit">Explicit flag</param>
+    /// <param name="keyword">Keyword</param>
+    /// <returns>True if the alias should be parsed</returns>
+    /// <exception cref="NotImplementedException"></exception>
+    public virtual bool IsTableFactorAlias(bool @explicit, Keyword keyword) =>
+        @explicit || !Keywords.ReservedForTableAlias.Contains(keyword);
     /// <summary>
     /// Returns the precedence when the precedence is otherwise unknown
     /// </summary>

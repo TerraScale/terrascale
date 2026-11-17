@@ -24,9 +24,9 @@ COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-SqlParserCS 0.6.5 (TylerBrinks/SqlParser-cs) at commit d95fb53f6bbee0a0aa6d8143a8cdd3e51d690fac
-License: MIT. Source: https://github.com/TylerBrinks/SqlParser-cs/tree/d95fb53f6bbee0a0aa6d8143a8cdd3e51d690fac
-Modified TokenizeLongArrow to preserve the character following ->>.
+SqlParserCS (TylerBrinks/SqlParser-cs) at commit e1929977a96290f937e9a2a67e3c823b7dc25cd2
+License: MIT. Source: https://github.com/TylerBrinks/SqlParser-cs/tree/e1929977a96290f937e9a2a67e3c823b7dc25cd2
+Local compiler fixes and their files are listed in src/vendor/SqlParserCS/NOTICE.
 
 MIT License
 

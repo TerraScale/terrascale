@@ -1,4 +1,6 @@
-﻿namespace SqlParser.Ast;
+﻿using System.Diagnostics;
+
+namespace SqlParser.Ast;
 
 // ReSharper disable CommentTypo
 
@@ -215,7 +217,8 @@ public abstract record Expression : IWriteSql, IElement
             {
                 CastKind.Cast => "CAST",
                 CastKind.TryCast => "TRY_CAST",
-                CastKind.SafeCast => "SAFE_CAST"
+                CastKind.SafeCast => "SAFE_CAST",
+                _ => throw new UnreachableException()
             };
           
             if (Format != null)
@@ -480,9 +483,9 @@ public abstract record Expression : IWriteSql, IElement
         /// <summary>
         /// Sequence function call
         /// </summary>
-        public FunctionArguments Args { get; internal set; }
+        public FunctionArguments? Args { get; init; }
 
-        public FunctionArguments Parameters { get; init; }
+        public FunctionArguments? Parameters { get; init; }
 
         /// <summary>
         /// e.g. `x > 5` in `COUNT(x) FILTER (WHERE x > 5)`
@@ -866,7 +869,7 @@ public abstract record Expression : IWriteSql, IElement
             : this(expression, negated, pattern, (string?)null, Any) { }
 
         public Like(Expression? expression, bool negated, Expression pattern)
-            : this(expression, negated, pattern, (string?)null, false) { }
+            : this(expression, negated, pattern, (string?)null) { }
 
         public override void ToSql(SqlTextWriter writer)
         {
@@ -1338,6 +1341,58 @@ public abstract record Expression : IWriteSql, IElement
         public override void ToSql(SqlTextWriter writer)
         {
             writer.Write('*');
+        }
+    }
+    /// <summary>
+    /// IS [NOT] [form] NORMALIZED expression
+    /// </summary>
+    public record IsNormalized(Expression Expression, bool Negated, NormalForm? Form = null) : Expression, INegated
+    {
+        public override void ToSql(SqlTextWriter writer)
+        {
+            var negated = Negated ? "NOT " : null;
+            var form = Form != null ? $"{Form} " : null;
+            writer.WriteSql($"{Expression} IS {negated}{form}NORMALIZED");
+        }
+    }
+    /// <summary>
+    /// MySQL MEMBER OF expression
+    /// </summary>
+    public record MemberOf(Expression Member, Expression ArrayExpr) : Expression
+    {
+        public override void ToSql(SqlTextWriter writer)
+        {
+            writer.WriteSql($"{Member} MEMBER OF({ArrayExpr})");
+        }
+    }
+    /// <summary>
+    /// OVERLAPS predicate
+    /// </summary>
+    public record Overlaps(Sequence<Expression> Left, Sequence<Expression> Right) : Expression
+    {
+        public override void ToSql(SqlTextWriter writer)
+        {
+            writer.WriteSql($"({Left.ToSqlDelimited()}) OVERLAPS ({Right.ToSqlDelimited()})");
+        }
+    }
+    /// <summary>
+    /// Snowflake CONNECT_BY_ROOT expression
+    /// </summary>
+    public record ConnectByRoot(Expression Expression) : Expression
+    {
+        public override void ToSql(SqlTextWriter writer)
+        {
+            writer.WriteSql($"CONNECT_BY_ROOT {Expression}");
+        }
+    }
+    /// <summary>
+    /// NOT NULL expression (without IS)
+    /// </summary>
+    public record NotNull(Expression Expression) : Expression
+    {
+        public override void ToSql(SqlTextWriter writer)
+        {
+            writer.WriteSql($"{Expression} NOTNULL");
         }
     }
 

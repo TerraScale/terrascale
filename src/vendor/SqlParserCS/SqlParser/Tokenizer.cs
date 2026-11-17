@@ -7,7 +7,8 @@ namespace SqlParser;
 
 public ref struct Tokenizer(bool unescape = true)
 {
-    private Dialect _dialect;
+    private static readonly GenericDialect DefaultDialect = new();
+    private Dialect _dialect = DefaultDialect;
     private State _state;
 
     /// <summary>
@@ -537,7 +538,7 @@ public ref struct Tokenizer(bool unescape = true)
             return new Modulo();
         }
 
-        return _dialect.IsIdentifierStart(Symbols.Percent)
+        return _dialect.IsIdentifierStart(Symbols.Percent) && _dialect.IsIdentifierPart(next)
             ? TokenizeIdentifierOrKeyword([character, next])
             : StartBinOp($"{Symbols.Percent}", new Modulo());
     }
@@ -947,8 +948,9 @@ public ref struct Tokenizer(bool unescape = true)
                 return new Hash();
 
             default:
-                return _dialect.IsIdentifierStart(Symbols.Num)
-                    ? TokenizeIdentifierOrKeyword([character, _state.Peek()])
+                var next = _state.Peek();
+                return _dialect.IsIdentifierStart(Symbols.Num) && _dialect.IsIdentifierPart(next)
+                    ? TokenizeIdentifierOrKeyword([character, next])
                     : StartBinOp("#", new Hash());
         }
     }
@@ -956,13 +958,14 @@ public ref struct Tokenizer(bool unescape = true)
     private Token TokenizeAt(char character)
     {
         _state.Next();
-        return _state.Peek() switch
+        var next = _state.Peek();
+        return next switch
         {
             Symbols.GreaterThan => TokenizeSingleCharacter(new AtArrow()),
             Symbols.QuestionMark => TokenizeSingleCharacter(new AtQuestion()),
             Symbols.At => TokenizeAtAt(character),
             Symbols.Space => new AtSign(),
-            _ when _dialect.IsIdentifierStart(Symbols.At) => TokenizeIdentifierOrKeyword([character, _state.Peek()]),
+            _ when _dialect.IsIdentifierStart(Symbols.At) && _dialect.IsIdentifierPart(next) => TokenizeIdentifierOrKeyword([character, next]),
             _ => new AtSign()
         };
     }
@@ -976,7 +979,8 @@ public ref struct Tokenizer(bool unescape = true)
             return new AtAt();
         }
 
-        return _dialect.IsIdentifierStart(Symbols.At) ?
+        // Only extend to identifier if next char is a valid identifier part
+        return _dialect.IsIdentifierStart(Symbols.At) && _dialect.IsIdentifierPart(next) ?
             TokenizeIdentifierOrKeyword([character, Symbols.At, next])
             : new AtAt();
     }

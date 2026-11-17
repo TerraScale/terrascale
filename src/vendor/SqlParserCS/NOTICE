@@ -1,7 +1,16 @@
-SqlParserCS 0.6.5, TylerBrinks/SqlParser-cs, upstream commit d95fb53f6bbee0a0aa6d8143a8cdd3e51d690fac (tag v0.6.5).
-Source: https://github.com/TylerBrinks/SqlParser-cs/tree/d95fb53f6bbee0a0aa6d8143a8cdd3e51d690fac
+SqlParserCS, TylerBrinks/SqlParser-cs, upstream commit e1929977a96290f937e9a2a67e3c823b7dc25cd2.
+Source: https://github.com/TylerBrinks/SqlParser-cs/tree/e1929977a96290f937e9a2a67e3c823b7dc25cd2
 License: MIT; see LICENSE.
-The SqlParser directory is byte-identical to upstream src/SqlParser except Tokenizer.cs: TokenizeLongArrow no longer advances before ConsumeForBinOp.
-Identical fix merged upstream: https://github.com/TylerBrinks/SqlParser-cs/pull/84 (e1929977a96290f937e9a2a67e3c823b7dc25cd2).
-SqlParserCS.csproj supplies the monorepo build configuration separately from the preserved upstream project.
-The wrapper retains upstream C# 12 and excludes repository analyzers with RunAnalyzers=false; compiler warnings remain errors.
+JSON ->> fix included upstream: https://github.com/TylerBrinks/SqlParser-cs/pull/84
+
+Local source edits correct nullable contracts, require mandatory initialized members, initialize the tokenizer dialect, make existing member hiding explicit, reject unreachable switch cases and missing domain constraints, and remove previously ignored constructor parameters while retaining alias token consumption.
+Files:
+- Ast/Expression.cs
+- Ast/Statement.cs
+- Ast/TableFactor.cs
+- Parser.Statements.cs
+- Parser.cs
+- TokenizeQuotedStringSettings.cs
+- Tokenizer.cs
+
+SqlParserCS.csproj supplies the separate net11.0 monorepo build with upstream C# 12 and RunAnalyzers=false; compiler warnings remain errors.

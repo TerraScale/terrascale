@@ -8,7 +8,7 @@ public abstract record TableFactor : IWriteSql, IElement
     /// <summary>
     /// Common table alias across all implementations
     /// </summary>
-    [Visit(1)] public TableAlias? Alias { get; internal set; }
+    [Visit(1)] public TableAlias? Alias { get; set; }
     /// <summary>
     /// Derived table factor
     /// </summary>
@@ -42,6 +42,35 @@ public abstract record TableFactor : IWriteSql, IElement
             }
 
             writer.WriteSql($"{Name}({Args.ToSqlDelimited()})");
+
+            if (Alias != null)
+            {
+                writer.WriteSql($" AS {Alias}");
+            }
+        }
+    }
+    /// <summary>
+    /// MS SQL OPENJSON table-valued function
+    /// </summary>
+    public record OpenJsonTable(Expression JsonExpression, Sequence<OpenJsonTableColumn> Columns, Value? JsonPath) : TableFactor
+    {
+        public override void ToSql(SqlTextWriter writer)
+        {
+            writer.WriteSql($"OPENJSON({JsonExpression}");
+
+            if (JsonPath != null)
+            {
+                writer.WriteSql($", {JsonPath}");
+            }
+
+            writer.Write(")");
+
+            if (Columns.SafeAny())
+            {
+                writer.Write(" WITH (");
+                writer.WriteDelimited(Columns);
+                writer.Write(")");
+            }
 
             if (Alias != null)
             {
@@ -124,7 +153,6 @@ public abstract record TableFactor : IWriteSql, IElement
     /// <param name="Name">Object name</param>
     public record Table(
         [property: Visit(0)] ObjectName Name,
-        TableVersion? Version = null,
         Sequence<Ident>? Partitions = null)
         : TableFactor
     {
@@ -267,12 +295,31 @@ public abstract record TableFactor : IWriteSql, IElement
     /// <param name="JsonExpression"></param>
     /// <param name="JsonPath"></param>
     /// <param name="Columns"></param>
-    public record JsonTable(Expression JsonExpression, Value JsonPath, Sequence<JsonTableColumn> Columns) : TableFactor
+    public record JsonTable(
+        Expression JsonExpression, 
+        Value JsonPath, 
+        Sequence<JsonTableColumn> Columns) : TableFactor
     {
         public override void ToSql(SqlTextWriter writer)
         {
             writer.WriteSql($"JSON_TABLE({JsonExpression}, {JsonPath} COLUMNS({Columns.ToSqlDelimited()}))");
 
+            if (Alias != null)
+            {
+                writer.WriteSql($" AS {Alias}");
+            }
+        }
+    }
+    /// <summary>
+    /// An expression that can be used as a table factor.
+    /// Used for `ARRAY JOIN` in ClickHouse.
+    /// </summary>
+    /// <param name="Expression">Expression</param>
+    public record ExpressionTable(Expression Expression) : TableFactor
+    {
+        public override void ToSql(SqlTextWriter writer)
+        {
+            Expression.ToSql(writer);
             if (Alias != null)
             {
                 writer.WriteSql($" AS {Alias}");
@@ -290,17 +337,15 @@ public abstract record TableFactor : IWriteSql, IElement
     /// <param name="AfterMatchSkip">ONE ROW PER MATCH | ALL ROWS PER MATCH</param>
     /// <param name="Pattern">Pattern</param>
     /// <param name="Symbols">Define Symbols</param>
-    /// <param name="Alias">Define Alias</param>
     public record MatchRecognize(
         TableFactor MatchTable,
-        Sequence<Expression> PartitionBy,
-        Sequence<OrderByExpression> OrderBy,
-        Sequence<Measure> Measures,
+        Sequence<Expression>? PartitionBy,
+        Sequence<OrderByExpression>? OrderBy,
+        Sequence<Measure>? Measures,
         RowsPerMatch? RowsPerMatch,
         AfterMatchSkip? AfterMatchSkip,
         MatchRecognizePattern Pattern,
-        Sequence<SymbolDefinition> Symbols,
-        TableAlias? Alias
+        Sequence<SymbolDefinition> Symbols
     ) : TableFactor
     {
         public override void ToSql(SqlTextWriter writer)
@@ -333,6 +378,61 @@ public abstract record TableFactor : IWriteSql, IElement
             }
 
             writer.WriteSql($"PATTERN ({Pattern}) DEFINE {Symbols.ToSqlDelimited()})");
+
+            if (Alias != null)
+            {
+                writer.WriteSql($" AS {Alias}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// TABLESAMPLE clause
+    /// </summary>
+    public record TableSample(
+        TableFactor TableFactor,
+        TableSampleKind TableSampleKind) : TableFactor
+    {
+        public override void ToSql(SqlTextWriter writer)
+        {
+            writer.WriteSql($"{TableFactor} {TableSampleKind}");
+
+            if (Alias != null)
+            {
+                writer.WriteSql($" AS {Alias}");
+            }
+        }
+    }
+    /// <summary>
+    /// XMLTABLE expression
+    /// </summary>
+    public record XmlTable(XmlTableExpression XmlTableExpression) : TableFactor
+    {
+        public override void ToSql(SqlTextWriter writer)
+        {
+            writer.WriteSql($"{XmlTableExpression}");
+
+            if (Alias != null)
+            {
+                writer.WriteSql($" AS {Alias}");
+            }
+        }
+    }
+    /// <summary>
+    /// SEMANTIC_VIEW table factor
+    /// </summary>
+    public record SemanticView(ObjectName Name, Sequence<FunctionArg> Args) : TableFactor
+    {
+        public override void ToSql(SqlTextWriter writer)
+        {
+            writer.WriteSql($"SEMANTIC_VIEW({Name}");
+
+            if (Args.SafeAny())
+            {
+                writer.WriteSql($", {Args.ToSqlDelimited()}");
+            }
+
+            writer.Write(")");
 
             if (Alias != null)
             {

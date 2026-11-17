@@ -103,6 +103,72 @@ public partial class Parser
         return null;
     }
 
+    public TableAlias? MaybeParseTableAlias()
+    {
+        var inner = ParseOptionalAliasInner(null, Validator);
+
+        if (inner == null){ return null; }
+
+        var columns = ParseTableAliasColumnDefs();
+        //return new TableAlias(inner.Value, columns);
+        return new TableAlias(new Ident(inner.Value, inner.QuoteStyle), columns);
+
+        bool Validator(bool @explicit, Keyword keyword)
+        {
+            return _dialect.IsTableFactorAlias(@explicit, keyword);
+        }
+    }
+
+    private Sequence<TableAliasColumnDef>? ParseTableAliasColumnDefs()
+    {
+        if (ConsumeToken<LeftParen>())
+        {
+            var cols = ParseCommaSeparated(() =>
+            {
+                var name = ParseIdentifier();
+                var dataType = MaybeParse(ParseDataType);
+                return new TableAliasColumnDef(name, dataType);
+            });
+
+            ExpectRightParen();
+            return cols;
+        }
+
+        return null;
+    }
+
+    private Ident? ParseOptionalAliasInner(
+        IEnumerable<Keyword>? reservedKeywords,
+        Func<bool, Keyword, bool> validator)
+    {
+        var afterAs = ParseKeyword(Keyword.AS);
+
+        var next = NextToken();
+        switch (next)
+        {
+            case Word w when afterAs || (reservedKeywords !=null && reservedKeywords.Contains(w.Keyword)):
+                return w.ToIdent();
+
+            case Word w when validator(afterAs, w.Keyword):
+                return w.ToIdent();
+
+            case SingleQuotedString s:
+                return new Ident(s.Value, Symbols.SingleQuote);
+
+            case DoubleQuotedString d:
+                return new Ident(d.Value, Symbols.DoubleQuote);
+
+            default:
+                if (afterAs)
+                {
+                    throw Expected("an identifier after AS", next);
+                }
+
+                PrevToken();
+                return null;
+        }
+    }
+
     public Sequence<ParsedAction> ParseActionsList()
     {
         var values = new Sequence<ParsedAction>();
@@ -786,64 +852,77 @@ public partial class Parser
 
     public Sequence<UtilityOption> ParseUtilityOptions()
     {
-        return ExpectParens(() =>
-        {
-            return ParseCommaSeparated(ParseUtilityOption);
-        });
+        return ExpectParens(() => ParseCommaSeparated(ParseUtilityOption));
     }
 
     public Sequence<SequenceOptions> ParseCreateSequenceOptions()
     {
         var sequenceOptions = new Sequence<SequenceOptions>();
 
-        //[ INCREMENT [ BY ] increment ]
-        if (ParseKeyword(Keyword.INCREMENT))
+        // Parse options in any order
+        while (true)
         {
-            var by = ParseKeyword(Keyword.BY);
-            sequenceOptions.Add(new SequenceOptions.IncrementBy(ParseNumber(), by));
-        }
-
-        //[ MINVALUE minvalue | NO MINVALUE ]
-        if (ParseKeyword(Keyword.MINVALUE))
-        {
-            sequenceOptions.Add(new SequenceOptions.MinValue(ParseNumber()));
-        }
-        else if (ParseKeywordSequence(Keyword.NO, Keyword.MINVALUE))
-        {
-            sequenceOptions.Add(new SequenceOptions.MinValue(null));
-        }
-
-        //[ MAXVALUE maxvalue | NO MAXVALUE ]
-        if (ParseKeywordSequence(Keyword.MAXVALUE))
-        {
-            sequenceOptions.Add(new SequenceOptions.MaxValue(ParseNumber()));
-        }
-        else if (ParseKeywordSequence(Keyword.NO, Keyword.MAXVALUE))
-        {
-            sequenceOptions.Add(new SequenceOptions.MaxValue(null));
-        }
-
-        //[ START [ WITH ] start ]
-        if (ParseKeywordSequence(Keyword.START))
-        {
-            var with = ParseKeyword(Keyword.WITH);
-            sequenceOptions.Add(new SequenceOptions.StartWith(ParseNumber(), with));
-        }
-
-        //[ CACHE cache ]
-        if (ParseKeyword(Keyword.CACHE))
-        {
-            sequenceOptions.Add(new SequenceOptions.Cache(new LiteralValue(ParseNumberValue())));
-        }
-
-        // [ [ NO ] CYCLE ]
-        if (ParseKeywordSequence(Keyword.NO, Keyword.CYCLE))
-        {
-            sequenceOptions.Add(new SequenceOptions.Cycle(true));
-        }
-        else if (ParseKeyword(Keyword.CYCLE))
-        {
-            sequenceOptions.Add(new SequenceOptions.Cycle(false));
+            //[ INCREMENT [ BY ] increment ]
+            if (ParseKeyword(Keyword.INCREMENT))
+            {
+                var by = ParseKeyword(Keyword.BY);
+                sequenceOptions.Add(new SequenceOptions.IncrementBy(ParseNumber(), by));
+            }
+            //[ MINVALUE minvalue | NO MINVALUE ]
+            else if (ParseKeyword(Keyword.MINVALUE))
+            {
+                sequenceOptions.Add(new SequenceOptions.MinValue(ParseNumber()));
+            }
+            else if (ParseKeywordSequence(Keyword.NO, Keyword.MINVALUE))
+            {
+                sequenceOptions.Add(new SequenceOptions.MinValue(null));
+            }
+            //[ MAXVALUE maxvalue | NO MAXVALUE ]
+            else if (ParseKeyword(Keyword.MAXVALUE))
+            {
+                sequenceOptions.Add(new SequenceOptions.MaxValue(ParseNumber()));
+            }
+            else if (ParseKeywordSequence(Keyword.NO, Keyword.MAXVALUE))
+            {
+                sequenceOptions.Add(new SequenceOptions.MaxValue(null));
+            }
+            //[ START [ WITH ] start ]
+            else if (ParseKeyword(Keyword.START))
+            {
+                var with = ParseKeyword(Keyword.WITH);
+                sequenceOptions.Add(new SequenceOptions.StartWith(ParseNumber(), with));
+            }
+            //[ RESTART [ WITH ] restart ]
+            else if (ParseKeyword(Keyword.RESTART))
+            {
+                var with = ParseKeyword(Keyword.WITH);
+                sequenceOptions.Add(new SequenceOptions.Restart(ParseNumber(), with));
+            }
+            //[ CACHE cache ]
+            else if (ParseKeyword(Keyword.CACHE))
+            {
+                sequenceOptions.Add(new SequenceOptions.Cache(new LiteralValue(ParseNumberValue())));
+            }
+            // [ [ NO ] CYCLE ]
+            else if (ParseKeywordSequence(Keyword.NO, Keyword.CYCLE))
+            {
+                sequenceOptions.Add(new SequenceOptions.Cycle(true));
+            }
+            else if (ParseKeyword(Keyword.CYCLE))
+            {
+                sequenceOptions.Add(new SequenceOptions.Cycle(false));
+            }
+            // [ OWNED BY { table_name.column_name | NONE } ]
+            else if (ParseKeywordSequence(Keyword.OWNED, Keyword.BY))
+            {
+                sequenceOptions.Add(ParseKeyword(Keyword.NONE)
+                    ? new SequenceOptions.OwnedBy(null)
+                    : new SequenceOptions.OwnedBy(ParseObjectName()));
+            }
+            else
+            {
+                break;
+            }
         }
 
         return sequenceOptions;
