@@ -730,12 +730,6 @@ replay-safe request backoff and `Retry-After` policy, keeping the token cache.
 
 Preview workflows: [CLI database branches](docs/cli-branches.md) covers create, list, guarded delete and scoped connection URLs.
 
-### Rules in the CLI
-
-The source CLI provides `ts rules pull <database>`, `ts rules deploy <database>`
-and `ts rules test <database>`. See [Rules commands](docs/cli-rules.md) for version
-state, diff confirmation, draft simulation and JSON output.
-
 ### Declarative schema in the CLI
 
 `ts schema pull app` writes a new `schema.sql` from the public SQL catalog.
