@@ -142,7 +142,6 @@ for (const [kind, name] of [
   ['stale', 'a stale dashboard owner fails its real checkpoint save after database-clock expiry'],
   ['crash', 'persisted log payload replays after a crash following receiver acceptance'],
   ['deleted', 'a prefetched drain cannot recreate a deleted database claim or delivery'],
-  ['quiet', 'an old quiet drain records its unchanged-cursor gap once without idle claim writes'],
   ['skew', 'forward and backward dashboard clocks cannot steal or extend database-clock leases'],
   ['renewal', 'a lost renewal reply preserves work inside the last proven lease'],
   ['plans', 'settled plan requests and idle reconciliation passes write no claims'],
@@ -157,6 +156,16 @@ for (const [kind, name] of [
     console.log(output.split('\n').filter(line => line.startsWith('background ')).join('\n'));
   });
 }
+
+test('dashboard background: an old quiet drain records its unchanged-cursor gap once without idle claim writes', async () => {
+  try {
+    const output = await backgroundCase('quiet');
+    expect(output.split('\n')).toContain('background case: quiet');
+    console.log(output.split('\n').filter(line => line.startsWith('background ')).join('\n'));
+  } finally {
+    expect((await backgroundCase('quiet-cleanup')).split('\n')).toContain('background case: quiet-cleanup');
+  }
+});
 
 test('paid owner billing recovery, UTC deadline and subscription tax policy', async ({ page, context, audit }) => {
   await context.addCookies(JSON.parse(readFileSync(ownerSession(), 'utf8')).cookies);
@@ -284,8 +293,13 @@ test('paid owner billing recovery, UTC deadline and subscription tax policy', as
 });
 
 test('dashboard background: a quiet drain immediately ships its next settled batch and removes deleted database claims', async () => {
-  await expect.poll(async () => (await backgroundCase('quiet-ready')).trim(), { message: 'the production request-log source exposes the newly settled SQL event' }).toBe('ready');
-  expect((await backgroundCase('quiet-next')).split('\n')).toContain('background case: quiet-next');
+  try {
+    expect((await backgroundCase('quiet')).split('\n')).toContain('background case: quiet');
+    await expect.poll(async () => (await backgroundCase('quiet-ready')).trim(), { message: 'the production request-log source exposes the newly settled SQL event' }).toBe('ready');
+    expect((await backgroundCase('quiet-next')).split('\n')).toContain('background case: quiet-next');
+  } finally {
+    expect((await backgroundCase('quiet-cleanup')).split('\n')).toContain('background case: quiet-cleanup');
+  }
 });
 
 test('dashboard background: idle drains write no claims and invalid URLs record No response', async () => {

@@ -18,7 +18,6 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--ts-s4) var(--ts-s6);
-  margin-bottom: var(--ts-s4);
 }
 
 .ts-page-heading {

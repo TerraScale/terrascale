@@ -4,7 +4,7 @@
 @using System.Text.Encodings.Web
 <main class="ts-page ts-db-detail" id="database-settings" data-database-id="@Model.Database.Id" data-title="@(Model.Shell.Title + " · TerraScale")" data-init="document.title = el.dataset.title">
 @(await RenderPartialAsync<TerraScale.Dashboard.Common.Databases.DatabaseFrame,DatabaseFrameModel>(new(Model.Database, "settings")))
-<header class="ts-page-header"><h1 class="ts-page-title">Settings</h1><div class="ts-page-actions"></div></header>
+<h1 class="ts-sr-only">Settings</h1>
 <div class="ts-columns"><div class="ts-columns-main">
 <section class="ts-card ts-card-boxed ts-card-flush" id="database-general" aria-labelledby="database-settings-title">
 <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="database-settings-title">General</h2></div></header>

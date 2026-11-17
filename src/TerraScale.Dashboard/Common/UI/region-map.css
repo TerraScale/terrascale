@@ -289,34 +289,6 @@ label.ts-region-callout-body {
   display: inline;
 }
 
-.ts-region-map-ping-actions {
-  padding: var(--ts-s2);
-}
-
-.ts-region-map-ping-refresh {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border: 1px solid var(--ts-line);
-  border-radius: var(--ts-radius-md);
-  background: var(--ts-surface);
-  color: var(--ts-ink-2);
-  cursor: pointer;
-  transition: color var(--ts-fast) var(--ts-ease), border-color var(--ts-fast) var(--ts-ease);
-}
-
-.ts-region-map-ping-refresh:hover {
-  color: var(--ts-ink);
-  border-color: var(--ts-line-strong);
-}
-
-.ts-region-map-ping-refresh:focus-visible {
-  outline: 2px solid var(--ts-focus);
-  outline-offset: 2px;
-}
-
 .ts-region-map-status {
   min-height: 18px;
   margin: 0;

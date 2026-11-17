@@ -94,14 +94,14 @@ async function mcpConsent(page: Page): Promise<string> {
 const databaseTabs: [string, string, Identity][] = [
   ['tables', 'Tables', currentTab('Database sections', 'Tables')],
   ['grants', 'Grants', title('Grants', 2)],
-  ['sql', 'SQL editor', (page) => page.locator('h1.ts-page-title').filter({ hasText: /^SQL editor$/ })],
-  ['functions', 'Functions', title('Functions', 1)],
-  ['replication', 'Replication', title('Replication', 2)],
+  ['sql', 'SQL editor', currentTab('Database sections', 'SQL editor')],
+  ['functions', 'Functions', currentTab('Database sections', 'Functions')],
+  ['replication', 'Replication', title('Region sync', 2)],
   ['conflicts', 'Conflicts', title('Conflicts', 2)],
   ['logs', 'Logs', title('Request logs', 2)],
   ['backups', 'Backups', title('Restore to a point in time', 2)],
   ['branches', 'Forks', title('Forks', 2)],
-  ['settings', 'Settings', title('Settings')],
+  ['settings', 'Settings', currentTab('Database sections', 'Settings')],
   ['danger', 'Danger zone', title('Delete database', 2)],
 ];
 

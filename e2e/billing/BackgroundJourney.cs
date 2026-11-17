@@ -113,6 +113,7 @@ internal static partial class BackgroundJourney
             case "idle": await IdleAsync(services, commands, owner, cancellationToken); break;
             case "quiet": await QuietAsync(services, commands, owner, path, cancellationToken); break;
             case "quiet-next": await QuietNextAsync(services, owner, path, cancellationToken); break;
+            case "quiet-cleanup": await QuietCleanupAsync(services, owner, path, cancellationToken); break;
             case "gate": await GateAsync(services, commands, cancellationToken); break;
             default: throw new InvalidOperationException("Unknown background case.");
         }

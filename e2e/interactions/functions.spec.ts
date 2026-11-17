@@ -81,7 +81,7 @@ test('failed function deletion preserves the selection and confirmation dialog w
   await audit.check('a false delete stays in the confirmation dialog');
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect(dialog).not.toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Functions', exact: true, level: 1 })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Database sections' }).locator('a[aria-current="page"]', { hasText: /^Functions$/ })).toBeVisible();
   await audit.check('the functions page remains usable after a stale delete');
   console.log('Functions delete failure: already-deleted function returns HTML 404 with modal alert; Cancel returns to the usable page.');
 });

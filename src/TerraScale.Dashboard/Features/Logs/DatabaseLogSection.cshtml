@@ -3,7 +3,7 @@
 @using System.Globalization
 <main id="database-logs" class="ts-page" data-database-id="@Model.Database.Id">
     @(await RenderPartialAsync<TerraScale.Dashboard.Common.Databases.DatabaseFrame, DatabaseFrameModel>(new(Model.Database, "logs")))
-    <header class="ts-page-header"><h1 class="ts-page-title">Logs</h1><div class="ts-page-actions"></div></header>
+    <h1 class="ts-sr-only">Logs</h1>
     <section class="ts-card" id="request-logs" aria-labelledby="request-logs-title">
         <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="request-logs-title">Request logs</h2></div><div class="ts-card-actions"><form id="request-log-filters" method="get" data-on:submit="evt.preventDefault(); const url = new URL(el.getAttribute('action'), window.location.origin); url.search = new URLSearchParams(new FormData(el)).toString(); history.replaceState(null, '', url); @@get(url.toString(), {retryMaxCount: 0})" class="ts-filters" action="@DatabaseService.Path(Model.Database.Id, "logs")">
                 <label class="ts-label" for="request-status">HTTP status</label>

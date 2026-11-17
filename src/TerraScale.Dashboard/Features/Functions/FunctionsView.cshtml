@@ -10,7 +10,7 @@
 }
 <main class="ts-page" data-database-id="@Model.Database.Id">
 @(await RenderPartialAsync<TerraScale.Dashboard.Common.Databases.DatabaseFrame,DatabaseFrameModel>(new(Model.Database, "functions")))
-<header class="ts-page-header"><h1 class="ts-page-title" id="functions-title">Functions</h1><div class="ts-page-actions">@if(canWrite){<a class="ts-btn ts-btn-primary ts-btn-sm" href="@(list + "?edit=new")">@Icons.Render("Zap",14)<span>New function</span></a>}else{<button class="ts-btn ts-btn-primary ts-btn-sm" type="button" disabled title="@writeReason">@Icons.Render("Zap",14)<span>New function</span></button>}</div></header>
+<h1 class="ts-sr-only" id="functions-title">Functions</h1>
 @if(Model.Error.Length > 0 && Model.DeleteName.Length == 0 && !Model.NoAccess){<div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p><a class="ts-link" href="@list">Reload functions</a></div>}
 @if(Model.Form is { } form){
 <section class="ts-card ts-card-boxed" aria-labelledby="function-editor-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="function-editor-title">New function</h2></div><div class="ts-card-actions"><a class="ts-btn ts-btn-secondary ts-btn-sm" href="@list">Cancel</a></div></header><div class="ts-card-body">
@@ -35,7 +35,7 @@
 </div>
 }
 @if(selected is null && Model.Form is null && !Model.NoAccess && Model.Functions.Count > 0){
-<section class="ts-card ts-card-boxed ts-card-flush" aria-labelledby="functions-list-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="functions-list-title">Functions</h2></div></header><div class="ts-card-body">
+<section class="ts-card ts-card-boxed ts-card-flush" aria-labelledby="functions-list-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="functions-list-title">Functions</h2></div><div class="ts-card-actions">@if(canWrite){<a class="ts-btn ts-btn-primary ts-btn-sm" href="@(list + "?edit=new")">@Icons.Render("Zap",14)<span>New function</span></a>}else{<button class="ts-btn ts-btn-primary ts-btn-sm" type="button" disabled title="@writeReason">@Icons.Render("Zap",14)<span>New function</span></button>}</div></header><div class="ts-card-body">
 <ul class="ts-rows" id="functions">
 @foreach(var function in Model.Functions){<li><span class="ts-dot" data-tone="success" aria-hidden="true"></span><div class="ts-stack-sm"><span class="ts-rows-title ts-mono">@function.Name</span><span class="ts-rows-meta">@Runs(function) · Updated @ValueFormat.UtcDate(function.UpdatedAt)</span></div><span class="ts-badge ts-badge-tone" data-tone="success">deployed</span><div class="ts-rows-actions"><a class="ts-btn ts-btn-secondary ts-btn-sm" href="@(list + "?function=" + Uri.EscapeDataString(function.Name))">Open</a></div></li>}
 </ul>

@@ -76,7 +76,7 @@ test('database settings, grants and filters save without navigating', async ({ p
   await page.getByRole('button', { name: 'Save regions', exact: true }).click();
   await expect(page.locator('#regions-saved')).toBeVisible();
   await expect(placed).toHaveValue(region);
-  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toHaveCount(0);
   await expect(page.locator('#replication')).toContainText('This database runs in one region.');
   await expect(page).toHaveURL(replicationUrl);
   await expect(page.locator('html')).toHaveAttribute('data-in-place', 'replication');

@@ -6,9 +6,7 @@
 <div id="backup-page" class="ts-stack-lg">
 <script type="module" src="@Assets.Url("js/backup-timeline.js")" nonce="@Model.Shell.Nonce"></script>
 @if(Model.Restore is not null){@(await RenderPartialAsync<TerraScale.Dashboard.Features.Backups.RestoreStatusView, TerraScale.Dashboard.Features.Backups.BackupPage>(Model))}
-<header class="ts-page-header"><h2 class="ts-page-title" id="backups-title">Backups</h2>
-@if(canManage){<div class="ts-page-actions"><form method="post" action="/api/v1/dashboard/backups" data-submit-once data-on:submit="evt.preventDefault(); @@post(el.action, {contentType:'form'})"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="databaseId" value="@Model.Database.Id" /><button class="ts-btn ts-btn-primary" type="submit">@Icons.Render("Archive",16)<span>Back up now</span></button></form></div>}
-</header>
+<h1 class="ts-sr-only" id="backups-title">Backups</h1>
 @if(policy is null){<div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-body">Backup schedules couldn't be loaded.</p><a class="ts-link" href="@DatabaseService.Path(Model.Database.Id, "backups")">Retry</a></div>}
 @if(failedNewest){<div class="ts-alert ts-alert-danger" role="status"><p class="ts-alert-body">Scheduled backup failed <time datetime="@policy!.LastFailedAt!.Value.ToString("O",System.Globalization.CultureInfo.InvariantCulture)" title="@BackupHealth.Utc(policy.LastFailedAt.Value)">@BackupHealth.Relative(policy.LastFailedAt.Value, now)</time>@(policy.LastError?.Message is { Length: > 0 } message ? ": " + message : "")</p></div>}
 <dl class="ts-stats" aria-label="Backup health">
@@ -20,7 +18,7 @@
 <div class="ts-columns">
 <div class="ts-columns-main">
 @(await RenderPartialAsync<TerraScale.Dashboard.Features.Backups.PitrCardView, TerraScale.Dashboard.Features.Backups.PitrCardModel>(new(Model.Shell, Model.Database, Model.Recovery ?? new WholeDatabaseRecoveryPage(Model.Shell, Model.Database), Model.Listing?.Backups ?? [], Model.Bucket?.Destination is not null)))
-<section class="ts-card ts-card-boxed ts-card-flush" id="restore-points" aria-labelledby="restore-points-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="restore-points-title">Restore points</h2></div><div class="ts-card-actions"></div></header>
+<section class="ts-card ts-card-boxed ts-card-flush" id="restore-points" aria-labelledby="restore-points-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="restore-points-title">Restore points</h2></div>@if(canManage && Model.Listing is not { Backups.Count: 0 }){<div class="ts-card-actions"><form method="post" action="/api/v1/dashboard/backups" data-submit-once data-on:submit="evt.preventDefault(); @@post(el.action, {contentType:'form'})"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="databaseId" value="@Model.Database.Id" /><button class="ts-btn ts-btn-primary" type="submit">@Icons.Render("Archive",16)<span>Back up now</span></button></form></div>}</header>
 <div class="ts-card-body">
 @if(Model.Listing is null){<div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-body">Restore points for @Model.Database.Name are unavailable.</p><a class="ts-link" href="@DatabaseService.Path(Model.Database.Id, "backups")">Retry</a></div>}
 else if(Model.Listing.Backups.Count == 0){<div class="ts-empty" role="status"><p class="ts-empty-title">No restore points yet.</p>@if(canManage){<form method="post" action="/api/v1/dashboard/backups" data-submit-once data-on:submit="evt.preventDefault(); @@post(el.action, {contentType:'form'})"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="databaseId" value="@Model.Database.Id" /><button class="ts-btn ts-btn-primary ts-btn-sm" type="submit">Back up now</button></form>}</div>}
