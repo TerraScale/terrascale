@@ -19,6 +19,7 @@ The product goal is to write in any region and read in any region, with free rea
 - [Placement](placement.md) and [copy placement during recovery](recovery-copy-placement.md).
 - [Shape reads](shape-reads.md), [table read grants](shape-read-grants.md) and [live shape reads](free-reads-live.md).
 - [Rules](rules.md): end-user reads and writes from the browser (proposed).
+- [Reactive queries](reactive-queries-design.md): live results of any read-only SQL query (proposed).
 - [Regional shape tails and capture retention](region-shape-tails-and-cdc-retention.md).
 - [Shape overlay](shape-overlay.md): provisional, confirmed and reverted live changes across regions.
 
