@@ -33,6 +33,13 @@ namespace TerraScale.TerraBase.Rpc.Functions
         }
 
         /// <inheritdoc />
+        public async UnaryResult<TerraBaseFunctionStats> StatsAsync(string projectId, string database, string name, string? window)
+        {
+            var answer = await api.SendAsync(Context, "GET", Item(projectId, database, name) + "/stats" + RestPaths.Query(("window", window)));
+            return RestApi.Read(answer, Json.TerraBaseFunctionStats);
+        }
+
+        /// <inheritdoc />
         public async UnaryResult<bool> DeleteAsync(string projectId, string database, string name)
         {
             var answer = await api.SendAsync(Context, "DELETE", RestPaths.Database(projectId, database) + "/functions/" + Uri.EscapeDataString(name));

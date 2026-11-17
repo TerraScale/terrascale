@@ -4,18 +4,30 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Features.Functions;
 
-internal sealed class FunctionSql(ISqlSession session, string? requestId)
+internal sealed class FunctionSql(ISqlSession session, string? requestId, TimeProvider time)
 {
     public const int MaxCalls = 256;
 
     private Task _tail = Task.CompletedTask;
     private int _calls;
+    private TimeSpan _elapsed;
+
+    public int SqlCalls => _calls;
+
+    public long SqlMs => (long)Math.Ceiling(_elapsed.TotalMilliseconds);
+
+    public long RowsRead { get; private set; }
+
+    public long RowsWritten { get; private set; }
 
     public Task<string> CallAsync(string op, string json, CancellationToken cancellationToken)
     {
-        var call = ++_calls > MaxCalls
-            ? Task.FromResult(Failure(SqlErrors.TooBig($"an invocation makes at most {MaxCalls} sql calls")))
-            : AfterAsync(_tail, op, json, cancellationToken);
+        if (++_calls > MaxCalls)
+        {
+            return Task.FromResult(Failure(SqlErrors.TooBig($"an invocation makes at most {MaxCalls} sql calls")));
+        }
+
+        var call = AfterAsync(_tail, op, json, cancellationToken);
         _tail = call;
         return call;
     }
@@ -41,13 +53,21 @@ internal sealed class FunctionSql(ISqlSession session, string? requestId)
         {
         }
 
-        return op switch
+        var started = time.GetTimestamp();
+        try
         {
-            "begin" => await ControlAsync("BEGIN", cancellationToken).ConfigureAwait(false),
-            "commit" => await ControlAsync("COMMIT", cancellationToken).ConfigureAwait(false),
-            "rollback" => await ControlAsync("ROLLBACK", cancellationToken).ConfigureAwait(false),
-            _ => await ExecuteAsync(json, cancellationToken).ConfigureAwait(false),
-        };
+            return op switch
+            {
+                "begin" => await ControlAsync("BEGIN", cancellationToken).ConfigureAwait(false),
+                "commit" => await ControlAsync("COMMIT", cancellationToken).ConfigureAwait(false),
+                "rollback" => await ControlAsync("ROLLBACK", cancellationToken).ConfigureAwait(false),
+                _ => await ExecuteAsync(json, cancellationToken).ConfigureAwait(false),
+            };
+        }
+        finally
+        {
+            _elapsed += time.GetElapsedTime(started);
+        }
     }
 
     private async Task<string> ExecuteAsync(string json, CancellationToken cancellationToken)
@@ -67,10 +87,17 @@ internal sealed class FunctionSql(ISqlSession session, string? requestId)
             SqlBatchFailure invalid => Failure(invalid),
             List<SqlPlannedCommand> commands => await SqlBatch.RunAsync(session, commands, cancellationToken).ConfigureAwait(false) switch
             {
-                SqlExecuteBody body => JsonSerializer.Serialize(body, SqlJsonContext.Default.SqlExecuteBody),
+                SqlExecuteBody body => Complete(body),
                 SqlBatchFailure failure => Failure(failure),
             },
         };
+    }
+
+    private string Complete(SqlExecuteBody body)
+    {
+        RowsRead += body.Results.Sum(result => (long)result.Rows.Count);
+        RowsWritten += body.Results.Sum(result => result.RowsAffected);
+        return JsonSerializer.Serialize(body, SqlJsonContext.Default.SqlExecuteBody);
     }
 
     private async Task<string> ControlAsync(string sql, CancellationToken cancellationToken) =>

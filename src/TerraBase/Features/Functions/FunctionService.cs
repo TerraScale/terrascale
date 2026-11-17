@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.Json;
 using System.Text;
 using TerraBase.Configuration;
@@ -22,7 +21,7 @@ public static class FunctionsExtensions
             .AddSingleton<FunctionScheduler>().AddHostedService(provider => provider.GetRequiredService<FunctionScheduler>());
 }
 
-internal sealed class FunctionService(SystemCatalog catalog, ISqlService sql, IUsageMeter usage, IMemoryBudget memory,
+internal sealed partial class FunctionService(SystemCatalog catalog, ISqlService sql, IUsageMeter usage, IMemoryBudget memory,
     TerraBaseOptions options, TimeProvider time) : IFunctions
 {
     public const string Schedules = "function_schedules";
@@ -106,6 +105,7 @@ internal sealed class FunctionService(SystemCatalog catalog, ISqlService sql, IU
             await transaction.DeleteAsync(Records(tenant), name, cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(Schedules, ScheduleId(tenant, name), cancellationToken).ConfigureAwait(false);
             await transaction.DropKindAsync(Logs(tenant, name), cancellationToken).ConfigureAwait(false);
+            await transaction.DropKindAsync(FunctionMetrics.Kind(tenant, name), cancellationToken).ConfigureAwait(false);
             return new Done();
         }, static error => error, cancellationToken).ConfigureAwait(false);
         return result;
@@ -142,29 +142,31 @@ internal sealed class FunctionService(SystemCatalog catalog, ISqlService sql, IU
         }
 
         var started = time.GetUtcNow();
-        var clock = Stopwatch.StartNew();
+        var clock = time.GetTimestamp();
         FunctionRun run;
         var session = sql.Open(tenant, canWrite: true);
+        var calls = new FunctionSql(session, requestId, time);
         await using (session.ConfigureAwait(false))
         {
             session.BeginRequest();
-            run = await Task.Run(() => FunctionRunner.RunAsync(source, eventJson, new FunctionSql(session, requestId), cancellationToken), cancellationToken)
+            run = await Task.Run(() => FunctionRunner.RunAsync(source, eventJson, calls, cancellationToken), CancellationToken.None)
                 .ConfigureAwait(false);
         }
 
         var error = run.Error;
 
         usage.RecordOperation(tenant, "invoke", 1);
-        var log = new FunctionLogBody(EntityIds.New().ToString(), started, trigger, error is null ? "ok" : "error", clock.ElapsedMilliseconds,
-            [.. run.Lines], error);
-        await RecordAsync(tenant, name, log, cancellationToken).ConfigureAwait(false);
-        return error is null ? Response(run.Result!) : new FunctionResponse(500, "application/json",
+        var response = error is null ? Response(run.Result!) : new FunctionResponse(500, "application/json",
             JsonSerializer.SerializeToUtf8Bytes(new ErrorBody(new ErrorDetail("function_error", error, RequestId: requestId,
                 DocsUrl: ErrorDocs.Url("function_error"))), TerraBaseJsonContext.Default.ErrorBody));
+        var log = new FunctionLogBody(EntityIds.New().ToString(), started, trigger, error is null ? "ok" : "error",
+            (long)Math.Ceiling(time.GetElapsedTime(clock).TotalMilliseconds), [.. run.Lines], error,
+            calls.SqlCalls, calls.SqlMs, calls.RowsRead, calls.RowsWritten, ResponseBytes: response.Body.LongLength, HttpStatus: trigger == "http" && error is null ? response.Status : null);
+        return await RecordAsync(tenant, name, log, CancellationToken.None).ConfigureAwait(false) ? response : Busy;
     }
 
-    private async ValueTask RecordAsync(TenantContext tenant, string name, FunctionLogBody log, CancellationToken cancellationToken) =>
-        _ = await catalog.WriteAsync(async transaction =>
+    private async ValueTask<bool> RecordAsync(TenantContext tenant, string name, FunctionLogBody log, CancellationToken cancellationToken) =>
+        await catalog.WriteAsync(async transaction =>
         {
             if (await GetAsync(transaction, tenant, name, cancellationToken).ConfigureAwait(false) is null)
             {
@@ -173,6 +175,7 @@ internal sealed class FunctionService(SystemCatalog catalog, ISqlService sql, IU
 
             await SystemCatalog.PutAsync(transaction, Logs(tenant, name), log.Id, log, FunctionsJsonContext.Default.FunctionLogBody, cancellationToken)
                 .ConfigureAwait(false);
+            await FunctionMetrics.RecordAsync(transaction, tenant, name, log, cancellationToken).ConfigureAwait(false);
             var kept = await transaction.ListAsync(Logs(tenant, name), null, KeptLogs + 1, 8 * 1024 * 1024, cancellationToken).ConfigureAwait(false);
             if (kept.Records.Count > KeptLogs)
             {

@@ -71,6 +71,7 @@ Add `"cron": "*/5 * * * *"` (UTC) to the deploy body to run on a schedule. Deplo
 | `PUT /functions/{name}` `{source, cron?}` | Deploy or replace |
 | `GET /functions`, `GET /functions/{name}` | List, read with source |
 | `POST /functions/{name}/invoke` | Run |
+| `GET /functions/{name}/stats?window=24h` | Invocation totals and latency percentiles |
 | `GET /functions/{name}/logs` | Last 100 invocations |
 | `DELETE /functions/{name}` | Delete with schedule and logs |
 
@@ -86,3 +87,33 @@ Add `"cron": "*/5 * * * *"` (UTC) to the deploy body to run on a schedule. Deplo
 | Logs | 50 lines of 1 KiB per invocation |
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
+## Invocation metrics
+
+Every HTTP and cron invocation records wall-clock `durationMs`, `sqlCalls`, `sqlMs`, `rowsRead`, `rowsWritten`,
+`responseBytes` and `httpStatus` alongside its status, console lines and error in `GET .../functions/{name}/logs`.
+REST fields use camelCase, as the other functions responses do. SQL calls count binding calls, including transaction
+controls and refused calls. SQL time excludes waiting behind another binding call. Durations round up to milliseconds.
+Rows read count the rows returned by successful SQL binding results, including RETURNING rows; rows written sum
+their affected-row counts. These are result counts, not engine scan counts or committed-row counts: rolling back
+an explicit transaction does not subtract earlier successful results. Response bytes count the UTF-8 HTTP body; HTTP status is null for cron runs and execution errors.
+
+`GET .../functions/{name}/stats?window=1h|24h|7d` defaults to `24h`; invalid windows return HTTP 400 in the standard
+error envelope. It requires the same project authority and `sql:read` plus `sql:write` scopes as logs. The RPC
+`IFunctionsService.StatsAsync` exposes the same response.
+
+The response contains `window`, `invocations`, `errors`, `p50Ms`, `p95Ms`, `p99Ms`, `maxMs`, `sqlCalls`,
+`rowsRead`, `rowsWritten` and `buckets`. Each bucket contains `at`, `invocations`, `errors`, `p50Ms` and `p95Ms`.
+Errors count execution failures; a handler returning an HTTP error status still completed successfully.
+Buckets use UTC, oldest first, including zero-filled empty intervals and the current incomplete interval.
+The `1h` window contains 60 minute buckets; `24h` and `7d` contain 24 and 168 hour buckets.
+
+Metrics survive the last-100 log limit. Like invocation logs, they cover the answering regional writer;
+this endpoint does not combine metrics from different regions. Each function has at most 228 aggregate records: a 60-slot minute ring
+and a 168-slot hour ring, each record holding fixed counters and a 64-bin power-of-two millisecond histogram.
+That bounds histogram storage to 14,592 counters per function, plus 228 fixed counter sets and record metadata.
+Percentiles are nearest-rank histogram upper bounds, capped at the observed maximum; they are estimates rather than
+exact samples. Minute data expires outside the current 60-minute bucket window and hour data outside the current
+168-hour bucket window. Expired slots are excluded by their timestamp and overwritten on reuse, so idle functions
+retain bounded expired records without exposing them in stats. Log and aggregate updates share one catalog
+transaction and add no customer-database SQL query. Deleting a function or its database deletes its aggregates.

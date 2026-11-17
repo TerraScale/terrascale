@@ -1,6 +1,6 @@
 {
- "source": "TerraBase d95bbb36b55acfdf90ca0232cea7a80daaf07dd5 /openapi/v1.json (local dump)",
- "fetched": "2026-11-08",
+ "source": "TerraBase 56d68c7f3fb626c7a7bcde6127977bb1c333a35f /openapi/v1.json (local source inventory)",
+ "fetched": "2026-11-17",
  "contract": "sdk/SQL-API.md#databases-for-agents",
  "contract_routes": [
   "DELETE /v1/projects/{project}/databases/{database}/ttl",
@@ -33,6 +33,7 @@
   "GET /v1/projects/{project}/databases/{database}/functions",
   "GET /v1/projects/{project}/databases/{database}/functions/{function}",
   "GET /v1/projects/{project}/databases/{database}/functions/{function}/logs",
+  "GET /v1/projects/{project}/databases/{database}/functions/{function}/stats",
   "GET /v1/projects/{project}/databases/{database}/logs",
   "GET /v1/projects/{project}/databases/{database}/point-in-time",
   "GET /v1/projects/{project}/databases/{database}/read-grants",

@@ -14,6 +14,9 @@ namespace TerraScale.TerraBase.Contracts.Functions
         /// <summary><c>GET …/functions/{name}/logs</c>.</summary>
         UnaryResult<IReadOnlyList<TerraBaseFunctionInvocation>> LogsAsync(string projectId, string database, string name, int? limit);
 
+        /// <summary><c>GET …/functions/{name}/stats</c>; window is 1h, 24h (default) or 7d.</summary>
+        UnaryResult<TerraBaseFunctionStats> StatsAsync(string projectId, string database, string name, string? window);
+
         /// <summary><c>DELETE …/functions/{name}</c>.</summary>
         UnaryResult<bool> DeleteAsync(string projectId, string database, string name);
 

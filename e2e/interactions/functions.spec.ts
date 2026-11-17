@@ -155,3 +155,68 @@ test('a handler status is the test-run result', async ({ page }) => {
   await expect(page.locator('#function-event-error')).toHaveCount(0);
   console.log('Functions test run: a handler 404 and its JSON body are the result.');
 });
+
+test('function metrics include SQL calls and zero-filled latency buckets', async ({ request }) => {
+  const headers = await functionAccess(request);
+  const name = unique('metrics');
+  const url = functionUrl(name);
+  const table = name.replaceAll('-', '_');
+  const source = `async function handler() {
+    await sql.execute('CREATE TABLE "${table}" (value INTEGER NOT NULL)');
+    await sql.execute('INSERT INTO "${table}" VALUES (1)');
+    await sql.execute('UPDATE "${table}" SET value = 2');
+    const rows = await sql.query('SELECT value FROM "${table}"');
+    await sql.execute('DROP TABLE "${table}"');
+    return { status: 201, body: { ok: rows[0].value === 2 } };
+  }`;
+  expect((await request.put(url, { headers, data: { source } })).status()).toBe(200);
+  const empty = await request.get(`${url}/stats`, { headers });
+  expect(empty.status()).toBe(200);
+  expect(await empty.json()).toMatchObject({ window: '24h', invocations: 0, p50Ms: 0 });
+  for (let i = 0; i < 2; i++) {
+    const invoked = await request.post(`${url}/invoke`, { headers, data: {} });
+    expect(invoked.status()).toBe(201);
+    expect(await invoked.json()).toEqual({ ok: true });
+  }
+  for (const [window, count] of [['1h', 60], ['24h', 24], ['7d', 168]] as const) {
+    const response = await request.get(`${url}/stats?window=${window}`, { headers });
+    expect(response.status()).toBe(200);
+    const stats = await response.json();
+    expect(stats.window).toBe(window);
+    expect(stats.invocations).toBeGreaterThanOrEqual(2);
+    expect(stats.p50Ms).toBeGreaterThan(0);
+    expect(stats.p95Ms).toBeGreaterThanOrEqual(stats.p50Ms);
+    expect(stats.p99Ms).toBeGreaterThanOrEqual(stats.p95Ms);
+    expect(stats.sqlCalls).toBe(10);
+    expect(stats.rowsRead).toBe(2);
+    expect(stats.rowsWritten).toBeGreaterThanOrEqual(4);
+    expect(stats.buckets).toHaveLength(count);
+    expect(stats.buckets.reduce((sum: number, bucket: { invocations: number }) => sum + bucket.invocations, 0)).toBe(stats.invocations);
+    expect(stats.buckets.map((bucket: { at: string }) => bucket.at)).toEqual(stats.buckets.map((bucket: { at: string }) => bucket.at).sort());
+    expect(stats.buckets.filter((bucket: { invocations: number }) => bucket.invocations === 0).every((bucket: { p50Ms: number; p95Ms: number }) => bucket.p50Ms === 0 && bucket.p95Ms === 0)).toBe(true);
+  }
+  const logsResponse = await request.get(`${url}/logs`, { headers });
+  expect(logsResponse.status()).toBe(200);
+  const logs = await logsResponse.json();
+  expect(logs).toHaveLength(2);
+  expect(logs[0]).toMatchObject({ sqlCalls: 5, rowsRead: 1, responseBytes: 11, httpStatus: 201 });
+  expect(logs[0].rowsWritten).toBeGreaterThanOrEqual(2);
+  expect(logs[0].sqlMs).toBeGreaterThan(0);
+  expect(logs[0].sqlMs).toBeLessThanOrEqual(logs[0].durationMs);
+  const failedSource = 'async function handler() { await sql.query("SELECT 1 AS ok"); throw new Error("metrics failure"); }';
+  expect((await request.put(url, { headers, data: { source: failedSource } })).status()).toBe(200);
+  const failed = await request.post(`${url}/invoke`, { headers, data: {} });
+  expect(failed.status()).toBe(500);
+  expect((await failed.json()).error.code).toBe('function_error');
+  const failedLogs = await request.get(`${url}/logs?limit=1`, { headers });
+  expect(failedLogs.status()).toBe(200);
+  expect((await failedLogs.json())[0]).toMatchObject({ status: 'error', sqlCalls: 1, rowsRead: 1, rowsWritten: 0, httpStatus: null });
+  const failedStats = await request.get(`${url}/stats`, { headers });
+  expect(failedStats.status()).toBe(200);
+  expect(await failedStats.json()).toMatchObject({ invocations: 3, errors: 1, sqlCalls: 11, rowsRead: 3 });
+  const invalid = await request.get(`${url}/stats?window=2h`, { headers });
+  expect(invalid.status()).toBe(400);
+  expect((await invalid.json()).error.code).toBe('invalid_request');
+  expect((await request.delete(url, { headers })).status()).toBe(204);
+  expect((await request.get(`${url}/stats`, { headers })).status()).toBe(404);
+});
