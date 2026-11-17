@@ -10,9 +10,7 @@ TS_DOTNET_DIR ?= sdk/dotnet
 TERRABASE_BINARY ?= $(CURDIR)/src/TerraBase/bin/$(CONFIGURATION)/net11.0/terrabase
 REDOCLY := npx --yes @redocly/cli@2.57.0
 
-# Upstream's source of the vendored SQL driver keeps upstream's formatting: reformatting it would break the pristine
-# import and the patch replay (src/vendor/Turso.Data.Sqlite/UPSTREAM.md).
-VENDORED_UPSTREAM := src/vendor/Turso.Data.Sqlite/src
+VENDORED_UPSTREAM := src/vendor/Turso.Data.Sqlite/src src/vendor/SqlParserCS/SqlParser
 
 AUTH_HOST_DLL := src/TerraScale.Authentication/bin/$(CONFIGURATION)/net11.0/ts-auth.dll
 
