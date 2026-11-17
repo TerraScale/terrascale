@@ -21,11 +21,18 @@ public static partial class TrustedClaims
     {
         JsonValueKind.Undefined => current,
         JsonValueKind.Null => null,
-        JsonValueKind.Object => Normalize(patch),
-        _ => throw Invalid(),
+        JsonValueKind.Object => Normalize(patch, "custom_claims"),
+        _ => throw Invalid("custom_claims"),
     };
 
-    private static string Normalize(JsonElement claims)
+    public static JsonElement? Minted(JsonElement claims) => claims.ValueKind switch
+    {
+        JsonValueKind.Undefined or JsonValueKind.Null => null,
+        JsonValueKind.Object => JsonElement.Parse(Normalize(claims, Claim)),
+        _ => throw Invalid(Claim),
+    };
+
+    private static string Normalize(JsonElement claims, string field)
     {
         var names = new HashSet<string>(StringComparer.Ordinal);
         using var buffer = new MemoryStream();
@@ -36,7 +43,7 @@ public static partial class TrustedClaims
             {
                 if (names.Count == MaxMembers || !names.Add(member.Name) || !Name().IsMatch(member.Name) || !Allowed(member.Value))
                 {
-                    throw Invalid();
+                    throw Invalid(field);
                 }
 
                 writer.WritePropertyName(member.Name);
@@ -46,7 +53,7 @@ public static partial class TrustedClaims
             writer.WriteEndObject();
         }
 
-        return buffer.Length <= MaxBytes ? Encoding.UTF8.GetString(buffer.GetBuffer(), 0, (int)buffer.Length) : throw Invalid();
+        return buffer.Length <= MaxBytes ? Encoding.UTF8.GetString(buffer.GetBuffer(), 0, (int)buffer.Length) : throw Invalid(field);
     }
 
     private static bool Allowed(JsonElement value) => value.ValueKind switch
@@ -63,8 +70,8 @@ public static partial class TrustedClaims
 
     private static bool Finite(JsonElement value) => value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var number) && double.IsFinite(number);
 
-    private static ApiException Invalid() => new(StatusCodes.Status400BadRequest, "invalid_request",
-        "custom_claims must be null or a JSON object of at most 32 members and 1000 bytes serialized, named [a-z][a-z0-9_]{0,62}, whose values are strings of at most 256 characters, finite numbers, booleans, or arrays of at most 64 strings or 64 numbers.");
+    private static ApiException Invalid(string field) => new(StatusCodes.Status400BadRequest, "invalid_request",
+        field + " must be null or a JSON object of at most 32 members and 1000 bytes serialized, named [a-z][a-z0-9_]{0,62}, whose values are strings of at most 256 characters, finite numbers, booleans, or arrays of at most 64 strings or 64 numbers.");
 
     [GeneratedRegex("^[a-z][a-z0-9_]{0,62}$")]
     private static partial Regex Name();

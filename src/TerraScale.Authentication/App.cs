@@ -178,7 +178,7 @@ public static class App
         builder.Services.AddSingleton<ApiKeys>();
         builder.Services.AddSingleton<UserApiKeys>();
         builder.Services.AddSingleton<PlatformGrants>();
-        builder.Services.AddSingleton<EndUserAccessTokens>();
+        builder.Services.AddSingleton<CustomTokens>();
         // Singletons keep factory clients (discovery and key caches), so a rotating handler could never be collected:
         // its expiry timer would root the whole container long after the host stops. Handlers live as long as the
         // container instead, and pooled connections still re-resolve DNS.
