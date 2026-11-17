@@ -1,6 +1,6 @@
 {
   "producer": "TerraScale/terrascale",
-  "revision": "a6adb4239b6e8e7309baba54b03326c3be36313d",
+  "revision": "56d68c7f3fb626c7a7bcde6127977bb1c333a35f",
   "inputs": {
     "src/TerraBase/Features/Functions/ListFunctionsEndpoint.cs": "54a3bc70dbe3d22f1147d22d6af8ac99a2314c9e3df983ea842dab4a521ef385",
     "src/TerraBase/Features/Functions/DeployFunctionEndpoint.cs": "a85b596c088346db57037f8d51959083ac3ac6366e6ee0387f5864e8358bfaf6",
@@ -10,11 +10,11 @@
     "src/TerraBase/Features/Functions/ListFunctionLogsEndpoint.cs": "59e010d434a95334b1d0067cf4e2e50f6c6ba8c4a1f89ca080b663e150dd79d1",
     "src/TerraBase/Features/Functions/FunctionRoute.cs": "f0e297a0a510f3f2bea413d172f202ce0e236aec8be512cffb4d9ddfa8483e07",
     "src/TerraBase/Features/Functions/Functions.cs": "87e84fa280e2a13e58583cdb776708d84740cc493b5759a5151e37879cccb6e9",
-    "src/TerraBase/Features/Functions/FunctionService.cs": "eaa2205b087427aa4e86a5c6080d0af7c6844678a44887301c952245b2a5713f",
+    "src/TerraBase/Features/Functions/FunctionService.cs": "78a2d6ce42c67ee5297567c4385c2836dd82c5850c91f4a0c8cccaceca3c64f9",
     "src/TerraBase/Features/Functions/FunctionMetrics.cs": "b5dea2a7f2a260921e55e44740b641b71ab85f155d91a86efc64ca7863f9e6d1",
     "src/TerraBase/Features/Functions/FunctionService.Stats.cs": "1f89ef4ac68cbe2c14fb61695dab2c38d0d3ae929ec47296384618b211d47bf8",
     "src/TerraBase/Features/Functions/GetFunctionStatsEndpoint.cs": "1195486b47b586acf949ba36a8308ee58aaa308e4ffc2a694297d65abbb95b36",
-    "src/TerraBase/Features/Functions/FunctionSql.cs": "96d916f620f8dccf5e2eadf7f937d1c514156b04962e921fa8f09f05dd0b0cc5",
+    "src/TerraBase/Features/Functions/FunctionSql.cs": "965ce691b1325d4867223bd4b0d6221db8d255a1e9fbb5d68b902161bd0b9e79",
     "src/TerraBase/Features/Functions/FunctionsJsonContext.cs": "f498b896f3f8a79aa71602eca9539b573608ea421ac6ab9b417c1775f4a8c65d"
   },
   "security": "Bearer project credential; both listed scopes required; anonymous/end-user refused",
@@ -24,7 +24,7 @@
   "request": "Deploy: source required string; optional cron:string. Replacement clears an omitted cron.",
   "response": "Function: name:string, source:string|null (omitted in list), cron:string|null, createdAt:date-time, updatedAt:date-time. Delete: empty 204.",
   "errors": "400 validation, 401/403 credential/scope, 404 database/function, 409 function_limit (deploy), 503 unavailable",
-  "remaining": "Invoke returns handler status/body or JSON 200; 500 function_error; input <=1MiB. Logs direct array newest-first limit 1..100 default 50; last 100. Missed cron runs are skipped. Stats: window 1h|24h|7d, default 24h; zero-filled UTC minute/hour buckets; histogram percentiles, 7-day hourly retention. Logs add sqlCalls, sqlMs, rowsRead, rowsWritten, responseBytes, httpStatus; row counters currently zero. Stats SDK operation follows in C7.",
+  "remaining": "Invoke returns handler status/body or JSON 200; 500 function_error; input <=1MiB. Logs direct array newest-first limit 1..100 default 50; last 100. Missed cron runs are skipped. Stats: window 1h|24h|7d, default 24h; zero-filled UTC minute/hour buckets; histogram percentiles, 7-day hourly retention. Logs add sqlCalls, sqlMs, rowsRead, rowsWritten, responseBytes, httpStatus; rowsRead sums returned rows and rowsWritten sums affected rows from successful SQL binding results. Stats SDK operation follows in C7.",
   "operations": [
     {"operation":"listFunctions","method":"GET","path":"/v1/projects/{project}/databases/{database}/functions","scopes":["sql:read","sql:write"],"success":200,"implemented":true},
     {"operation":"deployFunction","method":"PUT","path":"/v1/projects/{project}/databases/{database}/functions/{function}","scopes":["sql:read","sql:write"],"success":200,"implemented":true},
