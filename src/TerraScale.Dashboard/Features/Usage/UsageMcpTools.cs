@@ -141,6 +141,8 @@ namespace TerraScale.Dashboard.Features.Usage
             return new(context.Organization!.Id, context.Project?.Id ?? "", databaseId, plan?.Name ?? "No billing plan",
                 [Allowance("Operation units this month", plan?.OperationsAllowance, limits.MonthlyOperations,
                     complete && reads is not null ? measured.OperationUnits(controls.Projects.Select(project => project.Id), time.GetUtcNow()) : null),
+                 Allowance("Function invocations this month", plan?.OperationsAllowance, limits.MonthlyOperations,
+                    complete && reads is not null ? measured.FunctionInvocations(controls.Projects.Select(project => project.Id), time.GetUtcNow()) : null),
                  Allowance("Storage across regions", plan?.StorageAllowance, limits.StorageBytes, null),
                  Allowance("Client egress this month", plan?.EgressAllowance, limits.MonthlyEgressBytes, null)], allowanceError,
                 "Published allowances count 4 KiB operation units and storage across selected regions, and client egress. These read and write counters do not measure allowance utilization.",

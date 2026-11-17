@@ -50,7 +50,8 @@ namespace TerraScale.Dashboard.Common.Usage
     public enum UsageSourceState { Measured, NotMetered, Unauthorized, Unavailable, NoProducer, Restricted, QueryTooExpensive }
     public sealed record UsagePeriod(DateTimeOffset From, DateTimeOffset To, string Granularity, long Reads, long Writes);
     public sealed record UsageReading(string ProjectId, string DatabaseId, long LogicalBytes, UsagePeriod Period, IReadOnlyList<ActivityPoint> Series, IReadOnlyList<UsageReading> Items, UsageMonth? Month = null);
-    public sealed record UsageMonth(string Month, long ReadUnits, long WriteUnits, long Units, long? OrganizationUnits = null, long? OrganizationReadUnits = null);
+    public sealed record UsageMonth(string Month, long ReadUnits, long WriteUnits, long Units, long? OrganizationUnits = null, long? OrganizationReadUnits = null,
+        long Invocations = 0, long? OrganizationInvocations = null);
     public sealed record UsageObservation(UsageSourceState State, UsageReading? Reading = null);
     public sealed record UsageMeasurements(UsageObservation Scope, IReadOnlyDictionary<string, UsageObservation> Monthly)
     {
@@ -58,28 +59,32 @@ namespace TerraScale.Dashboard.Common.Usage
         // The organization ledger retains deleted projects; never reconstruct it from current project totals.
         public long? OperationUnits(IEnumerable<string> projectIds, DateTimeOffset now)
         {
-            return Units(projectIds, now, reads: false);
+            return Units(projectIds, now, month => (month.OrganizationUnits, month.Units));
         }
 
         public long? SqlReadUnits(IEnumerable<string> projectIds, DateTimeOffset now)
         {
-            return Units(projectIds, now, reads: true);
+            return Units(projectIds, now, month => (month.OrganizationReadUnits, month.ReadUnits));
         }
 
-        private long? Units(IEnumerable<string> projectIds, DateTimeOffset now, bool reads)
+        public long? FunctionInvocations(IEnumerable<string> projectIds, DateTimeOffset now)
+        {
+            return Units(projectIds, now, month => (month.OrganizationInvocations, month.Invocations));
+        }
+
+        private long? Units(IEnumerable<string> projectIds, DateTimeOffset now, Func<UsageMonth, (long? Organization, long Project)> counter)
         {
             var month = now.UtcDateTime.ToString("yyyy-MM", System.Globalization.CultureInfo.InvariantCulture);
             long? units = null;
             long projectUnits = 0;
             foreach (var id in projectIds)
             {
-                if (Monthly.GetValueOrDefault(id) is not { State: UsageSourceState.Measured, Reading.Month: { OrganizationUnits: { } organizationWrites, OrganizationReadUnits: { } organizationReads } reading } ||
-                    reading.Month != month || reading.ReadUnits < 0 || reading.WriteUnits != reading.Units)
+                if (Monthly.GetValueOrDefault(id) is not { State: UsageSourceState.Measured, Reading.Month: { } reading } || counter(reading) is not ({ } organizationUnits, var project) ||
+                    reading.Month != month || reading.ReadUnits < 0 || reading.Invocations < 0 || reading.Units < reading.WriteUnits)
                 {
                     return null;
                 }
 
-                var (organizationUnits, project) = reads ? (organizationReads, reading.ReadUnits) : (organizationWrites, reading.WriteUnits);
                 if (organizationUnits < project || units is not null && units != organizationUnits)
                 {
                     return null;

@@ -10,7 +10,8 @@ using TerraBaseSqlException = TerraScale.DotNet.TerraBase.TerraBaseSqlException;
 
 namespace TerraScale.Dashboard.Features.Notifications
 {
-    public sealed record AllowanceUsageObservation(string OrganizationId, long? Operations, long? LogicalBytes, long? SqlReads = null, long? StorageByteHours = null);
+    public sealed record AllowanceUsageObservation(string OrganizationId, long? Operations, long? LogicalBytes, long? SqlReads = null, long? StorageByteHours = null,
+        long? WriteUnits = null, long? Invocations = null);
     public sealed record AllowanceUsagePage(DateTimeOffset PeriodStart, DateTimeOffset ObservedAt, IReadOnlyList<AllowanceUsageObservation> Items, string? Next, string OperationsContract, string StorageContract);
     public sealed record AllowanceAlert(string Id, string OrganizationId, string BillingMonth, string Metric, int Threshold, long Used, long Allowance,
         DateTimeOffset CreatedAt, string EmailStatus = "pending")
@@ -42,7 +43,7 @@ namespace TerraScale.Dashboard.Features.Notifications
 
     public sealed class AllowanceNotifications(IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, IAllowanceNotificationBackend backend, TimeProvider clock, ILogger<AllowanceNotifications> logger, BackgroundJobs jobs, BillingSchemaGate gate)
     {
-        public const string OperationsContract = "write-units-4kib-global-v2";
+        public const string OperationsContract = "operation-units-writes-invocations-global-v3";
         public const string StorageContract = "stored-byte-hours-global-v1";
 
         public async Task RunOnceAsync(CancellationToken cancellationToken)
@@ -70,13 +71,14 @@ namespace TerraScale.Dashboard.Features.Notifications
         {
             if (page.Items.Count > 0 && page.OperationsContract != OperationsContract)
             {
-                throw new IOException("Allowance metering does not report authoritative global 4 KiB write units.");
+                throw new IOException("Allowance metering does not report authoritative global operation units.");
             }
 
             var current = new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero);
             var month = expectedMonth ?? current;
             if (page.PeriodStart != month || page.ObservedAt < current || page.ObservedAt > now || now - page.ObservedAt > TimeSpan.FromMinutes(5) ||
-                page.Items.Count > 25 || page.Items.Any(item => !TerraScaleIds.IsValid(item.OrganizationId) || item.Operations < 0 || item.LogicalBytes < 0 || item.SqlReads < 0 || item.StorageByteHours < 0) ||
+                page.Items.Count > 25 || page.Items.Any(item => !TerraScaleIds.IsValid(item.OrganizationId) || item.Operations < 0 || item.LogicalBytes < 0 || item.SqlReads < 0 || item.StorageByteHours < 0 ||
+                    item.WriteUnits < 0 || item.Invocations < 0 || item.Operations < item.WriteUnits) ||
                 page.Items.Select(item => item.OrganizationId).Distinct(StringComparer.Ordinal).Count() != page.Items.Count ||
                 page.Items.Any(item => after is not null && string.CompareOrdinal(item.OrganizationId, after) <= 0) ||
                 page.Next is not null && (!TerraScaleIds.IsValid(page.Next) || page.Items.Count == 0 || page.Items[^1].OrganizationId != page.Next || string.CompareOrdinal(page.Next, after) <= 0))
