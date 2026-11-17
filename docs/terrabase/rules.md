@@ -1,6 +1,8 @@
 # TerraBase Rules: end-user reads and writes
 
-Status: Proposed, not built. It replaces [shape read grants](shape-read-grants.md) and the `tables` claim of
+Status: Partly built. The rules set, deploy checks, the condition compiler, versions, restore and the section 7 routes
+are live; end-user reads and writes do not use rules yet, and [shape read grants](shape-read-grants.md) still decide
+end-user reads. When enforced, rules replace read grants and the `tables` claim of
 [scoped end-user tokens](../auth/scoped-end-user-tokens.md).
 
 A project's end users sign in with the project's own ts-auth tenant and read and write a database straight from the

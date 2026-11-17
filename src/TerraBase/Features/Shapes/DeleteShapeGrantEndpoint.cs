@@ -2,6 +2,7 @@ using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Catalog;
 using TerraBase.Features.Management;
+using TerraBase.Features.Rules;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
@@ -32,7 +33,7 @@ internal sealed class DeleteShapeGrantEndpoint(IManagementService management, IS
             return ErrorResponse.From(ShapeRoute.BadTable);
         }
 
-        var resolved = await ShapeGrantRoute.DatabaseAsync(HttpContext, management, cancellationToken);
+        var resolved = await RulesRoute.DatabaseAsync(HttpContext, management, cancellationToken);
         if (resolved is not TenantContext database)
         {
             return (IResult)resolved;

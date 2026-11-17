@@ -164,6 +164,15 @@ async function restorePair(cells: Cells, endpoint: string, region: string, page:
     await sql(cells, endpoint, source.id, 'CREATE TABLE rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
     await sql(cells, endpoint, source.id, "INSERT INTO rows (id, value) VALUES (1, 'snapshot')");
     await served(cells, source.id, [[1, 'snapshot']]);
+    const rules = { tables: { rows: { read: 'TRUE', columns: ['id', 'value'] } } };
+    const misplaced = await cells.put(`${home}${database(source.id)}/rules`, { headers: { 'if-none-match': '*' }, data: rules });
+    expect(misplaced.status(), await misplaced.text()).toBe(421);
+    expect((await misplaced.json()).error.code).toBe('wrong_region');
+    expect(misplaced.headers()['x-terrabase-database-home']).toBe(region);
+    const deployed = await json<{ version: string }>(await cells.put(`${endpoint}${database(source.id)}/rules`, {
+      headers: { 'if-none-match': '*' }, data: rules,
+    }), 200);
+    expect(deployed.version).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
     const current = journey();
     await page.context().addCookies(JSON.parse(readFileSync(ownerSession(), 'utf8')).cookies);
     await page.goto(`/databases/${source.id}/backups?organizationId=${current.organizationId}&projectId=${current.projectId}`);

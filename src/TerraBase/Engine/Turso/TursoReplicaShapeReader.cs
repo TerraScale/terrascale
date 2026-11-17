@@ -1,5 +1,6 @@
 using TerraBase.Errors;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Rules;
 using TerraBase.Features.Shapes;
 using TerraBase.Tenancy;
 using Turso;
@@ -45,6 +46,15 @@ internal sealed class TursoReplicaShapeReader : IReplicaShapeReader
 
     public ValueTask<LineageResult> ResolveAsync(string table, ShapeQuery query, CancellationToken cancellationToken) =>
         new(Task.Run(() => Resolve(table, query), cancellationToken));
+
+    public ValueTask<StoredRules?> ReadRulesAsync(string? version, CancellationToken cancellationToken) =>
+        new(Task.Run(() => _reader.Rules(version), cancellationToken));
+
+    public ValueTask<RulesVersionPage?> ListRulesVersionsAsync(string? after, int limit, CancellationToken cancellationToken) =>
+        new(Task.Run(() => _reader.RulesVersions(after, limit), cancellationToken));
+
+    public ValueTask<IReadOnlyList<RulesProblem>> CheckRulesAsync(RulesSet rules, CancellationToken cancellationToken) =>
+        new(Task.Run(() => RulesChecks.Problems(rules, _reader), cancellationToken));
 
     public ValueTask<ShapeGrant?> ReadGrantAsync(string table, CancellationToken cancellationToken) =>
         new(Task.Run(() => _reader.Grant(table), cancellationToken));

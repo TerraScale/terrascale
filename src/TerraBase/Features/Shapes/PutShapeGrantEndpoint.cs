@@ -2,6 +2,7 @@ using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Catalog;
 using TerraBase.Features.Management;
+using TerraBase.Features.Rules;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
@@ -36,14 +37,14 @@ internal sealed class PutShapeGrantEndpoint(IManagementService management, IShap
             return ErrorResponse.From((Validation)checkedGrant);
         }
 
-        var resolved = await ShapeGrantRoute.DatabaseAsync(HttpContext, management, cancellationToken);
+        var resolved = await RulesRoute.DatabaseAsync(HttpContext, management, cancellationToken);
         if (resolved is not TenantContext database)
         {
             return (IResult)resolved;
         }
 
-        var probe = new ShapeQuery(grant.Where is { } where ? ShapeFilters.Bind(where, ShapeGrantRoute.Probe) : null,
-            grant.Columns is { } columns ? string.Join(',', columns) : null);
+        var probe = new ShapeQuery(null, grant.Columns is { } columns ? string.Join(',', columns) : null,
+            grant.Where is { } where ? new ShapeGrantRule(where, null, "", ShapeGrantRoute.Probe, null) : null);
         switch (await lineages.CheckAsync(database, grant.Table, probe, cancellationToken))
         {
             case ResolvedShape:

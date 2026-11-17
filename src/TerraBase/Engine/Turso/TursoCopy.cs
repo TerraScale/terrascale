@@ -44,7 +44,7 @@ internal static class TursoCopy
             if (name != "_tb_shape_snapshot")
             {
                 CopyRows(source, copy, name, chunkRows, chunkBytes, cancellationToken,
-                    rowFilter: name == "_tb_shape_chunk" ? " WHERE handle >= '~grant:' AND handle < '~grant;' AND offset = 0" : "");
+                    rowFilter: name == "_tb_shape_chunk" ? " WHERE " + TursoShapeReader.KeptShapeRows : "");
             }
         }
 

@@ -85,16 +85,11 @@ internal static class ShapeRoute
                     switch (await context.RequestServices.GetRequiredService<IShapeGrants>().GetGrantAsync(database, table!, cancellationToken))
                     {
                         case ShapeGrant grant:
-                            string? bound = null;
-                            if (grant.Where is { } rule && (bound = ShapeFilters.Bind(rule, access.Actor)) is null)
-                            {
-                                return NotGranted;
-                            }
-
                             query = query with
                             {
-                                Grant = new ShapeGrantRule(bound, grant.Columns is { } columns ? string.Join(',', columns) : null,
-                                    string.Join('\0', grant.UpdatedAt.UtcTicks.ToString(CultureInfo.InvariantCulture), access.Actor)),
+                                Grant = new ShapeGrantRule(grant.Where, grant.Columns is { } columns ? string.Join(',', columns) : null,
+                                    string.Join('\0', grant.UpdatedAt.UtcTicks.ToString(CultureInfo.InvariantCulture), access.Actor), access.Actor,
+                                    ShapeFilters.GrantInvalid),
                             };
                             break;
                         case NotFound:
