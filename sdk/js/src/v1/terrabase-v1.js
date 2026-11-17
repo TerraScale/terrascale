@@ -13,6 +13,7 @@ import { V1Transport } from "./transport.js";
 import { V1Health, V1Platform, V1Regions } from "./system.js";
 import { V1Backups, V1BackupDestinationClient } from "./backups.js";
 import { V1Functions } from "./functions.js";
+import { V1DatabaseRules } from "./rules.js";
 import { V1ProjectUsageClient, V1DatabaseUsageClient, requestLogs } from "./usage.js";
 import { V1DatabaseRegionsClient } from "./regions.js";
 /** @import { TerraBaseV1ClientConfig } from "./transport.js" */
@@ -36,6 +37,8 @@ export class V1Database {
   metrics;
   /** @type {V1DatabaseRegionsClient} */
   regions;
+  /** @type {V1DatabaseRules} */
+  rules;
   /** @type {V1Transport} */
   #transport;
   /** @type {string} */
@@ -52,6 +55,7 @@ export class V1Database {
     this.regions = new V1DatabaseRegionsClient(transport, this.name);
     this.backups = new V1Backups(transport, this.name);
     this.functions = new V1Functions(transport, this.name);
+    this.rules = new V1DatabaseRules(transport, this.name);
     Object.freeze(this);
   }
 

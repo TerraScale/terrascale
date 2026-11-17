@@ -1,4 +1,4 @@
-/** @typedef {"executeSql" | "exportDatabase" | "readTableShape" | "getShapeManifest" | "getShapeKey" | "connectSql" | "connectShapeHints" | "healthz" | "readyz" | "backupz" | "listPlatformDatabases" | "createBackup" | "listBackups" | "restoreBackup" | "getRestoreOperation" | "getBackupPolicy" | "setBackupPolicy" | "getRestoreWindow" | "planPointInTime" | "restorePointInTime" | "rewindPointInTime" | "getBackupDestination" | "setBackupDestination" | "deleteBackupDestination" | "getProjectUsage" | "getProjectAnalytics" | "getDatabaseUsage" | "getDatabaseAnalytics" | "listDatabaseLogs" | "getProjectMetrics" | "getDatabaseRegions" | "listRegions" | "listFunctions" | "deployFunction" | "getFunction" | "deleteFunction" | "invokeFunction" | "listFunctionLogs" | "getFunctionStats"} ManagementOperation */
+/** @typedef {"executeSql" | "exportDatabase" | "readTableShape" | "getShapeManifest" | "getShapeKey" | "connectSql" | "connectShapeHints" | "healthz" | "readyz" | "backupz" | "listPlatformDatabases" | "createBackup" | "listBackups" | "restoreBackup" | "getRestoreOperation" | "getBackupPolicy" | "setBackupPolicy" | "getRestoreWindow" | "planPointInTime" | "restorePointInTime" | "rewindPointInTime" | "getBackupDestination" | "setBackupDestination" | "deleteBackupDestination" | "getProjectUsage" | "getProjectAnalytics" | "getDatabaseUsage" | "getDatabaseAnalytics" | "listDatabaseLogs" | "getProjectMetrics" | "getDatabaseRegions" | "listRegions" | "listFunctions" | "deployFunction" | "getFunction" | "deleteFunction" | "invokeFunction" | "listFunctionLogs" | "getFunctionStats" | "getDatabaseRules" | "putDatabaseRules" | "listDatabaseRulesVersions" | "getDatabaseRulesVersion" | "restoreDatabaseRulesVersion" | "testDatabaseRules"} ManagementOperation */
 /** @type {readonly import("./routes.js").V1Route[]} */
 export const managementV1Routes = Object.freeze([
   route("executeSql", "POST", "/v1/projects/{project}/databases/{database}/sql/execute"),
@@ -48,6 +48,14 @@ export const managementV1Routes = Object.freeze([
     { permission: "sql:read", additionalPermissions: ["sql:write"] }),
   route("getFunctionStats", "GET", "/v1/projects/{project}/databases/{database}/functions/{function}/stats", 200,
     { permission: "sql:read", additionalPermissions: ["sql:write"] }),
+  route("getDatabaseRules", "GET", "/v1/projects/{project}/databases/{database}/rules"),
+  route("putDatabaseRules", "PUT", "/v1/projects/{project}/databases/{database}/rules"),
+  route("listDatabaseRulesVersions", "GET", "/v1/projects/{project}/databases/{database}/rules/versions"),
+  route("getDatabaseRulesVersion", "GET", "/v1/projects/{project}/databases/{database}/rules/versions/{version}"),
+  route("restoreDatabaseRulesVersion", "POST", "/v1/projects/{project}/databases/{database}/rules/versions/{version}/restore", 200,
+    { requestMediaTypes: [] }),
+  route("testDatabaseRules", "POST", "/v1/projects/{project}/databases/{database}/rules:test", 200,
+    { permission: "databases:read" }),
 ]);
 
 /** @param {ManagementOperation} operation @param {import("./routes.js").V1Route["method"]} method @param {string} pathTemplate @param {number} [status] @param {Partial<import("./routes.js").V1Route>} [overrides] @returns {import("./routes.js").V1Route} */

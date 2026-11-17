@@ -447,8 +447,8 @@ reading or writing rows:
   --auth … --row … --new …` calls the simulator and exits non-zero on a deny.
 - **Terraform:** `terrascale_database_rules` (`project`, `database`, `rules` as JSON; computed `version`); updates use
   `If-Match` from state, and drift is a different current version.
-- **SDKs:** .NET, Go, Python and Rust manage rules (`get`, `deploy`, `versions`, `restore`, `test`) and mint custom
-  tokens. The JS browser client signs in to the tenant (PKCE, guests, magic link), refreshes tokens, reads rows and
+- **SDKs:** .NET, Go, Python, Rust and the JS server client (`db.rules`) manage rules (`get`, `deploy`, `versions`,
+  `restore`, `test`) and mint custom tokens. The JS browser client signs in to the tenant (PKCE, guests, magic link), refreshes tokens, reads rows and
   live shapes, and creates, updates, deletes and batches rows.
 
 ## 10. Naming
