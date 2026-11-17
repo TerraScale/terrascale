@@ -45,6 +45,10 @@ One rules set per database, sent as JSON. A database without one denies every en
   `403 column_not_writable`. `set.update` runs on every update, including one that changes no other column.
 - The row id alias (an `INTEGER PRIMARY KEY` column) may be in `writable` for create only; an update never changes
   the row id.
+- An ownership column in `writable` needs `new.<column> = auth.uid` in both `create` and `update`, or a user can create
+  rows for others and hand their rows over. Prefer `set.create` as in the example. Deploy reports a writable column
+  that `read` compares with `auth.uid` and that `create` or `update` leaves unchecked as the warning
+  `unchecked_owner` in `warnings`, which does not block the deploy.
 - Limits: 256 tables, 4096 characters per condition, 256 KiB per rules set.
 
 ### Deploy checks
@@ -87,13 +91,18 @@ a bare name answers `unsafe_where`), and these typed references are added:
 
 Where each reference is allowed:
 
-| Rule | `row.*` | `new.*` | `auth.*`, `request.time` |
-|---|---|---|---|
-| `read` | yes | no | yes |
-| `create` | no | yes | yes |
-| `update` | yes | yes | yes |
-| `delete` | yes | no | yes |
-| `validate` | no | yes | yes |
+| Rule | `row.*` | `new.*` | `auth.*` | `request.time` |
+|---|---|---|---|---|
+| `read` | yes | no | yes | no |
+| `create` | no | yes | yes | yes |
+| `update` | yes | yes | yes | yes |
+| `delete` | yes | no | yes | yes |
+| `validate` | no | yes | yes | yes |
+
+`read` cannot use `request.time` (`reference_not_allowed`). Shape snapshots and chunks are sealed, cached and shared
+per handle and change only when rows change, so a row whose visibility depends only on the clock
+(`row.expires_at > request.time`) would keep being served after it should be hidden. Hide expired rows by deleting
+or updating them.
 
 - **Binding.** Every `auth.*` and `request.*` value, and every `row.*` value the server read, is bound as a statement
   parameter. Nothing from a token or a request body is spliced into SQL text. Parameters written by the author
@@ -102,35 +111,46 @@ Where each reference is allowed:
 - **NULL and missing claims.** A missing claim, organization or column value is NULL, so a comparison with it is
   NULL and denies, and so does its negation: `NOT (auth.claims.banned = 1)` denies when `banned` is absent. Only
   `IS`, `IS NOT`, `coalesce` and `ifnull` can turn NULL into true; the author writes them on purpose.
-- **Lists.** A list claim may appear only as the right operand of `IN` or `NOT IN`
-  (`'editor' IN auth.claims.roles`), compiled to a membership test over the bound JSON array. Any other use answers
-  `unsafe_where`.
+- **Lists.** A claim reference that is the right operand of `IN` or `NOT IN` (`'editor' IN auth.claims.roles`) is
+  in list position and compiles to a membership test over the bound JSON array; every other claim reference is in
+  scalar position. `IN (` followed by a claim among other values answers `unsafe_where` at deploy.
+- **Claim types at runtime.** A claim's type is known only per token. A missing list claim, or a scalar claim in list
+  position, makes `IN` and `NOT IN` NULL, so both deny: `'banned' NOT IN auth.claims.flags` denies when `flags` is
+  absent. A list claim in scalar position binds NULL. A present empty list makes `IN` false and `NOT IN` true.
 - **Claim names** match `[a-z][a-z0-9_]{0,62}`.
 
 ## 3. Identity
 
 ### 3.1 Tenant tokens (direct sign-in)
 
-Every access token of a project tenant ([project tenant management](../auth/project-tenant-management.md):
-hosted, social and magic-link sign-in, guests from [consumer integration](../auth/consumer-integration.md),
-[project organizations](../auth/project-organizations.md)) also names the project's data audience
-`https://api.terrascale.tech/v1/projects/{project}`. No client setting turns this on or off: a token reaches no
+Only end-user sign-in access tokens are end users: those with `token_use: user`
+([project tenant management](../auth/project-tenant-management.md): hosted, social and magic-link sign-in, guests
+from [consumer integration](../auth/consumer-integration.md),
+[project organizations](../auth/project-organizations.md)), and custom tokens (`token_use: custom`, section 3.2).
+Every such token also names the project's data audiences, one per TerraBase API origin `A` in ts-auth's
+`TS_AUTH_ACCESS_TOKEN_AUDIENCES`: `{A}/v1/projects/{project}`, for example
+`https://gru.api.terrascale.tech/v1/projects/{project}`. No client setting turns this on or off: a token reaches no
 row until the database's rules allow it, and a database without rules allows nothing. ID tokens never work.
+
+The tenant's machine-client tokens (`token_use: machine`, `sub` = `client_id`, 5 to 60 minutes,
+`src/TerraScale.Authentication/Features/Oidc/MachineClients.cs`) are not end users. ts-auth refuses a data audience
+in a machine client's `allowed_audiences` (`400 invalid_request`), and TerraBase refuses a machine token that names
+one anyway (rule 4). A machine needing data uses a project API key.
 
 TerraBase accepts a tenant token offline when:
 
-1. The unverified `iss` is exactly `https://auth.terrascale.tech/{P}`, `P` a canonical ULID equal to the route's
-   `{project}`. `terrascale` is never a project id, so a platform token cannot pass as a tenant token, and a token of
+1. The unverified `iss` is exactly `{O}/{P}`, where `O` is the origin of TerraBase's configured `AuthIssuer`
+   (`https://auth.terrascale.tech` in production) and `P` a canonical ULID equal to the route's `{project}`. `terrascale` is never a project id, so a platform token cannot pass as a tenant token, and a token of
    project A answers `404 unknown_database` on project B's routes, as [cross-project errors](cross-project-errors.md)
    do today.
 2. Its signature verifies against `P`'s own JWKS (`{iss}/.well-known/jwks.json`). TerraBase fetches it only for a
    project its catalog knows, caches it per project like the platform ring today (`IIssuerKeys`), and refreshes
    once on an unknown `kid`. Keys of one tenant never verify another tenant's tokens. A deleted project's JWKS
    answers `404` and its keys are dropped.
-3. `typ` is `at+jwt`, `alg` `ES256`, `aud` contains the exact data audience above, `exp` is in the future (30-second
-   skew, as today), and `sub` is a canonical ULID.
-4. It carries no `scope`, `project_id`, `instance_id`, `token_kind` other than `custom` (section 3.2),
-   `platform_role`, `key_id` or IP-allowlist claim; any of them answers `401`.
+3. `typ` is `at+jwt`, `alg` `ES256`, `aud` contains `{A}/v1/projects/{P}` for one of TerraBase's own configured
+   `AuthAudiences` `A` (exact match), `exp` is in the future (30-second skew, as today), and `sub` is a canonical ULID.
+4. `token_use` is `user` or `custom`; any other value, or none, answers `401`. It carries no `scope`, `project_id`,
+   `instance_id`, `token_kind`, `platform_role`, `key_id` or IP-allowlist claim; any of them answers `401`.
 
 Guests (`is_anonymous: true`) are accepted, and rules see `auth.is_anonymous = 1`. A request with no token is never
 an end user; it answers `401`.
@@ -152,7 +172,8 @@ Authorization: Bearer <project API key with auth:tokens:mint>
 
 - The key needs only the new scope `auth:tokens:mint` (today `sql:read` and `sql:write`). It belongs to the route's
   project and has no database restriction. A mint-only key can neither run SQL nor manage ts-auth.
-- The token is signed by the project tenant's key ring under the tenant issuer, with `token_kind: custom`,
+- `user_id` must be a canonical uppercase ULID, as on main today; a backend whose users have other IDs keeps a map.
+- The token is signed by the project tenant's key ring under the tenant issuer, with `token_use: custom`,
   `aud` the data audience only (so ts-auth's OAuth endpoints refuse it), `sub` = `user_id`, `claims` as given
   (section 3.3 limits) and `database` when given. It lives at most 5 minutes; the backend mints again.
 - `database` restricts the token to that database: any other answers `404 unknown_database`. Custom tokens carry no
@@ -191,15 +212,25 @@ Tokens are checked offline, so a token keeps working until it expires. Each limi
 
 | Change | Takes effect on TerraBase |
 |---|---|
-| Rules deploy | The next request: writes read the rules in their own transaction; every shape handle changes (section 4.3) |
+| Rules deploy, writes | The next request: writes read the rules in their own home transaction |
+| Rules deploy, reads | When replication brings the new rules to the answering region, after that region's replica lag; every shape handle then changes (section 4.3) |
 | User disabled or deleted, signed out everywhere, session revoked | Within 5 minutes 30 seconds (refresh is refused at once) |
 | Organization membership removed or role changed | Within 5 minutes 30 seconds |
 | `custom_claims` changed | At the next refresh, within 5 minutes 30 seconds |
 | Mint key revoked | No new custom tokens at once; issued ones within 5 minutes 30 seconds |
 | Project deleted | Its databases are deleted; its JWKS answers `404` |
 
-Rows, epoch keys and snapshots a client already received stay with it. Rules decide what is served next; they cannot
-take back what was served.
+Three more limits on what a revoked user keeps:
+
+- **Epoch keys.** An epoch key decrypts every object of its handle sealed in its 10-minute epoch
+  ([shape reads](shape-reads.md) section 10), and the CDN serves ciphertext without checking tokens
+  ([live shapes](free-reads-live.md)). A user whose token stops working can still decrypt the chunks of their handle
+  sealed until the end of the epoch of their last key fetch: up to 10 minutes after the token's last use. A rules
+  deploy changes the handle, so chunks sealed after it use keys the old handle never gets.
+- **Live long-polls.** A `live=true` request admitted before `exp` may wait its full 20 seconds and answer after
+  `exp`. A hints socket closes at `exp`.
+- **Already served.** Rows, epoch keys and snapshots a client already received stay with it. Rules decide what is
+  served next; they cannot take back what was served.
 
 ## 4. Reads
 
@@ -287,8 +318,9 @@ in `set` or not in `writable` → `403 column_not_writable`; the row id alias on
 
 **Create**
 
-1. `INSERT` the body's columns plus `set.create`, `RETURNING rowid`. A UNIQUE or primary-key conflict answers
-   `409 row_exists`; a NOT NULL, CHECK or foreign-key failure answers `400 constraint_failed`.
+1. `INSERT OR ABORT` the body's columns plus `set.create`, `RETURNING rowid`. A UNIQUE or primary-key conflict
+   answers `409 row_exists`, with `details.key` when the caller may read the conflicting row; a NOT NULL, CHECK or
+   foreign-key failure answers `400 constraint_failed`.
 2. `SELECT (create) IS TRUE, (validate[0]) IS TRUE, … FROM t WHERE rowid = $rowid`, with `new.x` compiled to the
    stored column `x`.
 3. `create` false → roll back, `403 rule_denied`; a `validate[i]` false → roll back, `400 validation_failed` with
@@ -297,7 +329,7 @@ in `set` or not in `writable` → `403 column_not_writable`; the row id alias on
 **Update**
 
 1. `SELECT <every column>, (read) IS TRUE FROM t WHERE rowid = $key`. No row, or `read` false → `404 row_not_found`.
-2. `UPDATE t SET <body columns, set.update> WHERE rowid = $key`.
+2. `UPDATE OR ABORT t SET <body columns, set.update> WHERE rowid = $key`. Conflicts answer as on create.
 3. `SELECT (update) IS TRUE, (validate[0]) IS TRUE, … FROM t WHERE rowid = $key`, with `row.x` bound to the values
    step 1 read and `new.x` compiled to the stored column `x`.
 4. `update` false → roll back, `403 rule_denied`; a `validate[i]` false → roll back, `400 validation_failed`;
@@ -309,10 +341,15 @@ in `set` or not in `writable` → `403 column_not_writable`; the row id alias on
    `404 row_not_found`; `delete` false → `403 rule_denied`.
 2. `DELETE FROM t WHERE rowid = $key`; commit.
 
+`OR ABORT` overrides any `ON CONFLICT REPLACE` or `IGNORE` in the table's own DDL, so an end-user create or update
+never deletes another user's row (a `REPLACE` would remove it with no `delete` check) and never silently skips.
+End-user writes never use `UPSERT` or `OR REPLACE`.
+
 `new.*` is always the post-image the engine stored, after column affinity, defaults and triggers, never the request
-body, so a value that changes on storage cannot slip past `create`, `update` or `validate`. Triggers run with the
-database owner's authority and their effects roll back with a denied write. Rules gate the end user's row operation,
-not what the owner's triggers then do.
+body, so a value that changes on storage cannot slip past `create`, `update` or `validate`. Triggers and foreign-key
+actions (`ON DELETE` or `ON UPDATE` `CASCADE`, `SET NULL`, `SET DEFAULT`) run with the database owner's authority,
+and their effects roll back with a denied write. Rules gate the end user's row operation, not what the owner's
+triggers and cascades then do to other rows.
 
 ### 5.3 Regions
 
@@ -326,7 +363,8 @@ Chrome and Edge resend a buffered body once after a `421` (`sdk/js/README.md:248
 so the resend cannot apply a write twice, but the JS client cannot stop it either; the browser client (W3) must close
 or state that gap in its README. After an uncertain result (a timeout), clients must not replay: a create whose key comes from
 `set.create` with `request.ulid` cannot be matched afterwards, so apps that retry creates should let the client choose
-a ULID key in a writable `id` column and treat `409 row_exists` as done.
+a ULID in a writable, UNIQUE `id` column and treat `409 row_exists` as done; its `details.key` is the row's key when
+the caller may read it.
 
 ## 6. Entry points
 
@@ -336,7 +374,17 @@ a ULID key in a writable `id` column and treat `409 row_exists` as done.
 | Row writes and batch | Section 5.2 | Every row and column |
 | SQL over HTTP, WebSocket and the PostgreSQL protocol | `403 forbidden` | As today |
 | Rules routes, simulator, every management route | `403 forbidden` | `databases:read` / `databases:write` |
-| File buckets | Bucket policy, as today ([file buckets](file-buckets.md)) | As today |
+| File buckets | Bucket policy, below | As today |
+
+[File buckets](file-buckets.md) under the new identity:
+
+- A policy's `roles` match the trusted `claims.roles` list (section 3.3) in place of the deleted top-level `roles`
+  claim (`FileStorageService.cs:480`).
+- `public` means every signed-in end user who is not a guest. Anyone can become a guest, so a guest
+  (`auth.is_anonymous = 1`) is admitted by none of `public`, `owner` or `roles` unless that read or write policy also
+  says `"guests": true`.
+- A token restricted to a database (a custom token with `database`) gets no bucket access, as today
+  (`FileStorageService.cs:45`).
 
 The end-user endpoint allowlist (`ProjectCheck.cs:82-92`) gains the row routes and nothing else; `SocketAdmission.cs`
 keeps refusing end-user SQL sockets.
@@ -346,7 +394,7 @@ keeps refusing end-user SQL sockets.
 | Route | Scope | Answer |
 |---|---|---|
 | `GET /v1/projects/{project}/databases/{database}/rules` | `databases:read` | `200 {"version","tables","problems","updatedAt","updatedBy"}`, `ETag: "<version>"`; `404 no_rules` |
-| `PUT …/rules` | `databases:write` | `200` the new version; `400 invalid_rules`; `412 version_mismatch`; `428 precondition_required` |
+| `PUT …/rules` | `databases:write` | `200` the new version with its `warnings`; `400 invalid_rules`; `412 version_mismatch`; `428 precondition_required` |
 | `GET …/rules/versions?after=&limit=` | `databases:read` | `200 {"items":[{"version","updatedAt","updatedBy","digest"}],"next"}`, newest first |
 | `GET …/rules/versions/{version}` | `databases:read` | `200` that version's rules; `404 unknown_version` |
 | `POST …/rules/versions/{version}/restore` | `databases:write` | `200` a new version with that body; same errors as `PUT` |
@@ -423,7 +471,7 @@ The data feature is **Rules**; "grant" leaves it. Deleted with grants: the route
 | `400` | `unknown_column`, `constraint_failed`, `invalid_request` | Bad body, engine constraint, malformed request |
 | `404` | `row_not_found` | The row is missing or not readable |
 | `404` | `unknown_database`, `unknown_table`, `no_rules`, `unknown_version` | As named |
-| `409` | `row_exists` | A create hit a UNIQUE or primary key |
+| `409` | `row_exists` | A create or update hit a UNIQUE or primary key; `details.key` when readable |
 | `409` | `must_refetch` | The shape handle changed (rules deploy, new binding) |
 | `412` | `version_mismatch` | Stale `If-Match` |
 | `421` | `wrong_region` | Home unreachable or no replica; nothing applied |
@@ -461,14 +509,15 @@ handle, cache and column rules. Deletes the read-grant routes, files, keys and c
 
 **W1 feat/auth-data-tokens.** ts-auth: the data audience on every tenant access token; `custom_claims` on users,
 copied into tokens as `claims`; the `auth:tokens:mint` scope; `POST /v1/{project}/custom-tokens` signed by the tenant
-ring with `token_kind: custom`, 5 minutes, `database` only. Deletes the platform `end-user-tokens` route, its
+ring with `token_use: custom`, 5 minutes, `database` only; machine clients refused a data audience. Deletes the platform `end-user-tokens` route, its
 `tables` and `roles` fields and its OpenAPI file; updates `docs/auth/scoped-end-user-tokens.md`. Lands after
 feat/terrabase-identity, and in the same PR removes TerraBase's platform `token_kind: end_user` branch
 (`UserAuthenticationHandler.cs`), which nothing mints any more.
 
 **W1 feat/terrabase-identity.** TerraBase: per-project tenant issuer and JWKS selection from the route project
 (section 3.1), validation, and the mapping of tenant and custom tokens to `ProjectAccess` and the `auth.*` values;
-guests allowed; hints sockets closed at `exp`.
+guests allowed; machine tokens refused; hints sockets closed at `exp`. File buckets move in the same PR: `roles`
+from `claims.roles`, `public` without guests, and the `guests` policy field (section 6).
 
 **W2 feat/terrabase-rows.** The section 5 row API: create, update, delete and batch in the home write transaction
 with the pre-read and post-image checks, `set` and `writable`, forwarding and `421`, error codes, OpenAPI,
