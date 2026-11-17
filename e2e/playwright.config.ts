@@ -13,7 +13,6 @@ if (faultRequested && (production || process.env.E2E_REGIONS !== '2' || process.
 }
 
 export default defineConfig({
-  testDir: '.',
   outputDir: 'test-results',
   fullyParallel: true,
   forbidOnly: true,

@@ -105,7 +105,7 @@ internal sealed class ReplicaSqlSession(
             return null;
         }
 
-        if (writes)
+        if (writes && _home is not { IsAutocommit: false })
         {
             await RouteAsync([.. commands.Select(command => command.Command.Sql)], cancellationToken).ConfigureAwait(false);
         }

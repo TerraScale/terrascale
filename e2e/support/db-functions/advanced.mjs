@@ -168,10 +168,16 @@ export async function advanced(client, surface, prefix, check) {
       await check('aborted-transaction', async () => {
         await client.control('begin');
         await execute(`INSERT INTO ${t} VALUES(40)`);
+        const batch = await client.execute([
+          { sql: `INSERT INTO ${t} VALUES(41) RETURNING id` },
+          { sql: `SELECT id FROM ${t} WHERE id IN (40,41) ORDER BY id` },
+        ]);
+        assert.deepEqual(rows(batch), [['41']]);
+        assert.deepEqual(rows(batch.slice(1)), [['40'], ['41']]);
         await refused(execute(`INSERT INTO ${t} VALUES(40)`), '23505');
         await refused(execute('SELECT 1'), '25P02');
         await client.control('rollback');
-        assert.deepEqual(rows(await execute(`SELECT count(*) FROM ${t} WHERE id=40`)), [['0']]);
+        assert.deepEqual(rows(await execute(`SELECT count(*) FROM ${t} WHERE id IN (40,41)`)), [['0']]);
       });
     if (surface === 'Postgres') {
       await check('simple-script-atomicity', async () => {
