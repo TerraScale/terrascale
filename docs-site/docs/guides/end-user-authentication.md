@@ -127,19 +127,17 @@ claims = jwt.decode(access_token, key.key, algorithms=["ES256"],
 
 Refresh tokens rotate on every use. The initial project refresh token expires at **original sign-in (`auth_time`) + configured project session lifetime** (5 minutes–30 days, default 14 days). Rotation never extends the observed expiry; a policy reduction can shorten it further. Store each successor securely and stop using its predecessor. Keep tokens and client secrets out of URLs, logs and browser persistent storage. On sign-out, clear your app session, use `/oauth/logout` for hosted sign-out and `/oauth/revoke` for token revocation; these are separate from clearing local state.
 
-A project issuer serves only the authorization code and refresh token grants. Project clients also support RFC 7009 token revocation at the discovered `revocation_endpoint`. Project sign-in access tokens also name your project's data audience, `https://api.terrascale.tech/v1/projects/{project}`, and carry the user's trusted claims as `claims`; they reach no row of a database until its rules allow it. Your browser can use those access tokens directly with [Rules](/concepts/rules); see [Data access for your users](#data-access-for-your-users).
+A project issuer serves only the authorization code and refresh token grants. Project clients also support RFC 7009 token revocation at the discovered `revocation_endpoint`. Project sign-in access tokens also name your project's data audience, `https://api.terrascale.tech/v1/projects/{project}`, and carry the user's trusted claims as `claims`; they reach no row of a database until its rules allow it. See [Data access for your users](#data-access-for-your-users).
 
 ## Data access for your users
 
-Project sign-in access tokens authorize row reads, live shapes and row writes as the database's [Rules](/concepts/rules) allow. Deploy rules first: a database without rules denies end-user access. Guests can use the same APIs when the client permits guest sign-in and the project permits public sign-up. Start with [Build a todo app with no backend](/getting-started/todo-app).
+Users who sign in with the project sign-in above use their access token directly: it names your project's data audience, and the database's rules decide what it reads and writes. When your backend signs users in itself, it mints a custom token for each of them and the browser uses only that:
 
-If your backend authenticates users itself, mint a custom token with `POST https://auth.terrascale.tech/v1/{project}/custom-tokens`. Use a project credential with `auth:tokens:mint` and no database restriction. The body supplies a canonical ULID `user_id`, an optional `database` ID and optional trusted `claims`:
+1. Your backend authenticates the user and picks their user ID and trusted claims. The `user_id` is a canonical ULID and need not match a ts-auth account: your backend owns the mapping.
+2. Your backend mints the token with `POST https://auth.terrascale.tech/v1/{project}/custom-tokens`, authenticating with a project API key that has `auth:tokens:mint` and no database restriction. Only a project admin can create such a key, and it can neither run SQL nor manage authentication. The body is `{"user_id": "…", "database": "…", "claims": {"roles": ["editor"]}}`; `database` and `claims` are optional.
+3. Your backend sends only the returned JWT (5 minutes) to the browser, mints again when it expires, and keeps the project API key on the server.
 
-```json
-{"user_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","claims":{"roles":["editor"]}}
-```
-
-Return only the short-lived `access_token` to the browser. Custom tokens last at most five minutes; the backend mints another when needed. Keep the minting credential on your server because it can act as any user in the project. The same rules apply to custom tokens and project sign-in tokens. Neither authorizes end-user SQL or rules management. See [custom tokens](/concepts/rules#custom-tokens) for the complete data access flow.
+The token is signed by your project's issuer with `token_use: custom`. Rules see `auth.uid` as the user ID, `auth.claims` as the claims, no organization and `auth.is_anonymous = 0`. A token minted for one database gets `404 unknown_database` from any other, and ts-auth's own endpoints refuse it. The full mint contract, limits and error behavior are in [custom tokens](https://github.com/TerraScale/terrascale/blob/main/docs/auth/custom-tokens.md); rules are described in [TerraBase Rules](https://github.com/TerraScale/terrascale/blob/main/docs/terrabase/rules.md).
 
 ### Run the sample app
 
