@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { Audit, auditedContext, expect, test } from '../support/audit';
 import { createDedicatedProjectOwner } from '../support/project-owner';
-import { signInToken } from '../support/auth-management';
+import { signInToken, stepUp } from '../support/auth-management';
 import { confirmWithPassword, hostedReady } from '../support/hosted';
 import { newAddress, nextMail } from '../support/inbox';
 import { enterSecret } from '../support/secret';
@@ -111,6 +111,13 @@ test('tenant tokens name the project data audience, carry trusted claims, and cu
     expect((await cleared.json()).custom_claims).toBeNull();
 
     const ownerToken = await signInToken(ownerPage.request, 'data-token-owner');
+    const machine = await ownerPage.request.post(auth + '/v1/' + project + '/clients', {
+      headers: { Authorization: 'Bearer ' + ownerToken, 'X-TerraScale-Step-Up-Proof': await stepUp(ownerPage.request, ownerToken, 'create_oauth_client', current.password) },
+      data: { name: 'Data machine', type: 'machine', redirect_uris: [], allowed_scopes: ['invoices:read'], allowed_audiences: [dataAudience], token_lifetime_minutes: 15 },
+    });
+    expect(machine.status()).toBe(400);
+    expect((await machine.json()).error.code).toBe('invalid_request');
+
     const created = await ownerPage.request.post(auth + '/v1/terrascale/organizations/' + current.organizationId + '/projects/' + project + '/api-keys', {
       headers: { Authorization: 'Bearer ' + ownerToken }, data: { name: 'Mint only', scopes: ['auth:tokens:mint'] },
     });

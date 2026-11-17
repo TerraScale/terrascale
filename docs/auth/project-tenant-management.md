@@ -23,12 +23,15 @@ A project tenant serves, while its project exists:
 - A project tenant has no device flow, token exchange, API keys or platform
   claims. Its access tokens carry `sub`, `email` (with the `email` scope),
   `iss` = the project issuer and `aud` = the client id and the project's data
-  audience `https://api.terrascale.tech/v1/projects/{project}`, with the user's
+  audiences, `{A}/v1/projects/{project}` for each TerraBase origin `A` in
+  `TS_AUTH_ACCESS_TOKEN_AUDIENCES` (`https://api.terrascale.tech/v1/projects/{project}`
+  in production), with the user's
   trusted `custom_claims` as `claims` when set
   ([user profiles](user-profiles.md)). TerraBase validates them against the
   project's own JWKS and serves rows only as the database's rules allow
   ([TerraBase Rules](../terrabase/rules.md) section 3). Impersonation and machine
-  client tokens do not carry the data audience. ID tokens never do.
+  client tokens do not carry a data audience, and a machine client's
+  `allowed_audiences` cannot name one (`400 invalid_request`). ID tokens never do.
 - A disabled end user cannot sign in, and its sessions and tokens stop working.
 
 ## 2. Management API

@@ -6,6 +6,7 @@ using OpenIddict.Abstractions;
 using OpenIddict.Server;
 using OpenIddict.Server.AspNetCore;
 using static OpenIddict.Server.OpenIddictServerEvents;
+using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Features.SignIn;
@@ -37,6 +38,11 @@ internal static class MachineClients
                 || !Uri.TryCreate(audience, UriKind.Absolute, out var uri) || !string.IsNullOrEmpty(uri.Fragment)))
         {
             throw new ApiException(400, "invalid_request", "Supply 1 to 64 unique OAuth allowed_scopes, at most 64 allowed_audiences and token_lifetime_minutes from 5 to 60.");
+        }
+
+        if (audiences.Any(audience => new Uri(audience).AbsolutePath.StartsWith(AuthOptions.ProjectDataPath, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new ApiException(400, "invalid_request", "allowed_audiences cannot name a project data audience; a machine needing data uses a project API key.");
         }
 
         return new(scopes, audiences, minutes ?? 15);
