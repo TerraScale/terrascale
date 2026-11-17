@@ -158,7 +158,7 @@ fn boundary(value: &str) -> Result<i64> {
 fn error(code: &str, retry_after: Option<Duration>) -> Error {
     let status = match code {
         "invalid_key" | "key_revoked" | "key_expired" => 401,
-        "forbidden_scope" | "not_granted" | "column_not_granted" | "grant_invalid" => 403,
+        "forbidden_scope" | "rule_denied" | "column_not_readable" | "rules_invalid" => 403,
         "invalid_request" | "unsafe_where" | "unsupported_table" => 400,
         "unknown_database" | "unknown_table" => 404,
         "must_refetch" => 409,
@@ -183,9 +183,9 @@ pub(super) fn terminal(error: &Error) -> bool {
                     | "key_revoked"
                     | "key_expired"
                     | "forbidden_scope"
-                    | "not_granted"
-                    | "column_not_granted"
-                    | "grant_invalid"
+                    | "rule_denied"
+                    | "column_not_readable"
+                    | "rules_invalid"
             )
         )
 }

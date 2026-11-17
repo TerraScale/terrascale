@@ -12,7 +12,6 @@ internal static class ApiExamples
     private const string Expiring = """
         {"id":"01ARZ3NDEKTSV4RRFFQ69G5FA1","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"run-42","branchedFrom":null,"createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[],"allRegions":false,"placementVersion":1,"regions":["gru-1"],"expiresAt":"2026-10-07T13:00:00Z"}
         """;
-    private const string ReadGrant = """{"table":"notes","where":"owner_id = :sub","columns":["id","owner_id","body"],"updatedAt":"2026-11-04T12:00:00Z"}""";
     private const string RulesTables = """{"todos":{"read":"row.owner_id = auth.uid","create":"new.owner_id = auth.uid","columns":["id","owner_id","title","done"],"writable":["title","done"],"set":{"create":{"owner_id":"auth.uid"}}}}""";
     private const string Rules = "{\"tables\":" + RulesTables + "}";
     private const string Row = """{"key":"1","row":{"id":1,"owner_id":"01ARZ3NDEKTSV4RRFFQ69G5FAE","title":"Buy milk","done":0}}""";
@@ -87,7 +86,6 @@ internal static class ApiExamples
         "createFileUpload" => """{"name":"hello.txt","contentType":"text/plain","size":5,"sha256":"LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ=","metadata":{"userId":"01ARZ3NDEKTSV4RRFFQ69G5FAE"}}""",
         "createDatabase" => """{"name":"run-42","ttlSeconds":3600,"regions":["gru-1"]}""",
         "setDatabaseTtl" => """{"ttlSeconds":3600}""",
-        "putReadGrant" => """{"where":"owner_id = :sub","columns":["id","owner_id","body"]}""",
         "putDatabaseRules" => Rules,
         "testDatabaseRules" => """{"operation":"update","table":"todos","auth":{"uid":"01ARZ3NDEKTSV4RRFFQ69G5FAE","claims":{"roles":["admin"]},"org_id":null,"org_role":null,"is_anonymous":false},"row":{"owner_id":"01ARZ3NDEKTSV4RRFFQ69G5FAF","title":"a"},"new":{"title":"b"},"time":1763337600000}""",
         "createRow" => """{"row":{"title":"Buy milk","done":0}}""",
@@ -121,9 +119,8 @@ internal static class ApiExamples
         "createDatabase" or "setDatabaseTtl" => Expiring,
         "getDatabase" or "updateDatabase" or "clearDatabaseTtl" or "moveDatabaseHome" => Database,
         "getDatabaseRegions" => """{"databaseId":"01ARZ3NDEKTSV4RRFFQ69G5FA1","homeRegion":"gru-1","observedAt":"2026-10-07T12:00:00Z","replicas":[{"region":"sjc-1","lagMs":120.5,"lastPulledAt":"2026-10-07T12:00:09Z","lastVerified":"2026-10-07T11:58:00Z","revision":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}],"regions":[{"region":"gru-1","role":"writer","lagMs":null,"lastPulledAt":null,"lastVerified":null,"revision":null},{"region":"sjc-1","role":null,"lagMs":120.5,"lastPulledAt":"2026-10-07T12:00:09Z","lastVerified":"2026-10-07T11:58:00Z","revision":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}]}""",
-        "putReadGrant" or "getReadGrant" => ReadGrant,
-        "listReadGrants" => "{\"grants\":[" + ReadGrant + "]}",
         "testDatabaseRules" => """{"allowed":false,"decidedBy":"update","clause":"row.owner_id = auth.uid","results":[{"rule":"read","value":true},{"rule":"update","value":false}],"columns":["id","owner_id","title","done"],"problems":[]}""",
+        "getRow" => """{"row":{"id":1,"owner_id":"01ARZ3NDEKTSV4RRFFQ69G5FAE","title":"Buy milk","done":0}}""",
         "getDatabaseRules" => "{\"version\":\"01ARZ3NDEKTSV4RRFFQ69G5FAR\",\"tables\":" + RulesTables + ",\"problems\":[],\"updatedAt\":\"2026-11-17T12:00:00Z\",\"updatedBy\":\"01ARZ3NDEKTSV4RRFFQ69G5FAE\"}",
         "putDatabaseRules" or "restoreDatabaseRulesVersion" => "{\"version\":\"01ARZ3NDEKTSV4RRFFQ69G5FAR\",\"tables\":" + RulesTables + ",\"warnings\":[],\"updatedAt\":\"2026-11-17T12:00:00Z\",\"updatedBy\":\"01ARZ3NDEKTSV4RRFFQ69G5FAE\"}",
         "getDatabaseRulesVersion" => "{\"version\":\"01ARZ3NDEKTSV4RRFFQ69G5FAR\",\"tables\":" + RulesTables + ",\"updatedAt\":\"2026-11-17T12:00:00Z\",\"updatedBy\":\"01ARZ3NDEKTSV4RRFFQ69G5FAE\"}",
@@ -158,9 +155,9 @@ internal static class ApiExamples
             "invalid_request, invalid_query",
         "400" when id == "connectSql" => "invalid_request, websocket_required",
         "400" when id == "executeSql" => "syntax_error, undefined_table, undefined_column, duplicate_object, primary_key_violation, unique_violation, not_null_violation, check_violation, foreign_key_violation, constraint_violation, query_canceled, read_only_transaction, transaction_state, sql_error, invalid_request",
-        "400" when id is "putReadGrant" => "invalid_request, unknown_column, unsafe_where",
-        "404" when id is "putReadGrant" => "unknown_database, unknown_table",
-        "404" when id is "getReadGrant" or "deleteReadGrant" => "unknown_database, no_read_grant",
+        "400" when id is "getShape" or "getShapeKey" or "getShapeManifest" or "getRow" => "invalid_request, unknown_column, unsafe_where, unsupported_table",
+        "403" when id is "getShape" or "getShapeKey" or "getShapeManifest" or "getRow" => "forbidden_scope, rule_denied, rules_invalid, column_not_readable",
+        "404" when id == "getRow" => "unknown_database, unknown_table, row_not_found",
         "400" when id is "putDatabaseRules" or "restoreDatabaseRulesVersion" => "invalid_rules, invalid_request",
         "404" when id == "testDatabaseRules" => "unknown_database",
         "403" when id == "testDatabaseRules" => "forbidden_scope",

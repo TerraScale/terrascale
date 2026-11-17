@@ -137,7 +137,7 @@ When a signed-in user needs data held in a TerraScale database, your backend min
 2. Your backend mints the token with `POST /v1/terrascale/projects/{project}/end-user-tokens`, authenticating with a project API key that has `auth:tokens:mint` and no database restriction. Only a project admin can create such a key, and it can neither run SQL nor manage authentication. The request asserts the user ID, optionally the database and up to 32 table names, and optional roles.
 3. Your backend sends only the returned short-lived JWT (at most 15 minutes) to the browser and keeps the project API key on the server.
 
-TerraBase honors these tokens for shape reads when each table has a read grant. The full mint contract, limits and error behavior are in [scoped end-user access tokens](https://github.com/TerraScale/terrascale/blob/main/docs/auth/scoped-end-user-tokens.md); table grants are described in [shape read grants](https://github.com/TerraScale/terrascale/blob/main/docs/terrabase/shape-read-grants.md).
+TerraBase honors these tokens for shape and row reads as the database's rules allow; TerraBase ignores the table names. The full mint contract, limits and error behavior are in [scoped end-user access tokens](https://github.com/TerraScale/terrascale/blob/main/docs/auth/scoped-end-user-tokens.md); rules are described in [TerraBase Rules](https://github.com/TerraScale/terrascale/blob/main/docs/terrabase/rules.md).
 
 ### Run the sample app
 

@@ -50,6 +50,9 @@ internal sealed class TursoReplicaShapeReader : IReplicaShapeReader
     public ValueTask<RulesTestBody> TestRulesAsync(RulesTestRequest request, RulesSet rules, CancellationToken cancellationToken) =>
         new(Task.Run(() => RulesSimulator.Test(request, rules, _reader), cancellationToken));
 
+    public ValueTask<ShapeRowRead> ReadRowAsync(string table, long key, ShapeQuery query, CancellationToken cancellationToken) =>
+        new(Task.Run(() => _reader.ReadRow(table, key, query), cancellationToken));
+
     public ValueTask<StoredRules?> ReadRulesAsync(string? version, CancellationToken cancellationToken) =>
         new(Task.Run(() => _reader.Rules(version), cancellationToken));
 
@@ -58,9 +61,6 @@ internal sealed class TursoReplicaShapeReader : IReplicaShapeReader
 
     public ValueTask<IReadOnlyList<RulesProblem>> CheckRulesAsync(RulesSet rules, CancellationToken cancellationToken) =>
         new(Task.Run(() => RulesChecks.Problems(rules, _reader), cancellationToken));
-
-    public ValueTask<ShapeGrant?> ReadGrantAsync(string table, CancellationToken cancellationToken) =>
-        new(Task.Run(() => _reader.Grant(table), cancellationToken));
 
     public ValueTask<ShapeRead?> ReadAsync(ShapeScope scope, ShapeLineage lineage, long offset, IMemoryBudget memory, CancellationToken cancellationToken) =>
         new(Task.Run<ShapeRead?>(() =>

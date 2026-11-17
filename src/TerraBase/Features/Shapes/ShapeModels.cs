@@ -42,7 +42,6 @@ internal interface IShapeLineages
 {
     ValueTask<LineageResult> ResolveAsync(TenantContext database, string table, ShapeQuery query, CancellationToken cancellationToken);
 
-    ValueTask<LineageResult> CheckAsync(TenantContext database, string table, ShapeQuery query, CancellationToken cancellationToken);
 }
 
 internal interface IShapeSnapshots

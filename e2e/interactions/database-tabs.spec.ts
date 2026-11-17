@@ -1,7 +1,7 @@
 import { expect, test } from '../support/audit';
 import { journey } from '../support/state';
 
-test('database settings, grants and filters save without navigating', async ({ page, audit }) => {
+test('database settings and filters save without navigating', async ({ page, audit }) => {
   const current = journey();
   const original = current.databaseName;
   const renamed = `saved-${current.runId}`;
@@ -37,36 +37,6 @@ test('database settings, grants and filters save without navigating', async ({ p
   await page.locator('#create-table-name').fill('records');
   await page.locator('#create-table').getByRole('button', { name: 'Create table', exact: true }).click();
   await expect(page.locator('[data-table="records"]')).toBeVisible();
-  await page.goto(path + '/grants');
-  const grantsUrl = page.url();
-  await page.locator('html').evaluate(el => el.setAttribute('data-in-place', 'grants'));
-  await page.getByRole('button', { name: 'Add grant', exact: true }).click();
-  await page.locator('#grant-table').fill('missing');
-  await page.locator('#grant').getByRole('button', { name: 'Save grant', exact: true }).click();
-  await expect(page.locator('#grant[open] [role="alert"]')).toContainText('does not exist');
-  await expect(page.locator('#grant:modal')).toBeVisible();
-  await page.locator('#grant-table').fill('still_missing');
-  await page.locator('#grant').getByRole('button', { name: 'Save grant', exact: true }).click();
-  await expect(page.locator('#grant[open] [role="alert"]')).toContainText('Table still_missing does not exist');
-  await expect(page.locator('#grant:modal')).toBeVisible();
-  await page.locator('#grant-table').fill('records');
-  await page.locator('#grant').getByRole('button', { name: 'Save grant', exact: true }).click();
-  const row = page.locator('[data-grant="records"]');
-  await expect(row).toContainText('All rows');
-  await expect(page.locator('#grant')).not.toBeVisible();
-  await expect(page.locator('dialog:modal')).toHaveCount(0);
-  await row.getByRole('button', { name: 'Edit grant on records', exact: true }).click();
-  await page.locator('#grant-0-columns').fill('id');
-  await page.locator('#grant-0').getByRole('button', { name: 'Save grant', exact: true }).click();
-  await expect(row).toContainText('id');
-  await expect(page.locator('dialog:modal')).toHaveCount(0);
-  await row.getByRole('button', { name: 'Remove grant on records', exact: true }).click();
-  await page.locator('#remove-grant-0').getByRole('button', { name: 'Remove grant', exact: true }).click();
-  await expect(row).toHaveCount(0);
-  await expect(page.locator('dialog:modal')).toHaveCount(0);
-  await expect(page).toHaveURL(grantsUrl);
-  await expect(page.locator('html')).toHaveAttribute('data-in-place', 'grants');
-  await audit.check('grant add, edit and remove in place');
 
   await page.goto(path + '/replication');
   const replicationUrl = page.url();

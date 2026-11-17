@@ -235,7 +235,7 @@ namespace TerraScale.Dashboard.Features.Databases
             return result;
         }
 
-        internal static async Task<IResult> DetailPageAsync(HttpContext http, AccountContext context, string id, string tab, IDatabaseBackend backend, DatabaseService databases, string error = "", bool openDelete = false, int status = 200, string? branchName = null, string ttlHours = "", string pointInTime = "", DatabaseGrantForm? grantForm = null, DatabaseRegionsForm? regions = null, string formError = "", CreateTableDraft? tableDraft = null, bool openCreateTable = false, string createdTable = "")
+        internal static async Task<IResult> DetailPageAsync(HttpContext http, AccountContext context, string id, string tab, IDatabaseBackend backend, DatabaseService databases, string error = "", bool openDelete = false, int status = 200, string? branchName = null, string ttlHours = "", string pointInTime = "", DatabaseRegionsForm? regions = null, string formError = "", CreateTableDraft? tableDraft = null, bool openCreateTable = false, string createdTable = "")
         {
             DatabaseRecord database;
             try
@@ -302,8 +302,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 }
             }
             var conflictsRead = tab == "conflicts" ? ConflictsAsync() : null;
-            var tablesRead = tab is "overview" or "tables" or "grants" ? TablesAsync() : null;
-            var grantsRead = tab == "grants" ? DatabaseGrants.ListAsync(context, database, backend, databases, http.RequestAborted) : null;
+            var tablesRead = tab is "overview" or "tables" ? TablesAsync() : null;
             // An all-regions database serves every catalog region; without the catalog it shows its recorded regions.
             if (tab == "replication" || tab == "overview" && database.AllRegions)
             {
@@ -322,18 +321,6 @@ namespace TerraScale.Dashboard.Features.Databases
                     if (error.Length == 0)
                     {
                         error = "Tables are unavailable. The data plane did not answer.";
-                    }
-                }
-            }
-            IReadOnlyList<DatabaseReadGrant>? grants = null;
-            if (grantsRead is not null)
-            {
-                try { grants = await grantsRead; }
-                catch (Exception failure) when (failure is HttpRequestException or System.Text.Json.JsonException || KnownFailure(failure))
-                {
-                    if (error.Length == 0)
-                    {
-                        error = "Grants are unavailable. The data plane did not answer.";
                     }
                 }
             }
@@ -368,8 +355,6 @@ namespace TerraScale.Dashboard.Features.Databases
                 Table = shownTable,
                 Preview = preview,
                 StorageBytes = storage,
-                Grants = grants,
-                GrantForm = grantForm,
                 RegionsForm = regions,
                 TableDraft = tableDraft,
                 ShowCreateTable = openCreateTable || http.Request.Query["dialog"] == "create-table",
@@ -396,7 +381,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 return Results.Empty;
             }
 
-            if (tab is "grants" or "replication" && http.Request.IsDatastarRequest)
+            if (tab == "replication" && http.Request.IsDatastarRequest)
             {
                 await DatastarEvents.PatchElementsAsync(http, DatabaseDetailSection.Create(page));
                 return Results.Empty;

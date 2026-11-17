@@ -225,7 +225,7 @@ public sealed partial class LiveShape
             using var response = new HttpResponseMessage(code switch
             {
                 "invalid_key" or "key_revoked" or "key_expired" => HttpStatusCode.Unauthorized,
-                "forbidden_scope" or "not_granted" or "column_not_granted" or "grant_invalid" => HttpStatusCode.Forbidden,
+                "forbidden_scope" or "rule_denied" or "column_not_readable" or "rules_invalid" => HttpStatusCode.Forbidden,
                 "must_refetch" => HttpStatusCode.Conflict,
                 "shape_busy" => HttpStatusCode.TooManyRequests,
                 _ => HttpStatusCode.ServiceUnavailable,
@@ -253,7 +253,7 @@ public sealed partial class LiveShape
     }
 
     private static bool Terminal(TerraBaseException error) => error.ErrorCode is
-        "invalid_request" or "unsupported_table" or "unknown_database" or "unknown_table" or "invalid_key" or "key_revoked" or "key_expired" or "forbidden_scope" or "not_granted" or "column_not_granted" or "grant_invalid"
+        "invalid_request" or "unsupported_table" or "unknown_database" or "unknown_table" or "invalid_key" or "key_revoked" or "key_expired" or "forbidden_scope" or "rule_denied" or "column_not_readable" or "rules_invalid"
         || error.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden;
 
     private static bool Transient(Exception error) => error switch

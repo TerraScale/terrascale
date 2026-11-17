@@ -6,9 +6,9 @@ SDKs fetch these stable URLs without credentials, cookies or query parameters.
 The URLs do not require signing. The manifest's `expires_at` governs manifest
 refresh; it does not expire the ciphertext URL.
 
-[Shape reads](shape-reads.md) and [read grants](shape-read-grants.md) remain the
-protocol and authorization contracts. TerraBase checks the current token, table
-grant, database and lineage before releasing a manifest or epoch key. Those
+[Shape reads](shape-reads.md) and [rules](rules.md) remain the protocol and
+authorization contracts. TerraBase checks the current token, the table's rules,
+database and lineage before releasing a manifest or epoch key. Those
 responses remain `private, no-store`. Public TBS1 ciphertext does not grant
 access to plaintext. A cached ciphertext GET may succeed for a caller who cannot
 obtain its decryption key; unauthorized manifests and keys must still fail.
@@ -61,8 +61,8 @@ For a change, fetch the current ruleset, preserve unrelated rules, then use
 `cf rulesets update ... --body '<json>'`. Qualify a fresh shape from a Free
 throwaway account, each SDK's actual User-Agent or default HTTP-stack header
 (including no header), and egress from gru/sjc/fra. Record HTTP status,
-`CF-Cache-Status`, `CF-Ray`, bytes and ciphertext SHA-256. Also check granted
-manifest/key success, anonymous rejection, table-scope and absent-grant rejection,
+`CF-Cache-Status`, `CF-Ray`, bytes and ciphertext SHA-256. Also check allowed
+manifest/key success, anonymous rejection, and rejection without a `read` rule,
 and the WAF guard. Delete the proof database and account afterward.
 
 The live qualification includes

@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Net;
 using System.Security.Claims;
 using System.Text.Encodings.Web;
@@ -158,8 +159,6 @@ internal sealed class UserAuthenticationHandler(
             if (project is null || !payload.RootElement.TryGetProperty("instance_id", out var instance)
                 || instance.ValueKind != JsonValueKind.String || instance.GetString() != project
                 || payload.RootElement.TryGetProperty("scope", out _)
-                || payload.RootElement.TryGetProperty("tables", out var granted) && (granted.ValueKind != JsonValueKind.Array || granted.GetArrayLength() > 32
-                    || granted.EnumerateArray().Any(table => table.ValueKind != JsonValueKind.String || !Shapes.ShapeTables.IsValidName(table.GetString())))
                 || payload.RootElement.TryGetProperty(Platform.PlatformExplore.RoleClaim, out _)
                 || payload.RootElement.TryGetProperty("is_anonymous", out var guest) && guest.ValueKind != JsonValueKind.False
                 || !payload.RootElement.TryGetProperty("roles", out var roles) || roles.ValueKind != JsonValueKind.Array
@@ -171,10 +170,6 @@ internal sealed class UserAuthenticationHandler(
 
             claims.Add(new Claim("token_kind", "end_user"));
             claims.AddRange(roles.EnumerateArray().Select(role => role.GetString()!).Distinct(StringComparer.Ordinal).Select(role => new Claim("roles", role)));
-            if (payload.RootElement.TryGetProperty("tables", out var tables))
-            {
-                claims.AddRange(tables.EnumerateArray().Select(table => table.GetString()!).Distinct(StringComparer.Ordinal).Select(table => new Claim("tables", table)));
-            }
             claims.Add(new Claim("scope", "sql:read"));
             claims.Add(new Claim("scope", "sql:write"));
         }
@@ -233,7 +228,10 @@ internal sealed class UserAuthenticationHandler(
 
         scope = endUser ? EndUserScope : scope;
         accepted = new ValidatedTokens.Accepted(
-            checkedWith, jwt.ValidTo, [.. claims.Select(claim => (claim.Type, claim.Value))], project, database, scope, allowlists, key);
+            checkedWith, jwt.ValidTo, [.. claims.Select(claim => (claim.Type, claim.Value))], project, database, scope, allowlists, key)
+        {
+            Auth = endUser ? new RulesAuth(user, FrozenDictionary<string, RulesClaim>.Empty, null, null, false) : null,
+        };
         validated.Add(cacheKey, accepted);
         return Success(accepted, token);
     }

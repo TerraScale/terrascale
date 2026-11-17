@@ -14,7 +14,6 @@
   "DELETE /v1/projects/{project}/databases/{database}",
   "DELETE /v1/projects/{project}/databases/{database}/functions/{function}",
   "DELETE /v1/projects/{project}/databases/{database}/if-id/{expectedId}",
-  "DELETE /v1/projects/{project}/databases/{database}/tables/{table}/read-grant",
   "DELETE /v1/projects/{project}/databases/{database}/tables/{table}/rows/{key}",
   "DELETE /v1/projects/{project}/databases/{database}/ttl",
   "GET /backupz",
@@ -37,14 +36,13 @@
   "GET /v1/projects/{project}/databases/{database}/functions/{function}/stats",
   "GET /v1/projects/{project}/databases/{database}/logs",
   "GET /v1/projects/{project}/databases/{database}/point-in-time",
-  "GET /v1/projects/{project}/databases/{database}/read-grants",
   "GET /v1/projects/{project}/databases/{database}/regions",
   "GET /v1/projects/{project}/databases/{database}/restores/{operation}",
   "GET /v1/projects/{project}/databases/{database}/rules",
   "GET /v1/projects/{project}/databases/{database}/rules/versions",
   "GET /v1/projects/{project}/databases/{database}/rules/versions/{version}",
   "GET /v1/projects/{project}/databases/{database}/sql/ws",
-  "GET /v1/projects/{project}/databases/{database}/tables/{table}/read-grant",
+  "GET /v1/projects/{project}/databases/{database}/tables/{table}/rows/{key}",
   "GET /v1/projects/{project}/databases/{database}/tables/{table}/shape",
   "GET /v1/projects/{project}/databases/{database}/tables/{table}/shape/keys",
   "GET /v1/projects/{project}/databases/{database}/tables/{table}/shape/manifest",
@@ -80,7 +78,6 @@
   "PUT /v1/projects/{project}/databases/{database}/backup-policy",
   "PUT /v1/projects/{project}/databases/{database}/functions/{function}",
   "PUT /v1/projects/{project}/databases/{database}/rules",
-  "PUT /v1/projects/{project}/databases/{database}/tables/{table}/read-grant",
   "PUT /v1/projects/{project}/databases/{database}/ttl"
  ]
 }

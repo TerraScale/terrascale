@@ -81,9 +81,9 @@ Every error body carries a `docsUrl` pointing at the entry below for its `code`.
 
 409 — the project is already closing under another closure id or organization. Use the running closure. Retry: no.
 
-### `column_not_granted`
+### `column_not_readable`
 
-403 — the read grant does not include a column the query names. Extend the grant or drop the column. Retry: no.
+403 — an end-user request's `where` or `columns` names a column outside the table rule's `columns`; `details.column` names it. Read only readable columns. Retry: no.
 
 ### `conflict`
 
@@ -117,10 +117,6 @@ Every error body carries a `docsUrl` pointing at the entry below for its `code`.
 
 503 — the node is out of disk space. Wait for capacity or contact support. Retry: yes, after `Retry-After`.
 
-### `duplicate_column`
-
-400 — a read grant's `columns` names the same column twice. Send each column once. Retry: no.
-
 ### `duplicate_object`
 
 400, SQLSTATE 42P07 — a schema object of that name already exists. Choose another name or drop the existing object. Retry: no.
@@ -148,10 +144,6 @@ Every error body carries a `docsUrl` pointing at the entry below for its `code`.
 ### `gone`
 
 410 — what the request resumes from is gone for good, such as a cursor below retention. Start over from the beginning. Retry: no.
-
-### `grant_invalid`
-
-403 — the read grant does not match the table's current schema. Update the grant. Retry: no.
 
 ### `id_taken`
 
@@ -183,7 +175,7 @@ Every error body carries a `docsUrl` pointing at the entry below for its `code`.
 
 ### `invalid_rules`
 
-400 — the bucket access rules are not a valid owner pointer with bounded roles. Fix the rules. Retry: no.
+400 — the bucket access rules are not a valid owner pointer with bounded roles, or a database rules deploy failed its checks with every problem in `details.problems`. Fix the rules. Retry: no.
 
 ### `invalid_status`
 
@@ -233,10 +225,6 @@ Every error body carries a `docsUrl` pointing at the entry below for its `code`.
 
 409 — the name is already taken. Choose another name. Retry: no.
 
-### `no_read_grant`
-
-404 — the table has no read grant. Create one first. Retry: no.
-
 ### `not_empty`
 
 409 — the resource still contains something. Delete what it contains first. Retry: no.
@@ -244,10 +232,6 @@ Every error body carries a `docsUrl` pointing at the entry below for its `code`.
 ### `not_found`
 
 404 — the addressed resource does not exist or is hidden from the caller. Check the identifier and the credential's reach. Retry: no.
-
-### `not_granted`
-
-403 — this token has no read grant for the table. Create a read grant or use another token. Retry: no.
 
 ### `not_null_violation`
 
@@ -360,6 +344,18 @@ Not an API answer: a TerraBase server logs this code at startup when another org
 ### `row_conflict`
 
 409, SQLSTATE P0001 — a `terrascale_expect_changes(changes(), n)` guard found that the previous statement did not change `n` rows: the row was changed or deleted since you read it. The request rolled back. Reload the row and decide again. Retry: no.
+
+### `row_not_found`
+
+404 — the row does not exist, or the table's `read` rule hides it from this end user. Check the key. Retry: no.
+
+### `rule_denied`
+
+403 — the database's rules have no rule for this operation on the table, or the rule is false; `details.operation` and `details.table` name them. Deploy rules that allow it or use another token. Retry: no.
+
+### `rules_invalid`
+
+403 — the table's rule no longer compiles against the table, usually after a DDL; `GET …/rules` lists the problems. Deploy the rules again. Retry: no.
 
 ### `serialization_conflict`
 

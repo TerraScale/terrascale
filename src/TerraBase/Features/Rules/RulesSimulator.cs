@@ -139,7 +139,6 @@ internal static class RulesSimulator
                 ConditionSource.Row => row.GetValueOrDefault(parameter.Key!),
                 ConditionSource.Claim => Claim(parameter.Key!, list: false),
                 ConditionSource.ClaimList => Claim(parameter.Key!, list: true),
-                ConditionSource.Subject => throw new UnreachableException(),
                 _ => throw new UnreachableException(),
             });
             return engine.Evaluate(schema, condition, projection, parameters);

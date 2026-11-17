@@ -12,7 +12,7 @@ namespace TerraBase.Features.Shapes;
 internal sealed class ShapeService(
     IStorageEngine engine, IShapeSealer sealer, IShapeSnapshotSealer snapshots, IShapeStorage storage, IShapeRetention retention,
     ShapeRegistry registry, ShapeLiveGate gate, IShapeFlights<ShapeRead> flights, IMemoryBudget memory, IHostApplicationLifetime lifetime,
-    ILogger<ShapeService> logger, ReplicaShapeTails replicaTails, ShapeControls controls, IShapeMirror mirror, TimeProvider time) : IShapeLineages, IShapeSnapshots, IShapeChunks, IShapeLiveTail, IShapeGrants
+    ILogger<ShapeService> logger, ReplicaShapeTails replicaTails, ShapeControls controls, IShapeMirror mirror, TimeProvider time) : IShapeLineages, IShapeSnapshots, IShapeChunks, IShapeLiveTail, IShapeRows
 {
     private int _maintaining;
     private readonly ClosedChunks _closed = new(memory);
@@ -61,13 +61,16 @@ internal sealed class ShapeService(
         }
     }
 
-    public async ValueTask<ShapeGrantRead> GetGrantAsync(TenantContext database, string table, CancellationToken cancellationToken)
+    public async ValueTask<ShapeRowRead> ReadRowAsync(TenantContext database, string table, long key, ShapeQuery query, CancellationToken cancellationToken)
     {
         try
         {
             if (replicaTails.Holds(database))
             {
-                return await replicaTails.GrantAsync(database, table, cancellationToken).ConfigureAwait(false);
+                await using var replica = await replicaTails.BeginReadAsync(database, cancellationToken).ConfigureAwait(false);
+                return replica is null
+                    ? new Unavailable("the region replica is catching up; retry later")
+                    : await replica.ReadRowAsync(table, key, query, cancellationToken).ConfigureAwait(false);
             }
 
             if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
@@ -76,83 +79,9 @@ internal sealed class ShapeService(
             }
 
             await using var reader = await storage.BeginTransactionAsync(store, write: false, cancellationToken).ConfigureAwait(false);
-            return await Tables(reader).ReadShapeGrantAsync(table, cancellationToken).ConfigureAwait(false) is { } grant
-                ? grant
-                : new NotFound("the table has no read grant", "no_read_grant");
+            return await Tables(reader).ReadShapeRowAsync(table, key, query, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception error) when (error is ObjectDisposedException or StorageBusyException or QosMemoryException)
-        {
-            return StorageBusy;
-        }
-    }
-
-    public async ValueTask<ShapeGrantList> ListGrantsAsync(TenantContext database, CancellationToken cancellationToken)
-    {
-        try
-        {
-            if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
-            {
-                return UnknownDatabase;
-            }
-
-            await using var reader = await storage.BeginTransactionAsync(store, write: false, cancellationToken).ConfigureAwait(false);
-            return new ShapeGrantList(await Tables(reader).ListShapeGrantsAsync(cancellationToken).ConfigureAwait(false));
-        }
-        catch (Exception error) when (error is ObjectDisposedException or StorageBusyException or QosMemoryException)
-        {
-            return StorageBusy;
-        }
-    }
-
-    public async ValueTask<ShapeGrantPut> PutGrantAsync(TenantContext database, ShapeGrant grant, CancellationToken cancellationToken)
-    {
-        try
-        {
-            if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
-            {
-                return UnknownDatabase;
-            }
-
-            await using var writer = await storage.BeginTransactionAsync(store, write: true, cancellationToken).ConfigureAwait(false);
-            await Tables(writer).PutShapeGrantAsync(grant, cancellationToken).ConfigureAwait(false);
-            _ = await writer.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return grant;
-        }
-        catch (Exception error) when (error is ObjectDisposedException or StorageBusyException or QosMemoryException)
-        {
-            return StorageBusy;
-        }
-    }
-
-    public async ValueTask<ShapeGrantDelete> DeleteGrantAsync(TenantContext database, string table, CancellationToken cancellationToken)
-    {
-        try
-        {
-            if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
-            {
-                return UnknownDatabase;
-            }
-
-            await using var writer = await storage.BeginTransactionAsync(store, write: true, cancellationToken).ConfigureAwait(false);
-            var removed = await Tables(writer).DeleteShapeGrantAsync(table, cancellationToken).ConfigureAwait(false);
-            _ = await writer.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return removed;
-        }
-        catch (Exception error) when (error is ObjectDisposedException or StorageBusyException or QosMemoryException)
-        {
-            return StorageBusy;
-        }
-    }
-
-    public async ValueTask<LineageResult> CheckAsync(TenantContext database, string table, ShapeQuery query, CancellationToken cancellationToken)
-    {
-        try
-        {
-            return await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is { } store
-                ? await CurrentAsync(store, database, table, query, cancellationToken).ConfigureAwait(false)
-                : UnknownDatabase;
-        }
-        catch (Exception error) when (error is ShapeSealOffsetException or ObjectDisposedException or StorageBusyException or QosMemoryException)
         {
             return StorageBusy;
         }
@@ -219,7 +148,7 @@ internal sealed class ShapeService(
             NotFound missing => missing,
             Unavailable unavailable => unavailable,
             Validation => new MustRefetch("the table no longer supports shapes"),
-            Forbidden => new MustRefetch("the table's read grant no longer applies"),
+            Forbidden => new MustRefetch("the rules no longer allow this read"),
             QuotaExceeded busy => busy,
         };
 

@@ -1,9 +1,8 @@
 # TerraBase Rules: end-user reads and writes
 
-Status: Partly built. The rules set, deploy checks, the condition compiler, versions, restore, the section 7 routes and
-the section 5 row writes are live; end-user reads do not use rules yet, and [shape read grants](shape-read-grants.md)
-still decide them. When enforced, rules replace read grants and the `tables` claim of
-[scoped end-user tokens](../auth/scoped-end-user-tokens.md).
+Status: Partly built. The rules set, deploy checks, the condition compiler, versions, restore, the section 7 routes,
+end-user reads (section 4: shapes and the row read), the section 5 row writes and the section 8 simulator are live.
+Rules replaced read grants and the `tables` claim of [scoped end-user tokens](../auth/scoped-end-user-tokens.md).
 
 A project's end users sign in with the project's own ts-auth tenant and read and write a database straight from the
 browser, with no developer backend. The database owner deploys one **rules** set per database: for each table,
@@ -260,8 +259,7 @@ For an end user:
 
 1. The effective condition is `(read) AND (request where)`, each validated on its own first, as grants do today.
 2. The request `where` may name only readable columns (`columns`). Naming any other answers
-   `403 column_not_readable` with `details.column`. Today the request `where` is checked against every column
-   (`ShapeFilter.cs:69`), so filtering on a hidden column reveals its values one guess at a time; W0 fixes that.
+   `403 column_not_readable` with `details.column`, so filtering on a hidden column cannot reveal its values.
 3. The request `columns` must be a subset of `columns`; naming any other answers `403 column_not_readable`.
    Without `columns`, the shape carries every readable column.
 
@@ -277,9 +275,8 @@ fields = … ‖ filter ‖ 0x00 ‖ rules_version ‖ 0x00 ‖ binding
 - `binding` is the canonical JSON of the `auth.*` values the table's `read` rule references, sorted by name; empty
   when it references none. Two users whose rule binds different values never share a handle, a cached body, a sealed
   chunk or an epoch key; a rule that binds nothing (`"read":"TRUE"`) keeps one shared handle.
-- Today the handle keys only on the effective filter (`ShapeHandle.cs:23`), which carries the subject only because
-  `:sub` is spliced into its text. Once auth values are bound as parameters the filter text is the same for every
-  user, so the binding must be in the handle; W0 makes that change.
+- Auth values are bound as statement parameters, so the filter text is the same for every user; the binding in the
+  handle is what keeps users apart.
 - The domain becomes `TB-SHAPE-HANDLE-V3` and the protocol field `"3"`, so every existing handle answers
   `409 must_refetch` once.
 - A deploy changes `rules_version`, so every open shape answers `409 must_refetch` at its next request; a live
@@ -456,11 +453,10 @@ reading or writing rows:
 
 ## 10. Naming
 
-The data feature is **Rules**; "grant" leaves it. Deleted with grants: the routes `…/tables/{table}/read-grant` and
-`…/read-grants`, `ShapeGrantRoute.cs`, `ShapeGrants.cs`, the four grant endpoints, the engine shape reader's grant partial (`Engine/*/*ShapeReader.Grants.cs`) and the
-`~grant:` keys, and the codes `not_granted`, `column_not_granted`, `grant_invalid` and `no_read_grant`.
-`src/TerraBase/Features/UserAuth/ProjectGrants.cs` resolves project access, not data rules; it becomes
-`ProjectAccessResolver.cs`. Dashboard collaborator grants and ts-auth OAuth grants keep their names.
+The data feature is **Rules**; "grant" left it. The table read grant routes, their endpoints, storage and error codes
+are deleted, and the first rules deploy of a database deletes its old `~grant:` rows in the same home write
+transaction. `ProjectAccessResolver.cs` resolves project access, not data rules. Dashboard collaborator grants and
+ts-auth OAuth grants keep their names.
 
 ## 11. Errors
 
@@ -510,8 +506,8 @@ hidden column is refused; two users never share a handle.
 **W1 feat/terrabase-rules.** The rules set, its storage under `~rules:` keys, versions, the section 7 routes
 with `If-Match`, deploy checks and `problems`; the validator extended with qualified and typed references, parameter
 binding, `IS TRUE` compilation and list membership; read enforcement on shapes and the row read with the section 4
-handle, cache and column rules. Deletes the read-grant routes, files, keys and codes (section 10), stops reading the
-`tables` claim, and renames `ProjectGrants.cs`.
+handle, cache and column rules. Deletes the table read grants (section 10), stops reading the `tables` claim, and
+renames `ProjectGrants.cs`.
 
 **W1 feat/auth-data-tokens.** ts-auth: the data audience on every tenant access token; `custom_claims` on users,
 copied into tokens as `claims`; the `auth:tokens:mint` scope; `POST /v1/{project}/custom-tokens` signed by the tenant

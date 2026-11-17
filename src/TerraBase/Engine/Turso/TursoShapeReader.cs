@@ -8,6 +8,7 @@ using System.Text.RegularExpressions;
 using TerraBase.Errors;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
+using TerraBase.Features.Rules;
 using TerraBase.Features.Shapes;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -42,7 +43,10 @@ internal sealed partial class TursoShapeReader(
             return new Unavailable("the table changed while resolving its shape; retry later");
         }
 
-        switch (ShapeFilters.Parse(query, current.Columns))
+        var parsed = query.Viewer is null
+            ? ShapeFilters.Parse(query, current.Columns)
+            : RulesReads.Filter(query, table, current.Columns, Rules(null), this);
+        switch (parsed)
         {
             case Validation error:
                 return error;

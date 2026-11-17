@@ -5,7 +5,5 @@ using TerraBase.Hosting;
 namespace TerraBase.Features.Shapes;
 
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, MaxDepth = RequestJson.StoredMaxDepth + 8)]
-[JsonSerializable(typeof(ShapeGrantRequest))]
-[JsonSerializable(typeof(ShapeGrantBody))]
-[JsonSerializable(typeof(ShapeGrantsBody))]
+[JsonSerializable(typeof(RowResponse))]
 internal sealed partial class ShapesJsonContext : JsonSerializerContext;

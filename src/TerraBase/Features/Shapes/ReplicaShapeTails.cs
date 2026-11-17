@@ -12,9 +12,9 @@ internal interface IReplicaShapeReader : IAsyncDisposable, Rules.IRulesStorage
 {
     ValueTask<LineageResult> ResolveAsync(string table, ShapeQuery query, CancellationToken cancellationToken);
 
-    ValueTask<ShapeRead?> ReadAsync(ShapeScope scope, ShapeLineage lineage, long offset, IMemoryBudget memory, CancellationToken cancellationToken);
+    ValueTask<ShapeRowRead> ReadRowAsync(string table, long key, ShapeQuery query, CancellationToken cancellationToken);
 
-    ValueTask<ShapeGrant?> ReadGrantAsync(string table, CancellationToken cancellationToken);
+    ValueTask<ShapeRead?> ReadAsync(ShapeScope scope, ShapeLineage lineage, long offset, IMemoryBudget memory, CancellationToken cancellationToken);
 
     ValueTask<ShapeProvisional> ProvisionalAsync(ShapeScope scope, ShapeLineage lineage, IReadOnlyList<ProvisionalTransaction> pending, IMemoryBudget memory,
         CancellationToken cancellationToken);
@@ -48,19 +48,6 @@ internal sealed class ReplicaShapeTails(IDatabaseReplicas replicas, IMemoryBudge
 
     internal ValueTask<IReplicaShapeReader?> BeginReadAsync(TenantContext database, CancellationToken cancellationToken) =>
         replicas.BeginShapeReadAsync(database, cancellationToken);
-
-    internal async ValueTask<ShapeGrantRead> GrantAsync(TenantContext database, string table, CancellationToken cancellationToken)
-    {
-        await using var reader = await replicas.BeginShapeReadAsync(database, cancellationToken).ConfigureAwait(false);
-        if (reader is null)
-        {
-            return new Unavailable("the region replica is catching up; retry later");
-        }
-
-        return await reader.ReadGrantAsync(table, cancellationToken).ConfigureAwait(false) is { } grant
-            ? grant
-            : new NotFound("the table has no read grant", "no_read_grant");
-    }
 
     internal async ValueTask<ShapeRead> WaitAsync(ShapeScope scope, ShapeLineage lineage, long offset, string? local, CancellationToken cancellationToken)
     {

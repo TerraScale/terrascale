@@ -76,6 +76,9 @@ internal sealed partial class TursoStorageTransaction : IShapeStorageTransaction
     public ValueTask<ShapeFilterResult> ReadShapeFilterAsync(string table, string generation, ShapeQuery query, CancellationToken cancellationToken) =>
         RunAsync(() => ShapeReader.ReadFilter(table, generation, query), cancellationToken);
 
+    public ValueTask<ShapeRowRead> ReadShapeRowAsync(string table, long key, ShapeQuery query, CancellationToken cancellationToken) =>
+        RunAsync(() => ShapeReader.ReadRow(table, key, query), cancellationToken);
+
     private void RetireShapeTable(string table, string? generation)
     {
         if (generation is not null && StoredShapeTable(table)?.Generation != generation)

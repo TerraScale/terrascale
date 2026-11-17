@@ -11,6 +11,7 @@ internal static class ErrorResponse
         Validation e => new Response(StatusCodes.Status400BadRequest, e.Code, e.Message, op, e.Details),
         PreconditionFailed e => new Response(StatusCodes.Status412PreconditionFailed, e.Code, e.Message, op),
         Unauthorized e => new Response(StatusCodes.Status401Unauthorized, e.Code, e.Message, op),
+        Forbidden { Details: { } details } e => new DetailedResponse(StatusCodes.Status403Forbidden, e.Code, e.Message, details),
         Forbidden e => new Response(StatusCodes.Status403Forbidden, e.Code, e.Message, op),
         QuotaExceeded e => new Response(StatusCodes.Status429TooManyRequests, e.Code, e.Message, op),
         Unavailable e => new Response(StatusCodes.Status503ServiceUnavailable, e.Code, e.Message, op, retryAfter: true),
@@ -35,5 +36,10 @@ internal static class ErrorResponse
 
             return BadRequests.WriteAsync(httpContext, status, code, message, op, details, region, machine, gap: gap);
         }
+    }
+
+    private sealed class DetailedResponse(int status, string code, string message, IReadOnlyDictionary<string, string> details) : IResult
+    {
+        public Task ExecuteAsync(HttpContext httpContext) => BadRequests.WriteDetailedAsync(httpContext, status, code, message, details);
     }
 }

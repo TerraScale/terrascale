@@ -5,11 +5,9 @@ namespace TerraBase.Features.UserAuth;
 
 public sealed record ProjectAccess(string Actor, string ProjectId, string OrganizationId, string? DatabaseName, string? DatabaseId)
 {
-    public bool IsEndUser { get; init; }
+    public bool IsEndUser => Auth is not null;
 
     public IReadOnlySet<string> Roles { get; init; } = FrozenSet<string>.Empty;
-
-    internal TokenTables Tables { get; init; } = TokenTables.None;
 
     internal RulesAuth? Auth { get; init; }
 
@@ -30,15 +28,6 @@ public sealed record ProjectAccess(string Actor, string ProjectId, string Organi
             Access.Value = previous;
         }
     }
-}
-
-internal sealed record TokenTables(IReadOnlySet<string>? Named)
-{
-    public static TokenTables None { get; } = new(FrozenSet<string>.Empty);
-
-    public static TokenTables Every { get; } = new((IReadOnlySet<string>?)null);
-
-    public bool Contains(string table) => Named is null || Named.Contains(table);
 }
 
 internal readonly union ProjectAccessResult(ProjectAccess, NotFound, Unavailable);

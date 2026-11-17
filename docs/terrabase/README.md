@@ -17,8 +17,8 @@ The product goal is to write in any region and read in any region, with free rea
 - [Regional sealing preparation](local-sealing-preparation.md): keys and monthly allowances before regional writes become available.
 - [Region replicas](region-replicas.md) and [replica status](replica-status.md).
 - [Placement](placement.md) and [copy placement during recovery](recovery-copy-placement.md).
-- [Shape reads](shape-reads.md), [table read grants](shape-read-grants.md) and [live shape reads](free-reads-live.md).
-- [Rules](rules.md): end-user reads and writes from the browser (rules management built; enforcement next).
+- [Shape reads](shape-reads.md) and [live shape reads](free-reads-live.md).
+- [Rules](rules.md): end-user reads and writes from the browser (management and reads built; writes next).
 - [Reactive queries](reactive-queries-design.md): live results of any read-only SQL query (proposed).
 - [Regional shape tails and capture retention](region-shape-tails-and-cdc-retention.md).
 - [Shape overlay](shape-overlay.md): provisional, confirmed and reverted live changes across regions.
@@ -35,7 +35,7 @@ The product goal is to write in any region and read in any region, with free rea
 - [Storage migrations](storage-migrations.md).
 - [SQL catalog](sql-catalog.md), [plain-row system records](decisions/2026-11-04-plain-row-storage.md) and [IDs](id-contract.md).
 
-Public routes use `/v1`. ts-auth issues credentials; TerraBase validates project tokens offline and enforces the project, database and scope boundaries. `sql:read` permits SQL reads; writes and DDL also require `sql:write`. End-user tokens read shapes only through table read grants.
+Public routes use `/v1`. ts-auth issues credentials; TerraBase validates project tokens offline and enforces the project, database and scope boundaries. `sql:read` permits SQL reads; writes and DDL also require `sql:write`. End-user tokens read shapes and rows only as the database's [rules](rules.md) allow.
 
 The public listener serves `/openapi/v1.json` and `/scalar/`. `/healthz` is liveness and `/readyz` is readiness; neither returns tenant data. The administrative listener does not serve the public reference.
 

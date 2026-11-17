@@ -113,10 +113,10 @@ public static class ShapesExtensions
             .AddSingleton<ReplicaShapeTails>()
             .AddSingleton<ShapeService>()
             .AddSingleton<IShapeLineages>(provider => provider.GetRequiredService<ShapeService>())
-            .AddSingleton<IShapeGrants>(provider => provider.GetRequiredService<ShapeService>())
             .AddSingleton<IShapeSnapshots>(provider => provider.GetRequiredService<ShapeService>())
             .AddSingleton<IShapeChunks>(provider => provider.GetRequiredService<ShapeService>())
             .AddSingleton<IShapeLiveTail>(provider => provider.GetRequiredService<ShapeService>())
+            .AddSingleton<IShapeRows>(provider => provider.GetRequiredService<ShapeService>())
             .AddSingleton<ShapeMirror>(provider => new ShapeMirror(provider.GetRequiredService<IStorageEngine>(),
                 provider.GetRequiredService<IShapeStorage>(), provider.GetRequiredService<IShapeMetrics>(), provider.GetRequiredService<IMemoryBudget>(), provider.GetRequiredService<TimeProvider>(),
                 () => provider.GetRequiredService<IShapeCrypto>(),

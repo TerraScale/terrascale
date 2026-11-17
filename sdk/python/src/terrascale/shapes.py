@@ -130,7 +130,7 @@ class AsyncShape:
         if frame.get("type") == "error":
             code = _text(frame["code"])
             status = (401 if code in ("invalid_key", "key_expired", "key_revoked", "unauthorized") else
-                      403 if code in ("forbidden_scope", "not_granted", "column_not_granted", "grant_invalid") else
+                      403 if code in ("forbidden_scope", "rule_denied", "column_not_readable", "rules_invalid") else
                       400 if code in ("invalid_request", "unsupported_table") else
                       404 if code in ("unknown_database", "unknown_table") else
                       409 if code == "must_refetch" else 429 if code == "shape_busy" else 503)

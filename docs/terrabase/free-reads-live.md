@@ -1,15 +1,16 @@
 # Live shape admission and hints
 
-Home and replica tail reads share one computation per database, granted shape handle,
+Home and replica tail reads share one computation per database, shape handle,
 offset and read mode. A disconnected reader releases only its reference; the wait
 continues for the remaining readers. Completed live answers remain available for one
 second, within the existing flight and memory bounds. Replica polling belongs to the
 shared computation, rather than to each reader.
 
 Handle resolution is shared by database store identity and commit sequence at home,
-and by the held database revision on replicas. The cache includes the full query and
-bound read grant, holds at most 256 entries, and admits memory before loading. A new
-commit or grant binding cannot reuse an older lookup. Bootstrap and epoch-key release
+and by the held database revision on replicas. The cache includes the full query and,
+for an end user, the token's `auth.*` values, holds at most 256 entries, and admits
+memory before loading. A new commit, which includes a rules deploy, cannot reuse an
+older lookup. Bootstrap and epoch-key release
 still authenticate each HTTP request; keys remain private and no-store.
 
 ## Cache boundaries
@@ -21,7 +22,7 @@ on a cached empty tail.
 
 Shared CDN caches hold TBS1 ciphertext only. Plaintext live responses cannot safely
 use public caching: the current Cloudflare cache rule authenticates neither tokens
-nor table grants. The F6 R2 cache rules therefore keep their existing host/path and
+nor rules. The F6 R2 cache rules therefore keep their existing host/path and
 query restrictions, status exclusions and immutable ciphertext TTL. A live update's
 sealed object uses that same CDN path and verification chain. No public plaintext
 cache rule or new permission is required.
@@ -31,14 +32,14 @@ cache rule or new permission is required.
 `GET …/tables/{table}/shape/ws?handle=…&offset=…` upgrades with subprotocol
 `terrascale.shape.v1`. Repeat the shape's `where` and `columns`. Authenticate through
 an Authorization header or a first JSON text frame `{"type":"auth","token":"…"}`
-within five seconds. Never put credentials in the URL. Browser end-user tokens retain
-their table grants and actor-bound filters.
+within five seconds. Never put credentials in the URL. Browser end-user tokens keep
+their rules-bound filters.
 
 The server sends `{"type":"ready"}`, then a `new_data` frame with `handle`, `offset`,
 `next_offset` and `manifest`. Hints carry no rows. The manifest contains the existing
 sealed-object descriptors; it may be empty while mirroring catches up. Clients apply
 only verified HTTP data and retain their last applied offset across disconnects.
-Credentials and grants are rechecked before hints and at each 20-second wait deadline.
+Credentials and rules are rechecked before hints and at each 20-second wait deadline.
 The existing project-key revocation watch also terminates the socket. A stale handle
 sends `must_refetch`; authorization loss terminates access. Socket writes have a
 five-second deadline and no unbounded outgoing queue.
@@ -69,7 +70,7 @@ The server advertises the hint subprotocol in `TB-Shape-Hints`. The client waits
 that socket at the head, offers hinted manifests to its existing CDN verifier and
 reads catch-up data over HTTP. A missing mirror falls back to origin HTTP. Broken
 sockets reconnect with backoff while HTTP long-polling remains available. Authentication
-and grant errors terminate the subscription; `must_refetch` restarts its snapshot.
+and rules errors terminate the subscription; `must_refetch` restarts its snapshot.
 
 `terrabase_shape_flights_started_total` counts shared computations, while
 `terrabase_shape_flights_active` measures active or briefly retained computations.

@@ -18,7 +18,7 @@ const text = `# TerraScale documentation
 > - Postgres wire: postgresql://{database}@pg.terrascale.tech:5432/{database}
 >   with the API key as the password. Statements stay in the SQLite dialect.
 
-> Live shapes support where filters and selected columns. End-user tokens need table read grants.
+> Live shapes support where filters and selected columns. End-user tokens read under database rules.
 > Agent databases support TTL, forks and database-scoped keys. Point-in-time recovery creates a new database;
 > in-place restore is coming. Database deletion destroys backup data keys; physical cleanup is separate.
 > Plans enforce write caps and SQL read fair use. Customer-set hard dollar spending caps are coming.

@@ -19,6 +19,9 @@ public sealed record ErrorDetail(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? DocsUrl = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? UnavailableFrom = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTimeOffset? UnavailableTo = null);
+public sealed record DetailedErrorBody(DetailedErrorDetail Error);
+public sealed record DetailedErrorDetail(string Code, string Message, IReadOnlyDictionary<string, string> Details, string RequestId,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? DocsUrl = null);
 public static class BadRequests
 {
     internal const string UnknownRoute = "unknown_route";
@@ -109,6 +112,16 @@ public static class BadRequests
     {
         response.Clear();
         response.Headers.CacheControl = "no-store";
+    }
+
+    internal static Task WriteDetailedAsync(HttpContext context, int status, string code, string message, IReadOnlyDictionary<string, string> details)
+    {
+        context.Response.StatusCode = status;
+        context.Response.Headers.CacheControl = "no-store";
+        context.Response.ContentType = "application/json";
+        return JsonSerializer.SerializeAsync(context.Response.Body,
+            new DetailedErrorBody(new DetailedErrorDetail(code, message, details, context.TraceIdentifier, ErrorDocs.Url(code))),
+            TerraBaseJsonContext.Default.DetailedErrorBody, context.RequestAborted);
     }
 
     internal static Task WriteAsync(

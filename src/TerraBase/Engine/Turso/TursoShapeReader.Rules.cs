@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using TerraBase.Features.Rules;
@@ -10,8 +11,10 @@ internal sealed partial class TursoShapeReader : IRulesSchema
 {
     internal const string RulesCurrent = "~rules:current";
     internal const string RulesVersionPrefix = "~rules:v:";
-    internal const string KeptShapeRows = "((handle >= '~grant:' AND handle < '~grant;') OR (handle >= '~rules:' AND handle < '~rules;')) AND offset = 0";
+    internal const string KeptShapeRows = "handle >= '~rules:' AND handle < '~rules;' AND offset = 0";
     private const int RulesHeaderBytes = 512;
+    private const int ParsedRules = 256;
+    private static readonly ConcurrentDictionary<string, StoredRules> Parsed = new(StringComparer.Ordinal);
 
     internal StoredRules? Rules(string? version)
     {
@@ -29,6 +32,11 @@ internal sealed partial class TursoShapeReader : IRulesSchema
             version = Encoding.ASCII.GetString(TursoSession.Bytes(pointer, 0));
         }
 
+        if (Parsed.TryGetValue(version, out var cached))
+        {
+            return cached;
+        }
+
         var read = Command("SELECT body, sealed_at FROM _tb_shape_chunk WHERE handle = $key AND offset = 0;");
         read.Parameters.AddWithValue("$key", RulesVersionPrefix + version);
         CountRead("shape");
@@ -43,7 +51,14 @@ internal sealed partial class TursoShapeReader : IRulesSchema
         var (digest, updatedBy) = RulesHeader(body.AsSpan(0, split));
         var rules = JsonSerializer.Deserialize(body.AsSpan(split + 1), RulesJsonContext.Default.RulesSet)
             ?? throw new InvalidDataException("a stored rules version is damaged");
-        return new StoredRules(version, rules, new DateTimeOffset(reader.GetInt64(1), TimeSpan.Zero), updatedBy, digest);
+        var stored = new StoredRules(version, rules, new DateTimeOffset(reader.GetInt64(1), TimeSpan.Zero), updatedBy, digest);
+        if (Parsed.Count >= ParsedRules)
+        {
+            Parsed.Clear();
+        }
+
+        Parsed[version] = stored;
+        return stored;
     }
 
     internal RulesVersionPage? RulesVersions(string? after, int limit)

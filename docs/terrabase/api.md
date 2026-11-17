@@ -15,7 +15,7 @@ TerraBase serves SQL databases under `/v1/projects/{project}/databases/{database
 
 [Native SQL](sql/native-sql.md) specifies types, parameter binding, limits and errors. [Shapes](shape-reads.md) specify their parameters and continuations. PostgreSQL drivers use the TLS PostgreSQL listener and the same SQLite dialect.
 
-SQL requires `sql:read`; writes and DDL also require `sql:write`. End-user tokens can read authorized shapes through [table read grants](shape-read-grants.md). They do not grant general SQL or management access.
+SQL requires `sql:read`; writes and DDL also require `sql:write`. End-user tokens read shapes and rows only as the database's [rules](rules.md) allow. They get no SQL or management access.
 
 ## Rules
 
@@ -28,7 +28,9 @@ SQL requires `sql:read`; writes and DDL also require `sql:write`. End-user token
 | POST | `/rules:test` | `databases:read` | Simulates a request against deployed or draft rules without reading or writing rows; reports the deciding clause, readable columns and draft problems ([section 8](rules.md#8-simulator)) |
 | POST | `/rules/versions/{version}/restore` | `databases:write` | Deploys that version's body as a new version |
 
-[Rules](rules.md) section 7 specifies the routes, preconditions and storage. A deploy compiles every condition against the current
+| GET | `/tables/{table}/rows/{key}?columns=` | `sql:read` | One row as `{"row":{…}}`; an end user gets only rows `read` allows and its readable columns; `404 row_not_found` |
+
+[Rules](rules.md) section 7 specifies the routes, preconditions and storage; section 4 the end-user reads. A deploy compiles every condition against the current
 schema and answers `400 invalid_rules` with every problem in `details.problems`; `PUT` and restore run in the home region
 and answer `421 wrong_region` elsewhere.
 

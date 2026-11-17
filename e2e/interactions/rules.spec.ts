@@ -5,6 +5,39 @@ import { auth } from '../support/stack';
 import { journey, saveSecret } from '../support/state';
 
 const api = 'https://api.terrascale.tech';
+const crockford = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+
+type ShapeRow = Record<string, unknown>;
+type ShapeBody = { handle: string; next_offset: string; changes: { ops: { op: string; row: ShapeRow }[] }[] };
+
+test.describe.configure({ mode: 'serial' });
+
+function ulid(): string {
+  return '01' + Array.from(randomBytes(24), byte => crockford[byte % 32]).join('');
+}
+
+async function mintKey(request: APIRequestContext): Promise<string> {
+  const current = journey();
+  const token = await signInToken(request, 'rules-reads-owner');
+  const response = await request.post(`${auth}/v1/terrascale/organizations/${current.organizationId}/projects/${current.projectId}/api-keys`, {
+    headers: { authorization: 'Bearer ' + token }, data: { name: 'rules reads mint', scopes: ['auth:tokens:mint'] },
+  });
+  expect(response.status()).toBe(201);
+  const key = (await response.json()).key as string;
+  saveSecret('rules-reads-mint-key', key);
+  return key;
+}
+
+async function endUserToken(request: APIRequestContext, key: string, user: string): Promise<string> {
+  const current = journey();
+  const response = await request.post(`${auth}/v1/terrascale/projects/${current.projectId}/end-user-tokens`, {
+    headers: { authorization: 'Bearer ' + key }, data: { user_id: user, database: current.databaseId },
+  });
+  expect(response.status()).toBe(200);
+  const credential = (await response.json()).access_token as string;
+  saveSecret('rules-reads-end-user-' + user, credential);
+  return credential;
+}
 
 type Problem = { table: string; field: string; code: string; message: string };
 type Simulation = { allowed: boolean; decidedBy: string; clause: string | null; results: { rule: string; value: boolean }[]; columns: string[]; problems: Problem[] };
@@ -219,5 +252,79 @@ test('rules compile, keep versions, simulate deployed and draft requests and res
   } finally {
     await execute(`DROP TABLE IF EXISTS ${table}`);
     await execute(`DROP TABLE IF EXISTS ${otherTable}`);
+  }
+});
+
+test('end users read only the rows and columns the rules allow, under handles bound to the user and the rules version', async ({ request, page }) => {
+  const current = journey();
+  const database = `${api}/v1/projects/${current.projectId}/databases/${current.databaseId}`;
+  const table = 'rules_notes_' + randomBytes(4).toString('hex');
+  const shape = `${database}/tables/${table}/shape`;
+  const rows = `${database}/tables/${table}/rows/`;
+  const owner = await ownerToken(request);
+  const headers = (extra: Record<string, string> = {}) => ({ authorization: 'Bearer ' + owner, ...extra });
+  const execute = async (sql: string) => {
+    const response = await request.post(database + '/sql/execute', { headers: headers(), data: { statements: [{ sql }] } });
+    expect(response.status(), sql).toBe(200);
+  };
+  const deploy = async (tables: Record<string, unknown>) => {
+    const deployed = await answer<RulesBody>(await request.get(database + '/rules', { headers: headers() }), 200);
+    return answer<RulesBody>(await request.put(database + '/rules', { headers: headers({ 'if-match': `"${deployed.version}"` }), data: { tables } }), 200);
+  };
+  const [alice, bob] = [ulid(), ulid()];
+
+  await execute(`CREATE TABLE ${table} (id INTEGER PRIMARY KEY, owner TEXT NOT NULL, body TEXT NOT NULL, secret TEXT NOT NULL)`);
+  try {
+    await execute(`INSERT INTO ${table} (id, owner, body, secret) VALUES (1, '${alice}', 'a1', 'pin-1111'), (2, '${alice}', 'a2', 'pin-2222'), (3, '${bob}', 'b1', 'pin-3333')`);
+    const mint = await mintKey(page.request);
+    const aliceToken = await endUserToken(request, mint, alice);
+    const bobToken = await endUserToken(request, mint, bob);
+    const read = (credential: string, query: string, maxRedirects = 20) =>
+      request.get(`${shape}?${query}`, { headers: { authorization: 'Bearer ' + credential }, maxRedirects });
+    const row = (credential: string, key: string) => request.get(rows + key, { headers: { authorization: 'Bearer ' + credential } });
+
+    const denied = await answer<{ error: { details: Record<string, string> } }>(await read(aliceToken, 'offset=-1'), 403, 'rule_denied');
+    expect(denied.error.details).toEqual({ operation: 'read', table });
+
+    await deploy({ [table]: { read: 'row.owner = auth.uid', columns: ['id', 'owner', 'body'] } });
+    for (const query of ["where=secret = 'pin-1111'", 'where=length(secret) > 0', 'columns=id,secret']) {
+      const hidden = await answer<{ error: { details: Record<string, string> } }>(await read(aliceToken, 'offset=-1&' + query), 403, 'column_not_readable');
+      expect(hidden.error.details).toEqual({ column: 'secret' });
+    }
+
+    const bootstrap = async (credential: string) => {
+      const redirect = await read(credential, 'offset=-1', 0);
+      expect(redirect.status(), await redirect.text()).toBe(307);
+      const handle = redirect.headers()['tb-shape-handle'];
+      const body = await answer<ShapeBody>(await request.get(api + redirect.headers()['location'], { headers: { authorization: 'Bearer ' + credential } }), 200);
+      expect(body.handle).toBe(handle);
+      return { handle, body, rows: body.changes.flatMap(change => change.ops.map(op => op.row)) };
+    };
+    const aliceShape = await bootstrap(aliceToken);
+    const bobShape = await bootstrap(bobToken);
+    expect(aliceShape.handle).not.toBe(bobShape.handle);
+    expect(aliceShape.rows).toEqual([{ id: 1, owner: alice, body: 'a1' }, { id: 2, owner: alice, body: 'a2' }]);
+    expect(bobShape.rows).toEqual([{ id: 3, owner: bob, body: 'b1' }]);
+
+    expect(await answer(await row(aliceToken, '1'), 200)).toEqual({ row: { id: 1, owner: alice, body: 'a1' } });
+    await answer(await row(aliceToken, '3'), 404, 'row_not_found');
+    await answer(await row(aliceToken, '99'), 404, 'row_not_found');
+    await answer(await request.get(rows + '1?columns=secret', { headers: { authorization: 'Bearer ' + aliceToken } }), 403, 'column_not_readable');
+    expect(await answer(await row(owner, '3'), 200)).toEqual({ row: { id: 3, owner: bob, body: 'b1', secret: 'pin-3333' } });
+
+    await deploy({ [table]: { read: 'row.owner = auth.uid', columns: ['id', 'body'] } });
+    const stale = await read(aliceToken, `handle=${aliceShape.handle}&offset=${aliceShape.body.next_offset}`);
+    const refetch = await answer<{ error: { handle: string } }>(stale, 409, 'must_refetch');
+    expect(refetch.error.handle).not.toBe(aliceShape.handle);
+    expect(stale.headers()['tb-shape-handle']).toBe(refetch.error.handle);
+    expect((await bootstrap(aliceToken)).rows).toEqual([{ id: 1, body: 'a1' }, { id: 2, body: 'a2' }]);
+    expect(await answer(await row(aliceToken, '2'), 200)).toEqual({ row: { id: 2, body: 'a2' } });
+
+    await execute(`ALTER TABLE ${table} DROP COLUMN body`);
+    await answer(await read(aliceToken, 'offset=-1'), 403, 'rules_invalid');
+    await answer(await row(aliceToken, '1'), 403, 'rules_invalid');
+    await deploy({});
+  } finally {
+    await execute(`DROP TABLE IF EXISTS ${table}`);
   }
 });

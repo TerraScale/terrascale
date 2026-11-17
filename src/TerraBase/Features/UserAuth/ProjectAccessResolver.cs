@@ -41,13 +41,10 @@ internal static class ProjectAccessResolver
             }
         }
 
-        var auth = context.Features.Get<RulesAuth>();
         return new ProjectAccess(actor, project, organization, restricted, restrictedId)
         {
-            IsEndUser = jwt.HasClaim("token_kind", "end_user"),
             Roles = jwt.FindAll("roles").Select(claim => claim.Value).ToFrozenSet(StringComparer.Ordinal),
-            Tables = auth is null ? new TokenTables(jwt.FindAll("tables").Select(claim => claim.Value).ToFrozenSet(StringComparer.Ordinal)) : TokenTables.Every,
-            Auth = auth,
+            Auth = context.Features.Get<RulesAuth>(),
         };
     }
 }

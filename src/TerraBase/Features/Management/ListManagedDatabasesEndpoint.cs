@@ -81,7 +81,7 @@ internal sealed class ListManagedDatabasesEndpoint(
         IResult result = null!;
         var grant = new ProjectAccess(actor, project, owner, restricted, restrictedId)
         {
-            IsEndUser = HttpContext.User.HasClaim("token_kind", "end_user"),
+            Auth = HttpContext.Features.Get<RulesAuth>(),
             Roles = HttpContext.User.FindAll("roles").Select(claim => claim.Value).ToFrozenSet(StringComparer.Ordinal),
         };
         await ProjectAccess.RunAsync(grant, async () => result = await ListAsync(grant.Actor, owner, project, restricted, grant, page, cancellationToken).ConfigureAwait(false))
