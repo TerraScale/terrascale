@@ -8,7 +8,8 @@ public sealed record LiveError(string Id, int Status, string Message);
 public static class LiveDatabaseView
 {
     public static async Task<IResult> StreamAsync(HttpContext http, string region,
-        Func<AccountContext, DatabaseRecord, CancellationToken, Task<LiveFragment>> read, CancellationToken cancellationToken)
+        Func<AccountContext, DatabaseRecord, CancellationToken, Task<LiveFragment>> read, CancellationToken cancellationToken,
+        IAsyncEnumerable<DateTimeOffset>? hints = null)
     {
         var sessions = http.RequestServices.GetRequiredService<DashboardSessions>();
         var accounts = http.RequestServices.GetRequiredService<AccountService>();
@@ -40,7 +41,7 @@ public static class LiveDatabaseView
             }
         }
 
-        await live.StreamAsync(http, ReadAsync, live.ChangesAsync(cancellationToken), cancellationToken);
+        await live.StreamAsync(http, ReadAsync, hints ?? live.ChangesAsync(cancellationToken), cancellationToken);
         return Results.Empty;
     }
 }

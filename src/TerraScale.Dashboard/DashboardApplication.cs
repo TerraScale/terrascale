@@ -182,6 +182,7 @@ namespace TerraScale.Dashboard
                 EndpointRegistration.Create<ListDatabasesApiEndpoint>(),
                 EndpointRegistration.Create<DatabaseOverviewEndpoint>(),
                 EndpointRegistration.Create<DatabaseTablesEndpoint>(),
+                EndpointRegistration.Create<DatabaseTablesLiveEndpoint>(),
                 EndpointRegistration.Create<DatabaseGrantsPageEndpoint>(),
                 EndpointRegistration.Create<DatabaseReplicationEndpoint>(),
                 EndpointRegistration.Create<DatabaseReplicationLiveEndpoint>(),
