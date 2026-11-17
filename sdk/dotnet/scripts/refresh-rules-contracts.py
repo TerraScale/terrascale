@@ -39,12 +39,12 @@ body["operations"] = [op for op in body["operations"] if op["operation"] not in 
 body["operations"].extend({"client": "database", **op} for op in operations)
 inventory.write_text(json.dumps(body, indent=2) + "\n")
 if len(sys.argv) > 1:
-    document = json.loads(Path(sys.argv[1]).read_text())
+    openapi = json.loads(Path(sys.argv[1]).read_text())
     current = root / "sdk/dotnet/contracts/terrabase/current-public-routes.json"
     body = json.loads(current.read_text())
     body["serverCommit"] = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
     body["operations"] = [{"method": method.upper(), "path": path, "operation": operation["operationId"]}
-                          for path, methods in sorted(document["paths"].items()) for method, operation in sorted(methods.items())
+                          for path, methods in sorted(openapi["paths"].items()) for method, operation in sorted(methods.items())
                           if method in ("get", "put", "post", "delete", "patch", "head")]
     current.write_text(json.dumps(body, indent=2) + "\n")
     subprocess.run([sys.executable, str(root / "sdk/python/scripts/refresh-contract.py"), sys.argv[1],
