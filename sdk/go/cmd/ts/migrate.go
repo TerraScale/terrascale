@@ -163,8 +163,12 @@ func applyMigrations(ctx context.Context, db *v1.Database, ms []migration, out i
 			}
 			continue
 		}
+		statements, err := splitSQL(m.sql)
+		if err != nil {
+			return fmt.Errorf("%s: %w", m.name, err)
+		}
 		var batch []v1.Statement
-		for _, st := range splitSQL(m.sql) {
+		for _, st := range statements {
 			batch = append(batch, v1.Statement{SQL: st})
 		}
 		batch = append(batch, v1.Statement{
@@ -393,48 +397,37 @@ func schemaDiff(base, branch string, from, to map[string]string) string {
 	return fmt.Sprintf("--- %s\n+++ %s\n", base, branch) + b.String()
 }
 
-// splitSQL splits a script into statements at semicolons outside quotes and
-// comments, dropping statements without code.
-func splitSQL(script string) []string {
-	var out []string
-	start, code := 0, false
-	for i := 0; i < len(script); i++ {
-		c := script[i]
-		switch {
-		case c == '\'' || c == '"' || c == '`' || c == '[':
-			end := c
-			if c == '[' {
-				end = ']'
-			}
-			code = true
-			if j := strings.IndexByte(script[i+1:], end); j < 0 {
-				i = len(script)
-			} else {
-				i += j + 1
-			}
-		case strings.HasPrefix(script[i:], "--"):
-			if j := strings.IndexByte(script[i:], '\n'); j < 0 {
-				i = len(script)
-			} else {
-				i += j
-			}
-		case strings.HasPrefix(script[i:], "/*"):
-			if j := strings.Index(script[i+2:], "*/"); j < 0 {
-				i = len(script)
-			} else {
-				i += j + 3
-			}
-		case c == ';':
-			if code {
-				out = append(out, strings.TrimSpace(script[start:i]))
-			}
-			start, code = i+1, false
-		case c != ' ' && c != '\t' && c != '\n' && c != '\r':
-			code = true
+func splitSQL(script string) ([]string, error) {
+	tokens, err := schemaTokens(script)
+	if err != nil {
+		return nil, err
+	}
+	var statements []string
+	for len(tokens) > 0 {
+		if tokens[0].raw == ";" {
+			tokens = tokens[1:]
+			continue
 		}
+		trigger := len(tokens) > 1 && strings.EqualFold(tokens[0].raw, "CREATE") &&
+			(strings.EqualFold(tokens[1].raw, "TRIGGER") || len(tokens) > 2 &&
+				(strings.EqualFold(tokens[1].raw, "TEMP") || strings.EqualFold(tokens[1].raw, "TEMPORARY")) && strings.EqualFold(tokens[2].raw, "TRIGGER"))
+		depth, end := 0, len(tokens)
+		for i, token := range tokens {
+			if trigger {
+				switch strings.ToUpper(token.raw) {
+				case "BEGIN", "CASE":
+					depth++
+				case "END":
+					depth--
+				}
+			}
+			if token.raw == ";" && depth == 0 {
+				end = i + 1
+				break
+			}
+		}
+		statements = append(statements, strings.TrimSuffix(strings.TrimSpace(script[tokens[0].start:tokens[end-1].end]), ";"))
+		tokens = tokens[end:]
 	}
-	if code {
-		out = append(out, strings.TrimSpace(script[start:]))
-	}
-	return out
+	return statements, nil
 }

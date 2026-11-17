@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 
 	"terrascale.tech/sdk/v1"
 )
@@ -28,7 +29,16 @@ func dbImport(ctx context.Context, db *v1.Database, path string, from int, input
 	if err != nil {
 		return err
 	}
-	statements := splitSQL(string(script))
+	statements, err := splitSQL(string(script))
+	if err != nil {
+		return err
+	}
+	if len(statements) > 0 && strings.EqualFold(statements[0], "BEGIN") {
+		if len(statements) < 2 || !strings.EqualFold(statements[len(statements)-1], "COMMIT") {
+			return errors.New("dump starts with BEGIN but does not end with COMMIT")
+		}
+		statements = statements[1 : len(statements)-1]
+	}
 	total := len(statements)
 	if from < 1 {
 		from = 1

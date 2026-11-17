@@ -482,6 +482,16 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		return newMigration(operands[0], out)
 	}
 	dispatch := func(s *session) error {
+		if name == "db export" {
+			return dbExport(ctx, s, operands[0], *exportFile, *force, out)
+		}
+		if name == "db import" {
+			start, err := parseImportFrom(*from)
+			if err != nil {
+				return err
+			}
+			return dbImport(ctx, s.tb.Database(s.project, operands[0]), operands[1], start, in, out, prompt)
+		}
 		if strings.HasPrefix(name, "db branch ") || name == "db url" {
 			if name == "db branch delete" {
 				if err := confirmDelete(operands[0], s.project, *yes, in, prompt, tty); err != nil {
@@ -651,16 +661,6 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	}
 	if name == "keys rotate" {
 		return rotateKey(ctx, s, signIn, rotationID, rotationGrace, out, prompt)
-	}
-	if name == "db export" {
-		return dbExport(ctx, s, operands[0], *exportFile, *force, out)
-	}
-	if name == "db import" {
-		start, err := parseImportFrom(*from)
-		if err != nil {
-			return err
-		}
-		return dbImport(ctx, s.tb.Database(s.project, operands[0]), operands[1], start, in, out, prompt)
 	}
 	if name == "db delete" {
 		if err := confirmDelete(operands[0], s.project, *yes, in, prompt, tty); err != nil {
