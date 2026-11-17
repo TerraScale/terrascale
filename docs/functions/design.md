@@ -54,8 +54,9 @@ for moving execution onto dedicated function hosts; v1 shares the TerraBase proc
 
 - **Auth**: deploy, list, logs and delete need a project API key with `sql:read` and `sql:write`; invoke
   needs `sql:read`. SQL runs with the function's authority (reads and writes), like a backend endpoint.
-- **Billing**: every invocation counts one `invoke` operation in the database's usage, next to reads and writes, and its SQL
-  counts as normal SQL reads and writes. Pricing treats invocations as operations.
+- **Billing**: every invocation whose handler starts is one operation unit in the organization's monthly operations
+  bucket, shared with write units, including errors and timeouts. No CPU or duration charge. SQL inside the handler counts
+  as ordinary SQL reads (fair use) and write units. Past the plan's cap a new invocation is refused with `429 quota_exceeded`.
 - **Secrets**: each function has a write-only `secrets` map exposed to its handler as `event.secrets` (see Secrets below).
   Do not put credentials in function source.
 - **Logs**: `console.log` lines, status, duration and error of each invocation are kept per function and read through

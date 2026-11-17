@@ -95,7 +95,9 @@ internal static class CompleteMonths
         clock.Now = clock.Now.AddTicks(1);
         using var closed = await PageAsync("?month=2028-02");
         Require(closed.RootElement.GetProperty("periodStart").GetDateTimeOffset() == clock.Now.AddMonths(-1), "first instant of the next UTC month is complete");
+        var invocations = await FunctionInvocations.RunAsync(services, http, clock.Now, cancellationToken);
         Console.WriteLine("usage complete-month journey: two months back=37, persisted zero=0, absent=null, paging=25+2, current/future=400, UTC boundary and Usage-Final=false passed");
+        Console.WriteLine("usage function invocations journey: " + invocations);
     }
 
     private static void Require(bool accepted, string message)

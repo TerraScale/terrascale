@@ -33,6 +33,7 @@ Starter, Pro and Team can be billed monthly or yearly; a year costs ten monthly 
 ## What is billed
 
 - **Writes.** ${metering.operationUnit.definition}
+- **Function invocations.** Each invocation is ${count(metering.functionInvocation.operationUnits)} operation unit${metering.functionInvocation.operationUnits === 1 ? '' : 's'}. ${metering.functionInvocation.definition}
 - **Storage.** ${storageDefinition}
 - **Reads.** SQL reads are not billed; they count toward the plan's monthly fair use. Shape reads served from the edge are free and not counted.
 
@@ -40,7 +41,7 @@ ${metering.allowances.definition}
 
 Overage rates on paid plans: $${rates.operationUnitsPerMillionUsd} per million operation units and $${rates.storageGbRegionMonthUsd} per GB-month of storage.
 
-When a plan's write cap or SQL read fair use is reached, the statement answers \`429 quota_exceeded\` (Postgres SQLSTATE \`53100\`) until the next UTC month or an upgrade.
+When a plan's write cap or SQL read fair use is reached, the statement answers \`429 quota_exceeded\` (Postgres SQLSTATE \`53100\`) until the next UTC month or an upgrade. A function invocation past the write cap answers \`429 quota_exceeded\` the same way.
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 

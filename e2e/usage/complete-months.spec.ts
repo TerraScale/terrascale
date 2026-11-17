@@ -27,6 +27,7 @@ test('the allowance endpoint reads complete persisted months without inventing z
       maxBuffer: 1024 * 1024,
     });
     expect(stdout).toContain('usage complete-month journey: two months back=37, persisted zero=0, absent=null, paging=25+2, current/future=400, UTC boundary and Usage-Final=false passed');
+    expect(stdout).toMatch(/usage function invocations journey: before=\{.*"operations":0,.*"invocations":0\} after=\{.*"invocations":4\} capped=\{.*"operations":50000,.*"writeUnits":49999,"invocations":1\} refusal=429 quota_exceeded/);
   } finally {
     await rm(data, { recursive: true, force: true });
   }
