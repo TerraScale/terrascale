@@ -5,7 +5,7 @@ from __future__ import annotations
 import builtins
 import os
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any, TypeVar, overload
 
 import httpx
@@ -57,6 +57,7 @@ from .auth import (
     update_user_call,
     verify_user_api_key_call,
 )
+from .custom_tokens import ClaimValue, CustomToken, mint_custom_token_call
 from .errors import APIError, CommitUncertainError, InvalidResponseError, SqlError, SqlErrorCodes, error_for
 from .ids import is_valid_id, validate_id
 from .session import SqlSession
@@ -338,6 +339,11 @@ class TerraScale:
         """Mint a key for one database ULID, using this client's API key; the default lifetime is 3600 seconds."""
         return self._send(_scoped_key_call(
             self._api_key, self._issuer, project if project is not None else self.project, database, access, ttl_seconds))
+
+    def mint_custom_token(self, user_id: str, *, database: str | None = None,
+                          claims: Mapping[str, ClaimValue] | None = None, project: str | None = None) -> CustomToken:
+        return self._send(mint_custom_token_call(
+            self._api_key, self._issuer, project if project is not None else self.project, user_id, database, claims))
 
     def create_api_key(
         self, organization: str, name: str, scopes: Sequence[str], *,

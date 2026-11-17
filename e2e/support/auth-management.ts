@@ -13,7 +13,7 @@ import { journey, saveCookies, saveSecret } from './state';
 
 export type AuthOwner = { runId: string; password: string; organizationId: string; projectId: string };
 
-export type AuthManagement = { user: string; readKey: string; writeKey: string; csrf: string; ownerToken: string };
+export type AuthManagement = { user: string; readKey: string; writeKey: string; mintKey: string; csrf: string; ownerToken: string };
 
 export async function signInToken(context: APIRequestContext, label: string): Promise<string> {
   const client = '00000000000000000000000007';
@@ -206,6 +206,12 @@ export async function prepareAuthManagement(page: Page, sdk: string, current: Au
   }
   const [readKey, writeKey] = keys;
   const ownerToken = await signInToken(page.request, 'auth-owner');
+  const minter = await page.request.post(`${auth}/v1/terrascale/organizations/${current.organizationId}/projects/${current.projectId}/api-keys`, {
+    headers: { Authorization: 'Bearer ' + ownerToken }, data: { name: `auth-${sdk}-tokens-mint`, scopes: ['auth:tokens:mint'] },
+  });
+  expect(minter.status()).toBe(201);
+  const mintKey = (await minter.json()).key as string;
+  saveSecret(`auth-${sdk}-tokens:mint`, mintKey);
   if (sdk === 'dotnet') await checkMemberAuthority(page, writeKey, ownerToken);
   const email = await newAddress(`auth-${sdk}-${current.runId}`);
   const started = await page.request.post(`${auth}/ui/${current.projectId}/sign-up`, {
@@ -354,7 +360,7 @@ export async function prepareAuthManagement(page: Page, sdk: string, current: Au
   expect(signedIn.status()).toBe(200);
   const activeSessions = await page.request.get(root + '/sessions', { headers: { Authorization: 'Bearer ' + readKey } });
   expect((await activeSessions.json()).items.some((session: { user_id: string }) => session.user_id === user)).toBe(true);
-  const management = { user, readKey, writeKey, csrf, ownerToken };
+  const management = { user, readKey, writeKey, mintKey, csrf, ownerToken };
   if (sdk === 'dotnet') await checkSignupManagement(page, management);
   return management;
 }
@@ -413,7 +419,7 @@ export async function closeAuthManagement(page: Page, management: AuthManagement
     headers: { Authorization: `Bearer ${management.writeKey}` },
   });
   expect(deleted.status()).toBe(204);
-  for (const key of [management.readKey, management.writeKey]) {
+  for (const key of [management.readKey, management.writeKey, management.mintKey]) {
     const revoked = await page.request.post('/api/v1/dashboard/credentials/revoke', {
       headers: { Accept: 'application/json' },
       form: { _csrf: management.csrf, keyId: keyId(key) },

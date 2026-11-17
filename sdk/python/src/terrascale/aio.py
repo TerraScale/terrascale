@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import builtins
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from typing import Any, TypeVar, overload
 
 import httpx
@@ -57,6 +57,7 @@ from .auth import (
     verify_user_api_key_call,
 )
 from .client import _error, _settings
+from .custom_tokens import ClaimValue, CustomToken, mint_custom_token_call
 from .errors import CommitUncertainError, InvalidResponseError, SqlError, SqlErrorCodes
 from .ids import is_valid_id
 from .session import AsyncSqlSession
@@ -320,6 +321,11 @@ class AsyncTerraScale:
         """Mint a key for one database ULID, using this client's API key; the default lifetime is 3600 seconds."""
         return await self._send(_scoped_key_call(
             self._api_key, self._issuer, project if project is not None else self.project, database, access, ttl_seconds))
+
+    async def mint_custom_token(self, user_id: str, *, database: str | None = None,
+                          claims: Mapping[str, ClaimValue] | None = None, project: str | None = None) -> CustomToken:
+        return await self._send(mint_custom_token_call(
+            self._api_key, self._issuer, project if project is not None else self.project, user_id, database, claims))
 
     async def create_api_key(
         self, organization: str, name: str, scopes: Sequence[str], *,

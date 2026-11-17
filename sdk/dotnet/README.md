@@ -469,3 +469,8 @@ through another session before deciding whether to repeat it.
 Database methods `GetRulesAsync`, `DeployRulesAsync`, `ListRulesVersionsAsync`, `GetRulesVersionAsync`, `RestoreRulesAsync`, `TestRulesAsync` manage Rules and simulate requests. Reads require `databases:read`; deploy and restore require `databases:write`.
 
 Pass the current version for `If-Match`, or `null` for `If-None-Match: *` on first deployment. Versions are newest first; pass the page’s continuation cursor to fetch older versions. Each restore creates a new version. Validation errors retain typed compiler problems; stale versions return `412 version_mismatch`. The simulator evaluates deployed or draft Rules without accessing rows.
+
+## Custom tokens (source checkout)
+
+[Mint a token on your backend and hand it to a browser](docs/auth-custom-tokens.md) with
+`auth.Projects.MintCustomTokenAsync(projectKey, project, userId, database, claims)`.

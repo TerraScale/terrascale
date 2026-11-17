@@ -1,9 +1,8 @@
 {
   "producer_revision": "e30ffdc287530551b161b0130220be53d3c0475e",
   "dtos": {
-    "CustomTokenRequest": {"sdk_type": "EndUserTokenMintRequest", "contract": "custom-tokens.json", "fields": [{"name": "user_id", "type": "string", "nullable": false, "default": null}, {"name": "claims", "type": "EndUserTokenMintClaims?", "nullable": true, "default": null}]},
-    "CustomTokenClaims": {"sdk_type": "EndUserTokenMintClaims", "contract": "custom-tokens.json", "fields": [{"name": "roles", "type": "IReadOnlyList<string>?", "nullable": true, "default": null}]},
-    "CustomTokenBody": {"sdk_type": "TerraScaleAuthEndUserToken", "contract": "custom-tokens.json", "fields": [{"name": "access_token", "type": "string", "nullable": false, "default": null}, {"name": "token_type", "type": "string", "nullable": false, "default": null}, {"name": "expires_in", "type": "long", "nullable": false, "default": null}]},
+    "CustomTokenRequest": {"sdk_type": "CustomTokenMintRequest", "contract": "custom-tokens.json", "fields": [{"name": "user_id", "type": "string", "nullable": false, "default": null}, {"name": "database", "type": "string?", "nullable": true, "default": null}, {"name": "claims", "type": "IReadOnlyDictionary<string, JsonElement>?", "nullable": true, "default": null}]},
+    "CustomTokenBody": {"sdk_type": "TerraScaleAuthCustomToken", "contract": "custom-tokens.json", "fields": [{"name": "access_token", "type": "string", "nullable": false, "default": null}, {"name": "token_type", "type": "string", "nullable": false, "default": null}, {"name": "expires_in", "type": "long", "nullable": false, "default": null}]},
     "MfaPolicyRequest": {"sdk_type": "TerraScaleAuthPlatformMfaPolicy", "fields": [{"name": "require_mfa", "type": "bool", "nullable": false, "default": null}]},
     "AccountMfaBody": {"sdk_type": "TerraScaleAuthPlatformAccountMfa", "fields": [{"name": "enabled", "type": "bool", "nullable": false, "default": null}, {"name": "recovery_codes_remaining", "type": "int", "nullable": false, "default": null}, {"name": "manage_url", "type": "string", "nullable": false, "default": null}]},
     "StepUpGrantBody": {"sdk_type": "TerraScaleAuthStepUpGrant", "fields": [

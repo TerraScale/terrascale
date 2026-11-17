@@ -3,6 +3,8 @@ import { dirname, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { createTerraBaseClient, createTerraBaseClientFromEnvironment, generateId, isValidId, staticBaseUrlResolver } from '../../../sdk/js/src/index.js';
 
+import { createTerraScaleProjectIdentityClient } from '../../../sdk/js/src/management.js';
+
 import { createTsAuthClient } from '../../../sdk/js/src/ts-auth.js';
 
 if (process.env.E2E_SESSION_FAULT) {
@@ -282,6 +284,74 @@ const operations = {
         if (got !== (expected === null ? null : new URL(expected).origin))
           wrong.push(`#${index} ${JSON.stringify(raw.slice(0, 60))} ${column}: expected ${expected ?? 'refused'}, got ${got ?? 'refused'}`);
     check(wrong.length === 0, `origin rule: ${wrong.length} of ${2 * cases.length} checks differ: ${wrong.join('; ')}`);
+  },
+  async 'custom_tokens.mint'() {
+    const apiKey = process.env.TERRASCALE_API_KEY;
+    const keyId = apiKey.replace(/^sk_/, '').slice(0, 26);
+    const exchange = await fetch('https://auth.terrascale.tech/terrascale/oauth/token', {
+      method: 'POST',
+      headers: { Authorization: 'Basic ' + Buffer.from(keyId + ':' + apiKey).toString('base64') },
+      body: new URLSearchParams({ grant_type: 'client_credentials', project, scope: 'databases:read databases:write' }),
+    });
+    same(exchange.status, 200, 'Rules owner token');
+    const ownerToken = (await exchange.json()).access_token;
+    writeFileSync(join(process.env.E2E_SECRETS, 'custom-token-js-owner'), ownerToken, { mode: 0o600 });
+    const owner = { Authorization: 'Bearer ' + ownerToken };
+    const database = process.env.E2E_DATABASE_ID;
+    const root = 'https://api.terrascale.tech/v1/projects/' + project + '/databases/' + database;
+    const prior = await fetch(root + '/rules', { headers: owner });
+    let before = null;
+    if (prior.status === 404) same((await prior.json()).error.code, 'no_rules', 'missing Rules');
+    else {
+      same(prior.status, 200, 'Rules read');
+      before = await prior.json();
+    }
+    const rules = { tables: { [table]: {
+      read: "row.id = auth.uid AND auth.claims.plan = 'pro'",
+      create: "auth.claims.plan = 'pro'",
+      columns: ['id', 'label'], writable: ['label'], set: { create: { id: 'auth.uid' } },
+    } } };
+    const deployed = await fetch(root + '/rules', {
+      method: 'PUT',
+      headers: { ...owner, 'Content-Type': 'application/json', ...(before ? { 'If-Match': '"' + before.version + '"' } : { 'If-None-Match': '*' }) },
+      body: JSON.stringify(rules),
+    });
+    same(deployed.status, 200, 'Rules deploy');
+    const version = (await deployed.json()).version;
+    try {
+      const user = process.env.E2E_AUTH_USER;
+      const identity = createTerraScaleProjectIdentityClient({
+        apiBaseUrl: 'https://auth.terrascale.tech', project, projectApiKey: process.env.E2E_AUTH_MINT_KEY,
+      });
+      const minted = await identity.mintEndUserToken({ user_id: user, database, claims: { plan: 'pro', roles: ['editor'] } });
+      check(minted.ok, `custom token mint: ${minted.ok ? '' : `${minted.status} ${minted.error.code} ${minted.error.message}`}`);
+      const token = minted.value;
+      writeFileSync(join(process.env.E2E_SECRETS, 'custom-token-js'), token.access_token, { mode: 0o600 });
+      same([token.token_type, token.expires_in], ['Bearer', 300], 'custom token lifetime');
+      await state.db.execute('INSERT INTO ' + table + "(rowid,id,label) VALUES (700002,'other','hidden')");
+      const bearer = { Authorization: 'Bearer ' + token.access_token };
+      const rows = root + '/tables/' + table + '/rows';
+      const created = await fetch(rows, {
+        method: 'POST', headers: { ...bearer, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ row: { label: 'custom-token' } }),
+      });
+      same(created.status, 201, 'custom token Rules write');
+      const written = await created.json();
+      same(written.row, { id: user, label: 'custom-token' }, 'custom token written row');
+      const row = await fetch(rows + '/' + written.key, { headers: bearer });
+      same(row.status, 200, 'custom token Rules read');
+      same((await row.json()).row, written.row, 'custom token readable row');
+      const hidden = await fetch(rows + '/700002', { headers: bearer });
+      same([hidden.status, (await hidden.json()).error.code], [404, 'row_not_found'], 'custom token hidden row');
+    } finally {
+      await state.db.execute('DELETE FROM ' + table + " WHERE rowid = 700002 OR label = 'custom-token'");
+      const restored = await fetch(root + '/rules' + (before ? '/versions/' + before.version + '/restore' : ''), {
+        method: before ? 'POST' : 'PUT',
+        headers: { ...owner, 'Content-Type': 'application/json', 'If-Match': '"' + version + '"' },
+        body: JSON.stringify(before ? {} : { tables: {} }),
+      });
+      same(restored.status, 200, 'Rules restore');
+    }
   },
   async 'functions.stats'() {
     const name = `stats-${run}`;
