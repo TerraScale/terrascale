@@ -102,9 +102,18 @@ internal static partial class SqlErrors
         {
             return (new StorageFailure(), "the database reported corruption");
         }
-        if (primary is SqliteBusy or SqliteLocked or SqliteNoMem or SqliteIoErr or SqliteFull or SqliteCantOpen)
+        switch (primary)
         {
-            return (new Busy(), "the database is busy; retry");
+            case SqliteBusy or SqliteLocked:
+                return (new Busy(), "the database is busy; retry");
+            case SqliteNoMem:
+                return (new StorageError(), "the database ran out of memory");
+            case SqliteIoErr:
+                return (new StorageError(), "the database reported an I/O error");
+            case SqliteFull:
+                return (new StorageError(), "the database or its disk is full");
+            case SqliteCantOpen:
+                return (new StorageError(), "the database file could not be opened");
         }
 
         return message switch
