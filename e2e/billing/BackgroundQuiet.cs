@@ -28,10 +28,12 @@ internal static partial class BackgroundJourney
         var organizations = services.GetRequiredService<OrganizationStore>();
         var stored = await organizations.FindAsync(owner.OrganizationId, cancellationToken) ?? throw new IOException("The isolated organization is missing.");
         var original = stored.Organization.Projects[owner.ProjectId].Databases[owner.DatabaseId];
-        stored.Organization.Projects[owner.ProjectId].Databases = new() { [database.Id] = new() { Id = database.Id, ProjectId = owner.ProjectId, Name = database.Name, Region = owner.DatabaseRegion, Regions = [owner.DatabaseRegion] } };
-        await organizations.ReplaceAsync(stored, cancellationToken);
         var storage = services.GetRequiredService<IDbContextFactory<DashboardDbContext>>();
         var drain = await DrainAsync(storage, owner, cancellationToken);
+        var quiet = new BackgroundQuiet(database.Id, database.Name, drain.Id, drain.Revision, original);
+        await File.WriteAllTextAsync(path + ".quiet", JsonSerializer.Serialize(quiet, BackgroundJson.Default.BackgroundQuiet), cancellationToken);
+        stored.Organization.Projects[owner.ProjectId].Databases = new() { [database.Id] = new() { Id = database.Id, ProjectId = owner.ProjectId, Name = database.Name, Region = owner.DatabaseRegion, Regions = [owner.DatabaseRegion] } };
+        await organizations.ReplaceAsync(stored, cancellationToken);
         await using (var db = await storage.CreateDbContextAsync(cancellationToken))
         {
             db.LogDrainCursors.Add(new() { Id = AccountService.NewId(), DrainId = drain.Id, DatabaseId = database.Id, Cursor = "00000000000000000000000000" });
@@ -55,8 +57,6 @@ internal static partial class BackgroundJourney
         {
             Require(await db.LogDrains.AsNoTracking().AnyAsync(row => row.Id == drain.Id && row.LastGapAt == gapAt, cancellationToken), "An unchanged quiet gap was recorded again.");
         }
-        var quiet = new BackgroundQuiet(database.Id, database.Name, drain.Id, drain.Revision, gapAt, original);
-        await File.WriteAllTextAsync(path + ".quiet", JsonSerializer.Serialize(quiet, BackgroundJson.Default.BackgroundQuiet), cancellationToken);
         using var receiver = Receiver();
         await ConfigureAsync(receiver, new Uri(drain.Url).AbsolutePath, false, cancellationToken);
         var sql = new TerraBaseSqlClient(client, new() { ApiKey = owner.ApiKey, Region = owner.DatabaseRegion.ToLowerInvariant() }).Database(owner.ProjectId, database.Name);
@@ -91,12 +91,20 @@ internal static partial class BackgroundJourney
             using var receiver = Receiver();
             Require((await DeliveriesAsync(receiver, new Uri(drain.Url).AbsolutePath, cancellationToken)).Length == 1, "The next quiet-drain event was not sent exactly once.");
         }
+    }
+
+    private static async Task QuietCleanupAsync(IServiceProvider services, BackgroundOwner owner, string path, CancellationToken cancellationToken)
+    {
+        if (!File.Exists(path + ".quiet")) { return; }
+        var quiet = await QuietStateAsync(path, cancellationToken);
+        var storage = services.GetRequiredService<IDbContextFactory<DashboardDbContext>>();
         var organizations = services.GetRequiredService<OrganizationStore>();
         var stored = await organizations.FindAsync(owner.OrganizationId, cancellationToken) ?? throw new IOException("The isolated organization is missing.");
         stored.Organization.Projects[owner.ProjectId].Databases = new() { [owner.DatabaseId] = quiet.Original };
         await organizations.ReplaceAsync(stored, cancellationToken);
         await using (var db = await storage.CreateDbContextAsync(cancellationToken))
         {
+            var id = "log-drain/" + owner.ProjectId + "/" + quiet.Revision + "/" + quiet.DatabaseId;
             Require(!await db.BackgroundJobs.AnyAsync(row => row.Id == id, cancellationToken), "Removing one database left its log-drain claim row behind.");
         }
         using var client = new HttpClient(TerraBaseHttp.CreateHandler());
@@ -107,4 +115,4 @@ internal static partial class BackgroundJourney
     }
 }
 
-internal sealed record BackgroundQuiet(string DatabaseId, string DatabaseName, string DrainId, string Revision, DateTime GapAt, DatabaseRecord Original);
+internal sealed record BackgroundQuiet(string DatabaseId, string DatabaseName, string DrainId, string Revision, DatabaseRecord Original);
