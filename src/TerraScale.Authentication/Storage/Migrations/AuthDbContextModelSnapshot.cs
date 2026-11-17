@@ -420,6 +420,11 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("id");
 
+                    b.Property<string>("AllowedOrigins")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("allowed_origins");
+
                     b.Property<string>("ApplicationType")
                         .HasColumnType("TEXT")
                         .HasColumnName("application_type");
@@ -1308,6 +1313,10 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasMaxLength(26)
                         .HasColumnType("TEXT")
                         .HasColumnName("instance_id");
+
+                    b.Property<bool>("IsAnonymous")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("is_anonymous");
 
                     b.Property<string>("LastName")
                         .HasMaxLength(255)

@@ -13,6 +13,8 @@ namespace TerraScale.Authentication.Features.Identity;
 
 public sealed partial class Users(AuthData data, Credentials credentials, WebhookOutbox outbox, TimeProvider clock, SignUpRestrictions restrictions)
 {
+    public const string GuestEmailDomain = "@anonymous.invalid";
+
     public static string? NormalizeEmail(string? email)
     {
         var trimmed = email?.Trim();
@@ -37,7 +39,7 @@ public sealed partial class Users(AuthData data, Credentials credentials, Webhoo
         {
             var ascii = new IdnMapping().GetAscii(domain).ToLowerInvariant();
             return Uri.CheckHostName(ascii) == UriHostNameType.Dns && ascii.Split('.') is { Length: > 1 } labels && labels.All(label => label.Length > 0)
-                ? ascii : null;
+                && labels[^1] != "invalid" ? ascii : null;
         }
         catch (ArgumentException)
         {
@@ -55,6 +57,18 @@ public sealed partial class Users(AuthData data, Credentials credentials, Webhoo
     {
         var user = new UserRecord(userId, instanceId, normalizedEmail, 0, clock.GetUtcNow(), passwordHash) { AuthStamp = AuthIds.New(), Username = username };
         return (user, lifecycleEvent is null ? [Change.Insert(user)] : [Change.Insert(user), lifecycleEvent]);
+    }
+
+    public async Task<UserRecord> CreateGuestAsync(string instanceId, CancellationToken cancellationToken)
+    {
+        var id = AuthIds.New();
+        var guest = new UserRecord(id, instanceId, id.ToLowerInvariant() + GuestEmailDomain, 0, clock.GetUtcNow())
+        {
+            AuthStamp = AuthIds.New(),
+            EmailVerified = false,
+            IsAnonymous = true,
+        };
+        return await data.SaveAsync(Change.Insert(guest), cancellationToken).ConfigureAwait(false) ? BindAuthenticationState(guest) : throw ApiException.Unavailable();
     }
 
     internal async Task<UserRecord?> CreateAccountAsync(string instanceId, string email, string? passwordHash, string userId, CancellationToken cancellationToken)

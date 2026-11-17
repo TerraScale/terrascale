@@ -54,7 +54,8 @@ public sealed record UserInfoBody(
     [property: JsonPropertyName("family_name"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? LastName,
     [property: JsonPropertyName("picture"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ImageUrl,
     [property: JsonPropertyName("public_metadata"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? PublicMetadata,
-    [property: JsonPropertyName("act"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ImpersonationActor? Actor = null);
+    [property: JsonPropertyName("act"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ImpersonationActor? Actor = null,
+    [property: JsonPropertyName("is_anonymous"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? IsAnonymous = null);
 
 /// <summary><c>GET /{slug}/.well-known/openid-configuration</c>: OpenID Provider metadata, served by OpenIddict.</summary>
 public sealed class DiscoveryEndpoint : EndpointWithoutRequest<IResult>
@@ -551,9 +552,11 @@ public abstract class UserInfoEndpoint(Impersonations impersonations, TotpCreden
 
         var email = principal.HasScope(Scopes.Email);
         var profile = principal.HasScope(Scopes.Profile);
-        return Results.Ok(new UserInfoBody(user.Id, email ? user.Email : null, email ? user.EmailVerified : null,
+        var mailbox = email && !user.IsAnonymous;
+        return Results.Ok(new UserInfoBody(user.Id, mailbox ? user.Email : null, mailbox ? user.EmailVerified : null,
             profile ? user.FirstName : null, profile ? user.LastName : null, profile ? user.ImageUrl : null,
-            profile ? JsonElement.Parse(user.PublicMetadata) : null, acting is null ? null : new ImpersonationActor(acting.Record.ActorId)));
+            profile ? JsonElement.Parse(user.PublicMetadata) : null, acting is null ? null : new ImpersonationActor(acting.Record.ActorId),
+            user.IsAnonymous ? true : null));
     }
 }
 
@@ -773,8 +776,9 @@ internal static class OidcResults
         var identity = new ClaimsIdentity(TokenValidationParameters.DefaultAuthenticationType, Claims.Name, Claims.Role)
             .SetClaim(Claims.Subject, user.Id)
             .SetClaim("token_use", "user")
-            .SetClaim(Claims.Email, user.Email)
-            .SetClaim(Claims.EmailVerified, user.EmailVerified)
+            .SetClaim(Claims.Email, user.IsAnonymous ? null : user.Email)
+            .SetClaim(Claims.EmailVerified, user.IsAnonymous ? null : user.EmailVerified)
+            .SetClaim(GuestSignIn.Claim, user.IsAnonymous ? true : null)
             .SetClaim(Claims.GivenName, user.FirstName)
             .SetClaim(Claims.FamilyName, user.LastName)
             .SetClaim(Claims.Picture, user.ImageUrl)
@@ -819,7 +823,7 @@ internal static class OidcResults
             Claims.Subject or "act" or Impersonations.Claim => [Destinations.AccessToken, Destinations.IdentityToken],
             Claims.GivenName or Claims.FamilyName or Claims.Picture or "public_metadata" => profile ? [Destinations.IdentityToken] : [],
             Claims.Email or Claims.EmailVerified => email ? [Destinations.AccessToken, Destinations.IdentityToken] : [Destinations.AccessToken],
-            Claims.AuthenticationTime or "org_id" or "org_slug" or "org_role" => [Destinations.AccessToken, Destinations.IdentityToken],
+            Claims.AuthenticationTime or "org_id" or "org_slug" or "org_role" or GuestSignIn.Claim => [Destinations.AccessToken, Destinations.IdentityToken],
             "ts_auth_session" or "token_use" or TrustedClaims.Claim or OidcIssuer.EpochClaim or OidcIssuer.StateClaim or OidcIssuer.MfaClaim or PlatformRoleClaim => [Destinations.AccessToken],
             OidcIssuer.OrganizationPickerClaim => [Destinations.IdentityToken],
             _ => [],

@@ -18,7 +18,7 @@ public static class Tenancy
 
     // The protocol routes a project tenant serves; device flow, API keys and token exchange stay the platform's.
     private static readonly string[] ProjectRoutes =
-        ["step-up", OidcIssuer.ConfigurationPath, OidcIssuer.JwksPath, "oauth/authorize", "oauth/token", "oauth/userinfo", "oauth/revoke", "oauth/logout"];
+        ["step-up", OidcIssuer.ConfigurationPath, OidcIssuer.JwksPath, "oauth/authorize", "oauth/token", GuestSignIn.Route, "oauth/userinfo", "oauth/revoke", "oauth/logout"];
 
     /// <summary>Resolves the request's tenant into the request items.</summary>
     public static void UseTenancy(this WebApplication app) => app.Use(async (HttpContext context, RequestDelegate next) =>
