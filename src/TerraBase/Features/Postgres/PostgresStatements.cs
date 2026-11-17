@@ -82,15 +82,29 @@ internal static partial class PostgresStatements
         }
 
         var statements = new List<PgStatement>();
+        var trigger = Trigger(tokens, 0);
+        var depth = 0;
         for (int i = 0, start = 0; i <= tokens.Count; i++)
         {
+            if (trigger && i < tokens.Count && tokens[i] is Word { QuoteStyle: null } word)
+            {
+                depth += Is(word, "BEGIN") || Is(word, "CASE") ? 1 : Is(word, "END") ? -1 : 0;
+            }
+
             if (i < tokens.Count && tokens[i] is not SemiColon)
+            {
+                continue;
+            }
+
+            if (i < tokens.Count && trigger && depth > 0)
             {
                 continue;
             }
 
             var piece = tokens.Skip(start).Take(i - start).ToList();
             start = i + 1;
+            trigger = Trigger(tokens, start);
+            depth = 0;
             if (piece.Any(token => token is not Whitespace))
             {
                 switch (Statement(piece))
@@ -106,6 +120,14 @@ internal static partial class PostgresStatements
 
         return statements.ToArray();
     }
+
+    private static bool Trigger(IEnumerable<Token> tokens, int start) =>
+        tokens.Skip(start).Where(token => token is not Whitespace).Take(3).ToArray() switch
+        {
+            [Word first, Word second, ..] when Is(first, "CREATE") && Is(second, "TRIGGER") => true,
+            [Word first, Word second, Word third] when Is(first, "CREATE") && (Is(second, "TEMP") || Is(second, "TEMPORARY")) && Is(third, "TRIGGER") => true,
+            _ => false,
+        };
 
     private readonly union PgOne(PgStatement, PgError);
 

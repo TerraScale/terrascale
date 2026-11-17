@@ -767,7 +767,21 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
                 var parsedStatement = parsed is [var single] ? single : new PgStatement(PgKind.Empty, "", "", 0);
                 oids.AddRange(Enumerable.Repeat(0, Math.Max(0, parsedStatement.Parameters - oids.Count)));
-                session.Statements[statementName] = new Prepared(parsedStatement, [.. oids]);
+                var prepared = new Prepared(parsedStatement, [.. oids]);
+                if (parsedStatement.Kind == PgKind.Sql && Array.Exists(prepared.Oids, oid => oid == 0))
+                {
+                    if (await GuardAsync(session, async (database, token) =>
+                    {
+                        PostgresStatements.InferParameters(parsedStatement, prepared.Oids,
+                            await services.GetRequiredService<ISqlService>().ListTablesAsync(database, token).ConfigureAwait(false));
+                        return Array.Empty<PgResult>();
+                    }, cancellationToken).ConfigureAwait(false) is PgError inferring)
+                    {
+                        return inferring;
+                    }
+                }
+
+                session.Statements[statementName] = prepared;
                 output.Empty('1');
                 return null;
             case 'B':
@@ -815,19 +829,6 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                     }
 
                     (statement.Columns, statement.Described) = (columns, true);
-                    if (statement.Statement.Kind == PgKind.Sql && Array.Exists(statement.Oids, oid => oid == 0))
-                    {
-                        if (await GuardAsync(session, async (database, token) =>
-                        {
-                            PostgresStatements.InferParameters(statement.Statement, statement.Oids,
-                                await services.GetRequiredService<ISqlService>().ListTablesAsync(database, token).ConfigureAwait(false));
-                            return Array.Empty<PgResult>();
-                        }, cancellationToken).ConfigureAwait(false) is PgError { Fatal: true } inferring)
-                        {
-                            return inferring;
-                        }
-                    }
-
                     output.Begin('t');
                     output.Int16(statement.Oids.Length);
                     Array.ForEach(statement.Oids, oid => output.Int32(oid == 0 ? PgOid.Text : oid));
