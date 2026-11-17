@@ -7,6 +7,9 @@ internal sealed partial class TursoStorageTransaction : IRulesWriter
 {
     private const int KeptRulesVersions = 100;
 
+    public ValueTask<RulesTestBody> TestRulesAsync(RulesTestRequest request, RulesSet rules, CancellationToken cancellationToken) =>
+        RunAsync(() => RulesSimulator.Test(request, rules, ShapeReader), cancellationToken);
+
     public ValueTask<StoredRules?> ReadRulesAsync(string? version, CancellationToken cancellationToken) =>
         RunAsync(() => ShapeReader.Rules(version), cancellationToken);
 

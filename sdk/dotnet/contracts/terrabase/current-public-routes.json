@@ -1,5 +1,5 @@
 {
-  "serverCommit": "56d68c7f3fb626c7a7bcde6127977bb1c333a35f",
+  "serverCommit": "a8fc2729137590fe24b4b2e98d804d3f3b0842e4",
   "scope": "TerraBase /openapi/v1.json public inventory (ApiReferenceExtensions.ShouldInclude) at serverCommit",
   "operations": [
     {
@@ -266,6 +266,11 @@
       "method": "POST",
       "path": "/v1/projects/{project}/databases/{database}/rules/versions/{version}/restore",
       "operation": "restoreDatabaseRulesVersion"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/rules:test",
+      "operation": "testDatabaseRules"
     },
     {
       "method": "POST",

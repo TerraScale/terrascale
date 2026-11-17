@@ -25,6 +25,7 @@ SQL requires `sql:read`; writes and DDL also require `sql:write`. End-user token
 | PUT | `/rules` | `databases:write` | Deploys a whole rules set; needs `If-Match` or `If-None-Match: *` |
 | GET | `/rules/versions?after=&limit=` | `databases:read` | The last 100 versions, newest first |
 | GET | `/rules/versions/{version}` | `databases:read` | One version's rules; `404 unknown_version` |
+| POST | `/rules:test` | `databases:read` | Simulates a request against deployed or draft rules without reading or writing rows; reports the deciding clause, readable columns and draft problems ([section 8](rules.md#8-simulator)) |
 | POST | `/rules/versions/{version}/restore` | `databases:write` | Deploys that version's body as a new version |
 
 [Rules](rules.md) section 7 specifies the routes, preconditions and storage. A deploy compiles every condition against the current
