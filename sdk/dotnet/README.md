@@ -102,6 +102,27 @@ one request (or inside the open transaction) and read back as one result set per
 `DateTime`, `DateTimeOffset`, `DateOnly`, `TimeOnly`, `TimeSpan`, `Guid` and `decimal` arguments are sent as text and
 `GetFieldValue<T>` reads them back.
 
+## Live data
+
+The current source/local pack provides live table shapes with `sql:read` credentials:
+
+```csharp
+var shape = db.Shape("todos", new ShapeOptions { Where = "done = 0", Columns = ["id", "title"] });
+await foreach (var view in shape.WatchAsync(ct))
+{
+    foreach (var row in view.Rows)
+        Console.WriteLine($"{view.Status}: {row["title"].GetString()}");
+}
+```
+
+Each view contains immutable row dictionaries with the SQL API JSON cell representation and an applied
+`Offset`. `Status` is `Loading`, `Live` or `Reconnecting`. The SDK finishes the paged snapshot before
+publishing rows, applies commits in order and overlays regional provisional writes. WebSocket hints use
+bearer headers and trigger HTTP catch-up; HTTP long-polling takes over when hints are unavailable.
+Transient failures resume from the applied offset with backoff; `must_refetch` clears the view and starts
+a new snapshot. Authentication and permission failures end enumeration. Cancel or dispose the enumerator
+to close its work. Each enumeration owns an independent subscription.
+
 ## Databases for agents
 
 `TerraBaseSqlClient` creates, forks and deletes databases, sets or clears their TTL, and mints database-scoped

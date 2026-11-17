@@ -212,7 +212,19 @@
       "method": "GET",
       "path": "/v1/projects/{project}/metrics",
       "contract": "project-metrics.json"
+    },
+    {
+      "client": "sql",
+      "operation": "readTableShape",
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/tables/{table}/shape"
+    },
+    {
+      "client": "sql",
+      "operation": "connectShapeHints",
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/tables/{table}/shape/ws"
     }
   ],
-  "producerCommit": "8db4c792142dcd6644e1d14a2b2efd6bc04a107a"
+  "producerCommit": "2445e81e60e1832a6589553a236a470fde49ecff"
 }
