@@ -308,6 +308,20 @@ pub struct SqlRecord {
 }
 
 impl SqlRecord {
+    pub(super) fn from_shape(row: BTreeMap<String, SqlValue>) -> Self {
+        let columns = row
+            .keys()
+            .map(|name| SqlColumn {
+                name: name.clone(),
+                decltype: None,
+            })
+            .collect::<Vec<_>>();
+        Self {
+            columns: Arc::new(Columns::new(&columns)),
+            values: row.into_values().collect(),
+        }
+    }
+
     #[must_use]
     pub fn columns(&self) -> &[SqlColumn] {
         &self.columns.columns

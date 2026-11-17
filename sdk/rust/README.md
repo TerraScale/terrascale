@@ -268,3 +268,33 @@ An execute outside a confirmed transaction, or behind unanswered transaction con
 A lost read or non-committing statement inside a confirmed open transaction retains the transaction-lost behavior.
 Only a confirmed refusal or a request proven not sent permits a rollback assertion; reconcile an uncertain write
 through another session before deciding whether to repeat it.
+
+
+## Live data
+
+The source SDK supports filtered table subscriptions through HTTP long-polling.
+This API is not yet published; WebSocket hints remain pending.
+
+```rust
+use futures_util::StreamExt;
+use terrascale::v1::ShapeStatus;
+
+let shape = db.shape("todos").filter("done = 0").columns(&["id", "title"])
+    .subscribe().await?;
+futures_util::pin_mut!(shape);
+while let Some(view) = shape.next().await {
+    let view = view?;
+    if view.status == ShapeStatus::Live {
+        for row in view.rows.iter() {
+            println!("{}", row.get_str("title")?);
+        }
+    }
+}
+```
+
+Each view owns an immutable `Arc<[SqlRecord]>` with the same typed accessors as
+SQL query rows. Views arrive after every snapshot page and applied diff batch.
+Status is `Loading`, `Live`, or `Reconnecting`; temporary failures back off and
+resume from the last applied offset. `must_refetch` clears the view and starts a
+new snapshot. Credential errors yield the existing SDK error and end the stream.
+Dropping the stream cancels its pending request. See the [wire contract](../../docs/terrabase/shape-reads.md).

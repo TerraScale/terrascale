@@ -952,6 +952,46 @@ impl Client {
         Ok(Box::new(stream))
     }
 
+    pub(super) async fn read_shape(&self, req: Req<'_>) -> Result<Resp> {
+        if self.inner.project.is_none() {
+            return Err(Error::InvalidInput(
+                "shapes require a project client".into(),
+            ));
+        }
+        let url = self.url(&self.inner.base, &req.segments, &req.query)?;
+        let response = match self
+            .attempt(
+                &req,
+                &url,
+                self.inner.region_pin.as_deref(),
+                None,
+                true,
+                &mut false,
+            )
+            .await
+        {
+            Attempt::Done(response) => response,
+            Attempt::Failed(error, _) => return Err(error),
+        };
+        if response.status == StatusCode::TEMPORARY_REDIRECT {
+            let location = response
+                .header("Location")
+                .and_then(|value| url.join(value).ok())
+                .filter(|target| {
+                    target.origin() == url.origin()
+                        && target.path() == url.path()
+                        && target.username().is_empty()
+                        && target.password().is_none()
+                });
+            if location.is_none() {
+                return Err(response.invalid("invalid shape bootstrap redirect".into()));
+            }
+        } else {
+            response.check_status(&[StatusCode::OK])?;
+        }
+        Ok(response)
+    }
+
     pub(crate) async fn probe(&self, segments: Vec<&str>) -> Result<Resp> {
         let mut req = Req::new(Method::GET, segments);
         req.anonymous_probe = true;

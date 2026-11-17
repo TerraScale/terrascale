@@ -36,6 +36,7 @@ mod sql_connect_retry;
 mod sql_exec;
 mod sql_session;
 mod system;
+mod table_shape;
 mod types;
 
 pub use agent::{
@@ -67,4 +68,5 @@ pub use sql_exec::{
 };
 pub use sql_session::{SqlSession, MAX_SQL_FRAME_BYTES, SQL_SUBPROTOCOL};
 pub use system::HealthResponse;
+pub use table_shape::{Shape, ShapeStatus, ShapeView};
 pub use types::{opt_u64_string, u64_string, Number};
