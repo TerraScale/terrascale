@@ -305,36 +305,3 @@ Dropping the stream cancels its pending request. See the [wire contract](../../d
 Database methods `get_rules`, `deploy_rules`, `list_rules_versions`, `get_rules_version`, `restore_rules`, `test_rules` manage Rules and simulate requests. Reads require `databases:read`; deploy and restore require `databases:write`.
 
 Pass the current version for `If-Match`, or `None` for `If-None-Match: *` on first deployment. Versions are newest first; pass the page’s continuation cursor to fetch older versions. Each restore creates a new version. Validation errors retain typed compiler problems; stale versions return `412 version_mismatch`. The simulator evaluates deployed or draft Rules without accessing rows.
-
-## Custom tokens (source checkout)
-
-This operation is not in the published package. Mint only for a user your backend has verified.
-
-```rust
-let claims = [
-    ("plan".into(), serde_json::json!("pro")),
-    ("roles".into(), serde_json::json!(["editor"])),
-].into();
-let token = client.projects()?.mint_custom_token(
-    &project_key, &project, &verified_user_id, Some(&database), Some(&claims),
-).await?;
-let response = serde_json::json!({
-    "access_token": token.access_token,
-    "expires_in": token.expires_in,
-});
-```
-
-Return `access_token` and `expires_in` from your authenticated backend to the browser over HTTPS.
-Keep the project key on the backend. The browser uses `Authorization: Bearer <access_token>` on
-`GET /v1/projects/{project}/databases/{database}/tables/{table}/rows/{key}`; Rules decide which rows it can see.
-Request a new token from the backend before the 300-second lifetime ends; there is no refresh token.
-
-Database and trusted claims are optional. A database-bound token gets `404 unknown_database` elsewhere.
-Claims have at most 32 members and 1000 serialized bytes. Names match `[a-z][a-z0-9_]{0,62}`;
-values are strings up to 256 characters, finite numbers, booleans, or arrays of up to 64 strings or numbers.
-Roles belong in `claims.roles`. Authorize claims on your backend and never put secrets in them.
-
-Minting uses `POST /v1/{project}/custom-tokens` with an unrestricted project API key carrying
-`auth:tokens:mint`. User IDs must be canonical uppercase ULIDs; map other IDs on the backend.
-No tenant user account is required. A mint is sent once. Existing SDK errors retain
-`403 insufficient_scope`, `404 not_found`, and `429 rate_limited` with Retry-After.

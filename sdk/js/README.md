@@ -458,39 +458,6 @@ after sign-in stops working. Logical deletion does not certify physical erasure.
 mints end-user tokens through the public assertion contract; keep the project key
 on your backend and give browsers only the issued short-lived end-user token.
 
-From this source checkout, mint a token on your authenticated backend for a verified user:
-
-```js
-import { createTerraScaleProjectIdentityClient } from "@terrascale/sdk/management";
-
-const identity = createTerraScaleProjectIdentityClient({
-  apiBaseUrl: "https://auth.terrascale.tech",
-  project,
-  projectApiKey,
-});
-const minted = await identity.mintEndUserToken({
-  user_id: verifiedUserId,
-  database: databaseId,
-  claims: { plan: "pro", roles: ["editor"] },
-});
-if (!minted.ok) {
-  const { status, error } = minted;
-  const headers = error.retryAfter === undefined ? {} : { "Retry-After": String(Math.ceil(error.retryAfter / 1000)) };
-  return Response.json({ error: error.code }, { status: status ?? 502, headers });
-}
-const { access_token, expires_in } = minted.value;
-return Response.json({ access_token, expires_in });
-```
-
-The key needs `auth:tokens:mint`, belongs to the project and has no database restriction.
-`database` and `claims` are optional. User IDs are canonical uppercase ULIDs.
-`mintEndUserToken` returns a `TerraScaleResult`: a missing scope answers `insufficient_scope` (403),
-an unknown database answers 404, and a 429 carries `error.retryAfter` in milliseconds.
-Return the token over HTTPS to the browser, which sends `Authorization: Bearer <access_token>`
-on Rules row writes and reads. Tokens expire after 300 seconds and have no refresh token;
-the browser requests another from the backend before `expires_in` elapses.
-Authorize trusted claims on the backend and keep the project key there.
-
 `@terrascale/sdk/admin` exports `createTerraScaleAdministrationClient({ baseUrl,
 token })` with a named `databases` read.
 The Database service requires `platform_role=admin`. The old `requireTerraScaleManagement`

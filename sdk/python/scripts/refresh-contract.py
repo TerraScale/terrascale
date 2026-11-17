@@ -13,7 +13,6 @@ from pathlib import Path
 
 SOURCE = "https://api.terrascale.tech/openapi/v1.json"
 AGENT_ROUTES = [
-    "POST /v1/{project}/custom-tokens",
     "DELETE /v1/projects/{project}/databases/{database}/ttl",
     "POST /v1/terrascale/api-keys/self/scoped-keys",
     "PUT /v1/projects/{project}/databases/{database}/ttl",

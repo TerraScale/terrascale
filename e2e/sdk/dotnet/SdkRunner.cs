@@ -367,39 +367,11 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
         TerraBaseRules? before = null;
         try { before = await db.GetRulesAsync(cancellationToken); }
         catch (TerraBaseNotFoundException error) when (error.ErrorCode == "no_rules") { before = null; }
-        var rules = new TerraBaseRulesSet(new Dictionary<string, TerraBaseRulesTable> { [table] = new(Read: "row.id = auth.uid AND auth.claims.plan = 'pro'", Create: "auth.claims.plan = 'pro'", Columns: ["id", "label"], Writable: ["label"], Set: new(Create: new Dictionary<string, string> { ["id"] = "auth.uid" })) });
+        var rules = new TerraBaseRulesSet(new Dictionary<string, TerraBaseRulesTable> { [table] = new(Read: "row.id = auth.uid", Columns: ["id", "label"]) });
         var deployed = await db.DeployRulesAsync(rules, before?.Version, cancellationToken);
         var got = await db.GetRulesAsync(cancellationToken);
-        if (got.Version != deployed.Version || got.Tables[table].Read != "row.id = auth.uid AND auth.claims.plan = 'pro'") throw new InvalidOperationException("Rules read differs.");
-        var user = Required("E2E_AUTH_USER");
-        var custom = await auth.Projects.MintCustomTokenAsync(Required("E2E_AUTH_MINT_KEY"), project, user,
-            Required("E2E_DATABASE_ID"), new Dictionary<string, JsonElement> { ["plan"] = JsonElement.Parse("\"pro\"") }, cancellationToken);
-        RegisterSecret("custom-token-dotnet", custom.AccessToken);
-        if (custom.TokenType != "Bearer" || custom.ExpiresIn != 300) throw new InvalidOperationException("Custom token lifetime differs.");
-        await Db.ExecuteAsync($"INSERT INTO {table}(rowid,id,label) VALUES (700002,'other','hidden')", cancellationToken: cancellationToken);
-        var path = $"https://api.terrascale.tech/v1/projects/{project}/databases/{Required("E2E_DATABASE_ID")}/tables/{table}/rows/";
-        using var create = new HttpRequestMessage(HttpMethod.Post, path.TrimEnd('/'));
-        create.Headers.Authorization = new("Bearer", custom.AccessToken);
-        create.Content = new StringContent("""{"row":{"label":"custom-token"}}""", Encoding.UTF8, "application/json");
-        using var created = await http.SendAsync(create, cancellationToken);
-        using var written = JsonDocument.Parse(await created.Content.ReadAsStreamAsync(cancellationToken));
-        if (created.StatusCode != HttpStatusCode.Created || written.RootElement.GetProperty("row").GetProperty("id").GetString() != user)
-            throw new InvalidOperationException("Custom token Rules write differs.");
-        using var read = new HttpRequestMessage(HttpMethod.Get, path + written.RootElement.GetProperty("key").GetString());
-        read.Headers.Authorization = new("Bearer", custom.AccessToken);
-        using var row = await http.SendAsync(read, cancellationToken);
-        using var body = JsonDocument.Parse(await row.Content.ReadAsStreamAsync(cancellationToken));
-        if (row.StatusCode != HttpStatusCode.OK || body.RootElement.GetProperty("row").GetProperty("id").GetString() != user
-            || body.RootElement.GetProperty("row").GetProperty("label").GetString() != "custom-token")
-            throw new InvalidOperationException("Custom token Rules read differs.");
-        using var hiddenRead = new HttpRequestMessage(HttpMethod.Get, path + "700002");
-        hiddenRead.Headers.Authorization = new("Bearer", custom.AccessToken);
-        using var hidden = await http.SendAsync(hiddenRead, cancellationToken);
-        using var hiddenBody = JsonDocument.Parse(await hidden.Content.ReadAsStreamAsync(cancellationToken));
-        if (hidden.StatusCode != HttpStatusCode.NotFound || hiddenBody.RootElement.GetProperty("error").GetProperty("code").GetString() != "row_not_found")
-            throw new InvalidOperationException("Custom token revealed another user's row.");
-        await Db.ExecuteAsync($"DELETE FROM {table} WHERE rowid = 700002 OR label = 'custom-token'", cancellationToken: cancellationToken);
-        var input = new TerraBaseRulesTestRequest("read", table, new("owner", new Dictionary<string, JsonElement> { ["plan"] = JsonElement.Parse("\"pro\"") }), Row: new Dictionary<string, JsonElement> { ["id"] = JsonSerializer.SerializeToElement("owner", RunnerJson.Default.String) });
+        if (got.Version != deployed.Version || got.Tables[table].Read != "row.id = auth.uid") throw new InvalidOperationException("Rules read differs.");
+        var input = new TerraBaseRulesTestRequest("read", table, new("owner"), Row: new Dictionary<string, JsonElement> { ["id"] = JsonSerializer.SerializeToElement("owner", RunnerJson.Default.String) });
         var allowed = await db.TestRulesAsync(input, cancellationToken);
         if (!allowed.Allowed || allowed.Columns.Count != 2 || allowed.Columns[0] != "id" || allowed.Columns[1] != "label" || allowed.Problems.Count != 0) throw new InvalidOperationException("Rules did not allow owner.");
         var denied = await db.TestRulesAsync(input with { Auth = new("other") }, cancellationToken);
@@ -416,9 +388,9 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
         var next = await db.ListRulesVersionsAsync(page.Next, 1, cancellationToken);
         if (next.Items.Count != 1 || next.Items[0].Version != deployed.Version) throw new InvalidOperationException("Rules second page differs.");
         var version = await db.GetRulesVersionAsync(deployed.Version, cancellationToken);
-        if (version.Version != deployed.Version || version.Tables[table].Read != "row.id = auth.uid AND auth.claims.plan = 'pro'") throw new InvalidOperationException("Rules version differs.");
+        if (version.Version != deployed.Version || version.Tables[table].Read != "row.id = auth.uid") throw new InvalidOperationException("Rules version differs.");
         var restored = await db.RestoreRulesAsync(deployed.Version, updated.Version, cancellationToken);
-        if (restored.Version == deployed.Version || restored.Tables[table].Read != "row.id = auth.uid AND auth.claims.plan = 'pro'") throw new InvalidOperationException("Rules restore differs.");
+        if (restored.Version == deployed.Version || restored.Tables[table].Read != "row.id = auth.uid") throw new InvalidOperationException("Rules restore differs.");
         if (before is null) await db.DeployRulesAsync(empty, restored.Version, cancellationToken);
         else await db.RestoreRulesAsync(before.Version, restored.Version, cancellationToken);
     }

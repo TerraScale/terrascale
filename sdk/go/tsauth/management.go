@@ -695,13 +695,6 @@ func sendJSONStatus(ctx context.Context, hc *http.Client, method, target, author
 		if json.Unmarshal(data, &env) == nil && env.Error.Code != "" {
 			e.Code, e.Message = ErrorCode(env.Error.Code), env.Error.Message
 		}
-		var oauth struct {
-			Error       string `json:"error"`
-			Description string `json:"error_description"`
-		}
-		if json.Unmarshal(data, &oauth) == nil && oauth.Error != "" {
-			e.Code, e.Message = ErrorCode(oauth.Error), oauth.Description
-		}
 		return res.StatusCode, e
 	}
 	// Decoding errors quote response values, such as a created key: the

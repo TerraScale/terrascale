@@ -113,7 +113,7 @@ function execute(sdk: Sdk, env: NodeJS.ProcessEnv): Promise<{ code: number | nul
   });
 }
 
-export async function runOperations(sdk: Sdk, group: Group, management?: { user: string; readKey: string; writeKey: string; mintKey: string }): Promise<void> {
+export async function runOperations(sdk: Sdk, group: Group, management?: { user: string; readKey: string; writeKey: string }): Promise<void> {
   const current = journey<Journey & Partial<Pick<PaidJourney, 'secondDatabaseName'>>>();
   mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
   const planned = operations.filter((op) => op.group === group && (!op.sdks || op.sdks.includes(sdk)));
@@ -128,7 +128,7 @@ export async function runOperations(sdk: Sdk, group: Group, management?: { user:
       TERRASCALE_PROJECT_ID: current.projectId,
       TERRASCALE_DATABASE_NAME: current.databaseName,
       E2E_DATABASE_ID: current.databaseId,
-      ...(management ? { E2E_AUTH_USER: management.user, E2E_AUTH_READ_KEY: management.readKey, E2E_AUTH_WRITE_KEY: management.writeKey, E2E_AUTH_MINT_KEY: management.mintKey } : {}),
+      ...(management ? { E2E_AUTH_USER: management.user, E2E_AUTH_READ_KEY: management.readKey, E2E_AUTH_WRITE_KEY: management.writeKey } : {}),
       ...(current.secondDatabaseName ? { E2E_OTHER_DATABASE: current.secondDatabaseName } : {}),
       E2E_GROUP: group,
       E2E_RUN_ID: `${current.runId}${Date.now().toString(36)}`,
@@ -143,14 +143,11 @@ export async function runOperations(sdk: Sdk, group: Group, management?: { user:
     process.stdout.write(`${summary}\n`);
     test.info().annotations.push({ type: 'lane', description: summary });
   }
-  for (const file of readdirSync(secretsDir).filter((name) => name.startsWith(`scoped-key-${sdk}`) || name === `user-api-key-${sdk}` || name.startsWith(`custom-token-${sdk}`))) mask(readFileSync(join(secretsDir, file), 'utf8'));
+  for (const file of readdirSync(secretsDir).filter((name) => name.startsWith(`scoped-key-${sdk}`) || name === `user-api-key-${sdk}`)) mask(readFileSync(join(secretsDir, file), 'utf8'));
   if (production) process.stdout.write(`${sdk} group ${group} runner output:\n${result.stdout}\n${result.stderr}\n`);
   else await test.info().attach(`${sdk} group ${group}`, { body: `${result.stdout}\n${result.stderr}`, contentType: 'text/plain' });
   if (twoRegions) process.stdout.write(result.stdout.split('\n').filter(line => line.includes('placement:')).join('\n') + '\n');
   const lines = result.stdout.split('\n').filter((line) => line.startsWith('{')).map((line) => JSON.parse(line) as Line);
-  if (lines.some((line) => ['rules.manage', 'custom_tokens.mint'].includes(line.id) && line.ok)) {
-    process.stdout.write(`${sdk} custom token mint, Rules write and read: PASS\n`);
-  }
   if (lines.some((line) => line.id === 'rules.manage' && line.ok)) {
     for (const operation of ['get', 'deploy', 'test', 'versions', 'version', 'restore']) {
       process.stdout.write(`${sdk} Rules ${operation}: PASS\n`);
