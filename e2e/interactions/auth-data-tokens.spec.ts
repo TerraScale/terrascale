@@ -187,8 +187,8 @@ test('tenant tokens name the project data audience, carry trusted claims, and cu
     const bearer = { Authorization: 'Bearer ' + custom.access_token };
     const written = await logged('POST', '…/tables/notes/rows', await request.post(home + '/tables/notes/rows', { headers: bearer, data: { row: { title: 'from the backend' } } }), 201);
     expect(written.row).toMatchObject({ owner_id: user, title: 'from the backend' });
-    const read = await logged('GET', '…/tables/notes/rows/{key}', await request.get(home + '/tables/notes/rows/' + written.key, { headers: bearer }), 200);
-    expect(read.row).toMatchObject({ owner_id: user, title: 'from the backend' });
+    const fetched = await logged('GET', '…/tables/notes/rows/{key}', await request.get(home + '/tables/notes/rows/' + written.key, { headers: bearer }), 200);
+    expect(fetched.row).toMatchObject({ owner_id: user, title: 'from the backend' });
     expect((await logged('GET', '{other database}/tables/notes/rows/{key}', await request.get(other + '/tables/notes/rows/' + written.key, { headers: bearer }), 404)).error.code).toBe('unknown_database');
     expect((await logged('POST', '{other database}/tables/notes/rows', await request.post(other + '/tables/notes/rows', { headers: bearer, data: { row: { title: 'x' } } }), 404)).error.code).toBe('unknown_database');
     await logged('GET', '/{project}/oauth/userinfo', await request.get(auth + '/' + project + '/oauth/userinfo', { headers: bearer }), 401);

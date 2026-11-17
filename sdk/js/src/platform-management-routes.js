@@ -7,7 +7,7 @@ export const platformIdentityContract = Object.freeze({
     "src/TerraScale.Authentication/Features/Platform/PlatformEndpoints.cs": "847c737c4b614e845d64910d7d2038cd94a75f730da5caabd0b61212749adde3",
     "src/TerraScale.Authentication/Features/Platform/ApiKeyEndpoints.cs": "15bbed925cb72d200047b674a9679bdff3a3301e904f30479952248726e0ba51",
     "src/TerraScale.Authentication/Features/Platform/PlatformAuthentication.cs": "4a7658aac2737b5ac5749bc9a79eb5d6bcf44a1b67014b52935b824705e2d829",
-    "src/TerraScale.Authentication/Features/Platform/ApiKeys.cs": "fa5545b08a71dab828a8ad448bfea9723aa305ce8524d5da1c24ea0f8d71b0e2",
+    "src/TerraScale.Authentication/Features/Platform/ApiKeys.cs": "fab8eb8a0b12b0791a01a1e38ac96b7975b484dff83e1ab2ef9993e9690ccaed",
     "src/TerraScale.Authentication/Features/Platform/InvitationEndpoints.cs": "6fd86117190604826a6ccbc743b6cf03961d0e14a376895c7f3af3c0df9b1804",
     "src/TerraScale.Authentication/Features/Platform/AccountDeletionStatusEndpoint.cs": "e5452cf3e1e546359f04eb616f55cc86f58ed6bdcd8ad496b88fa0ff9ab19a47",
     "src/TerraScale.Authentication/Features/Platform/AccountDeletionHistoryEndpoint.cs": "b3816021b62870bd3068ed034abf3e90999a7ee0d203ac2569bf41b8960e681f",
@@ -19,7 +19,7 @@ export const platformIdentityContract = Object.freeze({
     "src/TerraScale.Authentication/Features/Sso/SsoConnections.cs": "272f6384bf19350f897afa4a6f0dedfd4e9448a1cc1df9404441de345243a1e1",
     "src/TerraScale.Authentication/Features/Social/ListLinkedProvidersEndpoint.cs": "22c5eb32f8c6a10f9f84340c6e9b936c30a29a19b1ef9677c2d3d4e787ed61f8",
     "src/TerraScale.Authentication/Features/Social/UnlinkProviderEndpoint.cs": "ab8ca6e042aee022388f24add08a189f8a37cf3d4af1113ac7cfd0c3def03d16",
-    "src/TerraScale.Authentication/Features/Oidc/CustomTokenEndpoint.cs": "8404e935481ba5f4630918751d1a15d5243ae956b2675aef11efcbfc24f4d63d",
+    "src/TerraScale.Authentication/Features/Oidc/CustomTokenEndpoint.cs": "8b9a19d9284efd24d7dd4055620e394db83e26f270eec170f4d53b0d89724f91",
     "src/TerraScale.Authentication/Features/Oidc/CustomTokens.cs": "39df61e4d6b9c37b086b57ebe6321135c9b4f5bba4ed3b8e519d5449b8f6c628",
     "src/TerraScale.Authentication/Features/Email/EmailAdmissionEndpoint.cs": "5beb79748646420e9538a8f4421f62cabe446e6da192aaf3a25b998bee4449a1"
   }

@@ -14,8 +14,8 @@ namespace TerraScale.Authentication.Features.Oidc;
 
 public sealed record CustomTokenRequest(
     [property: JsonPropertyName("user_id")] string? UserId,
-    [property: JsonPropertyName("database")] string? Database = null,
-    [property: JsonPropertyName("claims")] JsonElement Claims = default);
+    [property: JsonPropertyName("database")] string? Database,
+    [property: JsonPropertyName("claims")] JsonElement Claims);
 
 public sealed record CustomTokenBody(
     [property: JsonPropertyName("access_token")] string AccessToken,

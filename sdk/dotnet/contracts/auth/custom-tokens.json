@@ -2,7 +2,7 @@
   "producer": "TerraScale/terrascale",
   "inputs": {
     "src/TerraScale.Authentication/Features/Oidc/CustomTokens.cs": "39df61e4d6b9c37b086b57ebe6321135c9b4f5bba4ed3b8e519d5449b8f6c628",
-    "src/TerraScale.Authentication/Features/Oidc/CustomTokenEndpoint.cs": "8404e935481ba5f4630918751d1a15d5243ae956b2675aef11efcbfc24f4d63d",
+    "src/TerraScale.Authentication/Features/Oidc/CustomTokenEndpoint.cs": "8b9a19d9284efd24d7dd4055620e394db83e26f270eec170f4d53b0d89724f91",
     "src/TerraScale.Authentication/Features/Identity/TrustedClaims.cs": "6efa850c4af220f4253dd367264df2fd67dacf46b4e77c313a421c30becdd343",
     "src/TerraScale.Authentication/Features/Platform/ApiKeys.cs": "fab8eb8a0b12b0791a01a1e38ac96b7975b484dff83e1ab2ef9993e9690ccaed"
   },
