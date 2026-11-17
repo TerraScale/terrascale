@@ -153,7 +153,7 @@ internal static class RulesChecks
         return warnings;
     }
 
-    internal static bool IsValue(string value)
+    private static bool IsValue(string value)
     {
         if (AuthValues.Contains(value, StringComparer.Ordinal) || value == "request.ulid"
             || value.StartsWith("auth.claims.", StringComparison.Ordinal) && ShapeFilters.IsClaimName(value["auth.claims.".Length..]))

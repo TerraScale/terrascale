@@ -34,7 +34,6 @@ internal static class HomeForwarding
     internal const string PlacementMissMessage = "this region no longer holds the database; refresh its placement";
     internal const string PlacementMissHeader = "X-TerraBase-Placement-Miss";
     internal const string ForwardedForHeader = "X-TerraBase-Forwarded-For";
-    internal const string ForwardedRegionHeader = "X-TerraBase-Forwarded-Region";
     internal const string PushThroughHeader = "TerraBase-Push-Through";
     internal const string PublishIdHeader = "TerraBase-Publish-Id";
 
@@ -42,7 +41,7 @@ internal static class HomeForwarding
     {
         "Host", "Connection", "Keep-Alive", "Transfer-Encoding", "TE", "Trailer", "Upgrade", "Proxy-Connection", "Proxy-Authorization",
         "X-TerraScale-Caller", "Content-Length", "Content-Type", "X-TerraScale-Region-Pin", "ts-replay-src", "ts-replay-failed", "X-Forwarded-For", "X-Forwarded-Host",
-        "X-Forwarded-Proto", "Forwarded", ForwardedForHeader, ForwardedRegionHeader, PushThroughHeader, PublishIdHeader, InternalCredential.HeaderName, Management.Usage.PeerUsage.ScopeHeader, ProxyRequestBudget.RemainingHeader, ProxyRequestBudget.AnswerHeader, PlacementMissHeader, AccountingHeader,
+        "X-Forwarded-Proto", "Forwarded", ForwardedForHeader, PushThroughHeader, PublishIdHeader, InternalCredential.HeaderName, Management.Usage.PeerUsage.ScopeHeader, ProxyRequestBudget.RemainingHeader, ProxyRequestBudget.AnswerHeader, PlacementMissHeader, AccountingHeader,
     };
 
     private static readonly HashSet<string> Unreturned = new(StringComparer.OrdinalIgnoreCase)
@@ -107,12 +106,6 @@ internal static class HomeForwarding
 
     internal static Task UnansweredAsync(HttpContext context, string region, Exception error, bool sent = true)
     {
-        if (!sent && context.GetEndpoint()?.Metadata.GetMetadata<DatabaseRegions.HomeWrites>() is not null
-            && region != context.RequestServices.GetRequiredService<TerraBaseOptions>().Region)
-        {
-            return DatabaseRegions.HomeRegion(region, [region]).ExecuteAsync(context);
-        }
-
         if (HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method)
             || !sent)
         {
@@ -183,11 +176,6 @@ internal static class HomeForwarding
                 }
 
                 return await AuthorizedHomeAtAsync(shapeHome).ConfigureAwait(false);
-            }
-
-            if (context.GetEndpoint()?.Metadata.GetMetadata<DatabaseRegions.HomeWrites>() is not null)
-            {
-                return null;
             }
 
             if (database is not null
@@ -266,7 +254,6 @@ internal static class HomeForwarding
 
         request.Headers.Host = Host(region);
         request.Headers.TryAddWithoutValidation(ForwardedForHeader, (IpAllowlists.ClientOf(context) ?? IPAddress.None).ToString());
-        request.Headers.TryAddWithoutValidation(ForwardedRegionHeader, context.RequestServices.GetRequiredService<TerraBaseOptions>().Region);
         var budget = ProxyRequestBudget.For(context);
         request.Headers.TryAddWithoutValidation(ProxyRequestBudget.RemainingHeader, budget.Milliseconds);
         request.Headers.TryAddWithoutValidation(ProxyRequestBudget.AnswerHeader,
@@ -277,7 +264,7 @@ internal static class HomeForwarding
     internal static async Task ForwardAsync(HttpContext context, HomeNode home, byte[]? body = null, string? pushThrough = null,
         Action<HttpResponseMessage>? answered = null, string? publishId = null)
     {
-        if (!Listeners.CanForwardTo(context, home.Region))
+        if (Listeners.IsForwarded(context))
         {
             await UnavailableAsync(context, home.Region).ConfigureAwait(false);
             return;

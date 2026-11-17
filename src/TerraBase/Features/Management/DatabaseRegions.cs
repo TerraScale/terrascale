@@ -37,8 +37,6 @@ internal static class DatabaseRegions
 
     internal sealed class WriterReads;
 
-    internal sealed class HomeWrites;
-
     internal static bool SameSet(IReadOnlyList<string>? left, IReadOnlyList<string>? right) =>
         left is not null && right is not null && left.Order(StringComparer.Ordinal).SequenceEqual(right.Order(StringComparer.Ordinal), StringComparer.Ordinal);
 
@@ -101,7 +99,6 @@ internal static class DatabaseRegions
                 var region = context.RequestServices.GetRequiredService<TerraBaseOptions>().Region;
                 await (await RecordAsync(context, project, database).ConfigureAwait(false) switch
                 {
-                    ManagedDatabase when endpoint.Metadata.GetMetadata<HomeWrites>() is not null => next(context),
                     ManagedDatabase record when !record.Placement(region).PlacedIn(region)
                         || !record.PlacedIn(region) && endpoint.Metadata.GetMetadata<PlacementAware>() is null
                             && endpoint.Metadata.GetMetadata<ReplicaReads>() is null
