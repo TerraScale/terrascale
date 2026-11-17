@@ -1,4 +1,3 @@
-using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace TerraScale.DotNet.TerraBase;
@@ -25,17 +24,18 @@ public enum ShapeStatus
 }
 
 /// <summary>An immutable table view at an applied commit boundary, with regional provisional writes overlaid.</summary>
-/// <param name="Rows">Rows keyed by column name, using the SQL API JSON cell representation.</param>
+/// <param name="Rows">Immutable SQL records with the same typed accessors and mapping as query results.</param>
 /// <param name="Offset">Last applied server offset.</param>
 /// <param name="Status">Snapshot and connection progress.</param>
-public sealed record ShapeView(IReadOnlyList<IReadOnlyDictionary<string, JsonElement>> Rows, string Offset, ShapeStatus Status);
+public sealed record ShapeView(IReadOnlyList<TerraBaseSqlRecord> Rows, string Offset, ShapeStatus Status);
 
 internal sealed record ShapePage(string Handle, string NextOffset, bool UpToDate, IReadOnlyList<ShapeCommit> Changes,
     IReadOnlyList<ShapePending>? Provisional = null, string? Local = null);
-internal sealed record ShapeCommit(string Offset, JsonElement Ops, IReadOnlyList<string>? Confirmed = null, IReadOnlyList<string>? Revert = null);
-internal sealed record ShapePending(string Id, JsonElement Ops);
+internal sealed record ShapeCommit(string Offset, IReadOnlyList<ShapeOperation> Ops, IReadOnlyList<string>? Confirmed = null, IReadOnlyList<string>? Revert = null);
+internal sealed record ShapePending(string Id, IReadOnlyList<ShapeOperation> Ops);
+internal sealed record ShapeOperation(string Op, string Key, TerraBaseSqlRecord? Row = null, string? Move = null);
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
-    RespectRequiredConstructorParameters = true, RespectNullableAnnotations = true)]
+    RespectRequiredConstructorParameters = true, RespectNullableAnnotations = true, Converters = [typeof(ShapeRowConverter)])]
 [JsonSerializable(typeof(ShapePage))]
 internal sealed partial class ShapeJsonContext : JsonSerializerContext;

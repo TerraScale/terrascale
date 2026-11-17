@@ -131,7 +131,7 @@ internal sealed class TerraBaseSqlRowsConverter : JsonConverter<TerraBaseSqlRows
     public override void Write(Utf8JsonWriter writer, TerraBaseSqlRows value, JsonSerializerOptions options) =>
         throw new NotSupportedException("SQL rows are response-only.");
 
-    private static TerraBaseSqlCell Cell(ref Utf8JsonReader reader)
+    internal static TerraBaseSqlCell Cell(ref Utf8JsonReader reader)
     {
         switch (reader.TokenType)
         {

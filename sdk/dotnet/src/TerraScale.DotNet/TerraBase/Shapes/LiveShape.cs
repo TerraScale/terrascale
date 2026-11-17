@@ -62,7 +62,7 @@ public sealed partial class LiveShape
 
     private async Task RunAsync(ChannelWriter<ShapeView> writer, CancellationToken cancellationToken)
     {
-        var rows = new Dictionary<string, IReadOnlyDictionary<string, JsonElement>>(StringComparer.Ordinal);
+        var rows = new Dictionary<string, TerraBaseSqlRecord>(StringComparer.Ordinal);
         var pending = new List<ShapePending>();
         string? handle = null, cursor = null;
         var offset = "-1";
@@ -75,7 +75,7 @@ public sealed partial class LiveShape
         ShapeView View(ShapeStatus status)
         {
             if (offset.StartsWith("snap.", StringComparison.Ordinal)) return new([], offset, status);
-            var merged = new Dictionary<string, IReadOnlyDictionary<string, JsonElement>>(rows, StringComparer.Ordinal);
+            var merged = new Dictionary<string, TerraBaseSqlRecord>(rows, StringComparer.Ordinal);
             foreach (var transaction in pending) Apply(merged, transaction.Ops);
             return new(Array.AsReadOnly(merged.Values.ToArray()), offset, status);
         }
@@ -194,17 +194,14 @@ public sealed partial class LiveShape
         ("where", where), ("columns", columns), ("handle", handle), ("offset", offset),
         ("live", live ? "true" : null), ("cursor", live ? cursor : null), ("local", live ? local : null));
 
-    private static void Apply(Dictionary<string, IReadOnlyDictionary<string, JsonElement>> rows, JsonElement ops)
+    private static void Apply(Dictionary<string, TerraBaseSqlRecord> rows, IReadOnlyList<ShapeOperation> ops)
     {
-        foreach (var op in ops.EnumerateArray())
+        foreach (var op in ops)
         {
-            var key = op.GetProperty("key").GetString() ?? throw InvalidResponse();
-            var move = op.TryGetProperty("move", out var direction) ? direction.GetString() : null;
-            var kind = op.GetProperty("op").GetString();
-            if (move is not (null or "in" or "out")) throw InvalidResponse();
-            if (move == "out" || move is null && kind == "delete") rows.Remove(key);
-            else if (move == "in" || kind is "insert" or "update")
-                rows[key] = op.GetProperty("row").EnumerateObject().ToDictionary(column => column.Name, column => column.Value.Clone(), StringComparer.Ordinal).AsReadOnly();
+            if (op.Move is not (null or "in" or "out")) throw InvalidResponse();
+            if (op.Move == "out" || op.Move is null && op.Op == "delete") rows.Remove(op.Key);
+            else if (op.Move == "in" || op.Op is "insert" or "update")
+                rows[op.Key] = op.Row ?? throw InvalidResponse();
             else throw InvalidResponse();
         }
     }

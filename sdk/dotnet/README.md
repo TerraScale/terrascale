@@ -111,17 +111,19 @@ var shape = db.Shape("todos", new ShapeOptions { Where = "done = 0", Columns = [
 await foreach (var view in shape.WatchAsync(ct))
 {
     foreach (var row in view.Rows)
-        Console.WriteLine($"{view.Status}: {row["title"].GetString()}");
+        Console.WriteLine($"{view.Status}: {row.GetInt64("id")} {row.GetString("title")}");
 }
 ```
 
-Each view contains immutable row dictionaries with the SQL API JSON cell representation and an applied
+Each view contains immutable `TerraBaseSqlRecord` rows, matching SQL query results, and an applied
 `Offset`. `Status` is `Loading`, `Live` or `Reconnecting`. The SDK finishes the paged snapshot before
 publishing rows, applies commits in order and overlays regional provisional writes. WebSocket hints use
 bearer headers and trigger HTTP catch-up; HTTP long-polling takes over when hints are unavailable.
 Transient failures resume from the applied offset with backoff; `must_refetch` clears the view and starts
 a new snapshot. Authentication and permission failures end enumeration. Cancel or dispose the enumerator
 to close its work. Each enumeration owns an independent subscription.
+
+Rows support the same `GetInt64`, `GetBytes` and `As<T>(JsonTypeInfo<T>)` accessors as SQL query rows.
 
 ## Databases for agents
 
