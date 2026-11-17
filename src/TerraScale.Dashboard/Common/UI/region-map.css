@@ -145,11 +145,11 @@ button.ts-region-node {
 
 .ts-region-callout {
   display: block;
-  width: max-content;
-  max-width: 252px;
+  width: 216px;
   border: 1px solid var(--ts-line-strong);
   border-radius: var(--ts-radius-lg);
   background: var(--ts-surface-2);
+  box-shadow: 0 8px 22px -12px var(--ts-shadow);
   transition: border-color var(--ts-fast) var(--ts-ease), opacity var(--ts-base) var(--ts-ease);
 }
 
@@ -157,26 +157,24 @@ button.ts-region-node {
   border-color: var(--ts-control-line);
 }
 
-.ts-region-callout[data-selected="true"] {
-  border-color: color-mix(in oklab, var(--ts-link) 60%, transparent);
+.ts-region-callout:has(.ts-region-toggle:checked) {
+  border-color: color-mix(in oklab, var(--ts-link) 55%, transparent);
+  background: linear-gradient(180deg, color-mix(in oklab, var(--ts-link) 16%, var(--ts-surface-2)), color-mix(in oklab, var(--ts-link) 6%, var(--ts-surface-2)));
 }
 
-.ts-region-callout:has(input:focus-visible) {
-  outline: 2px solid var(--ts-focus);
+.ts-region-callout:has(.ts-region-toggle:focus-visible) {
+  outline: var(--ts-ring);
   outline-offset: 2px;
 }
 
 .ts-region-callout-body {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  position: relative;
+  display: grid;
   gap: var(--ts-s2);
-  min-width: 0;
-  padding: 9px 10px;
+  padding: 11px var(--ts-s3);
   color: var(--ts-ink);
   font-size: var(--ts-fs-sm);
-  font-weight: 500;
-  line-height: 1.25;
+  line-height: 1.3;
 }
 
 label.ts-region-callout-body {
@@ -184,35 +182,73 @@ label.ts-region-callout-body {
   user-select: none;
 }
 
-.ts-region-map[data-mode="read-only"] .ts-region-callout-body {
-  padding: 6px var(--ts-s2);
-}
-
-.ts-region-mark {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 16px;
-  height: 16px;
-}
-
-.ts-region-mark > * {
-  grid-area: 1 / 1;
-  transition: opacity var(--ts-base) var(--ts-ease);
-}
-
-.ts-region-mark > input {
+.ts-region-callout-body > .ts-region-toggle {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
   cursor: pointer;
+  appearance: none;
+}
+
+.ts-region-tick {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid var(--ts-control-line);
+  border-radius: 50%;
+  pointer-events: none;
+  transition: background-color var(--ts-fast) var(--ts-ease), border-color var(--ts-fast) var(--ts-ease);
+}
+
+.ts-region-tick::after {
+  content: "";
+  grid-area: 1 / 1;
+  width: 7px;
+  height: 3.5px;
+  margin-top: -1.5px;
+  border: 2px solid var(--ts-on-accent);
+  border-top: 0;
+  border-right: 0;
+  opacity: 0;
+  transform: rotate(-45deg);
+  transition: opacity var(--ts-fast) var(--ts-ease);
+}
+
+.ts-region-callout:has(.ts-region-toggle:checked) .ts-region-tick {
+  border-color: var(--ts-accent);
+  background: var(--ts-accent);
+}
+
+.ts-region-callout:has(.ts-region-toggle:checked) .ts-region-tick::after {
+  opacity: 1;
 }
 
 .ts-region-busy {
+  grid-area: 1 / 1;
   width: 14px;
   height: 14px;
   border: 1.5px solid var(--ts-link);
   border-top-color: transparent;
   border-radius: 50%;
   opacity: 0;
-  pointer-events: none;
+}
+
+.ts-region-title {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ts-s2);
+  min-width: 0;
+}
+
+label .ts-region-title {
+  padding-right: 24px;
 }
 
 .ts-region-flag {
@@ -220,6 +256,7 @@ label.ts-region-callout-body {
   flex: none;
   width: 20px;
   height: 15px;
+  margin-top: 1.5px;
   border-radius: 2px;
   box-shadow: 0 0 0 1px var(--ts-line-strong);
   object-fit: cover;
@@ -233,35 +270,44 @@ label.ts-region-callout-body {
 }
 
 .ts-region-name {
+  display: -webkit-box;
   min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
   overflow-wrap: anywhere;
+  text-wrap: balance;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
-.ts-region-code {
-  margin-left: auto;
-  padding-left: var(--ts-s1);
-  color: var(--ts-ink-3);
-  font-size: var(--ts-fs-xs);
-  font-weight: 400;
-}
-
-.ts-region-detail {
+.ts-region-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   color: var(--ts-ink-2);
   font-size: var(--ts-fs-xs);
-  font-weight: 400;
-  white-space: nowrap;
+  line-height: 1.4;
 }
 
-.ts-region-ping {
+.ts-region-chip {
   display: inline-flex;
   flex: none;
   align-items: center;
   gap: 5px;
-  color: var(--ts-ink-2);
-  font-size: var(--ts-fs-xs);
-  font-weight: 400;
-  font-variant-numeric: tabular-nums;
+  padding: 1px 7px;
+  border-radius: var(--ts-radius);
+  background: var(--ts-hover);
   white-space: nowrap;
+}
+
+.ts-region-code {
+  color: var(--ts-ink-3);
+  font-family: var(--ts-font-mono);
+}
+
+.ts-region-ping {
+  font-variant-numeric: tabular-nums;
 }
 
 .ts-region-ping::before {
@@ -277,16 +323,21 @@ label.ts-region-callout-body {
 .ts-region-ping[data-state="slow"]::before { background: var(--ts-severe); }
 .ts-region-ping[data-state="down"]::before { background: var(--ts-danger); }
 
-.ts-region-ping-best {
-  display: none;
-  color: var(--ts-ink-3);
-  font-size: var(--ts-fs-xs);
-  font-weight: 400;
-  white-space: nowrap;
+.ts-region-callout[data-fastest] .ts-region-ping {
+  background: color-mix(in oklab, var(--ts-success) var(--ts-tint-badge), transparent);
+  color: var(--ts-success);
 }
 
-.ts-region-callout[data-fastest] .ts-region-ping-best {
-  display: inline;
+.ts-region-callout[data-fastest] .ts-region-ping::after {
+  content: "· fastest";
+}
+
+.ts-region-detail {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ts-region-map-status {
@@ -310,7 +361,12 @@ label.ts-region-callout-body {
   pointer-events: none;
 }
 
-.ts-region-map[data-busy] .ts-region-mark > input {
+.ts-region-map[data-busy] .ts-region-callout .ts-region-tick {
+  border-color: transparent;
+  background: none;
+}
+
+.ts-region-map[data-busy] .ts-region-callout .ts-region-tick::after {
   opacity: 0;
 }
 
@@ -386,10 +442,6 @@ label.ts-region-callout-body {
 
   .ts-region-map[data-mode="select"]:not([data-bleed="true"]) {
     --ts-region-map-chrome: 572px;
-  }
-
-  .ts-region-callout {
-    max-width: 176px;
   }
 }
 
