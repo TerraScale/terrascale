@@ -32,7 +32,7 @@ async function mintKey(request: APIRequestContext): Promise<string> {
 
 async function endUserToken(request: APIRequestContext, key: string, user: string): Promise<string> {
   const current = journey();
-  const response = await request.post(`${auth}/v1/terrascale/projects/${current.projectId}/end-user-tokens`, {
+  const response = await request.post(`${auth}/v1/${current.projectId}/custom-tokens`, {
     headers: { authorization: 'Bearer ' + key }, data: { user_id: user, database: current.databaseId },
   });
   expect(response.status()).toBe(200);
@@ -206,7 +206,7 @@ test('rules compile, keep versions, simulate deployed and draft requests and res
     });
     const mintKey = (await answer<{ key: string }>(createdKey, 201)).key;
     saveSecret('rules-simulator-mint-key', mintKey);
-    const minted = await request.post(`${auth}/v1/terrascale/projects/${current.projectId}/end-user-tokens`, {
+    const minted = await request.post(`${auth}/v1/${current.projectId}/custom-tokens`, {
       headers: { authorization: 'Bearer ' + mintKey }, data: { user_id: subject },
     });
     const endUser = (await answer<{ access_token: string }>(minted, 200)).access_token;

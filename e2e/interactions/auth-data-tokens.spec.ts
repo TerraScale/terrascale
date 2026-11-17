@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { type APIResponse } from '@playwright/test';
 import { Audit, auditedContext, expect, test } from '../support/audit';
 import { createDedicatedProjectOwner } from '../support/project-owner';
 import { signInToken, stepUp } from '../support/auth-management';
@@ -6,7 +7,7 @@ import { confirmWithPassword, hostedReady } from '../support/hosted';
 import { newAddress, nextMail } from '../support/inbox';
 import { enterSecret } from '../support/secret';
 import { auth, dash, desktop } from '../support/stack';
-import { saveSecret } from '../support/state';
+import { journey, saveSecret } from '../support/state';
 
 type Jwt = { header: Record<string, unknown>; claims: Record<string, unknown> };
 
@@ -17,7 +18,14 @@ const decode = (token: string): Jwt => {
 
 const ulid = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 
-test('tenant tokens name the project data audience, carry trusted claims, and custom tokens need only the mint scope', async ({ browser }, info) => {
+async function logged(method: string, path: string, response: APIResponse, status: number) {
+  const text = await response.text();
+  console.log(method + ' ' + path + ' -> ' + response.status());
+  expect(response.status(), text).toBe(status);
+  return text ? JSON.parse(text) : null;
+}
+
+test('tenant tokens name the project data audience, carry trusted claims, and custom tokens need only the mint scope', async ({ browser, request }, info) => {
   const account = await createDedicatedProjectOwner(browser, info, 'Data token owner');
   const { current } = account;
   const ownerPage = account.page;
@@ -29,6 +37,9 @@ test('tenant tokens name the project data audience, carry trusted claims, and cu
   const redirect = dash + '/auth/data-tokens';
   const users = auth + '/v1/' + project + '/users/';
   const managed = { Authorization: 'Bearer ' + current.apiKey };
+  const api = 'https://api.terrascale.tech/v1/projects/' + project;
+  const databases: string[] = [];
+  const owner = { Authorization: '' };
   let client = '';
   try {
     await ownerPage.goto(dash + '/auth/clients');
@@ -125,18 +136,68 @@ test('tenant tokens name the project data audience, carry trusted claims, and cu
     const mintKey = (await created.json()).key as string;
     saveSecret('data-token-mint-key', mintKey);
 
-    const mint = (key: string) => ownerPage.request.post(auth + '/v1/terrascale/projects/' + project + '/end-user-tokens', {
-      headers: { Authorization: 'Bearer ' + key }, data: { user_id: user, claims: { roles: ['editor'] } },
+    const exchanged = await request.post(auth + '/terrascale/oauth/token', {
+      form: { grant_type: 'client_credentials', client_id: current.apiKey.slice(0, 26), client_secret: current.apiKey, project,
+        scope: 'sql:read sql:write databases:read databases:write' },
     });
-    const withoutScope = await mint(current.apiKey);
-    expect(withoutScope.status()).toBe(401);
-    const minted = await mint(mintKey);
-    expect(minted.status()).toBe(200);
-    const custom = await minted.json() as { access_token: string; token_type: string; expires_in: number };
+    expect(exchanged.status()).toBe(200);
+    owner.Authorization = 'Bearer ' + (await exchanged.json()).access_token;
+    saveSecret('data-token-project-token', owner.Authorization.slice(7));
+    const homeDatabase = await request.post(api + '/databases', { headers: owner, data: { name: 'custom-token-' + randomBytes(4).toString('hex') } });
+    expect(homeDatabase.status(), await homeDatabase.text()).toBe(201);
+    databases.push((await homeDatabase.json()).id as string);
+    const home = api + '/databases/' + databases[0];
+    const schema = await request.post(home + '/sql/execute', {
+      headers: owner, data: { statements: [{ sql: 'CREATE TABLE notes (id INTEGER PRIMARY KEY, owner_id TEXT NOT NULL, title TEXT NOT NULL)' }] },
+    });
+    expect(schema.status(), await schema.text()).toBe(200);
+    const rules = await request.put(home + '/rules', {
+      headers: { ...owner, 'if-none-match': '*' },
+      data: { tables: { notes: {
+        read: "row.owner_id = auth.uid AND 'editor' IN auth.claims.roles",
+        create: "auth.claims.plan = 'pro' AND auth.org_id IS NULL AND auth.org_role IS NULL AND auth.is_anonymous = 0",
+        writable: ['title'],
+        set: { create: { owner_id: 'auth.uid' } },
+      } } },
+    });
+    expect(rules.status(), await rules.text()).toBe(200);
+
+    const minting = { user_id: user, database: databases[0], claims: { plan: 'pro', roles: ['editor'] } };
+    const mint = async (key: string, body: Record<string, unknown>, status: number) =>
+      logged('POST', '/v1/{project}/custom-tokens', await request.post(auth + '/v1/' + project + '/custom-tokens', { headers: { Authorization: 'Bearer ' + key }, data: body }), status);
+    expect((await mint(current.apiKey, minting, 403)).error.code).toBe('insufficient_scope');
+    expect((await mint(mintKey, { ...minting, tables: ['notes'] }, 400)).error.code).toBe('invalid_request');
+    expect((await mint(mintKey, { ...minting, user_id: user.toLowerCase() }, 400)).error.code).toBe('invalid_request');
+    const custom = await mint(mintKey, minting, 200) as { access_token: string; token_type: string; expires_in: number };
     saveSecret('data-token-custom', custom.access_token);
-    expect(custom.token_type).toBe('Bearer');
-    expect(decode(custom.access_token).claims).toMatchObject({ sub: user, token_kind: 'end_user', project_id: project, roles: ['editor'] });
-    console.log('mint-only custom token request: POST /v1/terrascale/projects/{project}/end-user-tokens -> ' + minted.status() + ', without the scope -> ' + withoutScope.status());
+    expect(custom).toMatchObject({ token_type: 'Bearer', expires_in: 300 });
+    const token = decode(custom.access_token);
+    expect(token.header).toMatchObject({ typ: 'at+jwt', alg: 'ES256', kid: expect.any(String) });
+    expect(token.claims).toMatchObject({ iss: auth + '/' + project, sub: user, token_use: 'custom', database: databases[0], claims: minting.claims });
+    const audiences = [token.claims.aud].flat() as string[];
+    expect(audiences).toContain(dataAudience);
+    for (const audience of audiences) expect(audience.endsWith('/v1/projects/' + project)).toBe(true);
+    expect((token.claims.exp as number) - (token.claims.iat as number)).toBeLessThanOrEqual(300);
+    for (const absent of ['roles', 'tables', 'token_kind', 'project_id', 'instance_id', 'scope', 'org_id', 'is_anonymous']) expect(token.claims).not.toHaveProperty(absent);
+    console.log('decoded custom token header: ' + JSON.stringify(token.header));
+    console.log('decoded custom token payload: ' + JSON.stringify(token.claims));
+
+    const bearer = { Authorization: 'Bearer ' + custom.access_token };
+    const written = await logged('POST', '…/tables/notes/rows', await request.post(home + '/tables/notes/rows', { headers: bearer, data: { row: { title: 'from the backend' } } }), 201);
+    expect(written.row).toMatchObject({ owner_id: user, title: 'from the backend' });
+    const fetched = await logged('GET', '…/tables/notes/rows/{key}', await request.get(home + '/tables/notes/rows/' + written.key, { headers: bearer }), 200);
+    expect(fetched.row).toMatchObject({ owner_id: user, title: 'from the backend' });
+    const elsewhere = await mint(mintKey, { ...minting, database: '01ARZ3NDEKTSV4RRFFQ69G5FAV' }, 200) as { access_token: string };
+    saveSecret('data-token-custom-elsewhere', elsewhere.access_token);
+    const restricted = { Authorization: 'Bearer ' + elsewhere.access_token };
+    expect((await logged('GET', '…/tables/notes/rows/{key} restricted to another database', await request.get(home + '/tables/notes/rows/' + written.key, { headers: restricted }), 404)).error.code).toBe('unknown_database');
+    expect((await logged('POST', '…/tables/notes/rows restricted to another database', await request.post(home + '/tables/notes/rows', { headers: restricted, data: { row: { title: 'x' } } }), 404)).error.code).toBe('unknown_database');
+    const otherProject = journey().projectId;
+    expect(otherProject).not.toBe(project);
+    expect((await logged('POST', '/v1/{other project}/custom-tokens', await request.post(auth + '/v1/' + otherProject + '/custom-tokens', { headers: { Authorization: 'Bearer ' + mintKey }, data: minting }), 404)).error.code).toBe('not_found');
+    const otherRows = 'https://api.terrascale.tech/v1/projects/' + otherProject + '/databases/' + journey().databaseId + '/tables/notes/rows';
+    await logged('POST', '{other project}/tables/notes/rows', await request.post(otherRows, { headers: bearer, data: { row: { title: 'x' } } }), 401);
+    await logged('GET', '/{project}/oauth/userinfo', await request.get(auth + '/' + project + '/oauth/userinfo', { headers: bearer }), 401);
 
     const manage = await ownerPage.request.get(auth + '/v1/' + project + '/users', { headers: { Authorization: 'Bearer ' + mintKey } });
     expect(manage.status()).toBe(403);
@@ -146,6 +207,7 @@ test('tenant tokens name the project data audience, carry trusted claims, and cu
       const removed = await ownerPage.request.delete(auth + '/v1/' + project + '/clients/' + client, { headers: managed });
       expect(removed.status()).toBe(204);
     }
+    for (const id of databases) expect((await request.delete(api + '/databases/' + id, { headers: owner })).status()).toBe(204);
     await customer.close();
     await account.remove();
   }

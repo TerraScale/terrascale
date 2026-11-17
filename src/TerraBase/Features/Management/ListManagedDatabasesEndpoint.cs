@@ -1,4 +1,3 @@
-using System.Collections.Frozen;
 using System.Diagnostics;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
@@ -82,7 +81,6 @@ internal sealed class ListManagedDatabasesEndpoint(
         var grant = new ProjectAccess(actor, project, owner, restricted, restrictedId)
         {
             Auth = HttpContext.Features.Get<RulesAuth>(),
-            Roles = HttpContext.User.FindAll("roles").Select(claim => claim.Value).ToFrozenSet(StringComparer.Ordinal),
         };
         await ProjectAccess.RunAsync(grant, async () => result = await ListAsync(grant.Actor, owner, project, restricted, grant, page, cancellationToken).ConfigureAwait(false))
             .ConfigureAwait(false);

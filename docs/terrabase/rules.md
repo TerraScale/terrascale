@@ -2,7 +2,7 @@
 
 Status: Partly built. The rules set, deploy checks, the condition compiler, versions, restore, the section 7 routes,
 end-user reads (section 4: shapes and the row read), the section 5 row writes and the section 8 simulator are live.
-Rules replaced read grants and the `tables` claim of [scoped end-user tokens](../auth/scoped-end-user-tokens.md).
+Rules replaced read grants. A project backend mints [custom tokens](../auth/custom-tokens.md) (section 3.2) for its own users.
 
 A project's end users sign in with the project's own ts-auth tenant and read and write a database straight from the
 browser, with no developer backend. The database owner deploys one **rules** set per database: for each table,

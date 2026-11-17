@@ -17,6 +17,8 @@ internal sealed record RulesAuth(string Uid, IReadOnlyDictionary<string, RulesCl
     private const int MaxItems = 64;
     private const int MaxRole = 128;
 
+    public FrozenSet<string> Roles { get; } = RolesOf(Claims);
+
     public static RulesAuth? Read(string uid, JsonElement payload, bool custom)
     {
         var claims = FrozenDictionary<string, RulesClaim>.Empty;
@@ -41,6 +43,20 @@ internal sealed record RulesAuth(string Uid, IReadOnlyDictionary<string, RulesCl
 
         return new RulesAuth(uid, claims, organization, role, anonymous);
     }
+
+    private static FrozenSet<string> RolesOf(IReadOnlyDictionary<string, RulesClaim> claims) =>
+        claims.TryGetValue("roles", out var roles) ? roles switch
+        {
+            string role => FrozenSet.Create(StringComparer.Ordinal, role),
+            IReadOnlyList<RulesScalar> items => items.Select(Text).OfType<string>().ToFrozenSet(StringComparer.Ordinal),
+            long or double => FrozenSet<string>.Empty,
+        } : FrozenSet<string>.Empty;
+
+    private static string? Text(RulesScalar item) => item switch
+    {
+        string text => text,
+        long or double => null,
+    };
 
     private static bool OptionalText(JsonElement payload, string name, out string? value)
     {

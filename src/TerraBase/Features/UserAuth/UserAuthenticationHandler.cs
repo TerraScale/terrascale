@@ -1,4 +1,3 @@
-using System.Collections.Frozen;
 using System.Net;
 using System.Security.Claims;
 using System.Text.Encodings.Web;
@@ -119,9 +118,7 @@ internal sealed class UserAuthenticationHandler(
         }
 
         List<Claim> claims = [new(ClaimTypes.NameIdentifier, user)];
-        var endUser = jwt.TryGetPayloadValue<string>("token_kind", out var kind) && kind == "end_user";
-        if (jwt.TryGetPayloadValue<object>("token_kind", out _) && !endUser
-            || jwt.TryGetPayloadValue<object>("instance_id", out _) && !endUser)
+        if (jwt.TryGetPayloadValue<object>("token_kind", out _) || jwt.TryGetPayloadValue<object>("instance_id", out _))
         {
             return AuthenticateResult.Fail("invalid token kind");
         }
@@ -153,27 +150,6 @@ internal sealed class UserAuthenticationHandler(
             }
         }
 
-        if (endUser)
-        {
-            using var payload = JsonDocument.Parse(Base64UrlEncoder.DecodeBytes(jwt.EncodedPayload));
-            if (project is null || !payload.RootElement.TryGetProperty("instance_id", out var instance)
-                || instance.ValueKind != JsonValueKind.String || instance.GetString() != project
-                || payload.RootElement.TryGetProperty("scope", out _)
-                || payload.RootElement.TryGetProperty(Platform.PlatformExplore.RoleClaim, out _)
-                || payload.RootElement.TryGetProperty("is_anonymous", out var guest) && guest.ValueKind != JsonValueKind.False
-                || !payload.RootElement.TryGetProperty("roles", out var roles) || roles.ValueKind != JsonValueKind.Array
-                || roles.GetArrayLength() > 64 || roles.EnumerateArray().Any(role => role.ValueKind != JsonValueKind.String
-                    || string.IsNullOrWhiteSpace(role.GetString()) || role.GetString()!.Length > 128 || role.GetString()!.Any(char.IsControl)))
-            {
-                return AuthenticateResult.Fail("invalid end-user project linkage or roles");
-            }
-
-            claims.Add(new Claim("token_kind", "end_user"));
-            claims.AddRange(roles.EnumerateArray().Select(role => role.GetString()!).Distinct(StringComparer.Ordinal).Select(role => new Claim("roles", role)));
-            claims.Add(new Claim("scope", "sql:read"));
-            claims.Add(new Claim("scope", "sql:write"));
-        }
-
         if (jwt.TryGetPayloadValue<string>("database", out var database))
         {
             if (project is null || !EntityIds.IsValid(database))
@@ -200,7 +176,7 @@ internal sealed class UserAuthenticationHandler(
         {
             if (jwt.TryGetPayloadValue<string>(name, out var cidrs))
             {
-                if (project is null || endUser || IpAllowlists.Parse(cidrs) is not { } networks)
+                if (project is null || IpAllowlists.Parse(cidrs) is not { } networks)
                 {
                     return AuthenticateResult.Fail("invalid IP allowlist claim");
                 }
@@ -213,7 +189,7 @@ internal sealed class UserAuthenticationHandler(
         var hasKey = jwt.TryGetPayloadValue<string>("key_id", out var keyId);
         if (hasKey | jwt.TryGetPayloadValue<string>("key_gen", out var generation))
         {
-            if (!hasKey || keyId != user || endUser || !KeyToken.IsGeneration(generation))
+            if (!hasKey || keyId != user || !KeyToken.IsGeneration(generation))
             {
                 return AuthenticateResult.Fail("invalid API key claims");
             }
@@ -226,12 +202,8 @@ internal sealed class UserAuthenticationHandler(
             claims.Add(new Claim(Platform.PlatformExplore.RoleClaim, role));
         }
 
-        scope = endUser ? EndUserScope : scope;
         accepted = new ValidatedTokens.Accepted(
-            checkedWith, jwt.ValidTo, [.. claims.Select(claim => (claim.Type, claim.Value))], project, database, scope, allowlists, key)
-        {
-            Auth = endUser ? new RulesAuth(user, FrozenDictionary<string, RulesClaim>.Empty, null, null, false) : null,
-        };
+            checkedWith, jwt.ValidTo, [.. claims.Select(claim => (claim.Type, claim.Value))], project, database, scope, allowlists, key);
         validated.Add(cacheKey, accepted);
         return Success(accepted, token);
     }

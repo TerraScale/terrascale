@@ -46,7 +46,7 @@ public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimite
                 || context.Request.Path.Equals(DevicePath, StringComparison.OrdinalIgnoreCase)
                 || context.Request.Path.Equals(DevicePath + "/", StringComparison.OrdinalIgnoreCase)
                 || IsProjectTokenPath(context.Request.Path)
-                || EndUserTokenEndpoint.Matches(context.Request.Path)))
+                || CustomTokenEndpoint.Matches(context.Request.Path)))
         {
             await next(context);
             return;
@@ -63,7 +63,7 @@ public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimite
             logger.ZLogWarning(error.InnerException ?? error, $"Token request refused: its rate limit could not be checked");
             context.Response.Headers.CacheControl = "no-store";
             context.Response.Headers.RetryAfter = "2";
-            refusal = EndUserTokenEndpoint.Matches(context.Request.Path)
+            refusal = CustomTokenEndpoint.Matches(context.Request.Path)
                 ? Results.Json(new ErrorBody(new ErrorDetail("temporarily_unavailable", "The token request could not be checked; retry shortly.")),
                     statusCode: StatusCodes.Status503ServiceUnavailable)
                 : Results.Json(new OAuthErrorBody(Errors.TemporarilyUnavailable, "The token request could not be checked; retry shortly."),
