@@ -131,7 +131,7 @@ public static class OidcIssuer
                 server.SetConfigurationEndpointUris(ConfigurationPath)
                     .SetJsonWebKeySetEndpointUris(JwksPath)
                     .SetAuthorizationEndpointUris("oauth/authorize")
-                    .SetTokenEndpointUris("oauth/token")
+                    .SetTokenEndpointUris("oauth/token", GuestSignIn.Route)
                     .SetUserInfoEndpointUris("oauth/userinfo")
                     .SetEndSessionEndpointUris("oauth/logout")
                     .SetRevocationEndpointUris("oauth/revoke")
@@ -146,6 +146,7 @@ public static class OidcIssuer
                     .AllowTokenExchangeFlow()
                     // The bound GitHub Actions workload only (GitHubActionsBinding creates its client).
                     .AllowCustomFlow(GitHubActionsGrant.GrantType)
+                    .AllowCustomFlow(GuestSignIn.GrantType)
                     .RequireProofKeyForCodeExchange()
                     .RegisterScopes(Scopes.Email, Scopes.Profile, Scopes.OfflineAccess)
                     // Each client's scope permissions still bound what it may request; there is no scope store.
@@ -195,6 +196,9 @@ public static class OidcIssuer
                         .SetType(OpenIddictServerHandlerType.Custom))
                     .AddEventHandler<GenerateTokenContext>(handler => handler.UseScopedHandler<LimitImpersonationToken>()
                         .SetOrder(OpenIddictServerHandlers.Protection.CreateTokenEntry.Descriptor.Order - 2)
+                        .SetType(OpenIddictServerHandlerType.Custom))
+                    .AddEventHandler<ExtractTokenRequestContext>(handler => handler.UseSingletonHandler<RouteGuestGrant>()
+                        .SetOrder(OpenIddictServerAspNetCoreHandlers.ExtractBasicAuthenticationCredentials<ExtractTokenRequestContext>.Descriptor.Order + 1_000)
                         .SetType(OpenIddictServerHandlerType.Custom))
                     .AddEventHandler<ValidateTokenRequestContext>(handler => handler.UseSingletonHandler<RefuseScopeExpansion>()
                         .SetOrder(OpenIddictServerHandlers.Exchange.ValidateScopePermissions.Descriptor.Order - 1)

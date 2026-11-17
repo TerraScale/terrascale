@@ -12,7 +12,7 @@ public sealed class CreateProjectClientEndpoint(TenantDirectory tenants, IOpenId
     public override void Configure()
     {
         Post(Root + "/clients");
-        this.Describe("create_project_client", "Register an OAuth client", "An authorization code client with S256 PKCE, refresh tokens and logout. type is public, confidential or machine; machine apps use client_credentials with 1 to 64 allowed_scopes, optional allowed_audiences and token_lifetime_minutes (5 to 60, default 15), and no redirect URIs; redirect_uris holds 1 to 10 absolute https URLs (http only on loopback hosts) without userinfo or fragments. Each URI must additionally exactly match an entry in the project's redirect allowlist when nonempty; an empty list adds no restriction. A confidential client's client_secret is answered once and never again. Needs the admin project role.", "Project tenants", typeof(CreateClientRequest), StatusCodes.Status201Created, typeof(ClientBody));
+        this.Describe("create_project_client", "Register an OAuth client", "An authorization code client with S256 PKCE, refresh tokens and logout. type is public, confidential or machine; machine apps use client_credentials with 1 to 64 allowed_scopes, optional allowed_audiences and token_lifetime_minutes (5 to 60, default 15), and no redirect URIs; redirect_uris holds 1 to 10 absolute https URLs (http only on loopback hosts) without userinfo or fragments. Each URI must additionally exactly match an entry in the project's redirect allowlist when nonempty; an empty list adds no restriction. A confidential client's client_secret is answered once and never again. allowed_origins holds at most 10 exact browser origins (https://host[:port], or http on a loopback host; lowercase, no default port, path, trailing slash, wildcard, userinfo, query or fragment) whose cross-origin token, userinfo, revocation and guest requests get CORS; allow_anonymous (default false) admits guests at /{project}/oauth/anonymous. Machine apps take neither. Needs the admin project role.", "Project tenants", typeof(CreateClientRequest), StatusCodes.Status201Created, typeof(ClientBody));
     }
 
     protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
@@ -29,6 +29,12 @@ public sealed class CreateProjectClientEndpoint(TenantDirectory tenants, IOpenId
             throw Invalid("Machine policies require type machine.");
         }
 
+        var origins = ClientOrigins.Validate(request.AllowedOrigins) ?? [];
+        if (policy is not null && (origins.Count != 0 || request.AllowAnonymous == true))
+        {
+            throw Invalid("Machine apps take no allowed_origins or allow_anonymous.");
+        }
+
         if (policy is not null ? redirects.Count != 0 : redirects.Count is < 1 or > 10)
         {
             throw Invalid("Interactive apps need 1 to 10 redirect URIs; machine apps need none.");
@@ -43,7 +49,8 @@ public sealed class CreateProjectClientEndpoint(TenantDirectory tenants, IOpenId
         }
 
         person = await proofs.ConsumeHeaderAsync(person, this.HttpContext.Request, "create_oauth_client", null, cancellationToken);
-        var (client, secret) = await this.Tenants.CreateClientAsync(this.HttpContext, person, projectId, name, type, redirects, applications, policy, cancellationToken);
+        var (client, secret) = await this.Tenants.CreateClientAsync(this.HttpContext, person, projectId,
+            new(name, type, redirects, policy, origins, request.AllowAnonymous == true), applications, cancellationToken);
         return Results.Json(Map(client, secret), ProjectTenantJson.Default.ClientBody, statusCode: StatusCodes.Status201Created)
             .WithLocation($"/v1/{projectId}/clients/{client.ClientId}");
     }

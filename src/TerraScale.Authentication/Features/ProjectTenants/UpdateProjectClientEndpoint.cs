@@ -12,7 +12,7 @@ public sealed class UpdateProjectClientEndpoint(TenantDirectory tenants, IOpenId
     public override void Configure()
     {
         Put(Root + "/clients/{client_id}");
-        this.Describe("update_project_client", "Update an OAuth client", "Changes a client's display name and redirect URIs, or a machine app's allowed_scopes, allowed_audiences and token_lifetime_minutes (5 to 60); machine apps require no redirect URIs; its client_id stays the same and no secret is answered. redirect_uris holds 1 to 10 absolute https URLs (http only on loopback hosts) without userinfo or fragments, and each URI must additionally exactly match an entry in the project's redirect allowlist when nonempty. Needs the admin project role.", "Project tenants", typeof(UpdateClientRequest), StatusCodes.Status200OK, typeof(ClientBody));
+        this.Describe("update_project_client", "Update an OAuth client", "Changes a client's display name and redirect URIs, or a machine app's allowed_scopes, allowed_audiences and token_lifetime_minutes (5 to 60); machine apps require no redirect URIs; its client_id stays the same and no secret is answered. redirect_uris holds 1 to 10 absolute https URLs (http only on loopback hosts) without userinfo or fragments, and each URI must additionally exactly match an entry in the project's redirect allowlist when nonempty. allowed_origins holds at most 10 exact browser origins (https://host[:port], or http on a loopback host; lowercase, no default port, path, trailing slash, wildcard, userinfo, query or fragment) whose cross-origin token, userinfo, revocation and guest requests get CORS; allow_anonymous (default false) admits guests at /{project}/oauth/anonymous. Machine apps take neither. An omitted allowed_origins or allow_anonymous stays unchanged. Needs the admin project role.", "Project tenants", typeof(UpdateClientRequest), StatusCodes.Status200OK, typeof(ClientBody));
     }
 
     protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
@@ -21,6 +21,7 @@ public sealed class UpdateProjectClientEndpoint(TenantDirectory tenants, IOpenId
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(ProjectTenantJson.Default.UpdateClientRequest, cancellationToken);
         var name = PlatformDirectory.Name(request.Name) ?? throw Invalid("name must be 1 to 128 characters with a letter or digit.");
+        var origins = ClientOrigins.Validate(request.AllowedOrigins);
         List<Uri> redirects = [.. (request.RedirectUris ?? []).Select(value => ClientRedirect(value) ?? throw Invalid("Each redirect URI must be an absolute https URL, or http on a loopback host, without userinfo or fragments."))];
         if (redirects.Count > 10)
         {
@@ -56,6 +57,11 @@ public sealed class UpdateProjectClientEndpoint(TenantDirectory tenants, IOpenId
                 throw Invalid("Interactive apps need redirect URIs; machine apps need none.");
             }
 
+            if (policy is not null && (origins is { Count: > 0 } || request.AllowAnonymous == true))
+            {
+                throw Invalid("Machine apps take no allowed_origins or allow_anonymous.");
+            }
+
             var descriptor = new OpenIddictApplicationDescriptor();
             await applications.PopulateAsync(descriptor, application, cancellationToken);
             if (policy is not null)
@@ -64,6 +70,12 @@ public sealed class UpdateProjectClientEndpoint(TenantDirectory tenants, IOpenId
                     request.AllowedAudiences ?? policy.AllowedAudiences, request.TokenLifetimeMinutes ?? policy.TokenLifetimeMinutes));
             }
 
+            if (request.AllowAnonymous is { } anonymous && policy is null)
+            {
+                _ = anonymous ? descriptor.Permissions.Add(GuestSignIn.Permission) : descriptor.Permissions.Remove(GuestSignIn.Permission);
+            }
+
+            application.AllowedOrigins = origins ?? application.AllowedOrigins;
             descriptor.DisplayName = name;
             descriptor.RedirectUris.Clear();
             descriptor.RedirectUris.UnionWith(redirects);

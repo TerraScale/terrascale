@@ -148,7 +148,9 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         [property: JsonPropertyName("client_secret"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ClientSecret = null,
         [property: JsonPropertyName("allowed_scopes"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AllowedScopes = null,
         [property: JsonPropertyName("allowed_audiences"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AllowedAudiences = null,
-        [property: JsonPropertyName("token_lifetime_minutes"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? TokenLifetimeMinutes = null)
+        [property: JsonPropertyName("token_lifetime_minutes"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? TokenLifetimeMinutes = null,
+        [property: JsonPropertyName("allowed_origins")] IReadOnlyList<string>? AllowedOrigins = null,
+        [property: JsonPropertyName("allow_anonymous")] bool AllowAnonymous = false)
     {
         public override string ToString()
         {
@@ -162,14 +164,18 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         [property: JsonPropertyName("redirect_uris")] IReadOnlyList<string>? RedirectUris,
         [property: JsonPropertyName("allowed_scopes"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AllowedScopes = null,
         [property: JsonPropertyName("allowed_audiences"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AllowedAudiences = null,
-        [property: JsonPropertyName("token_lifetime_minutes"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? TokenLifetimeMinutes = null);
+        [property: JsonPropertyName("token_lifetime_minutes"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? TokenLifetimeMinutes = null,
+        [property: JsonPropertyName("allowed_origins"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AllowedOrigins = null,
+        [property: JsonPropertyName("allow_anonymous"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? AllowAnonymous = null);
 
     public sealed record TsAuthProjectClientUpdate(
         [property: JsonPropertyName("name")] string? Name,
         [property: JsonPropertyName("redirect_uris")] IReadOnlyList<string>? RedirectUris,
         [property: JsonPropertyName("allowed_scopes"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AllowedScopes = null,
         [property: JsonPropertyName("allowed_audiences"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AllowedAudiences = null,
-        [property: JsonPropertyName("token_lifetime_minutes"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? TokenLifetimeMinutes = null);
+        [property: JsonPropertyName("token_lifetime_minutes"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? TokenLifetimeMinutes = null,
+        [property: JsonPropertyName("allowed_origins"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AllowedOrigins = null,
+        [property: JsonPropertyName("allow_anonymous"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? AllowAnonymous = null);
 
     public sealed record TsAuthProjectRotateClient(
         [property: JsonPropertyName("grace_seconds")] int? GraceSeconds = null);

@@ -35,6 +35,8 @@ public sealed record UserRecord(string Id, string InstanceId, string Email, long
     /// <summary>A disabled user cannot sign in; disabling advances the epoch, which ends its sessions and tokens.</summary>
     public bool Disabled { get; init; }
 
+    public bool IsAnonymous { get; init; }
+
     /// <summary>Verified external identities linked to this account; provider subjects never serve as user ids.</summary>
     public IReadOnlyList<LinkedProvider> LinkedProviders { get; init; } = [];
 

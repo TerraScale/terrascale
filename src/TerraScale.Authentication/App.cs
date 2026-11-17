@@ -377,6 +377,7 @@ public static class App
             TokenRateLimitMiddleware.UseClientGuard(app);
         }
         app.UseTenancy();
+        app.UseClientCors();
         app.UseHostedTheme();
         app.UseBotChallenge();
         app.UseImpersonation();

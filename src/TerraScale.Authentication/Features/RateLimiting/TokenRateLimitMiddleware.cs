@@ -84,7 +84,8 @@ public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimite
     internal static bool IsProjectTokenPath(PathString path) =>
         (path.Value ?? string.Empty).Split('/') is [_, var tenant, var oauth, var token, ..] rest
         && rest.Length <= 5 && (rest.Length == 4 || rest[4].Length == 0)
-        && string.Equals(oauth, "oauth", StringComparison.OrdinalIgnoreCase) && string.Equals(token, "token", StringComparison.OrdinalIgnoreCase)
+        && string.Equals(oauth, "oauth", StringComparison.OrdinalIgnoreCase)
+        && (string.Equals(token, "token", StringComparison.OrdinalIgnoreCase) || string.Equals(token, "anonymous", StringComparison.OrdinalIgnoreCase))
         && TerraScaleIds.IsValid(tenant);
 
     private async Task<TimeSpan?> LimitAsync(HttpContext context)

@@ -14,6 +14,8 @@ namespace TerraScale.Authentication.Features.ProjectTenants;
 
 public sealed record ProjectSession(string Id, SessionRecord Session, string Email);
 
+public sealed record NewClient(string Name, string Type, IReadOnlyList<Uri> RedirectUris, MachineClientPolicy? Policy, IReadOnlyList<string> AllowedOrigins, bool AllowAnonymous);
+
 public sealed class TenantDirectory(AuthData data, Users users, Sessions sessions, PlatformDirectory platform, TimeProvider clock, ProjectAuthSettings settings)
 {
     internal const string ClientIssuanceCaller = "ts-auth:client-issuance-caller";
@@ -123,24 +125,25 @@ public sealed class TenantDirectory(AuthData data, Users users, Sessions session
         await data.ReadAsync((db, token) => db.OidcApplications.Where(client => client.InstanceId == projectId).OrderBy(client => client.Id).ToListAsync(token), cancellationToken)
             .ConfigureAwait(false);
 
-    public async Task<(OidcApplication Client, string? Secret)> CreateClientAsync(HttpContext context, UserRecord caller, string projectId, string name, string type, IReadOnlyList<Uri> redirectUris, IOpenIddictApplicationManager manager, MachineClientPolicy? policy, CancellationToken cancellationToken)
+    public async Task<(OidcApplication Client, string? Secret)> CreateClientAsync(HttpContext context, UserRecord caller, string projectId, NewClient client, IOpenIddictApplicationManager manager, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(client);
         ArgumentNullException.ThrowIfNull(manager);
         ArgumentNullException.ThrowIfNull(caller);
         if (caller.StepUpBindings.Count == 0)
         {
             throw StepUpProofs.Required();
         }
+        var (type, policy) = (client.Type, client.Policy);
         var secret = type is ClientTypes.Confidential or "machine" ? Tokens.RandomToken(48) : null;
         var descriptor = new OpenIddictApplicationDescriptor
         {
             ClientId = AuthIds.New(),
-            ClientSecret = secret,
             ClientType = policy is null ? type : ClientTypes.Confidential,
             ApplicationType = ApplicationTypes.Web,
             ConsentType = ConsentTypes.Implicit,
-            DisplayName = name,
+            DisplayName = client.Name,
             Permissions =
             {
                 Permissions.Endpoints.Authorization, Permissions.Endpoints.Token, Permissions.Endpoints.EndSession, Permissions.Endpoints.Revocation,
@@ -153,15 +156,22 @@ public sealed class TenantDirectory(AuthData data, Users users, Sessions session
         {
             MachineClients.Configure(descriptor, policy);
         }
+        else if (client.AllowAnonymous)
+        {
+            descriptor.Permissions.Add(GuestSignIn.Permission);
+        }
 
-        descriptor.RedirectUris.UnionWith(redirectUris);
-        descriptor.PostLogoutRedirectUris.UnionWith(redirectUris);
+        descriptor.RedirectUris.UnionWith(client.RedirectUris);
+        descriptor.PostLogoutRedirectUris.UnionWith(client.RedirectUris);
+        var application = new OidcApplication { AllowedOrigins = client.AllowedOrigins };
+        await manager.PopulateAsync(application, descriptor, cancellationToken).ConfigureAwait(false);
         var previous = context.Items[Tenancy.ItemKey];
         context.Items[Tenancy.ItemKey] = projectId;
         context.Items[ClientIssuanceCaller] = caller;
         try
         {
-            return ((OidcApplication)await manager.CreateAsync(descriptor, cancellationToken).ConfigureAwait(false), secret);
+            await manager.CreateAsync(application, secret, cancellationToken).ConfigureAwait(false);
+            return (application, secret);
         }
         catch (OpenIddictExceptions.ValidationException error)
         {

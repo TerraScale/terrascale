@@ -68,15 +68,18 @@ public sealed record ProjectSessionPageBody(IReadOnlyList<ProjectSessionBody> It
 
 /// <summary>An OAuth client of the tenant; <c>client_secret</c> only in the answer that created a confidential client.</summary>
 public sealed record ClientBody(string ClientId, string Name, string Type, IReadOnlyList<string> RedirectUris, DateTimeOffset CreatedAt,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ClientSecret = null, IReadOnlyList<string>? AllowedScopes = null, IReadOnlyList<string>? AllowedAudiences = null, int? TokenLifetimeMinutes = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ClientSecret = null, IReadOnlyList<string>? AllowedScopes = null, IReadOnlyList<string>? AllowedAudiences = null, int? TokenLifetimeMinutes = null,
+    IReadOnlyList<string>? AllowedOrigins = null, bool AllowAnonymous = false);
 
 /// <summary>The tenant's clients, in one page.</summary>
 public sealed record ClientPageBody(IReadOnlyList<ClientBody> Items, string? Next);
 
 /// <summary><c>POST /v1/{project}/clients</c>.</summary>
-public sealed record CreateClientRequest(string? Name, string? Type, IReadOnlyList<string>? RedirectUris, IReadOnlyList<string>? AllowedScopes = null, IReadOnlyList<string>? AllowedAudiences = null, int? TokenLifetimeMinutes = null);
+public sealed record CreateClientRequest(string? Name, string? Type, IReadOnlyList<string>? RedirectUris, IReadOnlyList<string>? AllowedScopes = null, IReadOnlyList<string>? AllowedAudiences = null, int? TokenLifetimeMinutes = null,
+    IReadOnlyList<string>? AllowedOrigins = null, bool? AllowAnonymous = null);
 
-public sealed record UpdateClientRequest(string? Name, IReadOnlyList<string>? RedirectUris, IReadOnlyList<string>? AllowedScopes = null, IReadOnlyList<string>? AllowedAudiences = null, int? TokenLifetimeMinutes = null);
+public sealed record UpdateClientRequest(string? Name, IReadOnlyList<string>? RedirectUris, IReadOnlyList<string>? AllowedScopes = null, IReadOnlyList<string>? AllowedAudiences = null, int? TokenLifetimeMinutes = null,
+    IReadOnlyList<string>? AllowedOrigins = null, bool? AllowAnonymous = null);
 
 public sealed record RotateClientRequest(int? GraceSeconds);
 
@@ -189,7 +192,7 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
     /// <summary>A client, with its secret when just created.</summary>
     protected static ClientBody Map(OidcApplication client, string? secret = null) => new(client.ClientId!, client.DisplayName ?? string.Empty, MachineClients.Policy(client) is null ? client.ClientType! : "machine",
         [.. client.RedirectUris], NUlid.Ulid.Parse(client.ClientId).Time, secret, MachineClients.Policy(client)?.AllowedScopes,
-        MachineClients.Policy(client)?.AllowedAudiences, MachineClients.Policy(client)?.TokenLifetimeMinutes);
+        MachineClients.Policy(client)?.AllowedAudiences, MachineClients.Policy(client)?.TokenLifetimeMinutes, [.. client.AllowedOrigins], GuestSignIn.Allows(client));
 
     protected static Uri? ClientRedirect(string? value) =>
         Uri.TryCreate(value, UriKind.Absolute, out var uri) && string.IsNullOrEmpty(uri.UserInfo) && !value.Contains('#', StringComparison.Ordinal)

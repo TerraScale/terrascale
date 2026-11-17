@@ -25,6 +25,7 @@ public sealed partial class AuthDbContext
             application.Property(row => row.Permissions).HasJson(StorageJson.Default.IReadOnlyListString);
             application.Property(row => row.PostLogoutRedirectUris).HasJson(StorageJson.Default.IReadOnlyListString);
             application.Property(row => row.RedirectUris).HasJson(StorageJson.Default.IReadOnlyListString);
+            application.Property(row => row.AllowedOrigins).HasJson(StorageJson.Default.IReadOnlyListString);
             application.Property(row => row.Requirements).HasJson(StorageJson.Default.IReadOnlyListString);
             application.Property(row => row.Properties).HasJson(StorageJson.Default.IReadOnlyDictionaryStringJsonElement);
             application.Property(row => row.Settings).HasJson(StorageJson.Default.IReadOnlyDictionaryStringString);

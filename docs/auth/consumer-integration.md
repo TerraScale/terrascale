@@ -7,51 +7,60 @@ Authentication and account storage remain on the existing GRU authority.
 
 ## Browser client configuration
 
-Create a public OAuth client with a management key kept on your backend:
+A project admin registers the browser app as a public OAuth client of the project, in the dashboard or through the
+[project tenant routes](project-tenant-management.md) (`POST /v1/{project}/clients` needs a signed-in person and a
+`create_oauth_client` step-up proof):
 
 ```http
-POST /v1/example/oauth-clients
-Authorization: Bearer sk_...
+POST /v1/{project}/clients
+Authorization: Bearer <sign-in token>
+X-TerraScale-Step-Up-Proof: <proof>
 Content-Type: application/json
 
-{"name":"Consumer app","public":true,"redirect_uris":["https://app.example.com/callback"],"allowed_origins":["https://app.example.com"],"allow_anonymous":true}
+{"name":"Consumer app","type":"public","redirect_uris":["https://app.example.com/callback"],"allowed_origins":["https://app.example.com"],"allow_anonymous":true}
 ```
 
-Existing clients default to `allow_anonymous: false`. Use
-`PATCH /v1/example/oauth-clients/{id}` to edit these four settings. Client IDs,
-secrets and authentication methods do not change. Public clients use `none`;
-confidential clients keep their configured Basic or form authentication.
+`allowed_origins` defaults to `[]` and `allow_anonymous` to `false`, also for clients created before these fields
+existed. `PUT /v1/{project}/clients/{client_id}` (with an `update_oauth_client` proof) changes them; an omitted field
+stays unchanged. Client IDs, secrets and authentication methods do not change. Machine apps take neither field.
 
-Origins must be exact, canonical HTTPS origins, without paths, trailing slashes,
-wildcards, credentials, query strings or fragments. HTTP loopback origins are
-allowed for local development. An instance's allowed origins are the union of
-its registered clients' origins. Origin permission does not replace client or
-bearer authentication. Cross-origin cookies are not enabled.
+Each origin is exact and canonical: `https://host[:port]`, or `http` on a loopback host, in lowercase, without a
+default port, path, trailing slash, wildcard, userinfo, query string or fragment; at most 10 per client. Anything
+else answers `400 invalid_request`. A project's allowed origins are the union of its clients' origins, read from
+storage on every request, so removing one affects the next request.
 
-CORS covers the token, userinfo, revocation, device authorization and guest APIs.
-It does not cover hosted cookie flows or management APIs. Preflights accept
-`Authorization` and `Content-Type`, with GET for userinfo and POST for mutations.
-Removing an origin affects subsequent requests without a process cache.
+CORS covers the project issuer's token, userinfo, revocation and guest routes (`/{project}/oauth/token`,
+`/oauth/userinfo`, `/oauth/revoke`, `/oauth/anonymous`). It does not cover hosted pages, cookie flows, management
+APIs or the platform issuer; device authorization is served only by the platform issuer and gets none. A preflight
+from an allowed origin answers `204` with `Access-Control-Allow-Origin` set to that origin, `GET` for userinfo or
+`POST` for the others, `Authorization, Content-Type` and a 600-second max age; responses expose `Retry-After` and
+`WWW-Authenticate`. `Access-Control-Allow-Credentials` is never sent, so no cookie crosses origins. An unknown origin
+gets no CORS headers, and the browser refuses the response. Origin permission does not replace client or bearer
+authentication. A `429` from the per-address token budget is answered before the project is resolved and carries no
+CORS headers, so a browser sees it as a network error.
 
-## Guest sign-in and conversion
+## Guest sign-in
 
-1. POST form field `client_id` to `/example/oauth/anonymous`. Confidential
-   clients must also authenticate. The response has OAuth access, refresh and
-   ID tokens. JWTs include `is_anonymous: true`, and userinfo includes the flag.
-   Store tokens using your platform's secure credential storage.
-2. Save application data using the token's `sub` as the user ID. Guest users
-   consume normal user quota seats. They have no email/password credential.
-3. To convert, POST `{"email":"person@example.com"}` to
-   `/example/oauth/anonymous/upgrade`, using the guest access token as Bearer.
-   Store the returned `verification_id`. The email contains an eight-digit code
-   valid for ten minutes, with at most five verification attempts per challenge.
-4. POST `{"verification_id":"gup_...","code":"12345678"}` to
-   `/example/oauth/anonymous/upgrade/complete`, with the same guest identity's
-   Bearer token. Optionally include `password` (8–1024 bytes) to set a password;
-   omitting it creates a verified email/passwordless account.
-5. Replace the old token set with the response. `sub`, application metadata and
-   quota seat stay unchanged; `is_anonymous` becomes false. The credential epoch
-   advances and ts-auth rejects the old access/refresh tokens and sessions.
+1. POST the form field `client_id` to `/{project}/oauth/anonymous`. The client needs `allow_anonymous`; a
+   confidential client also authenticates. `grant_type`, `scope` and other parameters are refused. The response is
+   the token endpoint's: access, refresh and ID tokens for the scopes `openid offline_access`. Both JWTs carry
+   `is_anonymous: true` and no email; the access token names the project's data audiences like any user sign-in
+   ([rules](../terrabase/rules.md) section 3.1), and userinfo answers `{"sub":"…","is_anonymous":true}`.
+   Keep tokens in memory or your platform's secure credential storage.
+2. Save application data with the token's `sub` as the user ID; rules see `auth.is_anonymous = 1`. A guest is a
+   user of the project: it is listed by the users API (with the placeholder email `<id>@anonymous.invalid`, which
+   never receives mail and never signs in), counted in `counts.users`, and disabled or deleted like any user.
+   It has no email or password credential.
+3. Refresh with the normal refresh grant. A guest's sign-in ends at the project's session lifetime after it was
+   created; the guest then has no way to sign in again.
+
+Only a project whose `sign_up_mode` is `public` admits guests (`403 access_denied` otherwise). A client without
+`allow_anonymous` answers `400 unauthorized_client`. Each client admits 30 guests a minute and each address 10 a
+minute per project (`429 rate_limited` with `Retry-After`); the token endpoint's per-address budget also applies.
+These counters use conditional writes in storage and survive restarts. ts-auth has no per-project user cap today;
+because guests are ordinary user rows, any user quota counts them. Turning `allow_anonymous` off stops new guests
+from that client; it does not end existing guests' sign-ins. Converting a guest into an email account is not
+available yet.
 
 An application that verifies JWT signatures offline must still enforce token
 expiry and its revocation/epoch policy. Offline verification alone cannot learn
@@ -62,29 +71,6 @@ advance the credential epoch, invalidating outstanding OAuth grants as well as
 browser sessions. Revoking one browser session rejects access tokens carrying
 its `sid`; independently held refresh families must be explicitly revoked or
 invalidated through revoke-all.
-
-The proof is bound to the tenant, user, client and credential epoch. Verification
-codes are stored as keyed HMAC digests. An already claimed email causes a 409;
-no existing account is replaced or merged. Sign into that account separately.
-Disabling guest admission stops new guest creation and upgrade requests. It
-does not itself ban existing users or revoke their refresh families.
-
-Guest admission permits 30 requests per client per minute. Upgrade requests
-permit five per user and per target-mailbox bucket per minute. These counters
-use conditional writes on the authority and do not reset on process restart.
-They supplement, rather than replace, edge controls and bot protection. User
-quota is the final durable admission boundary. Configure OCI Email Delivery
-(`TS_AUTH_SMTP_HOST`, `TS_AUTH_SMTP_USERNAME`, `TS_AUTH_SMTP_PASSWORD`) and
-Cloudflare Email Sending (`CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_EMAIL_TOKEN`)
-for actual email delivery, SMTP first with Cloudflare as fallback; the
-development logging sender does not expose verification codes.
-
-The conversion is committed before credentials are returned. If the response is
-lost after conversion, sign in using verified email or the chosen password;
-do not attempt to reuse the guest token. A failed concurrent or ambiguous
-conversion can conservatively retain an email uniqueness claim. Repair only
-after fencing that user's writes and verifying ownership and the final User
-record; never release a claim merely because a client observed an error.
 
 ## Device authorization
 
@@ -139,8 +125,5 @@ decision and their own resource ownership rules; a storage error is not a grant.
 
 ## Storage retention
 
-New tables are `organization_roles`, `oauth_device_grants`,
-`anonymous_upgrades` and `oauth_flow_limits`. Grant/challenge expiry is enforced
-at read time; this service does not yet automatically purge their rows or delete
-inactive guests. Establish retention/cleanup against the admitted TerraBase
-contract before large-scale deployment. Retired role keys must remain reserved.
+Guests are rows of `users` with `is_anonymous` set; client origins are `oidc_applications.allowed_origins`. ts-auth
+does not delete inactive guests; disable or delete them through the users API.

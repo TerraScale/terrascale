@@ -51,6 +51,8 @@ public sealed class OidcApplication
     /// <summary>Exact authorization redirect URIs.</summary>
     public IReadOnlyList<string> RedirectUris { get; set; } = [];
 
+    public IReadOnlyList<string> AllowedOrigins { get; set; } = [];
+
     /// <summary>Requirements such as PKCE.</summary>
     public IReadOnlyList<string> Requirements { get; set; } = [];
 
