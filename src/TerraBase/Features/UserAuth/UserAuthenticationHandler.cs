@@ -44,9 +44,11 @@ internal sealed class UserAuthenticationHandler(
     private static readonly string[] TenantTypes = ["at+jwt"];
 
     private static readonly string[] TenantRefusedClaims =
-        ["scope", "project_id", "instance_id", "token_kind", Platform.PlatformExplore.RoleClaim, "key_id", "key_gen", .. IpAllowlists.Claims];
+        ["project_id", "instance_id", "token_kind", Platform.PlatformExplore.RoleClaim, "key_id", "key_gen", .. IpAllowlists.Claims];
 
     private const string EndUserScope = "sql:read sql:write";
+
+    private static readonly string[] TenantSignInScopes = ["openid", "email", "profile", "offline_access"];
 
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
@@ -267,7 +269,9 @@ internal sealed class UserAuthenticationHandler(
             || !TenantTypes.Contains(unverified.Typ, StringComparer.Ordinal) || !TenantAlgorithms.Contains(unverified.Alg, StringComparer.Ordinal)
             || !unverified.TryGetPayloadValue<string>(JwtRegisteredClaimNames.Sub, out var user) || !EntityIds.IsValid(user)
             || !unverified.Audiences.Intersect(TenantKeys.Audiences(terraBase, project), StringComparer.Ordinal).Any()
-            || TenantRefusedClaims.Any(name => unverified.TryGetPayloadValue<object>(name, out _)))
+            || TenantRefusedClaims.Any(name => unverified.TryGetPayloadValue<object>(name, out _))
+            || unverified.TryGetPayloadValue<object>("scope", out _) && (!unverified.TryGetPayloadValue<string>("scope", out var scope)
+                || scope.Split(' ', StringSplitOptions.RemoveEmptyEntries).Any(item => !TenantSignInScopes.Contains(item, StringComparer.Ordinal))))
         {
             return AuthenticateResult.Fail("invalid project tenant token");
         }
