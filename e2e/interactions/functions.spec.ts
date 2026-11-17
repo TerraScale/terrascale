@@ -59,6 +59,9 @@ test('functions list, detail, invocation logs and deletion work through the page
     const reference = await functionTool(page.request, credential, 'get_functions_reference', {});
     expect(reference.reference).toContain('sql.transaction');
     expect(reference.reference).toContain('event.query is empty');
+    expect(reference.reference).toContain('strict mode');
+    expect(reference.reference).toContain('SQLite dialect');
+    expect(reference.reference).toContain('ALWAYS a response wrapper');
     const args = { ...scope, name: `${mcpName}-${index}`, source: 'async function handler(event) { console.log("MCP debug", event.body); return { status: 201, body: { echo: event.body, query: event.query } }; }' };
     const deployed = await functionTool(page.request, credential, 'deploy_function', args);
     expect(deployed.name).toBe(args.name);
@@ -88,6 +91,28 @@ test('functions list, detail, invocation logs and deletion work through the page
     expect(failed.log?.status).toBe('error');
     expect(failed.log?.error).toContain('MCP failure');
     expect(failed.log?.lines).toContain('debug failure');
+    await functionTool(page.request, credential, 'deploy_function', { ...args, source: 'function handler(event) { return { status: event.body.status, body: { error: { code: "conflict", message: "taken" }, requested: event.body.status } }; }' });
+    for (const status of [403, 404, 409, 500, 503]) {
+      const answer = await functionTool(page.request, credential, 'invoke_function', { ...scope, name: args.name, body: { status } });
+      expect(answer.status).toBe(status);
+      expect(answer.content_type).toContain('application/json');
+      expect(answer.body).toEqual({ error: { code: 'conflict', message: 'taken' }, requested: status });
+      expect(answer.log?.status).toBe('ok');
+    }
+    await functionTool(page.request, credential, 'deploy_function', { ...args, source: 'function handler() { return { status: 404, items: [1] }; }' });
+    const wrapper = await functionTool(page.request, credential, 'invoke_function', { ...scope, name: args.name });
+    expect(wrapper.status).toBe(404);
+    expect(wrapper.body).toBe('');
+    expect(wrapper.log?.status).toBe('ok');
+    await functionTool(page.request, credential, 'deploy_function', { ...args, source: 'function handler() { return { status: 200, body: { id: 1, status: 404 } }; }' });
+    const row = await functionTool(page.request, credential, 'invoke_function', { ...scope, name: args.name });
+    expect(row.status).toBe(200);
+    expect(row.body).toEqual({ id: 1, status: 404 });
+    await functionTool(page.request, credential, 'deploy_function', { ...args, source: 'function handler() { undeclared = 1; return {}; }' });
+    const strict = await functionTool(page.request, credential, 'invoke_function', { ...scope, name: args.name });
+    expect(strict.status).toBe(500);
+    expect(strict.log?.error).toContain('undeclared');
+    await mcpTool(page.request, credential, 'invoke_function', { ...scope, name: unique('missing') }, 'The requested resource is unavailable.');
   }
   const read = await mcpTool(page.request, current.apiKey, 'create_scoped_key', { ...scope, access: 'read', ttlSeconds: 3600 });
   saveSecret('functions-read-key', read.key);

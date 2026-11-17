@@ -7,6 +7,8 @@ namespace TerraScale.Dashboard.Features.Functions
 
             Deploy a single JavaScript ES2023 script defining function handler(event), usually async.
             Do not use exports, imports, fetch, require, CLR, files, network or environment access.
+            JavaScript runs in strict mode: declare variables with const, let or var; assigning an undeclared variable throws.
+            SQL uses the SQLite dialect: use ? or named parameters, not PostgreSQL syntax.
             Each invocation has a fresh Jint engine. Only SQL on this function's database and console are available.
             Call deploy_function(databaseId, name, source, cron?) to create or replace, then invoke_function(databaseId, name, body?).
             Deploy requires SQL write access (TerraBase requires sql:read and sql:write); invoke requires sql:read, even when the handler writes SQL.
@@ -14,6 +16,7 @@ namespace TerraScale.Dashboard.Features.Functions
             Deployment returns name, cron, updated_at and the HTTPS invoke_url. Syntax failures return error.code, error.message and line/column when present in the runner message.
             invoke_function returns status, content_type, body (JSON value for application/json, otherwise text), log and log_note.
             Logs require SQL write access. Otherwise log is null and log_note explains the permission.
+            If post-invocation log retrieval fails, status/body still describe the completed invocation; log is null and log_note explains the failure. Do not invoke again to retrieve logs.
             The log is the newest record after the call; concurrent HTTP or cron invocations may produce a newer log.
 
             Events:
@@ -47,7 +50,11 @@ namespace TerraScale.Dashboard.Features.Functions
             Non-string values are JSON-stringified; arguments are joined by spaces. Logs capture output and runtime errors.
 
             Return rules:
-            Return any JSON-serializable value for status 200 application/json; undefined becomes null.
+            A returned object with an integer status property from 200 to 599 is ALWAYS a response wrapper; only status and body are used.
+            Example: return {status: 200, items: rows} produces an empty response; items is discarded.
+            To return data containing a status field, wrap it explicitly: return {status: 200, body: {id: 1, status: 404}}.
+            Values without a top-level status property return status 200 application/json; undefined becomes null.
+            Treat top-level status as reserved; wrap data containing a status field inside body.
             To set the HTTP status, return {status: <integer 200..599>, body: <value>}.
             With that wrapper, a string body is text/plain; another non-null value is application/json; missing/null body is an empty JSON response.
             A thrown error or runtime limit returns HTTP 500 function_error and an error log.

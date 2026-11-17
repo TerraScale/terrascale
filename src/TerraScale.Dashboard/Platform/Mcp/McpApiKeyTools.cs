@@ -21,7 +21,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
 {
     // Machine credentials never become dashboard users. Every operation retains the original
     // ts-auth project/database scopes and TerraBase authorizes the RPC with that same token.
-    public sealed class McpApiKeyTools(IHttpClientFactory http, IDatabaseBackend databases, IBackupBackend backups, TerraBaseRpcClient rpc)
+    public sealed class McpApiKeyTools(IHttpClientFactory http, IDatabaseBackend databases, IBackupBackend backups, TerraBaseRpcClient rpc, ILogger<McpApiKeyTools> logger, TimeProvider time)
     {
         internal const string ContextKey = "TerraScale.Dashboard/mcp-api-key";
         internal static readonly HashSet<string> Tools = new(StringComparer.Ordinal)
@@ -156,13 +156,13 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 {
                     if (functionTool)
                     {
-                        async Task<T> AtHomeAsync<T>(Func<IFunctionsService, Task<T>> operation)
+                        async Task<T> AtHomeAsync<T>(Func<IFunctionsService, Task<T>> operation, CancellationToken cancellationToken)
                         {
-                            var client = rpc.User<IFunctionsService>(scope.AccessToken, home.Id).WithCancellationToken(ct);
+                            var client = rpc.User<IFunctionsService>(scope.AccessToken, home.Id).WithCancellationToken(cancellationToken).WithDeadline(time.GetUtcNow().UtcDateTime.AddSeconds(30));
                             try { return await operation(client); }
                             catch (TerraBaseWrongRegionException wrong) when (DatabaseRegion.Resolve(regions, wrong.HomeRegion) is { } owner && owner.Id != home.Id)
                             {
-                                return await operation(rpc.User<IFunctionsService>(scope.AccessToken, owner.Id).WithCancellationToken(ct));
+                                return await operation(rpc.User<IFunctionsService>(scope.AccessToken, owner.Id).WithCancellationToken(cancellationToken).WithDeadline(time.GetUtcNow().UtcDateTime.AddSeconds(30)));
                             }
                         }
                         var name = Text("name");
@@ -173,7 +173,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                                 {
                                     var source = Text("source");
                                     FunctionBackend.ValidateDeploy(name, source);
-                                    var deployed = await AtHomeAsync(async client => await client.DeployAsync(scope.ProjectId, databaseId, name, new(source, arguments?.TryGetValue("cron", out var cron) == true && cron.ValueKind != JsonValueKind.Null ? cron.GetString() : null)));
+                                    var deployed = await AtHomeAsync(async client => await client.DeployAsync(scope.ProjectId, databaseId, name, new(source, arguments?.TryGetValue("cron", out var cron) == true && cron.ValueKind != JsonValueKind.Null ? cron.GetString() : null)), ct);
                                     FunctionBackend.Validate(FunctionBackend.Record(deployed));
                                     return FunctionMcpOutput.Deployed(deployed.Name, deployed.Cron, deployed.UpdatedAt, InvokeUrl(name));
                                 }
@@ -181,24 +181,24 @@ namespace TerraScale.Dashboard.Platform.Mcp
                                 catch (AccountAccessException error) when (error.StatusCode == 400) { return FunctionMcpOutput.Invalid("validation", error.Message); }
                             case "invoke_function":
                                 var body = arguments?.TryGetValue("body", out var input) == true ? input.GetRawText() : "null";
-                                var call = await AtHomeAsync(client => FunctionMcpOutput.CallAsync(client, scope.ProjectId, databaseId, name, body, ct));
+                                var call = await AtHomeAsync(async client => await client.InvokeAsync(scope.ProjectId, databaseId, name, body), ct);
                                 var canReadLogs = credential.Scopes.Contains("sql:write", StringComparer.Ordinal);
-                                var newest = canReadLogs ? (await AtHomeAsync(async client => await client.LogsAsync(scope.ProjectId, databaseId, name, 1))).Select(FunctionBackend.Invocation).ToArray() : [];
-                                FunctionBackend.Validate(newest);
-                                return FunctionMcpOutput.Reply(FunctionMcpOutput.Run(call, newest.Length > 0 ? newest[0] : null, canReadLogs), FunctionMcpJson.Default.McpFunctionRun);
+                                async Task<IReadOnlyList<FunctionInvocation>> ReadNewestAsync(CancellationToken cancellationToken) =>
+                                    [.. (await AtHomeAsync(async client => await client.LogsAsync(scope.ProjectId, databaseId, name, 1), cancellationToken)).Select(FunctionBackend.Invocation)];
+                                return FunctionMcpOutput.Reply(await FunctionMcpOutput.CompleteAsync(call, canReadLogs, ReadNewestAsync, logger, ct), FunctionMcpJson.Default.McpFunctionRun);
                             case "list_functions":
                                 var limit = Number("limit") ?? 100;
                                 if (limit is < 1 or > 100) throw new AccountAccessException("limit must be between 1 and 100.", 422);
-                                var items = (await AtHomeAsync(async client => await client.ListAsync(scope.ProjectId, databaseId))).Select(FunctionBackend.Record).ToArray();
+                                var items = (await AtHomeAsync(async client => await client.ListAsync(scope.ProjectId, databaseId), ct)).Select(FunctionBackend.Record).ToArray();
                                 FunctionBackend.Validate(items);
                                 var page = CursorPaging.Page(items, item => item.Name, scope.OrganizationId + ":" + scope.ProjectId + ":" + databaseId + ":functions", (int)limit, Text("after"));
                                 return FunctionMcpOutput.Reply(new McpFunctionList(page.Items, page.NextCursor, page.HasMore, page.Limit), FunctionMcpJson.Default.McpFunctionList);
                             case "get_function":
-                                var function = FunctionBackend.Record(await AtHomeAsync(async client => await client.GetAsync(scope.ProjectId, databaseId, name)));
+                                var function = FunctionBackend.Record(await AtHomeAsync(async client => await client.GetAsync(scope.ProjectId, databaseId, name), ct));
                                 FunctionBackend.Validate(function);
                                 return FunctionMcpOutput.Reply(new McpFunctionDetail(function, InvokeUrl(name)), FunctionMcpJson.Default.McpFunctionDetail);
                             case "list_function_logs":
-                                var logs = (await AtHomeAsync(async client => await client.LogsAsync(scope.ProjectId, databaseId, name, 25))).Select(FunctionBackend.Invocation).ToArray();
+                                var logs = (await AtHomeAsync(async client => await client.LogsAsync(scope.ProjectId, databaseId, name, 25), ct)).Select(FunctionBackend.Invocation).ToArray();
                                 FunctionBackend.Validate(logs);
                                 return FunctionMcpOutput.Reply(new McpFunctionLogs(logs), FunctionMcpJson.Default.McpFunctionLogs);
                         }

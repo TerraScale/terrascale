@@ -4,7 +4,6 @@ using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using System.Text.RegularExpressions;
 using ModelContextProtocol.Protocol;
-using TerraScale.TerraBase.Contracts;
 using TerraScale.TerraBase.Contracts.Functions;
 
 namespace TerraScale.Dashboard.Features.Functions
@@ -31,20 +30,37 @@ namespace TerraScale.Dashboard.Features.Functions
             return Reply(new McpFunctionFailure(new(code, message, line, column)), FunctionMcpJson.Default.McpFunctionFailure, true);
         }
 
-        internal static async Task<TerraBaseFunctionCall> CallAsync(IFunctionsService client, string projectId, string database, string name, string body, CancellationToken cancellationToken)
+        internal static async Task<McpFunctionRun> CompleteAsync(TerraBaseFunctionCall call, bool canReadLogs,
+            Func<CancellationToken, Task<IReadOnlyList<FunctionInvocation>>> readLogs, ILogger logger, CancellationToken cancellationToken)
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            if (!canReadLogs)
+            {
+                return Run(call, null, LogNote);
+            }
+
+            FunctionInvocation? newest = null;
+            var note = "Newest log after the call; concurrent invocations or cron may produce a newer record.";
             try
             {
-                return await client.InvokeAsync(projectId, database, name, body);
+                var logs = await readLogs(cancellationToken);
+                FunctionBackend.Validate(logs);
+                newest = logs.Count > 0 ? logs[0] : null;
             }
-            catch (TerraBaseException error) when (error.ErrorCode == "function_error")
+            catch (Exception error) when (error is AccountAccessException or HttpRequestException or IOException or TimeoutException or JsonException ||
+                error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
             {
-                return new(error.Status, "application/json", JsonSerializer.Serialize(new McpFunctionFailure(new(error.ErrorCode, error.Message, null, null)), FunctionMcpJson.Default.McpFunctionFailure));
+                LogRetrievalFailed(logger, error);
+                note = "Function execution completed. Log retrieval failed: " + DatabaseResults.Message(error) +
+                    " Do not invoke again to retrieve logs; call list_function_logs to inspect existing records.";
             }
+
+            return Run(call, newest, note);
         }
 
-        internal static McpFunctionRun Run(TerraBaseFunctionCall call, FunctionInvocation? log, bool canReadLogs)
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Function execution completed but its invocation log could not be read.")]
+        private static partial void LogRetrievalFailed(ILogger logger, Exception exception);
+
+        private static McpFunctionRun Run(TerraBaseFunctionCall call, FunctionInvocation? log, string logNote)
         {
             var body = call.ContentType?.StartsWith("application/json", StringComparison.OrdinalIgnoreCase) == true && call.Body.Length > 0
                 ? JsonDocument.Parse(call.Body) : null;
@@ -52,7 +68,7 @@ namespace TerraScale.Dashboard.Features.Functions
             {
                 return new(call.Status, call.ContentType, body?.RootElement.Clone() ?? JsonSerializer.SerializeToElement(call.Body, FunctionMcpJson.Default.String),
                     log is null ? null : new(log.Id, log.Status, log.DurationMs, log.Lines, log.Error),
-                    canReadLogs ? "Newest log after the call; concurrent invocations or cron may produce a newer record." : LogNote);
+                    logNote);
             }
         }
 

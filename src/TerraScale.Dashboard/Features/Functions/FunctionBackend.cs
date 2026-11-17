@@ -11,7 +11,7 @@ namespace TerraScale.Dashboard.Features.Functions
     public sealed record FunctionRecord(string Name, string? Source, string? Cron, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
     public sealed record FunctionInvocation(string Id, DateTimeOffset At, string Trigger, string Status, double DurationMs, IReadOnlyList<string> Lines, string? Error, int SqlCalls, long SqlMs, long RowsRead, long RowsWritten, long ResponseBytes, int? HttpStatus);
 
-    public sealed partial class FunctionBackend(DatabaseService databases, IProjectAccessTokens tokens, TerraBaseRpcClient rpc)
+    public sealed partial class FunctionBackend(DatabaseService databases, IProjectAccessTokens tokens, TerraBaseRpcClient rpc, ILogger<FunctionBackend> logger, TimeProvider time)
     {
         public const string NameInputPattern = "[a-z][a-z0-9_-]{0,62}";
 
@@ -134,14 +134,18 @@ namespace TerraScale.Dashboard.Features.Functions
         internal async Task<McpFunctionRun> InvokeForMcpAsync(AccountContext context, DatabaseRecord database, string name, string body, CancellationToken ct)
         {
             CheckName(name);
-            context = await databases.CurrentAsync(context, ct);
             var target = await ClientAsync(context, database, false, ReadScopes, ct);
-            var call = await FunctionMcpOutput.CallAsync(target.Client, target.ProjectId, target.Database, name, body, ct);
-            var logs = context.CanWriteProjectData ? await LogsAsync(context, database, name, ct) : [];
-            return FunctionMcpOutput.Run(call, logs.Count > 0 ? logs[0] : null, context.CanWriteProjectData);
+            var call = await target.Client.InvokeAsync(target.ProjectId, target.Database, name, body);
+            return await FunctionMcpOutput.CompleteAsync(call, target.Context.CanWriteProjectData, ReadNewestAsync, logger, ct);
+
+            async Task<IReadOnlyList<FunctionInvocation>> ReadNewestAsync(CancellationToken cancellationToken)
+            {
+                var logs = await ClientAsync(target.Context, database, false, WriteScopes, cancellationToken);
+                return [.. (await logs.Client.LogsAsync(logs.ProjectId, logs.Database, name, 1)).Select(Invocation)];
+            }
         }
 
-        private async Task<(IFunctionsService Client, string ProjectId, string Database)> ClientAsync(AccountContext context, DatabaseRecord database, bool write, IReadOnlyList<string> scopes, CancellationToken ct)
+        private async Task<(IFunctionsService Client, string ProjectId, string Database, AccountContext Context)> ClientAsync(AccountContext context, DatabaseRecord database, bool write, IReadOnlyList<string> scopes, CancellationToken ct)
         {
             context = await databases.CurrentAsync(context, ct);
             database = DatabaseService.Database(context, database.Id);
@@ -158,7 +162,7 @@ namespace TerraScale.Dashboard.Features.Functions
 
             var home = await databases.HomeAsync(context, database, ct);
             var access = await tokens.GetAsync(context.Session, scope.OrganizationId, scope.ProjectId, scopes, ct);
-            return (rpc.User<IFunctionsService>(access, home.Id).WithCancellationToken(ct).WithDeadline(DateTime.UtcNow.AddSeconds(30)), scope.ProjectId, database.Name);
+            return (rpc.User<IFunctionsService>(access, home.Id).WithCancellationToken(ct).WithDeadline(time.GetUtcNow().UtcDateTime.AddSeconds(30)), scope.ProjectId, database.Name, context);
         }
 
         internal static FunctionInvocation Invocation(TerraBaseFunctionInvocation item) =>
