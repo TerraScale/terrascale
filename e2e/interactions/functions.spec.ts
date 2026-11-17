@@ -4,6 +4,7 @@ import { deployFunction, functionAccess, functionSource, functionTool, functionU
 import { deletionHandoff } from '../support/mcp';
 import { confirmWithPassword } from '../support/hosted';
 import { journey, saveSecret } from '../support/state';
+import { production } from '../support/stack';
 
 const unique = (prefix: string) => `${prefix}-${journey().runId}${Date.now().toString(36)}`.toLowerCase();
 
@@ -94,7 +95,27 @@ async function setSource(page: Page, source: string, id = '#function-editor'): P
   await expect(page.locator(id)).toHaveValue(source);
 }
 
+async function sqlCompletion(page: Page, id: string, screen: string): Promise<void> {
+  const editor = page.locator('ts-code-editor').filter({ has: page.locator(id) });
+  await expect(editor).toHaveAttribute('data-ready', '');
+  await editor.locator('.inputarea').focus();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.insertText('\nsql.');
+  await expect(page.locator('.suggest-widget.visible')).toContainText('transaction');
+  if (!production) {
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme });
+      await test.info().attach(`function-${screen}-sql-members-${colorScheme}.png`, {
+        body: await page.screenshot({ animations: 'disabled', caret: 'hide' }),
+        contentType: 'image/png',
+      });
+    }
+  }
+  await page.keyboard.press('Escape');
+}
+
 test('create, deploy, test run, edit and redeploy a function from the editor', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
   const current = journey();
   const name = unique('editor');
   const created = 'async function handler(event) { console.log("editor journey"); return { echo: event.body }; }';
@@ -102,13 +123,7 @@ test('create, deploy, test run, edit and redeploy a function from the editor', a
   await page.goto(`/databases/${current.databaseId}/functions?edit=new`);
   await expect(page.locator('#function-editor')).toHaveValue(/async function handler\(event\)/);
   await expect(page.locator('#function-editor')).toHaveValue(/sql\.query\("SELECT 1 AS ok"\)/);
-  const editor = page.locator('ts-code-editor').filter({ has: page.locator('#function-editor') });
-  await expect(editor).toHaveAttribute('data-ready', '');
-  await editor.locator('.inputarea').focus();
-  await page.keyboard.press('ControlOrMeta+End');
-  await page.keyboard.insertText('\nsql.');
-  await expect(page.locator('.suggest-widget.visible')).toContainText('transaction');
-  await page.keyboard.press('Escape');
+  await sqlCompletion(page, '#function-editor', 'create');
   await page.locator('#function-name').fill(name);
   await setSource(page, 'function (');
   await page.getByRole('button', { name: 'Deploy function', exact: true }).click();
@@ -119,6 +134,8 @@ test('create, deploy, test run, edit and redeploy a function from the editor', a
   await page.waitForURL((url) => url.searchParams.get('function') === name && url.searchParams.get('deployed') === '1');
   await expect(page.locator('#function-notice')).toHaveText('Function deployed.');
   await expect(page.locator('#function-source')).toHaveValue(created);
+  await sqlCompletion(page, '#function-source', 'edit');
+  await setSource(page, created, '#function-source');
   await expect(page.getByText('HTTPS calls', { exact: true }).first()).toBeVisible();
   const detailUrl = page.url();
   await page.locator('#function-event').fill('{"hello":"world"}');
