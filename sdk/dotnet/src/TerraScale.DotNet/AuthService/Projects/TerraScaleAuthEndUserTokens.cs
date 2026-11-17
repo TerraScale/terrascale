@@ -4,10 +4,10 @@ using System.Text.Json.Serialization;
 
 namespace TerraScale.DotNet;
 
-/// <summary>A backend-asserted, rule-bound end-user token; no refresh token or configurable lifetime.</summary>
+/// <summary>A backend-asserted custom token signed by the project tenant; no refresh token or configurable lifetime.</summary>
 /// <param name="AccessToken">Opaque compact access token, at most 8192 ASCII bytes. Keep out of logs.</param>
 /// <param name="TokenType">Bearer.</param>
-/// <param name="ExpiresIn">Remaining seconds, 1–900, capped at the minting key's expiry.</param>
+/// <param name="ExpiresIn">Remaining seconds, at most 300.</param>
 public sealed record TerraScaleAuthEndUserToken(string AccessToken, string TokenType, long ExpiresIn)
 {
     /// <summary>The sensitive access token.</summary>
@@ -21,7 +21,7 @@ public sealed record TerraScaleAuthEndUserToken(string AccessToken, string Token
 
     /// <summary>Remaining lifetime in seconds; issued tokens validate offline until expiry plus server clock skew.</summary>
     [JsonPropertyName("expires_in")]
-    public long ExpiresIn { get; init; } = ExpiresIn is >= 1 and <= 900 ? ExpiresIn : throw new JsonException("Invalid token lifetime.");
+    public long ExpiresIn { get; init; } = ExpiresIn is >= 1 and <= 300 ? ExpiresIn : throw new JsonException("Invalid token lifetime.");
 
     /// <summary>Redacts the token from diagnostics.</summary>
     public override string ToString() => "TerraScaleAuthEndUserToken { AccessToken = [REDACTED] }";
@@ -30,16 +30,14 @@ public sealed record TerraScaleAuthEndUserToken(string AccessToken, string Token
 public sealed partial class TerraScaleAuthProjectsClient
 {
     /// <summary>
-    /// mintEndUserToken: POST /v1/terrascale/projects/{project}/end-user-tokens, sent once with the explicit whole
-    /// project API key as Bearer. The key must match the project, have auth:tokens:mint
-    /// and have no database restriction. Organization keys, platform JWTs and cookies cannot authenticate.
-    /// The backend must verify the user and authorize the asserted roles; never relay browser-supplied claims.
-    /// Only canonical user/project ULIDs and up to 64 case-sensitive roles (128 UTF-16 code units each, nonblank,
-    /// no controls) are accepted. Null roles omits claims; duplicates are removed ordinally by the server.
-    /// UTF-8 JSON is bounded to 16 KiB; the signed JWT is capped at 8192 ASCII bytes and lifetime at 900 seconds
-    /// or key expiry. No user account is provisioned. Revocation stops future minting, not offline issued tokens.
-    /// Answers JSON 200; 400 invalid_request, 401 unauthorized, 429 rate_limited (Retry-After), and 503 throw
-    /// TerraScaleAuthException. No automatic retry, alternate grant, arbitrary claims or reserved-claim overrides.
+    /// mintCustomToken: POST /v1/{project}/custom-tokens, sent once with the explicit whole project API key as Bearer.
+    /// The key must belong to the project, have auth:tokens:mint and have no database restriction. Organization keys,
+    /// platform JWTs and cookies cannot authenticate. The backend must verify the user and authorize the asserted
+    /// roles; never relay browser-supplied claims. Roles travel as the trusted claim claims.roles: at most 64
+    /// case-sensitive roles of at most 128 UTF-16 code units each, nonblank, no controls, within the server's
+    /// trusted-claims limits. The token lives 300 seconds. No user account is provisioned. Revocation stops future
+    /// minting, not offline issued tokens. Answers JSON 200; 400 invalid_request, 401 unauthorized,
+    /// 403 insufficient_scope, 404 not_found, 429 rate_limited (Retry-After), and 503 throw TerraScaleAuthException.
     /// </summary>
     public Task<TerraScaleAuthEndUserToken> MintEndUserTokenAsync(string projectApiKey, string projectId, string userId,
         IReadOnlyList<string>? roles = null, CancellationToken cancellationToken = default)
@@ -61,7 +59,7 @@ public sealed partial class TerraScaleAuthProjectsClient
             snapshot[i] = role;
         }
         var json = TerraScaleAuthEndUserTokenJsonContext.Default;
-        return client.SendAuthenticatedJsonAsync(HttpMethod.Post, "/v1/terrascale/projects/" + projectId + "/end-user-tokens",
+        return client.SendAuthenticatedJsonAsync(HttpMethod.Post, "/v1/" + projectId + "/custom-tokens",
             new EndUserTokenMintRequest(userId, roles is null ? null : new(snapshot)), json.EndUserTokenMintRequest,
             json.TerraScaleAuthEndUserToken, TerraScaleAuthCredentials.Bearer(projectApiKey), HttpStatusCode.OK, 16 * 1024, cancellationToken);
     }
