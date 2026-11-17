@@ -120,8 +120,9 @@ export class BrowserAuth {
 
   /** Supplies a current access token to the data client, refreshing before exp. @returns {Promise<string>} */
   async accessToken() {
-    if (this.#session && this.#session.expires - Date.now() <= 30_000) {
-      const refreshed = await this.refresh();
+    const rotating = this.#refresh ?? (this.#session && this.#session.expires - Date.now() <= 30_000 ? this.refresh() : undefined);
+    if (rotating) {
+      const refreshed = await rotating;
       if (!refreshed.ok) throw new TerraBaseV1Error({ status: refreshed.status ?? 401, code: refreshed.error.code, message: refreshed.error.message });
     }
     if (!this.#session) throw new TerraBaseV1Error({ status: 401, code: "signed_out" });
@@ -160,9 +161,9 @@ export class BrowserAuth {
       if (generation !== this.#generation) return this.#changed(result);
       if (!user.ok) return await this.#forget() ?? user;
       if (user.value.sub !== claims.sub) throw new TypeError("Invalid tenant user.");
-      this.#clear();
       await this.#persist(result.value);
       if (generation !== this.#generation) return this.#changed(result);
+      clearTimeout(this.#timer);
       this.#session = { tokens: result.value, user: Object.freeze(user.value), expires: claims.exp * 1000 };
       this.#timer = setTimeout(() => { void this.refresh(); }, Math.min(2_147_483_647, this.#session.expires - Date.now() - 30_000));
       return { ...result, value: this.#session.user };

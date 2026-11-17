@@ -99,6 +99,40 @@ export async function storageProof() {
   return { restored: same, cleared: first.currentUser === null && restored.currentUser === null && stored.size === 0,
     cleanup: signedOut.ok ? null : signedOut.error.code, revoked: refused.ok ? null : refused.error.code };
 }
+export async function refreshInterleavingProof() {
+  const stored = new Map();
+  let hold;
+  const storage = { getItem: async key => stored.get(key) ?? null, removeItem: async key => { stored.delete(key); },
+    setItem: async (key, item) => {
+      const gate = hold;
+      hold = undefined;
+      if (gate) { gate.reached.resolve(); await gate.released.promise; }
+      stored.set(key, item);
+    } };
+  const hostage = () => (hold = { reached: Promise.withResolvers(), released: Promise.withResolvers() });
+  const session = new BrowserAuth({ ...config, storage });
+  const user = value(await session.signInGuest());
+  const before = await session.accessToken();
+  let gate = hostage();
+  const rotating = session.refresh();
+  await gate.reached.promise;
+  const joined = session.accessToken();
+  const kept = session.currentUser?.sub === user.sub;
+  gate.released.resolve();
+  value(await rotating);
+  const token = await joined;
+  const shared = token !== before && token === JSON.parse([...stored.values()][0]).access_token;
+  gate = hostage();
+  const racing = session.refresh();
+  await gate.reached.promise;
+  const waiting = session.accessToken().then(() => null, error => error.code);
+  const signingOut = session.signOut();
+  gate.released.resolve();
+  const lost = await racing;
+  value(await signingOut);
+  return { kept, shared, lost: lost.ok ? null : lost.error.code, waiter: await waiting,
+    cleared: session.currentUser === null && stored.size === 0 };
+}
 export async function rulesReset() { return reset; }
 
 export async function stop() {

@@ -168,6 +168,8 @@ browserTest('a browser app on an allowed origin signs in guests and users with n
     }
     expect(await sdk('storageProof')).toMatchObject({ restored: true, cleared: true, cleanup: 'storage_unavailable', revoked: 'invalid_grant' });
     console.log('Browser SDK: replaceable async storage restored a user; cleanup failure still revoked the refresh family');
+    expect(await sdk('refreshInterleavingProof')).toEqual({ kept: true, shared: true, lost: 'session_changed', waiter: 'session_changed', cleared: true });
+    console.log('Browser SDK: accessToken joined a refresh held in async storage; sign-out during that refresh won');
     await sdk('watchRulesReset');
     const rulesUpdate = await request.put(database + '/rules', {
       headers: { ...owner, 'if-match': deployed.headers().etag },
