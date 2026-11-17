@@ -222,6 +222,7 @@ internal sealed class SqlSession(
     private long? _transportStarted;
     private long? _scriptStarted;
     private long _requestExecution;
+    private (long Started, TimeSpan Budget)? _answerBy;
     private bool _inTransaction;
     private bool _readOnlyTransaction;
     private Pinned? _pinned;
@@ -246,7 +247,12 @@ internal sealed class SqlSession(
     {
         _transportStarted = time.GetTimestamp();
         _requestExecution = 0;
+        _answerBy = null;
     }
+
+    public void AnswerWithin(TimeSpan budget) => _answerBy = (time.GetTimestamp(), budget);
+
+    private TimeSpan? AnswerLeft => _answerBy is var (started, budget) ? budget - time.GetElapsedTime(started) : null;
 
     public ValueTask<SqlOutcome> ExecuteAsync(SqlPlannedCommand planned, CancellationToken cancellationToken) =>
         ExecuteAsync(planned.Plan, planned.Command, admit: null, cancellationToken);
@@ -406,6 +412,7 @@ internal sealed class SqlSession(
     public ValueTask EndRequestAsync()
     {
         _transportStarted = null;
+        _answerBy = null;
         return ValueTask.CompletedTask;
     }
 
@@ -456,7 +463,8 @@ internal sealed class SqlSession(
     private int _consumed;
 
     private bool RequestExpired =>
-        (_transportStarted is not null || _scriptStarted is not null) && TimeSpan.FromTicks(_requestExecution) >= SqlLimits.MaxRequestTime;
+        (_transportStarted is not null || _scriptStarted is not null)
+        && (TimeSpan.FromTicks(_requestExecution) >= SqlLimits.MaxRequestTime || AnswerLeft <= TimeSpan.Zero);
 
     private void ChargeExecution(TimeSpan execution)
     {
@@ -474,6 +482,11 @@ internal sealed class SqlSession(
         if (_transportStarted is not null || _scriptStarted is not null)
         {
             timeout = Min(timeout, SqlLimits.MaxRequestTime - TimeSpan.FromTicks(_requestExecution));
+        }
+
+        if (AnswerLeft is { } left)
+        {
+            timeout = Min(timeout, left);
         }
 
         return timeout > TimeSpan.FromMilliseconds(1) ? timeout : TimeSpan.FromMilliseconds(1);

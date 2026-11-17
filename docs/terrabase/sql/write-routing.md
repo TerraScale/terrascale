@@ -65,14 +65,16 @@ once. A push stream that returns NATS error 10074 is not retried, because the st
 
 ## Unanswered forwards
 
+A forwarder tells the home how long it still waits and when the home must answer: that wait minus the measured round
+trip to the home region and a 250 ms answer allowance. A forwarded SQL request stops its statements at that point and
+the home answers `query_canceled` (SQLSTATE `57014`) itself, so a query refused for its budget reaches the client as
+`57014` through every forwarding path. Only a home that does not answer at all gets the classifications below.
+
 A forwarded request that gets no answer from the home (or, inside a region, from the regional writer) answers by what
 the home could have done with it:
 
 - `421 wrong_region` when nothing was written there: the request is a `GET` or `HEAD`, which never writes, or the connection
   failed before the request was sent (name resolution, connect or TLS refused). Resend it to the named region.
-- A forwarded `POST .../sql/execute` with no write statement cannot have written: when the request's 5 s budget runs out
-  first it answers `400 query_canceled` (SQLSTATE `57014`, "the request exceeded its 5 s time limit"), and a broken
-  connection answers `503 unavailable`.
 - `503 write_outcome_unknown` with `error.region` naming the home for any other request: it was sent, or may have been
   (a connect timeout cannot be told from a lost answer), and the connection broke or timed out before the answer. The
   write may have committed. No SDK resends it; read what it would have written before running it again.

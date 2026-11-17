@@ -59,7 +59,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
         ArgumentNullException.ThrowIfNull(connection);
         var peer = (connection.RemoteEndPoint as IPEndPoint)?.Address;
         var output = new SessionOutput(connection.Transport.Output, connection.Features.GetRequiredFeature<IConnectionSocketFeature>().Socket, Time);
-        await ServeConnectionAsync(connection.Transport.Input, output, peer, IpAllowlists.IsEdge(peer), relayed: false, new ProxyRequestBudget(Time, HandshakeTimeout),
+        await ServeConnectionAsync(connection.Transport.Input, output, peer, IpAllowlists.IsEdge(peer), relayed: false, new ProxyRequestBudget(Time, HandshakeTimeout, HandshakeTimeout),
             () => connection.Abort(new ConnectionAbortedException("the API key was refused")), connection.ConnectionClosed).ConfigureAwait(false);
     }
 
@@ -365,7 +365,7 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
             await output.FlushAsync(cancellationToken).ConfigureAwait(false);
             return default;
         }
-        var budget = new ProxyRequestBudget(Time, SqlLimits.MaxRequestTime);
+        var budget = new ProxyRequestBudget(Time, SqlLimits.MaxRequestTime, SqlLimits.MaxRequestTime);
         using var deadline = budget.Link(cancellationToken);
         try
         {

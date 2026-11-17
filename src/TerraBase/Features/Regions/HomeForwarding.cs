@@ -16,6 +16,7 @@ using TerraBase.Tenancy;
 using TerraBase.Features.Management;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
+using TerraBase.Features.Clock;
 
 namespace TerraBase.Features.Regions;
 
@@ -40,7 +41,7 @@ internal static class HomeForwarding
     {
         "Host", "Connection", "Keep-Alive", "Transfer-Encoding", "TE", "Trailer", "Upgrade", "Proxy-Connection", "Proxy-Authorization",
         "X-TerraScale-Caller", "Content-Length", "Content-Type", "X-TerraScale-Region-Pin", "ts-replay-src", "ts-replay-failed", "X-Forwarded-For", "X-Forwarded-Host",
-        "X-Forwarded-Proto", "Forwarded", ForwardedForHeader, PushThroughHeader, PublishIdHeader, InternalCredential.HeaderName, Management.Usage.PeerUsage.ScopeHeader, ProxyRequestBudget.RemainingHeader, PlacementMissHeader, AccountingHeader,
+        "X-Forwarded-Proto", "Forwarded", ForwardedForHeader, PushThroughHeader, PublishIdHeader, InternalCredential.HeaderName, Management.Usage.PeerUsage.ScopeHeader, ProxyRequestBudget.RemainingHeader, ProxyRequestBudget.AnswerHeader, PlacementMissHeader, AccountingHeader,
     };
 
     private static readonly HashSet<string> Unreturned = new(StringComparer.OrdinalIgnoreCase)
@@ -103,18 +104,10 @@ internal static class HomeForwarding
     internal static bool Unanswered(HttpContext context, Exception error) =>
         error is HttpRequestException || (error is OperationCanceledException && !context.RequestAborted.IsCancellationRequested);
 
-    internal static Task UnansweredAsync(HttpContext context, string region, Exception error, bool sent = true, bool writes = true)
+    internal static Task UnansweredAsync(HttpContext context, string region, Exception error, bool sent = true)
     {
-        if (!writes && error is OperationCanceledException)
-        {
-            context.Response.StatusCode = SqlErrors.Status(SqlErrors.Deadline.Code);
-            context.Response.Headers.CacheControl = "no-store";
-            return context.Response.WriteAsJsonAsync(SqlBatch.Body(new SqlBatchFailure(SqlErrors.Deadline, 0), context.TraceIdentifier),
-                SqlJsonContext.Default.SqlErrorBody, cancellationToken: context.RequestAborted);
-        }
-
         if (HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method)
-            || !sent || !writes)
+            || !sent)
         {
             return UnavailableAsync(context, region);
         }
@@ -261,12 +254,15 @@ internal static class HomeForwarding
 
         request.Headers.Host = Host(region);
         request.Headers.TryAddWithoutValidation(ForwardedForHeader, (IpAllowlists.ClientOf(context) ?? IPAddress.None).ToString());
-        request.Headers.TryAddWithoutValidation(ProxyRequestBudget.RemainingHeader, ProxyRequestBudget.For(context).Milliseconds);
+        var budget = ProxyRequestBudget.For(context);
+        request.Headers.TryAddWithoutValidation(ProxyRequestBudget.RemainingHeader, budget.Milliseconds);
+        request.Headers.TryAddWithoutValidation(ProxyRequestBudget.AnswerHeader,
+            budget.AnswerMilliseconds(context.RequestServices.GetRequiredService<ClockTrust>().RoundTrip(region) ?? TimeSpan.Zero));
         context.RequestServices.GetRequiredService<InternalCredential>().Sign(request.Headers);
     }
 
     internal static async Task ForwardAsync(HttpContext context, HomeNode home, byte[]? body = null, string? pushThrough = null,
-        Action<HttpResponseMessage>? answered = null, string? publishId = null, bool writes = true)
+        Action<HttpResponseMessage>? answered = null, string? publishId = null)
     {
         if (Listeners.IsForwarded(context))
         {
@@ -382,7 +378,7 @@ internal static class HomeForwarding
                 else
                 {
                     context.Response.Clear();
-                    await UnansweredAsync(context, home.Region, error, sent: !IsPlacementMiss(response), writes).ConfigureAwait(false);
+                    await UnansweredAsync(context, home.Region, error, sent: !IsPlacementMiss(response)).ConfigureAwait(false);
                 }
             }
         }
@@ -432,7 +428,7 @@ internal static class HomeForwarding
             {
                 context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("TerraBase.Features.Regions.HomeForwarding")
                     .ZLogWarning(error, $"The proxy leg to {target.Region:@Region} did not answer");
-                await UnansweredAsync(context, target.Region, error, body is not { Length: > 0 } || content?.Sent == true, writes).ConfigureAwait(false);
+                await UnansweredAsync(context, target.Region, error, body is not { Length: > 0 } || content?.Sent == true).ConfigureAwait(false);
                 return null;
             }
         }
