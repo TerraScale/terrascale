@@ -44,7 +44,7 @@ internal sealed class PutShapeGrantEndpoint(IManagementService management, IShap
         }
 
         var probe = new ShapeQuery(null, grant.Columns is { } columns ? string.Join(',', columns) : null,
-            grant.Where is { } where ? new ShapeGrantRule(where, null, "", ShapeGrantRoute.Probe) : null);
+            grant.Where is { } where ? new ShapeGrantRule(where, null, "", ShapeGrantRoute.Probe, null) : null);
         switch (await lineages.CheckAsync(database, grant.Table, probe, cancellationToken))
         {
             case ResolvedShape:

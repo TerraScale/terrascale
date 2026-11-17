@@ -19,7 +19,7 @@ internal sealed record ShapeQuery(string? Where, string? Columns, ShapeGrantRule
     internal bool IsEmpty => Where is null && Columns is null && Grant is null;
 }
 
-internal sealed record ShapeGrantRule(string? Where, string? Columns, string Binding, string Subject);
+internal sealed record ShapeGrantRule(string? Where, string? Columns, string Binding, string Subject, Forbidden? Invalid);
 
 internal enum RulesOperation
 {
@@ -78,6 +78,8 @@ internal static class ShapeFilters
 
     private static readonly Forbidden ColumnNotGranted = new("where names a column the read grant does not allow", "column_not_granted");
 
+    internal static readonly Forbidden GrantInvalid = new("the table's read grant no longer applies to its columns", "grant_invalid");
+
     internal static Validation Refused(string message) => new(message, "unsafe_where");
 
     internal static object Parse(ShapeQuery query, IReadOnlyList<string> tableColumns)
@@ -120,9 +122,10 @@ internal static class ShapeFilters
         Dictionary<string, object?> parameters = new(StringComparer.Ordinal);
         if (query.Grant is { Where: { } rule } grant)
         {
-            if (Where(rule, new GrantScope(tableColumns)) is not CompiledCondition checkedRule)
+            var compiledRule = Where(rule, new GrantScope(tableColumns));
+            if (compiledRule is not CompiledCondition checkedRule)
             {
-                return new Forbidden("the table's read grant no longer applies to its columns", "grant_invalid");
+                return grant.Invalid ?? compiledRule;
             }
 
             condition = condition is null ? checkedRule.Sql : $"({checkedRule.Sql}) AND ({condition})";

@@ -88,7 +88,8 @@ internal static class ShapeRoute
                             query = query with
                             {
                                 Grant = new ShapeGrantRule(grant.Where, grant.Columns is { } columns ? string.Join(',', columns) : null,
-                                    string.Join('\0', grant.UpdatedAt.UtcTicks.ToString(CultureInfo.InvariantCulture), access.Actor), access.Actor),
+                                    string.Join('\0', grant.UpdatedAt.UtcTicks.ToString(CultureInfo.InvariantCulture), access.Actor), access.Actor,
+                                    ShapeFilters.GrantInvalid),
                             };
                             break;
                         case NotFound:

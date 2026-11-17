@@ -77,6 +77,11 @@ test('end-user shape reads see only granted columns and their own rows, under ha
     const duplicate = await putGrant(['id', 'owner', 'body', 'ID']);
     expect(duplicate.status()).toBe(400);
     expect((await duplicate.json()).error.code).toBe('duplicate_column');
+    for (const where of ['owner = :user', 'ownr = :sub']) {
+      const unsafe = await request.put(grant, { headers: { authorization: 'Bearer ' + owner }, data: { where } });
+      expect(unsafe.status(), where).toBe(400);
+      expect((await unsafe.json()).error.code, where).toBe('unsafe_where');
+    }
     expect((await putGrant(['id', 'owner', 'body'])).status()).toBe(200);
 
     const mint = await mintKey(page.request);

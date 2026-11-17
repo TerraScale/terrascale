@@ -52,7 +52,7 @@ On `GET …/tables/{table}/shape`, `…/shape/keys` and `…/shape/manifest` wit
 
 1. The token must name the database (`database`, a ULID) or any request for another database answers `404`.
 2. `table` must be in the token's `tables`, and the table must have a grant; otherwise `403 not_granted`.
-3. The grant's `where`, with `:sub` bound to the token's subject as a string literal, is joined with the request's
+3. The grant's `where`, with `:sub` bound to the token's subject as a statement parameter, is joined with the request's
    `where` as `(grant) AND (request)`. Each is validated on its own first, so a request cannot escape the grant.
    When the grant lists `columns`, the request's `where` may name only those columns: any other name in a column's
    place, hidden or unknown, answers `403 column_not_granted` before a row is read, so a filter cannot reveal a hidden
