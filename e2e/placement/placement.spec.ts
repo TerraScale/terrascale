@@ -5,7 +5,7 @@ import { stored } from '../support/files';
 import { journey, saveSecret } from '../support/state';
 import { test, home, replica, project, database, name, status, json, sql, replicated, removeDatabase, type Database, type Progress } from './support';
 import { production } from '../support/stack';
-import { issueKey, postgres } from './forwarding';
+import { internalPost, issueKey, postgres } from './forwarding';
 
 test.skip(production || process.env.E2E_REGIONS !== '2', 'placement requires the local stack started with E2E_REGIONS=2');
 test.describe.configure({ mode: 'default', timeout: 180_000 });
@@ -99,6 +99,28 @@ test('a new database with a replica creates a table at once over REST, WebSocket
         expect(code).toBe(0);
       }
       expect((await sql(cells, home, created.id, 'SELECT value FROM first_rows')).results[0].rows, protocol + ' created the table and stored its row').toEqual([[7]]);
+    } finally {
+      await removeDatabase(cells, created.id);
+    }
+  }
+});
+
+test('the home lease repair leaves a held lease unchanged and refuses a database without replicas', async ({ cells }) => {
+  const current = journey();
+  for (const replicaRegions of [['fra'], []]) {
+    const created = await json<Database>(await cells.post(`${home}${project()}/databases`, {
+      data: { name: name('lease'), homeRegion: 'gru', replicaRegions },
+    }), 201);
+    try {
+      await sql(cells, home, created.id, 'CREATE TABLE lease_rows (value INTEGER PRIMARY KEY)');
+      const answer = await internalPost(`/admin/organizations/${current.organizationId}/projects/${current.projectId}/databases/${created.id}/home-lease`);
+      if (replicaRegions.length > 0) {
+        expect(answer.status, answer.body).toBe(200);
+        expect(JSON.parse(answer.body)).toMatchObject({ outcome: 'unchanged', node: 'journey-1', epoch: expect.any(Number) });
+      } else {
+        expect(answer.status, answer.body).toBe(409);
+        expect(JSON.parse(answer.body).error.code).toBe('not_leased');
+      }
     } finally {
       await removeDatabase(cells, created.id);
     }

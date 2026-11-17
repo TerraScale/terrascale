@@ -37,6 +37,23 @@ export async function issueKey(organizationId: string, projectId: string, databa
   }
 }
 
+export async function internalPost(path: string): Promise<{ status: number; body: string }> {
+  const session = connect('http://127.0.0.1:8081');
+  const stream = session.request({ ':method': 'POST', ':path': path,
+    'x-terrabase-peer-credential': readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0] });
+  session.on('error', error => stream.destroy(error));
+  try {
+    const response = once(stream, 'response');
+    stream.end();
+    const [headers] = await response;
+    let body = '';
+    for await (const chunk of stream) body += chunk;
+    return { status: Number(headers[':status']), body };
+  } finally {
+    session.close();
+  }
+}
+
 async function destinationTraffic(request: Cells): Promise<{ discovery: number; connections: number; requests: number }> {
   const text = async () => (await request.get('http://127.0.0.1:9191/metrics')).text();
   const previous = await text();

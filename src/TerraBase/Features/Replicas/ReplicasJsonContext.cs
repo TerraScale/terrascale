@@ -35,4 +35,5 @@ namespace TerraBase.Features.Replicas;
 [JsonSerializable(typeof(HomeSessionAnswer))]
 [JsonSerializable(typeof(ReplicaChecksumPage))]
 [JsonSerializable(typeof(ReplicaStatusReport))]
+[JsonSerializable(typeof(HomeLeaseRepairBody))]
 internal sealed partial class ReplicasJsonContext : JsonSerializerContext;

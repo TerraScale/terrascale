@@ -7,7 +7,7 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
 
-internal sealed class RegionSetPlacement(IManagementService management, TerraBaseOptions options, IHomeApply apply, HomeMoves moves, IDatabaseRevisions revisions, DatabaseFences fences)
+internal sealed class RegionSetPlacement(IManagementService management, TerraBaseOptions options, IHomeApply apply, HomeMoves moves, IDatabaseRevisions revisions, DatabaseFences fences, HomeLeases leases)
 {
     internal static readonly Unavailable PlacementNotReady = new("requested regions remain members; retry when a requested region can take over", "replica_not_ready");
 
@@ -21,7 +21,9 @@ internal sealed class RegionSetPlacement(IManagementService management, TerraBas
         var user = ManagementRoute.UserId(context);
         var organization = ManagementRoute.OrganizationId(context);
         var placed = await apply.PrepareReplicatedAsync(organization, options.Region,
-            await management.SetDatabaseRegionSetAsync(user, organization, database.ProjectId, database.Id, selected, cancellationToken).ConfigureAwait(false),
+            await leases.UnderHeldLeaseAsync(new TenantContext(organization, PlanTier.Hobby, database.ProjectId, database.Id),
+                token => management.SetDatabaseRegionSetAsync(user, organization, database.ProjectId, database.Id, selected, token), HomeLeasePlacement.Bumped,
+                HomeLeasePlacement.Pending, cancellationToken).ConfigureAwait(false),
             cancellationToken).ConfigureAwait(false);
         if (placed is not ManagedDatabase current)
         {

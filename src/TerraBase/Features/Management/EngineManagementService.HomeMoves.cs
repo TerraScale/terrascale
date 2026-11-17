@@ -32,7 +32,9 @@ internal interface IHomeMoveCatalog
 
     ValueTask<IReadOnlyList<HomeMoveMarker>> PendingHomeMovesAsync(CancellationToken cancellationToken);
 
-    ValueTask<int> FollowServingRegionsAsync(IReadOnlyList<string> serving, CancellationToken cancellationToken);
+    ValueTask<IReadOnlyList<TenantContext>> ServingRegionsBehindAsync(IReadOnlyList<string> serving, CancellationToken cancellationToken);
+
+    ValueTask<long?> FollowServingRegionsAsync(TenantContext database, IReadOnlyList<string> serving, CancellationToken cancellationToken);
 }
 
 internal sealed partial class EngineManagementService : IHomeMoveCatalog
@@ -178,29 +180,47 @@ internal sealed partial class EngineManagementService : IHomeMoveCatalog
         return followed;
     }
 
-    public ValueTask<int> FollowServingRegionsAsync(IReadOnlyList<string> serving, CancellationToken cancellationToken)
+    public ValueTask<IReadOnlyList<TenantContext>> ServingRegionsBehindAsync(IReadOnlyList<string> serving, CancellationToken cancellationToken)
     {
         IReadOnlyList<string> replicas = DatabaseRegions.AllBut(serving, options.Region);
-        return WriteAsync<int>(async transaction =>
+        return ReadAsync<IReadOnlyList<TenantContext>>(async transaction =>
         {
-            var changed = 0;
+            List<TenantContext> behind = [];
             foreach (var (project, id) in await CatalogTables.AllRegionDatabasesAsync(transaction, options.Region, cancellationToken).ConfigureAwait(false))
             {
                 if (await CatalogTables.DatabaseAsync(transaction, project, id, cancellationToken).ConfigureAwait(false) is { } record
                     && !record.Replicas.SequenceEqual(replicas, StringComparer.Ordinal)
-                    && !await HomeMovePendingAsync(transaction, id, cancellationToken).ConfigureAwait(false))
+                    && await CatalogTables.ProjectOrganizationAsync(transaction, project, cancellationToken).ConfigureAwait(false) is { } organization)
                 {
-                    await CatalogTables.PutDatabaseAsync(transaction, record with
-                    {
-                        ReplicaRegions = replicas.Count == 0 ? null : [.. replicas],
-                        PlacementVersion = record.PlacementVersion + 1,
-                    }, cancellationToken).ConfigureAwait(false);
-                    changed++;
+                    behind.Add(new TenantContext(organization, PlanTier.Hobby, project, id));
                 }
             }
 
-            return changed;
-        }, static _ => 0, cancellationToken);
+            return behind;
+        }, static _ => [], cancellationToken);
+    }
+
+    public ValueTask<long?> FollowServingRegionsAsync(TenantContext database, IReadOnlyList<string> serving, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<string> replicas = DatabaseRegions.AllBut(serving, options.Region);
+        return WriteAsync<long?>(async transaction =>
+        {
+            if (await CatalogTables.DatabaseAsync(transaction, database.ProjectId!, database.DatabaseId!, cancellationToken).ConfigureAwait(false) is not { AllRegions: true } record
+                || record.Home(options.Region) != options.Region
+                || record.Replicas.SequenceEqual(replicas, StringComparer.Ordinal)
+                || await HomeMovePendingAsync(transaction, database.DatabaseId!, cancellationToken).ConfigureAwait(false))
+            {
+                return null;
+            }
+
+            var version = record.PlacementVersion + 1;
+            await CatalogTables.PutDatabaseAsync(transaction, record with
+            {
+                ReplicaRegions = replicas.Count == 0 ? null : [.. replicas],
+                PlacementVersion = version,
+            }, cancellationToken).ConfigureAwait(false);
+            return version;
+        }, static _ => null, cancellationToken);
     }
 
     public ValueTask<IReadOnlyList<HomeMoveMarker>> PendingHomeMovesAsync(CancellationToken cancellationToken) =>

@@ -500,7 +500,18 @@ internal sealed partial class HomeLeases(
 
             var previous = current?.Value is { } bytes ? Decode(bytes) : null;
             if (previous is not null && (previous.OrganizationId != database.OrganizationId || previous.ProjectId != database.ProjectId
-                || previous.DatabaseId != database.DatabaseId || previous.Epoch < placement.Version))
+                || previous.DatabaseId != database.DatabaseId))
+            {
+                Isolate(previous, current!.Value.Revision);
+                return RegionalLeaseResult.Kept;
+            }
+            if (previous is not null && previous.Epoch < placement.Version && previous.Home != options.Region)
+            {
+                leaseGate.Lease(database.DatabaseId!, held: false);
+                return RegionalLeaseResult.Kept;
+            }
+            if (previous is not null && previous.Epoch < placement.Version
+                && (!leaseGate.Proven(database.DatabaseId!) || previous.Node != source && previous.Node != options.MachineId))
             {
                 Isolate(previous, current!.Value.Revision);
                 return RegionalLeaseResult.Kept;
@@ -527,7 +538,7 @@ internal sealed partial class HomeLeases(
             }
 
             var next = new HomeLease(database.OrganizationId, database.ProjectId!, database.DatabaseId!, options.Region,
-                options.MachineId, (previous?.Epoch ?? 0) + 1, _session, previous?.Adopted);
+                options.MachineId, Math.Max((previous?.Epoch ?? 0) + 1, placement.Version), _session, previous?.Adopted);
             var value = JsonSerializer.SerializeToUtf8Bytes(next, ReplicasJsonContext.Default.HomeLease);
             var revision = current is null
                 ? await kv.CreateAsync(HomeKey(next.DatabaseId), value, cancellationToken: cancellationToken).ConfigureAwait(false)
@@ -694,7 +705,8 @@ internal sealed partial class HomeLeases(
             return;
         }
 
-        if (!_isolated.ContainsKey(id) && _homes.TryGetValue(id, out var known) && known.Lease is { Node: var node, Session: var session } && node == options.MachineId && session == _session)
+        if (!_isolated.ContainsKey(id) && _homes.TryGetValue(id, out var known) && known.Lease is { Node: var node, Session: var session, Epoch: var epoch } && node == options.MachineId && session == _session
+            && epoch >= placement.Version)
         {
             leaseGate.Lease(id, held: true);
             return;
@@ -903,14 +915,18 @@ internal sealed partial class HomeLeases(
 
     private async Task TrackUnservedAsync(CancellationToken cancellationToken)
     {
+        var moving = await MovingAsync(cancellationToken).ConfigureAwait(false);
         foreach (var (id, (lease, _)) in _homes)
         {
             var database = new TenantContext(lease.OrganizationId, PlanTier.Hobby, lease.ProjectId, id);
-            var cause = PlatformDatabase(id) || await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord ? null
+            var placement = PlatformDatabase(id) ? null
+                : await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var found } ? found : null;
+            var cause = placement is null ? null
                 : !_nodes.ContainsKey(lease.Node) ? "lapsed"
                 : owners.Find(lease.Home) is { } owner && owner.Node != lease.Node ? "not_writer"
+                : lease.Home != placement.Home && lease.Epoch < placement.Version && !moving.Contains(id) ? "stale_lease"
                 : null;
-            if (cause is null)
+            if (cause is null || placement is null)
             {
                 if (_unserved.TryRemove(id, out var was))
                 {
@@ -927,7 +943,7 @@ internal sealed partial class HomeLeases(
             }
 
             _unserved[id] = unserved;
-            logger.ZLogWarning($"Database {id:@Database} is unserved: its lease names {lease.Node:@Node} in {lease.Home:@Home} at epoch {lease.Epoch:@Epoch}, which cannot serve it ({cause:@Cause}); nothing else serves it as home until an operator acts");
+            logger.ZLogWarning($"Database {id:@Database} is unserved: its lease names {lease.Node:@Node} in {lease.Home:@Home} at epoch {lease.Epoch:@Epoch} for placement version {placement.Version:@Version} homed in {placement.Home:@PlacementHome}, which cannot serve it ({cause:@Cause}); nothing else serves it as home until an operator acts");
         }
     }
 

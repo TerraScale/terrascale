@@ -1,4 +1,6 @@
 using TerraBase.Configuration;
+using TerraBase.Features.Replicas;
+using TerraBase.Tenancy;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Regions;
@@ -9,7 +11,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-internal sealed class UpdateManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options, IRegionCatalog regions, IHomeApply apply, RegionSetPlacement placement) : Endpoint<DatabaseRegionsRequest, IResult>
+internal sealed class UpdateManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options, IRegionCatalog regions, IHomeApply apply, RegionSetPlacement placement, HomeLeases leases) : Endpoint<DatabaseRegionsRequest, IResult>
 {
     public override void Configure()
     {
@@ -95,7 +97,9 @@ internal sealed class UpdateManagedDatabaseEndpoint(IManagementService managemen
         {
             Validation error => ErrorResponse.From(error),
             IReadOnlyList<string> accepted => Answer(await apply.PrepareReplicatedAsync(organization, options.Region,
-                await management.SetDatabaseRegionsAsync(user, organization, project, id, accepted, cancellationToken, all), cancellationToken)),
+                await leases.UnderHeldLeaseAsync(new TenantContext(organization, PlanTier.Hobby, database.ProjectId, database.Id),
+                    token => management.SetDatabaseRegionsAsync(user, organization, project, id, accepted, token, all), HomeLeasePlacement.Bumped,
+                    HomeLeasePlacement.Pending, cancellationToken), cancellationToken)),
         };
     }
 

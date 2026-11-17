@@ -71,6 +71,7 @@ builder.Logging.AddTerraBaseLogging();
 var runCompletion = new ApplicationRunCompletion();
 builder.Services.AddSingleton(runCompletion);
 builder.Services.AddSingleton<Shutdown>();
+builder.Services.AddSingleton<StorageRefusals>();
 builder.Services.Configure<HostOptions>(host => host.ShutdownTimeout = Shutdown.HostedBudget);
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton(internalCredential);
