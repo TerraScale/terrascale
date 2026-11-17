@@ -272,10 +272,10 @@
     },
     {
       "id": "rules.manage",
-      "requests": 13,
+      "requests": 17,
       "group": "a",
       "sdks": ["dotnet", "go", "python", "rust"],
-      "title": "deploy Rules conditionally, get and page versions, simulate allow and deny, reject stale and invalid deployments, restore"
+      "title": "deploy Rules conditionally, get and page versions, simulate allow and deny, reject stale and invalid deployments, restore; mint a database-bound custom token and read an allowed row while hiding another user row"
     },
     {
       "id": "agent.create_ttl",

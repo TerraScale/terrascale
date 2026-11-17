@@ -801,7 +801,7 @@ impl Runner {
                     tables: [(
                         self.table.clone(),
                         RulesTable {
-                            read: Some("row.id = auth.uid".into()),
+                            read: Some("row.id = auth.uid AND auth.claims.plan = 'pro'".into()),
                             columns: Some(vec!["id".into(), "label".into()]),
                             ..Default::default()
                         },
@@ -815,15 +815,85 @@ impl Runner {
                     .map_err(e)?;
                 let got = self.db().get_rules().await.map_err(e)?;
                 if got.version != deployed.version
-                    || got.tables[&self.table].read.as_deref() != Some("row.id = auth.uid")
+                    || got.tables[&self.table].read.as_deref()
+                        != Some("row.id = auth.uid AND auth.claims.plan = 'pro'")
                 {
                     return Err("rules read differs".into());
                 }
+                let config = ClientConfig::builder()
+                    .auth_base_url("https://auth.terrascale.tech")
+                    .build()
+                    .map_err(|error| error.to_string())?;
+                let transport =
+                    terrascale::transport::ReqwestTransport::with_root_certificates(&self.ca)
+                        .map_err(|error| error.to_string())?;
+                let auth = terrascale::TerraScaleClient::with_transport(
+                    config,
+                    std::sync::Arc::new(transport),
+                )
+                .projects()
+                .map_err(|error| error.to_string())?;
+                let user = std::env::var("E2E_AUTH_USER").map_err(|error| error.to_string())?;
+                let key = std::env::var("E2E_AUTH_MINT_KEY").map_err(|error| error.to_string())?;
+                let database =
+                    std::env::var("E2E_DATABASE_ID").map_err(|error| error.to_string())?;
+                let claims = [("plan".into(), json!("pro"))].into();
+                let custom = auth
+                    .mint_custom_token(&key, &self.project, &user, Some(&database), Some(&claims))
+                    .await
+                    .map_err(|error| error.to_string())?;
+                register_secret("custom-token-rust", &custom.access_token)?;
+                if custom.token_type != "Bearer" || custom.expires_in != 300 {
+                    return Err("custom token lifetime differs".into());
+                }
+                self.db().sql().execute(&format!("INSERT INTO {}(rowid,id,label) VALUES (700001,?,'custom-token'),(700002,'other','hidden')", self.table), &[user.clone().into()]).await.map_err(|error| error.to_string())?;
+                let browser = reqwest::Client::builder()
+                    .add_root_certificate(
+                        reqwest::Certificate::from_pem(&self.ca)
+                            .map_err(|error| error.to_string())?,
+                    )
+                    .build()
+                    .map_err(|error| error.to_string())?;
+                let path = format!(
+                    "https://api.terrascale.tech/v1/projects/{}/databases/{}/tables/{}/rows/",
+                    self.project, database, self.table
+                );
+                let row = browser
+                    .get(format!("{path}700001"))
+                    .bearer_auth(&custom.access_token)
+                    .send()
+                    .await
+                    .map_err(|error| error.to_string())?;
+                let status = row.status().as_u16();
+                let body: Value = row.json().await.map_err(|error| error.to_string())?;
+                if status != 200 || body["row"] != json!({"id": user, "label": "custom-token"}) {
+                    return Err("custom token Rules read differs".into());
+                }
+                let hidden = browser
+                    .get(format!("{path}700002"))
+                    .bearer_auth(&custom.access_token)
+                    .send()
+                    .await
+                    .map_err(|error| error.to_string())?;
+                let status = hidden.status().as_u16();
+                let body: Value = hidden.json().await.map_err(|error| error.to_string())?;
+                if status != 404 || body["error"]["code"] != "row_not_found" {
+                    return Err("custom token revealed another user's row".into());
+                }
+                self.db()
+                    .sql()
+                    .execute(
+                        &format!("DELETE FROM {} WHERE rowid IN (700001,700002)", self.table),
+                        &[],
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?;
                 let mut input = RulesTestRequest {
                     operation: "read".into(),
                     table: self.table.clone(),
                     auth: RulesTestAuth {
                         uid: "owner".into(),
+                        claims: Some([("plan".into(), json!("pro"))].into()),
                         ..Default::default()
                     },
                     row: Some([("id".into(), json!("owner"))].into()),
@@ -894,7 +964,8 @@ impl Runner {
                     .await
                     .map_err(e)?;
                 if version.version != deployed.version
-                    || version.tables[&self.table].read.as_deref() != Some("row.id = auth.uid")
+                    || version.tables[&self.table].read.as_deref()
+                        != Some("row.id = auth.uid AND auth.claims.plan = 'pro'")
                 {
                     return Err("rules version differs".into());
                 }
@@ -904,7 +975,8 @@ impl Runner {
                     .await
                     .map_err(e)?;
                 if restored.version == deployed.version
-                    || restored.tables[&self.table].read.as_deref() != Some("row.id = auth.uid")
+                    || restored.tables[&self.table].read.as_deref()
+                        != Some("row.id = auth.uid AND auth.claims.plan = 'pro'")
                 {
                     return Err("rules restore differs".into());
                 }

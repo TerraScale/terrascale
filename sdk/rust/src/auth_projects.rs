@@ -5,6 +5,9 @@
 //! request, viewer for reads and admin for changes. Obtain a client with
 //! [`crate::TerraScaleClient::projects`].
 
+mod custom_tokens;
+pub use custom_tokens::CustomToken;
+
 mod organizations;
 pub use organizations::*;
 

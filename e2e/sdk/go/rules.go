@@ -1,8 +1,15 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+
+	"terrascale.tech/sdk/tsauth"
 
 	"terrascale.tech/sdk/v1"
 )
@@ -16,7 +23,7 @@ func (r *runner) rules() error {
 	} else if code(err) != "no_rules" {
 		return err
 	}
-	read := "row.id = auth.uid"
+	read := "row.id = auth.uid AND auth.claims.plan = 'pro'"
 	rules := v1.RulesSet{Tables: map[string]v1.RulesTable{r.table: {Read: &read, Columns: []string{"id", "label"}}}}
 	deployed, err := r.db.DeployRules(ctx, rules, current)
 	if err != nil {
@@ -29,7 +36,10 @@ func (r *runner) rules() error {
 	if got.Version != deployed.Version || got.Tables[r.table].Read == nil || *got.Tables[r.table].Read != read {
 		return errors.New("rules read differs")
 	}
-	input := v1.RulesTestRequest{Operation: "read", Table: r.table, Auth: v1.RulesTestAuth{UID: "owner"}, Row: map[string]any{"id": "owner"}}
+	if err := r.customTokenRead(); err != nil {
+		return err
+	}
+	input := v1.RulesTestRequest{Operation: "read", Table: r.table, Auth: v1.RulesTestAuth{UID: "owner", Claims: map[string]any{"plan": "pro"}}, Row: map[string]any{"id": "owner"}}
 	allowed, err := r.db.TestRules(ctx, input)
 	if err != nil {
 		return err
@@ -94,4 +104,63 @@ func (r *runner) rules() error {
 		_, err = r.db.DeployRules(ctx, empty, &restored.Version)
 	}
 	return err
+}
+
+func (r *runner) customTokenRead() error {
+	auth, err := tsauth.New(tsauth.Config{})
+	if err != nil {
+		return err
+	}
+	user := os.Getenv("E2E_AUTH_USER")
+	custom, err := auth.WithToken(os.Getenv("E2E_AUTH_MINT_KEY")).MintCustomToken(r.ctx, r.project,
+		tsauth.CustomTokenRequest{UserID: user, Database: os.Getenv("E2E_DATABASE_ID"), Claims: map[string]any{"plan": "pro"}})
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(os.Getenv("E2E_SECRETS"), "custom-token-go"), []byte(custom.AccessToken), 0o600); err != nil {
+		return err
+	}
+	if custom.TokenType != "Bearer" || custom.ExpiresIn != 300 {
+		return errors.New("custom token lifetime differs")
+	}
+	if _, err := r.db.Execute(r.ctx, fmt.Sprintf("INSERT INTO %s(rowid,id,label) VALUES (700001,?,'custom-token'),(700002,'other','hidden')", r.table), user); err != nil {
+		return err
+	}
+	for _, key := range []string{"700001", "700002"} {
+		if err := r.customTokenRow(r.ctx, custom.AccessToken, user, key); err != nil {
+			return err
+		}
+	}
+	_, err = r.db.Execute(r.ctx, fmt.Sprintf("DELETE FROM %s WHERE rowid IN (700001,700002)", r.table))
+	return err
+}
+
+func (r *runner) customTokenRow(ctx context.Context, token, user, key string) error {
+	path := fmt.Sprintf("https://api.terrascale.tech/v1/projects/%s/databases/%s/tables/%s/rows/%s",
+		r.project, os.Getenv("E2E_DATABASE_ID"), r.table, key)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	var body struct {
+		Row   map[string]any
+		Error struct{ Code string }
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		return err
+	}
+	if key == "700001" {
+		if response.StatusCode != 200 || body.Row["id"] != user || body.Row["label"] != "custom-token" {
+			return errors.New("custom token Rules read differs")
+		}
+	} else if response.StatusCode != 404 || body.Error.Code != "row_not_found" {
+		return errors.New("custom token revealed another user's row")
+	}
+	return nil
 }

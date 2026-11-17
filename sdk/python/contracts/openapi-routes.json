@@ -5,6 +5,7 @@
  "contract_routes": [
   "DELETE /v1/projects/{project}/databases/{database}/ttl",
   "POST /v1/terrascale/api-keys/self/scoped-keys",
+  "POST /v1/{project}/custom-tokens",
   "PUT /v1/projects/{project}/databases/{database}/ttl"
  ],
  "routes": [
@@ -73,6 +74,7 @@
   "POST /v1/projects/{project}/databases/{database}/sql/execute",
   "POST /v1/projects/{project}/databases/{database}/tables/{table}/rows",
   "POST /v1/terrascale/api-keys/self/scoped-keys",
+  "POST /v1/{project}/custom-tokens",
   "PUT /v1/projects/{project}/backup-destination",
   "PUT /v1/projects/{project}/buckets/{bucket}/rules",
   "PUT /v1/projects/{project}/databases/{database}/backup-policy",

@@ -13,7 +13,7 @@ import { journey, saveCookies, saveSecret } from './state';
 
 export type AuthOwner = { runId: string; password: string; organizationId: string; projectId: string };
 
-export type AuthManagement = { user: string; readKey: string; writeKey: string; csrf: string; ownerToken: string };
+export type AuthManagement = { user: string; readKey: string; writeKey: string; mintKey: string; csrf: string; ownerToken: string };
 
 export async function signInToken(context: APIRequestContext, label: string): Promise<string> {
   const client = '00000000000000000000000007';
@@ -194,7 +194,7 @@ export async function prepareAuthManagement(page: Page, sdk: string, current: Au
   await page.goto('/api-keys?create=key');
   const csrf = await page.locator('#create-key input[name="_csrf"]').inputValue();
   const keys: string[] = [];
-  for (const level of ['read', 'write']) {
+  for (const level of ['read', 'write', 'tokens:mint']) {
     const created = await page.request.post('/api/v1/dashboard/credentials/key', {
       headers: { Accept: 'application/json' },
       form: { _csrf: csrf, name: `auth-${sdk}-${level}`, scopes: `auth:${level}` },
@@ -204,7 +204,7 @@ export async function prepareAuthManagement(page: Page, sdk: string, current: Au
     saveSecret(`auth-${sdk}-${level}`, key);
     keys.push(key);
   }
-  const [readKey, writeKey] = keys;
+  const [readKey, writeKey, mintKey] = keys;
   const ownerToken = await signInToken(page.request, 'auth-owner');
   if (sdk === 'dotnet') await checkMemberAuthority(page, writeKey, ownerToken);
   const email = await newAddress(`auth-${sdk}-${current.runId}`);
@@ -354,7 +354,7 @@ export async function prepareAuthManagement(page: Page, sdk: string, current: Au
   expect(signedIn.status()).toBe(200);
   const activeSessions = await page.request.get(root + '/sessions', { headers: { Authorization: 'Bearer ' + readKey } });
   expect((await activeSessions.json()).items.some((session: { user_id: string }) => session.user_id === user)).toBe(true);
-  const management = { user, readKey, writeKey, csrf, ownerToken };
+  const management = { user, readKey, writeKey, mintKey, csrf, ownerToken };
   if (sdk === 'dotnet') await checkSignupManagement(page, management);
   return management;
 }
@@ -413,7 +413,7 @@ export async function closeAuthManagement(page: Page, management: AuthManagement
     headers: { Authorization: `Bearer ${management.writeKey}` },
   });
   expect(deleted.status()).toBe(204);
-  for (const key of [management.readKey, management.writeKey]) {
+  for (const key of [management.readKey, management.writeKey, management.mintKey]) {
     const revoked = await page.request.post('/api/v1/dashboard/credentials/revoke', {
       headers: { Accept: 'application/json' },
       form: { _csrf: management.csrf, keyId: keyId(key) },
