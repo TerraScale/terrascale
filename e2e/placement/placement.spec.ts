@@ -1,9 +1,11 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { once } from 'node:events';
 import { expect } from '@playwright/test';
 import { stored } from '../support/files';
-import { saveSecret } from '../support/state';
+import { journey, saveSecret } from '../support/state';
 import { test, home, replica, project, database, name, status, json, sql, replicated, removeDatabase, type Database, type Progress } from './support';
 import { production } from '../support/stack';
+import { issueKey, postgres } from './forwarding';
 
 test.skip(production || process.env.E2E_REGIONS !== '2', 'placement requires the local stack started with E2E_REGIONS=2');
 test.describe.configure({ mode: 'default', timeout: 180_000 });
@@ -57,6 +59,49 @@ test('create with a replica, observe its pull, move home and remove the old home
       .toEqual({ region: 'fra', rows: [[1], [2], [3]] });
   } finally {
     await removeDatabase(cells, created.id);
+  }
+});
+
+test('a new database with a replica creates a table at once over REST, WebSocket and PostgreSQL', async ({ cells, page }) => {
+  const token = await issueKey(journey().organizationId, journey().projectId);
+  for (const protocol of ['REST', 'WebSocket', 'PostgreSQL']) {
+    const created = await json<Database>(await cells.post(`${home}${project()}/databases`, {
+      data: { name: name('ddl'), homeRegion: 'gru', replicaRegions: ['fra'] },
+    }), 201);
+    try {
+      const statements = ['CREATE TABLE first_rows (value INTEGER PRIMARY KEY)', 'INSERT INTO first_rows VALUES (7)'];
+      if (protocol === 'REST') {
+        for (const statement of statements) await sql(cells, home, created.id, statement);
+      } else if (protocol === 'WebSocket') {
+        expect(await page.evaluate(({ url, token, statements }) => new Promise<string[]>((resolve, reject) => {
+          const socket = new WebSocket(url, 'terrascale.sql.v1');
+          const answers: string[] = [];
+          socket.onopen = () => socket.send(JSON.stringify({ id: 1, type: 'auth', token }));
+          socket.onerror = () => reject(new Error('the WebSocket upgrade failed'));
+          socket.onmessage = message => {
+            const answer = JSON.parse(String(message.data));
+            answers.push(answer.error?.code ?? answer.type);
+            if (answer.id === 1 && answer.type === 'result') {
+              statements.forEach((statement, index) => socket.send(JSON.stringify({ id: index + 2, type: 'execute', statements: [{ sql: statement }] })));
+            }
+            if (answers.length === statements.length + 1) { socket.close(); resolve(answers); }
+          };
+        }), { url: home.replace('https:', 'wss:') + database(created.id) + '/sql/ws', token, statements }), 'auth, CREATE TABLE and INSERT answer results').toEqual(['result', 'result', 'result']);
+      } else {
+        const process = postgres(created.id, token);
+        let errors = '';
+        process.stderr.on('data', chunk => { errors += chunk; });
+        process.stdout.resume();
+        const ended = once(process, 'close');
+        process.stdin.end(statements.map(statement => statement + ';\n').join(''));
+        const [code] = await ended;
+        expect(errors, 'psql reports no error').toBe('');
+        expect(code).toBe(0);
+      }
+      expect((await sql(cells, home, created.id, 'SELECT value FROM first_rows')).results[0].rows, protocol + ' created the table and stored its row').toEqual([[7]]);
+    } finally {
+      await removeDatabase(cells, created.id);
+    }
   }
 });
 

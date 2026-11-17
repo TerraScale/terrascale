@@ -64,7 +64,7 @@ async function browserAnswer(page: Page, id: string, token: string): Promise<str
   }), { url: home.replace('https:', 'wss:') + database(id) + '/sql/ws', token });
 }
 
-function postgres(id: string, token: string) {
+export function postgres(id: string, token: string) {
   return spawn('psql', ['-X', '-tA', '-v', 'ON_ERROR_STOP=1', '-v', 'VERBOSITY=verbose',
     'postgresql://any@pg.terrascale.tech:5432/' + journey().projectId + '/' + id + '?sslmode=verify-full&sslrootcert=' + encodeURIComponent(join(stateDir, 'pki', 'ca.pem'))], {
     env: { PATH: process.env.PATH, SSL_CERT_FILE: process.env.SSL_CERT_FILE, PGPASSWORD: token,

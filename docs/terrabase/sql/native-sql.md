@@ -63,6 +63,7 @@ SELECT terrascale_expect_changes(changes(), 1);
 | `not_null_violation`, `check_violation`, `foreign_key_violation` | 23502, 23514, 23503 |
 | `forbidden_scope`, `sql_sandbox` | 42501 |
 | `serialization_conflict` | 40001 |
+| `internal_error` | XX000 (HTTP 500; the storage engine ran out of memory, reported an I/O error, a full disk or a file it could not open) |
 | `row_conflict` | P0001 |
 | `too_large`, `query_canceled` | 54000, 57014 |
 | `write_outcome_unknown` | 08007 (HTTP 503; reconcile before repeating) |

@@ -131,7 +131,7 @@ internal sealed partial class TursoStorageEngine : IStorageCopyFaults
                 error.SqliteExtendedErrorCode == 0 ? error.SqliteErrorCode : error.SqliteExtendedErrorCode);
             proof = new ProofIncomplete(failure switch
             {
-                Busy => "busy_or_storage",
+                Busy or StorageError => "busy_or_storage",
                 Interrupted => "interrupted",
                 StorageFailure => checking ? "integrity_engine_corruption" : "storage",
                 Constraint or PrimaryKey or Unique or NotNull or Check or ForeignKeyFailure => "constraint",

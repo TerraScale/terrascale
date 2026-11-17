@@ -75,7 +75,7 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         {
             applying = await BeginAsync(database, promotion, cancellationToken).ConfigureAwait(false);
         }
-        catch (SqlStatementException error) when (error.Failure is Busy or Interrupted or StorageFailure)
+        catch (SqlStatementException error) when (error.Failure is Busy or Interrupted or StorageFailure or StorageError)
         {
             throw new StorageBusyException();
         }
@@ -136,7 +136,7 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
             {
                 rejection = rejected.Rejection;
             }
-            catch (SqlStatementException error) when (error.Failure is Busy or Interrupted or StorageFailure)
+            catch (SqlStatementException error) when (error.Failure is Busy or Interrupted or StorageFailure or StorageError)
             {
                 throw new StorageBusyException();
             }
@@ -150,7 +150,7 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         {
             return await RevertAsync(database, transaction, rejection, promotion, fenceGeneration, cancellationToken).ConfigureAwait(false);
         }
-        catch (SqlStatementException error) when (error.Failure is Busy or Interrupted or StorageFailure)
+        catch (SqlStatementException error) when (error.Failure is Busy or Interrupted or StorageFailure or StorageError)
         {
             throw new StorageBusyException();
         }
@@ -163,7 +163,7 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         {
             reading = await engine.BeginTransactionAsync(database, write: false, cancellationToken).ConfigureAwait(false);
         }
-        catch (SqlStatementException error) when (error.Failure is Busy or Interrupted or StorageFailure)
+        catch (SqlStatementException error) when (error.Failure is Busy or Interrupted or StorageFailure or StorageError)
         {
             throw new StorageBusyException();
         }
@@ -187,7 +187,7 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         {
             skipping = await engine.BeginTransactionAsync(database, write: true, cancellationToken).ConfigureAwait(false);
         }
-        catch (SqlStatementException error) when (error.Failure is Busy or Interrupted or StorageFailure)
+        catch (SqlStatementException error) when (error.Failure is Busy or Interrupted or StorageFailure or StorageError)
         {
             throw new StorageBusyException();
         }
@@ -532,7 +532,7 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
             Check => "check",
             ForeignKeyFailure => "foreign_key",
             Constraint or KnownError or TooBig or NoSuchTable or NoSuchColumn or Syntax or AlreadyExists or Busy or Interrupted or ReadOnly or StaleRow or Error
-                or StorageFailure => "constraint",
+                or StorageFailure or StorageError => "constraint",
         },
         SqliteTooBig or SqliteMismatch => "constraint",
         _ => null,

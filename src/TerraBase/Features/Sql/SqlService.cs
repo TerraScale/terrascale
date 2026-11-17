@@ -584,12 +584,14 @@ internal sealed class SqlSession(
                 long baseline = 0;
                 if (write)
                 {
-                    if (await ChargedAsync(() => MeasureAsync(transaction, cancellationToken)).ConfigureAwait(false) is not long measured)
+                    try
                     {
-                        return SqlErrors.Busy("the database is busy; retry");
+                        baseline = await ChargedAsync(() => transaction.MeasureSqlStorageAsync(cancellationToken)).ConfigureAwait(false);
                     }
-
-                    baseline = measured;
+                    catch (SqlStatementException error)
+                    {
+                        return Map(error);
+                    }
                 }
 
                 var tally = new Tally();
@@ -856,11 +858,7 @@ internal sealed class SqlSession(
                 return null;
             }
 
-            if (await ChargedAsync(() => MeasureAsync(transaction, cancellationToken)).ConfigureAwait(false) is not long after)
-            {
-                return SqlErrors.Busy("the database is busy; retry");
-            }
-
+            var after = await ChargedAsync(() => transaction.MeasureSqlStorageAsync(cancellationToken)).ConfigureAwait(false);
             var growth = after - baseline;
             if (lease is not null)
             {
@@ -909,18 +907,6 @@ internal sealed class SqlSession(
         catch (Exception error) when (Failure(error) is { } failure)
         {
             return failure;
-        }
-    }
-
-    private static async ValueTask<long?> MeasureAsync(IStorageTransaction transaction, CancellationToken cancellationToken)
-    {
-        try
-        {
-            return await transaction.MeasureSqlStorageAsync(cancellationToken).ConfigureAwait(false);
-        }
-        catch (SqlStatementException)
-        {
-            return null;
         }
     }
 
@@ -988,12 +974,26 @@ internal sealed class SqlSession(
         long baseline = 0;
         try
         {
-            if (write && await MeasureAsync(transaction, cancellationToken).ConfigureAwait(false) is long measured)
+            if (write)
             {
-                baseline = measured;
+                baseline = await transaction.MeasureSqlStorageAsync(cancellationToken).ConfigureAwait(false);
             }
         }
+        catch (SqlStatementException error)
+        {
+            await ReleaseAsync().ConfigureAwait(false);
+            return (null, Map(error));
+        }
         catch
+        {
+            await ReleaseAsync().ConfigureAwait(false);
+            throw;
+        }
+
+        _pinned = new Pinned(transaction, lease, write, baseline, new Tally(), []);
+        return (_pinned, null);
+
+        async ValueTask ReleaseAsync()
         {
             try
             {
@@ -1003,12 +1003,7 @@ internal sealed class SqlSession(
             {
                 lease?.Dispose();
             }
-
-            throw;
         }
-
-        _pinned = new Pinned(transaction, lease, write, baseline, new Tally(), []);
-        return (_pinned, null);
     }
 
     private async ValueTask LoseAsync(SqlError error)
@@ -1122,6 +1117,7 @@ internal sealed class SqlSession(
         ReadOnly => canWrite ? new SqlError(SqlErrors.ReadOnlyTransaction, error.Message) : SqlErrors.Auth,
         StaleRow => new SqlError(SqlErrors.RowConflict, error.Message),
         Error or KnownError or StorageFailure => SqlErrors.Error(error.Message),
+        StorageError => new SqlError(SqlErrors.InternalError, error.Message),
     };
 
     private static SqlError? Failure(Exception error) => error switch
