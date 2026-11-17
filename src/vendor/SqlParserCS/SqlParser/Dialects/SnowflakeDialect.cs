@@ -1,7 +1,6 @@
 ﻿using System.Text;
 using SqlParser.Ast;
 using SqlParser.Tokens;
-// ReSharper disable InconsistentNaming
 
 namespace SqlParser.Dialects;
 
@@ -178,7 +177,7 @@ public class SnowflakeDialect : Dialect
         return new ColumnPolicyProperty(with, policyName, usingColumns);
     }
 
-    private TagsColumnOption ParseColumnTags(Parser parser, bool with)
+    private static TagsColumnOption ParseColumnTags(Parser parser, bool with)
     {
         var tags = parser.ExpectParens(() => parser.ParseCommaSeparated(parser.ParseTag));
 
@@ -395,7 +394,7 @@ public class SnowflakeDialect : Dialect
         return new Statement.CreateTable(create);
     }
 
-    private static Statement ParseCreateStage(bool orReplace, bool temp, Parser parser)
+    private static Statement.CreateStage ParseCreateStage(bool orReplace, bool temp, Parser parser)
     {
         //[ IF NOT EXISTS ]
         var ifNot = parser.ParseIfNotExists();
@@ -566,7 +565,7 @@ public class SnowflakeDialect : Dialect
         return options;
     }
 
-    private static Statement ParseCopyInto(Parser parser)
+    private static Statement.CopyIntoSnowflake ParseCopyInto(Parser parser)
     {
         var into = ParseStageName(parser);
         Sequence<string>? files = null;

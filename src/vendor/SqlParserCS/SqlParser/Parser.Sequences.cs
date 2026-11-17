@@ -2,7 +2,6 @@
 using SqlParser.Dialects;
 using SqlParser.Tokens;
 using static SqlParser.Ast.Expression;
-// ReSharper disable InconsistentNaming
 
 namespace SqlParser;
 
@@ -46,7 +45,6 @@ public partial class Parser
 
         return statements;
     }
-    // ReSharper disable once GrammarMistakeInComment
     /// <summary>
     /// Parse potentially multiple statements
     ///
@@ -697,9 +695,7 @@ public partial class Parser
             }
         }
 
-#pragma warning disable CS0162
         return (modifiers, null);
-#pragma warning restore CS0162
 
     }
     public Sequence<FunctionArg> ParseOptionalArgs()
@@ -754,7 +750,7 @@ public partial class Parser
             required = ConsumeToken<Comma>();
         }
 
-        return modes.Any() ? modes : null;
+        return (modes.Count > 0) ? modes : null;
     }
 
     public Sequence<MergeClause> ParseMergeClauses()

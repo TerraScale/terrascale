@@ -1,6 +1,6 @@
 ﻿namespace SqlParser;
 
-internal class Constants
+internal static class Constants
 {
     public const string SpacedComma = ", ";
 }

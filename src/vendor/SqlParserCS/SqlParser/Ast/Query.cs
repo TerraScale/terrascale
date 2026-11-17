@@ -66,7 +66,7 @@ public record Query([Visit(1)] SetExpression Body) : IWriteSql, IElement
             writer.WriteSql($" {Fetch}");
         }
 
-        if (Locks != null && Locks.Any())
+        if (Locks != null && (Locks.Count > 0))
         {
             writer.WriteSql($" {Locks.ToSqlDelimited(Symbols.Space)}");
         }

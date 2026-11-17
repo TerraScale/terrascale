@@ -46,7 +46,7 @@ public class MsSqlDialect : Dialect
     public override bool SupportsEqualAliasAssignment => true;
     public override bool SupportsTryConvert => true;
 
-    private static Statement ParseIfStatement(Parser parser)
+    private static Statement.If ParseIfStatement(Parser parser)
     {
         var condition = parser.ParseExpr();
 
@@ -73,7 +73,7 @@ public class MsSqlDialect : Dialect
 
             return new Statement.If(new IfStatement(condition, thenBody)
             {
-                ElseIfs = elseIfs.Any() ? elseIfs : null,
+                ElseIfs = (elseIfs.Count > 0) ? elseIfs : null,
                 ElseBlock = elseBlock
             });
         }

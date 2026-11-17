@@ -66,6 +66,7 @@ test('SQL sessions retain uncertainty after lost committing replies', async () =
 const source = `WITH input(data, key) AS (VALUES ('{"name":"Ada","b":{"c":"nested"},"items":["zero","one"]}', 'name')) SELECT `;
 const cases: { name: string; sql: string; args?: string[]; pgSql?: string; expected: string }[] = [
   { name: 'single quotes', sql: source + `data->>'name' FROM input`, expected: 'Ada' },
+  { name: 'JSON arrow', sql: source + `data->'name' FROM input`, expected: '"Ada"' },
   { name: 'identifier', sql: source + 'data->>key FROM input', expected: 'Ada' },
   { name: 'quoted identifiers', sql: source + '"data"->>"key" FROM input', expected: 'Ada' },
   { name: 'numbered parameter', sql: source + 'data->>?1 FROM input', pgSql: source + 'data->>$1 FROM input', args: ['name'], expected: 'Ada' },
@@ -81,7 +82,7 @@ test('JSON text arrows preserve adjacent SQL tokens over REST, WebSocket and Pos
   const exchanged = await request.post(`${auth}/terrascale/oauth/token`, {
     form: {
       grant_type: 'client_credentials', client_id: keyId(current.apiKey),
-      client_secret: current.apiKey, project: current.projectId, scope: 'sql:read',
+      client_secret: current.apiKey, project: current.projectId, scope: 'sql:read sql:write',
     },
   });
   expect(exchanged.status()).toBe(200);
@@ -89,14 +90,44 @@ test('JSON text arrows preserve adjacent SQL tokens over REST, WebSocket and Pos
   saveSecret('json-arrow-token', token);
   const path = `/v1/projects/${current.projectId}/databases/${current.databaseId}/sql`;
 
-  for (const entry of cases) {
+  async function rest(sql: string, args?: string[]): Promise<{ rows: unknown[][] }> {
     const response = await request.post(`https://api.terrascale.tech${path}/execute`, {
       headers: { authorization: 'Bearer ' + token },
-      data: { statements: [{ sql: entry.sql, args: entry.args }] },
+      data: { statements: [{ sql, args }] },
     });
     const body = await response.json();
-    expect(response.status(), `REST ${entry.name}: ${JSON.stringify(body)}`).toBe(200);
-    expect(body.results[0].rows, `REST ${entry.name}`).toEqual([[entry.expected]]);
+    expect(response.status(), `REST ${sql}: ${JSON.stringify(body)}`).toBe(200);
+    return body.results[0];
+  }
+
+  for (const entry of cases) {
+    expect((await rest(entry.sql, entry.args)).rows, `REST ${entry.name}`).toEqual([[entry.expected]]);
+  }
+
+  function definitions(table: string): string[] {
+    return [
+      `CREATE TABLE ${table} (id INTEGER PRIMARY KEY, data TEXT NOT NULL)`,
+      `INSERT INTO ${table} VALUES (1, '{"name":"Ada"}'), (2, '{"name":"Grace"}')`,
+      `CREATE INDEX ${table}_name ON ${table} (data->>'name')`,
+      `CREATE VIEW ${table}_view AS SELECT id, data->>'name' AS name, data->'name' AS json_name FROM ${table}`,
+    ];
+  }
+
+  async function cleanup(table: string): Promise<void> {
+    await rest(`DROP VIEW IF EXISTS ${table}_view`);
+    await rest(`DROP TABLE IF EXISTS ${table}`);
+  }
+
+  const table = 'journey_json_arrow_rest';
+  try {
+    for (const sql of definitions(table)) await rest(sql);
+    expect((await rest(`SELECT id FROM ${table} WHERE data->>'name'=?`, ['Ada'])).rows).toEqual([[1]]);
+    expect((await rest(`SELECT id FROM ${table} WHERE data->>'name'=?`, ['Missing'])).rows).toEqual([]);
+    expect((await rest(`SELECT id, name, json_name FROM ${table}_view ORDER BY id`)).rows).toEqual([
+      [1, 'Ada', '"Ada"'], [2, 'Grace', '"Grace"'],
+    ]);
+  } finally {
+    await cleanup(table);
   }
 
   const socket = new WebSocket(`wss://api.terrascale.tech${path}/ws`, 'terrascale.sql.v1');
@@ -122,7 +153,7 @@ test('JSON text arrows preserve adjacent SQL tokens over REST, WebSocket and Pos
   }
 
   const url = `postgresql://any@pg.terrascale.tech:5432/${current.projectId}/${current.databaseId}?sslmode=verify-full&sslrootcert=system`;
-  const pg = spawn('psql', ['-X', '-v', 'ON_ERROR_STOP=1', '-At', url], {
+  const pg = spawn('psql', ['-X', '-v', 'ON_ERROR_STOP=1', '-qAt', url], {
     env: { PATH: process.env.PATH, HOME: process.env.HOME, SSL_CERT_FILE: process.env.SSL_CERT_FILE, PGPASSWORD: current.apiKey },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -131,11 +162,21 @@ test('JSON text arrows preserve adjacent SQL tokens over REST, WebSocket and Pos
   pg.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
   pg.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
   const completed = once(pg, 'close');
-  pg.stdin.end(cases.map(entry => entry.args
-    ? `${entry.pgSql ?? entry.sql}\n\\bind ${entry.args.join(' ')}\n\\g\n`
-    : `${entry.sql};\n`).join(''));
-  expect((await completed)[0], `PostgreSQL: ${stderr}`).toBe(0);
-  expect(stdout.trim().split('\n')).toEqual(cases.map(entry => entry.expected));
+  const pgTable = 'journey_json_arrow_pg';
+  try {
+    pg.stdin.end(cases.map(entry => entry.args
+      ? `${entry.pgSql ?? entry.sql}\n\\bind ${entry.args.join(' ')}\n\\g\n`
+      : `${entry.sql};\n`).join('') + definitions(pgTable).map(sql => `${sql};\n`).join('') +
+      `SELECT id FROM ${pgTable} WHERE data->>'name'=$1\n\\bind Ada\n\\g\n` +
+      `SELECT count(*) FROM ${pgTable} WHERE data->>'name'=$1\n\\bind Missing\n\\g\n` +
+      `SELECT id, name, json_name FROM ${pgTable}_view ORDER BY id;\n`);
+    expect((await completed)[0], `PostgreSQL: ${stderr}`).toBe(0);
+    expect(stdout.trim().split('\n')).toEqual([
+      ...cases.map(entry => entry.expected), '1', '0', '1|Ada|"Ada"', '2|Grace|"Grace"',
+    ]);
+  } finally {
+    await cleanup(pgTable);
+  }
 });
 
 

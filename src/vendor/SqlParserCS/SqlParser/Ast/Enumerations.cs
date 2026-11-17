@@ -670,7 +670,6 @@ public enum TruncateCascadeOption
 }
 
 
-// ReSharper disable InconsistentNaming
 public enum UnaryOperator
 {
     // Plus, e.g. `+9`
@@ -696,7 +695,6 @@ public enum UnaryOperator
     // Unary logical not operator: e.g. `! false` (Hive-specific)
     BangNot
 }
-// ReSharper restore InconsistentNaming
 
 public enum WindowFrameUnit
 {

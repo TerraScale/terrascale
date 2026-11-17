@@ -295,7 +295,7 @@ public abstract record ColumnOption : IWriteSql, IElement
 
                 if (SequenceOptions!=null)
                 {
-                    if (SequenceOptions.Any())
+                    if ((SequenceOptions.Count > 0))
                     {
                         writer.Write($" ({SequenceOptions.ToSqlDelimited(string.Empty)})");
                     }

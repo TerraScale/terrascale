@@ -20,7 +20,6 @@ public abstract record ShowStatementFilter : IWriteSql, IElement
     /// ILike filter
     /// </summary>
     /// <param name="Filter">Filter</param>
-    // ReSharper disable once InconsistentNaming
     public record ILike(string Filter) : ShowStatementFilter
     {
         public override void ToSql(SqlTextWriter writer)

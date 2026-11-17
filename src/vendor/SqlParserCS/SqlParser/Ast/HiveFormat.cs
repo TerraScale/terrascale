@@ -59,13 +59,11 @@ public abstract record HiveDistributionStyle : IElement
 /// <summary>
 /// Hive IO format
 /// </summary>
-// ReSharper disable once InconsistentNaming
 public abstract record HiveIOFormat : IElement
 {
     /// <summary>
     /// Hive IOF format
     /// </summary>
-    // ReSharper disable once InconsistentNaming
     public record IOF(Expression InputFormat, Expression OutputFormat) : HiveIOFormat;
     /// <summary>
     /// Hive File IO format

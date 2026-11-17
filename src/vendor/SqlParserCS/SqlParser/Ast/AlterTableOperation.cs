@@ -480,7 +480,7 @@ public abstract record AlterTableOperation : IWriteSql
         public override void ToSql(SqlTextWriter writer)
         {
             writer.WriteSql($"CHANGE COLUMN {OldName} {NewName} {DataType}");
-            if (Options.Any())
+            if ((Options.Count > 0))
             {
                 writer.WriteSql($" {Options.ToSqlDelimited(Symbols.Space)}");
             }

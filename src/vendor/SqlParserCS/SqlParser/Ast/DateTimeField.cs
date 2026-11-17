@@ -57,7 +57,6 @@ public abstract record DateTimeField : IWriteSql, IElement
     public record Microsecond : DateTimeField;
 
     public record Microseconds : DateTimeField;
-    // ReSharper disable once IdentifierTypo
     public record Millenium : DateTimeField;
 
     public record Millennium : DateTimeField;

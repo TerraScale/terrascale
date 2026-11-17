@@ -2,7 +2,6 @@
 
 namespace SqlParser.Ast;
 
-// ReSharper disable CommentTypo
 
 public abstract record Expression : IWriteSql, IElement
 {
@@ -242,7 +241,6 @@ public abstract record Expression : IWriteSql, IElement
         {
             switch (Field)
             {
-                // ReSharper disable once ConvertIfStatementToConditionalTernaryExpression
                 case CeilFloorKind.DateTimeFieldKind { Field: DateTimeField.NoDateTime }:
                     writer.WriteSql($"CEIL({Expression})");
                     break;
@@ -372,7 +370,6 @@ public abstract record Expression : IWriteSql, IElement
                     writer.WriteCommaSpaced();
                 }
 
-                // ReSharper disable once ConvertIfStatementToConditionalTernaryExpression
                 if (Sets[i].Count == 1)
                 {
                     writer.WriteSql($"{Sets[i]}");
@@ -453,7 +450,6 @@ public abstract record Expression : IWriteSql, IElement
         {
             switch (Field)
             {
-                // ReSharper disable once ConvertIfStatementToConditionalTernaryExpression
                 case CeilFloorKind.DateTimeFieldKind { Field: DateTimeField.NoDateTime }:
                     writer.WriteSql($"FLOOR({Expression})");
                     break;
@@ -570,7 +566,6 @@ public abstract record Expression : IWriteSql, IElement
     /// <summary>
     /// ILIKE (case-insensitive LIKE)
     /// </summary>
-    // ReSharper disable once InconsistentNaming
     public record ILike(Expression Expression, bool Negated, Expression Pattern, string? EscapeChar = null, bool Any = false) : Expression, INegated
     {
         public ILike(Expression expression, bool negated, Expression pattern, bool Any)
@@ -580,7 +575,6 @@ public abstract record Expression : IWriteSql, IElement
         {
             var any = Any ? "ANY " : string.Empty;
             
-            // ReSharper disable once ConvertIfStatementToConditionalTernaryExpression
             if (EscapeChar != null)
             {
                 writer.WriteSql($"{Expression} {AsNegated.NegatedText}ILIKE {any}{Pattern} ESCAPE '{EscapeChar}'");
@@ -875,7 +869,6 @@ public abstract record Expression : IWriteSql, IElement
         {
             var any = Any ? "ANY " : string.Empty;
 
-            // ReSharper disable once ConvertIfStatementToConditionalTernaryExpression
             if (EscapeChar != null)
             {
                 writer.WriteSql($"{Expression} {AsNegated.NegatedText}LIKE {any}{Pattern} ESCAPE '{EscapeChar}'");
@@ -963,7 +956,6 @@ public abstract record Expression : IWriteSql, IElement
         {
             writer.WriteSql($"MATCH ({Columns}) AGAINST ");
 
-            // ReSharper disable once ConvertIfStatementToConditionalTernaryExpression
             if (OptSearchModifier != SearchModifier.None)
             {
                 writer.WriteSql($"({MatchValue} {OptSearchModifier})");
@@ -1123,7 +1115,6 @@ public abstract record Expression : IWriteSql, IElement
                     writer.WriteCommaSpaced();
                 }
 
-                // ReSharper disable once ConvertIfStatementToConditionalTernaryExpression
                 if (Expressions[i].Count == 1)
                 {
                     writer.WriteSql($"{Expressions[i]}");
@@ -1150,7 +1141,6 @@ public abstract record Expression : IWriteSql, IElement
 
         public override void ToSql(SqlTextWriter writer)
         {
-            // ReSharper disable once ConvertIfStatementToConditionalTernaryExpression
             if (EscapeChar != null)
             {
                 writer.WriteSql($"{Expression} {AsNegated.NegatedText}SIMILAR TO {Pattern} ESCAPE '{EscapeChar}'");
@@ -1266,7 +1256,6 @@ public abstract record Expression : IWriteSql, IElement
                 writer.WriteSql($"{TrimWhere} ");
             }
 
-            // ReSharper disable once ConvertIfStatementToConditionalTernaryExpression
             if (TrimWhat != null)
             {
                 writer.WriteSql($"{TrimWhat} FROM {Expression}");
@@ -1425,7 +1414,6 @@ public abstract record Expression : IWriteSql, IElement
         return As<LiteralValue>();
     }
 }
-// ReSharper restore CommentTypo
 
 public record ExpressionWithAlias(Expression Expression, Ident? Alias) : IWriteSql, IElement
 {

@@ -3,14 +3,41 @@ Source: https://github.com/TylerBrinks/SqlParser-cs/tree/e1929977a96290f937e9a2a
 License: MIT; see LICENSE.
 JSON ->> fix included upstream: https://github.com/TylerBrinks/SqlParser-cs/pull/84
 
-Local source edits correct nullable contracts, require mandatory initialized members, initialize the tokenizer dialect, make existing member hiding explicit, reject unreachable switch cases and missing domain constraints, and remove previously ignored constructor parameters while retaining alias token consumption.
+Local edits correct nullable contracts, required initialization, member hiding, unreachable switches and missing constraints, remove ignored constructor parameters while retaining alias consumption, replace exposed fields with properties, make stateless helpers static or an interpolation extension, narrow private return types, use sequence counts and typed string operations, remove diagnostic suppression directives, and configure only the approved SQL grammar naming exclusions.
 Files:
+- .editorconfig
+- Ast/AlterTableOperation.cs
+- Ast/ColumnOption.cs
+- Ast/CreateTable.cs
+- Ast/DataType.cs
+- Ast/DateTimeField.cs
+- Ast/Enumerations.cs
 - Ast/Expression.cs
+- Ast/HiveFormat.cs
+- Ast/Query.cs
+- Ast/ShowStatementFilter.cs
 - Ast/Statement.cs
 - Ast/TableFactor.cs
+- Ast/Visitor.cs
+- Constants.cs
+- Dialects/Dialect.cs
+- Dialects/MsSqlDialect.cs
+- Dialects/MySqlDialect.cs
+- Dialects/PostgreSqlDialect.cs
+- Dialects/SnowflakeDialect.cs
+- Keywords.cs
+- Parser.Base.cs
+- Parser.Expressions.cs
+- Parser.Sequences.cs
 - Parser.Statements.cs
 - Parser.cs
+- SqlTextWriter.cs
 - TokenizeQuotedStringSettings.cs
 - Tokenizer.cs
+- Tokens/EOF.cs
 
-SqlParserCS.csproj supplies the separate net11.0 monorepo build with upstream C# 12 and RunAnalyzers=false; compiler warnings remain errors.
+SqlParserCS.csproj supplies the separate net11.0 monorepo build with upstream C# 12; compiler warnings remain errors and normal analyzers run.
+
+## Approved suppressions
+
+CA1707, CA1716, CA1720 and CA1711 are excluded only within src/vendor/SqlParserCS/SqlParser by that folder's .editorconfig because upstream SQL grammar names would otherwise require renaming 201 symbols and make later upstream syncs hand merges; approved by the user's batch authority (COS 20eaa46e), and revocable by the user. Every other analyzer remains enforced.

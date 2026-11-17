@@ -1074,7 +1074,7 @@ public ref struct Tokenizer(bool unescape = true)
                                 intermediate.Append(nextChar);
                                 if (nextChar != c)
                                 {
-                                    builder.Append(intermediate.ToString());
+                                    builder.Append(intermediate);
                                     breakToLoop = true;
                                     break;
                                 }
@@ -1095,12 +1095,12 @@ public ref struct Tokenizer(bool unescape = true)
                         if (_state.Peek() == Symbols.Dollar)
                         {
                             _state.Next();
-                            intermediate.Append("$");
+                            intermediate.Append('$');
                             loop = false;
                             break;
                         }
 
-                        builder.Append(intermediate.ToString());
+                        builder.Append(intermediate);
                         continue;
 
                     default:

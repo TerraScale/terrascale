@@ -14,9 +14,6 @@ using DataType = SqlParser.Ast.DataType;
 using Select = SqlParser.Ast.Select;
 using HiveRowDelimiter = SqlParser.Ast.HiveRowDelimiter;
 using Subscript = SqlParser.Ast.Subscript;
-// ReSharper disable InconsistentNaming
-// ReSharper disable GrammarMistakeInComment
-// ReSharper disable CommentTypo
 
 namespace SqlParser;
 
@@ -96,7 +93,6 @@ public partial class Parser
     /// Used for Hive metastore consistency checks and repairs.
     /// </summary>
     /// <returns>Msck statement</returns>
-    // ReSharper disable once IdentifierTypo
     public Msck ParseMsck()
     {
         var repair = ParseKeyword(Keyword.REPAIR);
@@ -324,13 +320,12 @@ public partial class Parser
 
         if (_dialect is GenericDialect or BigQueryDialect && ParseKeyword(Keyword.HAVING))
         {
-#pragma warning disable CS8509 // The switch expression does not handle all possible values of its input type (it is not exhaustive).
             var kind = ParseOneOfKeywords(Keyword.MIN, Keyword.MAX) switch
             {
                 Keyword.MIN => HavingBoundKind.Min,
                 Keyword.MAX => HavingBoundKind.Max,
+                _ => throw Expected("MIN or MAX", PeekToken()),
             };
-#pragma warning restore CS8509 // The switch expression does not handle all possible values of its input type (it is not exhaustive).
 
             clauses ??= [];
             clauses.Add(new FunctionArgumentClause.Having(new HavingBound(kind, ParseExpr())));
@@ -752,7 +747,7 @@ public partial class Parser
             {
                 path.Add(ParseJsonPathObjectKey());
             }
-            else if (next is Period && path.Any())
+            else if (next is Period && (path.Count > 0))
             {
                 path.Add(ParseJsonPathObjectKey());
 
@@ -1006,7 +1001,6 @@ public partial class Parser
             throw Expected("a TABLE keyword", PeekToken());
         }
     }
-    // ReSharper disable once IdentifierTypo
     /// <summary>
     /// Parse a UNCACHE TABLE statement
     /// </summary>
@@ -1031,7 +1025,6 @@ public partial class Parser
         ExpectKeyword(Keyword.USING);
 
         var moduleName = ParseIdentifier();
-        // ReSharper disable once GrammarMistakeInComment
         // SQLite docs note that module "arguments syntax is sufficiently
         // general that the arguments can be made to appear as column
         // definitions in a traditional CREATE TABLE statement", but
@@ -1205,10 +1198,10 @@ public partial class Parser
 
         return new Ast.CreateTable(tableName, columns)
         {
-            Constraints = constraints.Any() ? constraints : null,
+            Constraints = (constraints.Count > 0) ? constraints : null,
             HiveDistribution = hiveDistribution,
             HiveFormats = hiveFormats,
-            TableProperties = tableProperties.Any() ? tableProperties : null,
+            TableProperties = (tableProperties.Count > 0) ? tableProperties : null,
             OrReplace = orReplace,
             IfNotExists = ifNotExists,
             External = true,
@@ -2312,9 +2305,9 @@ public partial class Parser
         return new Ast.CreateTable(tableName, columns)
         {
             Temporary = temporary,
-            Constraints = constraints.Any() ? constraints : null,
-            WithOptions = withOptions.Any() ? withOptions : null,
-            TableProperties = tableProperties.Any() ? tableProperties : null,
+            Constraints = (constraints.Count > 0) ? constraints : null,
+            WithOptions = (withOptions.Count > 0) ? withOptions : null,
+            TableProperties = (tableProperties.Count > 0) ? tableProperties : null,
             OrReplace = orReplace,
             IfNotExists = ifNotExists,
             Transient = transient,
@@ -2649,7 +2642,7 @@ public partial class Parser
 
             return new ColumnOption.ForeignKey(
                 foreignTable,
-                referredColumns.Any() ? referredColumns : null,
+                (referredColumns.Count > 0) ? referredColumns : null,
                 onDelete,
                 onUpdate)
             {
@@ -3254,7 +3247,7 @@ public partial class Parser
                     }
                 }
 
-                if (newPartitions.Any())
+                if ((newPartitions.Count > 0))
                 {
                     return new AddPartitions(ifNotExists, newPartitions);
                 }
@@ -3744,7 +3737,7 @@ public partial class Parser
         return new Copy(source, to, target)
         {
             Options = options.SafeAny() ? options : null,
-            LegacyOptions = legacyOptions.Any() ? legacyOptions : null,
+            LegacyOptions = (legacyOptions.Count > 0) ? legacyOptions : null,
             Values = values,
             WithKeyword = withKeyword
         };
@@ -4845,7 +4838,7 @@ public partial class Parser
         {
             var name = ParseIdentifier();
             var columns = ParseTableAliasColumnDefs();
-            if (columns != null && !columns.Any())
+            if (columns != null && !(columns.Count > 0))
             {
                 columns = null;
             }
@@ -4921,7 +4914,7 @@ public partial class Parser
         else
         {
             var columns = ParseTableAliasColumnDefs();
-            if (columns != null && !columns.Any())
+            if (columns != null && !(columns.Count > 0))
             {
                 columns = null;
             }
@@ -5822,7 +5815,6 @@ public partial class Parser
                 return result;
             }
 
-            // ReSharper disable once GrammarMistakeInComment
             // A parsing error from `parse_derived_table_factor` indicates that the '(' we've
             // recently consumed does not start a derived table (cases 1, 2, or 4).
             // `maybe_parse` will ignore such an error and rewind to be after the opening '('.
@@ -6586,7 +6578,7 @@ public partial class Parser
         };
     }
 
-    private TableFactor ParsePivotTableFactor(TableFactor table)
+    private TableFactor.Pivot ParsePivotTableFactor(TableFactor table)
     {
         Sequence<ExpressionWithAlias> aggregateFunctions = null!;
         Sequence<Ident> valueColumn = null!;
@@ -6643,7 +6635,7 @@ public partial class Parser
         return true;
     }
 
-    private TableFactor ParseUnpivotTableFactor(TableFactor table)
+    private TableFactor.Unpivot ParseUnpivotTableFactor(TableFactor table)
     {
         var unpivot = ExpectParens(() =>
         {
@@ -6775,7 +6767,7 @@ public partial class Parser
             case Keyword.INSERT or Keyword.REFERENCES or Keyword.SELECT or Keyword.UPDATE:
                 {
                     var cols = ParseParenthesizedColumnList(IsOptional.Optional, false);
-                    if (cols.Any())
+                    if ((cols.Count > 0))
                     {
                         columns = cols;
                     }
@@ -6995,7 +6987,7 @@ public partial class Parser
         {
             var idents = ParseParenthesizedColumnList(IsOptional.Mandatory, false);
 
-            if (!idents.Any())
+            if (!(idents.Count > 0))
             {
                 throw Expected("at least one column should be parsed by the expect clause", PeekToken());
             }

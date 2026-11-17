@@ -262,7 +262,7 @@ public class PostgreSqlDialect : Dialect
         }
     }
 
-    private static Statement ParseCreateTypeAsEnum(Parser parser, ObjectName? name)
+    private static Statement.CreateType ParseCreateTypeAsEnum(Parser parser, ObjectName? name)
     {
         if (!parser.ConsumeToken<LeftParen>())
         {

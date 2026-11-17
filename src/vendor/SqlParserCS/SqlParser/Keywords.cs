@@ -1,8 +1,3 @@
-﻿// ReSharper disable IdentifierTypo
-// ReSharper disable UnusedMember.Global
-// ReSharper disable InconsistentNaming
-// ReSharper disable IdentifierTypo
-// ReSharper disable StringLiteralTypo
 
 namespace SqlParser;
 
@@ -133,7 +128,6 @@ internal static class Keywords
     ];
 }
 
-// ReSharper disable InconsistentNaming
 public enum Keyword
 {
     ABORT,

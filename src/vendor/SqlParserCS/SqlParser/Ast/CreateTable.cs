@@ -21,7 +21,6 @@ public record CreateTable([property: Visit(0)] ObjectName Name, [property: Visit
     [Visit(4)] public ObjectName? Like { get; init; }
     [Visit(5)] public ObjectName? CloneClause { get; init; }
     public TableEngine? Engine { get; init; }
-    // ReSharper disable once MemberHidesStaticFromOuterClass
     public CommentDef? Comment { get; init; }
     public OneOrManyWithParens<Expression>? OrderBy { get; init; }
     public Expression? PartitionBy { get; init; }
@@ -190,7 +189,6 @@ public record CreateTable([property: Visit(0)] ObjectName Name, [property: Visit
                 switch (HiveFormats.Storage)
                 {
                     case HiveIOFormat.IOF iof:
-                        // ReSharper disable once StringLiteralTypo
                         writer.WriteSql($" STORED AS INPUTFORMAT {iof.InputFormat.ToSql()} OUTPUTFORMAT {iof.OutputFormat.ToSql()}");
                         break;
 

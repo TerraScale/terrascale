@@ -7,7 +7,6 @@ using static SqlParser.Ast.Expression;
 using DataType = SqlParser.Ast.DataType;
 using Declare = SqlParser.Ast.Declare;
 using Use = SqlParser.Ast.Use;
-// ReSharper disable InconsistentNaming
 
 namespace SqlParser;
 
@@ -1300,12 +1299,10 @@ public partial class Parser
                     Keyword.TEXT => AnalyzeFormat.Text,
                     Keyword.GRAPHVIZ => AnalyzeFormat.Graphviz,
                     Keyword.JSON => AnalyzeFormat.Json,
-                    // ReSharper disable once StringLiteralTypo
                     _ => throw Expected("fileformat", token)
                 };
             }
 
-            // ReSharper disable once StringLiteralTypo
             throw Expected("fileformat", token);
         }
 
@@ -1766,7 +1763,7 @@ public partial class Parser
         };
     }
 
-    private Statement ParseMsSqlAlterRole()
+    private Statement.AlterRole ParseMsSqlAlterRole()
     {
         var roleName = ParseIdentifier();
         AlterRoleOperation operation = null!;
@@ -1794,7 +1791,7 @@ public partial class Parser
         return new AlterRole(roleName, operation);
     }
 
-    private Statement ParsePgAlterRole()
+    private Statement.AlterRole ParsePgAlterRole()
     {
         var roleName = ParseIdentifier();
         AlterRoleOperation operation;
@@ -1855,7 +1852,7 @@ public partial class Parser
                 options.Add(parsed);
             }
 
-            if (!options.Any())
+            if (!(options.Count > 0))
             {
                 throw Expected("option", PeekToken());
             }
@@ -1906,7 +1903,7 @@ public partial class Parser
         }
 
         if (variables is OneOrManyWithParens<ObjectName>.One one &&
-            one.Value.ToString().ToUpperInvariant() == "NAMES" &&
+            string.Equals(one.Value.ToString(), "NAMES", StringComparison.OrdinalIgnoreCase) &&
             _dialect is MySqlDialect or GenericDialect)
         {
             if (ParseKeyword(Keyword.DEFAULT))
@@ -2516,7 +2513,7 @@ public partial class Parser
         return new Vacuum(new VacuumStatement
         {
             TableName = table,
-            Columns = columns.Any() ? columns : null,
+            Columns = (columns.Count > 0) ? columns : null,
             Options = options,
             OptionsInParens = optionsInParens
         });
@@ -2699,7 +2696,7 @@ public partial class Parser
 
         return new If(new IfStatement(condition, thenBody)
         {
-            ElseIfs = elseIfs.Any() ? elseIfs : null,
+            ElseIfs = (elseIfs.Count > 0) ? elseIfs : null,
             ElseBlock = elseBlock
         });
     }

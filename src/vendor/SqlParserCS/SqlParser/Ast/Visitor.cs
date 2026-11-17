@@ -114,7 +114,7 @@ public interface IElement
 
         // No decorated properties uses the default visit order.
         // No need to look for additional properties
-        if (!decorated.Any())
+        if (!(decorated.Count > 0))
         {
             return properties;
         }
@@ -150,7 +150,6 @@ public interface IElement
                 }
             }
         }
-        // ReSharper disable once EmptyGeneralCatchClause
         catch { }
 
         return decorated;

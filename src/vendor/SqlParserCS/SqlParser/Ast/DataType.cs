@@ -10,13 +10,13 @@ public abstract record DataType : IWriteSql, IElement
     /// </summary>
     public abstract record CharacterLengthDataType(CharacterLength? CharacterLength) : DataType
     {
-        protected CharacterLength? CharLength = CharacterLength;
+        protected CharacterLength? CharLength { get; set; } = CharacterLength;
 
         protected ulong? IntegerLength => CharLength is CharacterLength.IntegerLength length
             ? length.Length
             : null;
 
-        protected void FormatCharacterStringType(SqlTextWriter writer, string sqlType, ulong? length)
+        protected static void FormatCharacterStringType(SqlTextWriter writer, string sqlType, ulong? length)
         {
             writer.Write(sqlType);
 
@@ -33,7 +33,7 @@ public abstract record DataType : IWriteSql, IElement
     /// <param name="Length">Data type length</param>
     public abstract record LengthDataType(ulong? Length = null) : DataType
     {
-        protected void FormatTypeWithOptionalLength(SqlTextWriter writer, string sqlType, ulong? length, bool unsigned = false)
+        protected static void FormatTypeWithOptionalLength(SqlTextWriter writer, string sqlType, ulong? length, bool unsigned = false)
         {
             writer.Write($"{sqlType}");
 
@@ -125,7 +125,6 @@ public abstract record DataType : IWriteSql, IElement
     {
         public override void ToSql(SqlTextWriter writer)
         {
-            // ReSharper disable once StringLiteralTypo
             writer.WriteSql($"BIGNUMERIC{ExactNumberInfo}");
         }
     }
@@ -246,12 +245,10 @@ public abstract record DataType : IWriteSql, IElement
     /// <summary>
     /// Binary string data type
     /// </summary>
-    // ReSharper disable IdentifierTypo
     public record Bytea : DataType
     {
         public override void ToSql(SqlTextWriter writer)
         {
-            // ReSharper disable once StringLiteralTypo
             writer.Write("BYTEA");
         }
     }

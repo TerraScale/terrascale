@@ -32,14 +32,14 @@ public class MySqlDialect : Dialect
         return character == Symbols.Backtick;
     }
 
-    public override Expression? ParseInfix(Parser parser, Expression expr, int precedence)
+    public override Expression? ParseInfix(Parser parser, Expression expression, int precedence)
     {
         if (parser.ParseKeyword(Keyword.DIV))
         {
-            return new Expression.BinaryOp(expr, BinaryOperator.MyIntegerDivide, parser.ParseExpr());
+            return new Expression.BinaryOp(expression, BinaryOperator.MyIntegerDivide, parser.ParseExpr());
         }
 
-        return base.ParseInfix(parser, expr, precedence);
+        return base.ParseInfix(parser, expression, precedence);
     }
 
     public override Statement? ParseStatement(Parser parser)

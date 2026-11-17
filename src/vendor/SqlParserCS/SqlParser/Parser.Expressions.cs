@@ -3,7 +3,6 @@ using SqlParser.Dialects;
 using SqlParser.Tokens;
 using static SqlParser.Ast.Expression;
 using DataType = SqlParser.Ast.DataType;
-// ReSharper disable InconsistentNaming
 
 namespace SqlParser;
 
@@ -614,7 +613,7 @@ public partial class Parser
                 throw new ParserException("Unmatched > in STRUCT literal", PeekToken().Location);
             }
 
-            var values = ExpectParens(() => ParseCommaSeparated(() => ParseStructFieldExpression(fields.Any())));
+            var values = ExpectParens(() => ParseCommaSeparated(() => ParseStructFieldExpression((fields.Count > 0))));
 
             return new Struct(values, fields);
         }
@@ -678,7 +677,7 @@ public partial class Parser
                 return new CompoundIdentifier(idParts);
             }
 
-            if (tkn is SingleQuotedString or DoubleQuotedString or HexStringLiteral && word.Value.StartsWith("_"))
+            if (tkn is SingleQuotedString or DoubleQuotedString or HexStringLiteral && word.Value.StartsWith('_'))
             {
                 return new IntroducedString(word.Value, ParseIntroducedStringValue());
             }
@@ -912,7 +911,6 @@ public partial class Parser
 
         var args = ParseFunctionArgumentList();
         FunctionArguments? parameters = null;
-        // ReSharper disable once GrammarMistakeInComment
         // ClickHouse aggregations support parametric functions like `HISTOGRAM(0.5, 0.6)(x, y)`
         // which (0.5, 0.6) is a parameter to the function.
         if (_dialect is ClickHouseDialect or GenericDialect && ConsumeToken<LeftParen>())
@@ -1198,7 +1196,6 @@ public partial class Parser
         }
     }
 
-    // ReSharper disable once GrammarMistakeInComment
     /// <summary>
     /// Parse a "query body", which is an expression with roughly the
     /// following grammar:

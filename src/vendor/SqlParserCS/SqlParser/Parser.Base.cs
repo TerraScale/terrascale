@@ -4,7 +4,6 @@ using SqlParser.Dialects;
 using SqlParser.Tokens;
 using static SqlParser.Ast.Expression;
 using DataType = SqlParser.Ast.DataType;
-// ReSharper disable InconsistentNaming
 
 namespace SqlParser;
 
@@ -311,7 +310,6 @@ public partial class Parser
         return false;
     }
 
-    // ReSharper disable once GrammarMistakeInComment
     /// <summary>
     /// Parses the keyword list and returns the first keyword
     /// found that matches one of the input keywords

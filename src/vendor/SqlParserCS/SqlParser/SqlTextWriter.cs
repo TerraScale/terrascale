@@ -6,25 +6,6 @@ namespace SqlParser;
 
 public class SqlTextWriter(StringBuilder sb) : StringWriter(sb)
 {
-    /// <summary>
-    /// Writes SQL using a custom string interpolation handler.  Doing so
-    /// allows IWriteSql types to be written using "ToSql" using the
-    /// current SqlTextWriter instead of allocating a new instance.  This
-    /// makes it possible to write IWriteSql objects and IEnumerable lists
-    /// inline.  This minimized StringBuilder pool access and reuses dequeued
-    /// string builders wherever possible.
-    /// <example>
-    ///  <c>instance.WriteSql($"{Expr} ({Values})"</c>
-    ///     will write Expression and enumerate/write Values using a single SqlTextWriter instance.  
-    /// </example>
-    /// </summary>
-    /// <param name="handler"></param>
-    public void WriteSql([InterpolatedStringHandlerArgument("")] ref SqlInterpolatedStringHandler handler)
-    {
-        // no implementation needed; handled by the interpolation handler with
-        // "this" passed in as the "" SqlTextWriter constructor parameter argument
-    }
-
     public void WriteCommaSpaced()
     {
         Write(Constants.SpacedComma);
@@ -90,13 +71,17 @@ public class SqlTextWriter(StringBuilder sb) : StringWriter(sb)
     {
         if (ident != null)
         {
-            WriteSql($"CONSTRAINT {ident} ");
+            this.WriteSql($"CONSTRAINT {ident} ");
         }
     }
 }
 
 public static class SqlWritingExtensions
 {
+    public static void WriteSql(this SqlTextWriter writer, [InterpolatedStringHandlerArgument("writer")] ref SqlInterpolatedStringHandler handler)
+    {
+    }
+
     /// <summary>
     /// Writes a IWriteSql object instance and all child objects
     /// to a single SQL string

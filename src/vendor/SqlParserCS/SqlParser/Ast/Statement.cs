@@ -1,7 +1,4 @@
-﻿// ReSharper disable StringLiteralTypo
-// ReSharper disable CommentTypo
-// ReSharper disable UnusedMember
-
+﻿
 namespace SqlParser.Ast;
 
 public abstract record Statement : IWriteSql, IElement
@@ -254,7 +251,6 @@ public abstract record Statement : IWriteSql, IElement
 
         public override void ToSql(SqlTextWriter writer)
         {
-            // ReSharper disable once ConvertIfStatementToConditionalTernaryExpression
             if (TableFlag != null)
             {
                 writer.WriteSql($"CACHE {TableFlag} TABLE {Name}");
@@ -433,7 +429,7 @@ public abstract record Statement : IWriteSql, IElement
         Sequence<DataLoadingOption>? CopyOptions = null,
         string? ValidationMode = null) : Statement
     {
-        public StageParams StageParams = StageParams ?? new();
+        public StageParams StageParams { get; set; } = StageParams ?? new();
 
         public override void ToSql(SqlTextWriter writer)
         {
@@ -514,7 +510,6 @@ public abstract record Statement : IWriteSql, IElement
 
             if (ManagedLocation != null)
             {
-                // ReSharper disable once StringLiteralTypo
                 writer.WriteSql($" MANAGEDLOCATION '{ManagedLocation}'");
             }
         }
@@ -866,7 +861,6 @@ public abstract record Statement : IWriteSql, IElement
         public Sequence<DataLoadingOption>? DirectoryTableParams { get; init; }
         public Sequence<DataLoadingOption>? FileFormat { get; init; }
         public Sequence<DataLoadingOption>? CopyOptions { get; init; }
-        // ReSharper disable once MemberHidesStaticFromOuterClass
         public new string? Comment { get; init; }
 
         public override void ToSql(SqlTextWriter writer)
@@ -1543,7 +1537,6 @@ public abstract record Statement : IWriteSql, IElement
     /// </summary>
     public record Explain(Statement Statement) : Statement
     {
-        // ReSharper disable once MemberHidesStaticFromOuterClass
         public new bool Analyze { get; set; }
 
         // If true, query used the MySQL `DESCRIBE` alias for explain
@@ -1869,7 +1862,6 @@ public abstract record Statement : IWriteSql, IElement
     /// <param name="Name">Object name</param>
     /// <param name="Repair">Repair</param>
     /// <param name="PartitionAction">Partition action</param>
-    // ReSharper disable once IdentifierTypo
     public record Msck(ObjectName Name, bool Repair, AddDropSync PartitionAction) : Statement
     {
         public override void ToSql(SqlTextWriter writer)
@@ -2508,7 +2500,6 @@ public abstract record Statement : IWriteSql, IElement
     /// </summary>
     /// <param name="Name">Object name</param>
     /// <param name="IfExists">True if exists statement</param>
-    // ReSharper disable once InconsistentNaming
     public record UNCache(ObjectName Name, bool IfExists = false) : Statement
     {
         public override void ToSql(SqlTextWriter writer)
