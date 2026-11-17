@@ -9,7 +9,9 @@ public sealed record ProjectAccess(string Actor, string ProjectId, string Organi
 
     public IReadOnlySet<string> Roles { get; init; } = FrozenSet<string>.Empty;
 
-    internal IReadOnlySet<string> Tables { get; init; } = FrozenSet<string>.Empty;
+    internal TokenTables Tables { get; init; } = TokenTables.None;
+
+    internal RulesAuth? Auth { get; init; }
 
     private static readonly AsyncLocal<ProjectAccess?> Access = new();
 
@@ -30,4 +32,13 @@ public sealed record ProjectAccess(string Actor, string ProjectId, string Organi
     }
 }
 
-internal readonly union ProjectGrant(ProjectAccess, NotFound, Unavailable);
+internal sealed record TokenTables(IReadOnlySet<string>? Named)
+{
+    public static TokenTables None { get; } = new(FrozenSet<string>.Empty);
+
+    public static TokenTables Every { get; } = new((IReadOnlySet<string>?)null);
+
+    public bool Contains(string table) => Named is null || Named.Contains(table);
+}
+
+internal readonly union ProjectAccessResult(ProjectAccess, NotFound, Unavailable);

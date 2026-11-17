@@ -46,7 +46,7 @@ internal static class SocketAdmission
             return new SocketRefusal("ip_not_allowed", IpAllowlists.Refusal(client));
         }
 
-        switch (await ProjectGrants.GrantAsync(context, jwt, project, bucketCreation: false).ConfigureAwait(false))
+        switch (await ProjectAccessResolver.ResolveAsync(context, jwt, project, bucketCreation: false).ConfigureAwait(false))
         {
             case ProjectAccess granted:
                 context.Features.Set(granted);
@@ -55,6 +55,13 @@ internal static class SocketAdmission
                 return new SocketRefusal("unknown_database", "the database does not exist");
             case Unavailable unavailable:
                 return new SocketRefusal("unavailable", unavailable.Message);
+        }
+
+        if (jwt.HasClaim("token_kind", "end_user") && token is not null)
+        {
+            var time = context.RequestServices.GetRequiredService<TimeProvider>();
+            keep(time.CreateTimer(_ => revoked.Cancel(), null,
+                token.ExpiresAt > time.GetUtcNow() ? token.ExpiresAt - time.GetUtcNow() : TimeSpan.Zero, Timeout.InfiniteTimeSpan));
         }
 
         if (token?.Key is not { } key)

@@ -21,6 +21,7 @@ internal sealed class UserAuthenticationHandler(
     TerraBaseOptions terraBase,
     IIssuerKeys issuerKeys,
     ValidatedTokens validated,
+    TenantKeys tenantKeys,
     [FromKeyedServices(UserAuthenticationHandler.SchemeName)] TimeProvider? time = null) : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
 {
     public const string SchemeName = UserAuthExtensions.TokenScheme;
@@ -38,6 +39,15 @@ internal sealed class UserAuthenticationHandler(
 
     private static readonly string[] Types = ["at+jwt", "application/at+jwt"];
 
+    private static readonly string[] TenantAlgorithms = [SecurityAlgorithms.EcdsaSha256];
+
+    private static readonly string[] TenantTypes = ["at+jwt"];
+
+    private static readonly string[] TenantRefusedClaims =
+        ["scope", "project_id", "instance_id", Platform.PlatformExplore.RoleClaim, "key_id", "key_gen", .. IpAllowlists.Claims];
+
+    private const string EndUserScope = "sql:read sql:write";
+
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
         var header = Request.Headers.Authorization.ToString();
@@ -50,6 +60,11 @@ internal sealed class UserAuthenticationHandler(
 
         Context.Features.Set<TokenKeysPending>(null);
         var token = header["Bearer ".Length..].Trim();
+        if (TenantToken(token) is ({ } tenant, { } unverified))
+        {
+            return await AuthenticateTenantAsync(token, unverified, tenant).ConfigureAwait(false);
+        }
+
         if (!CouldBeValid(token, terraBase, time))
         {
             return AuthenticateResult.Fail("invalid token");
@@ -214,15 +229,120 @@ internal sealed class UserAuthenticationHandler(
             claims.Add(new Claim(Platform.PlatformExplore.RoleClaim, role));
         }
 
-        scope = endUser ? "sql:read sql:write" : scope;
+        scope = endUser ? EndUserScope : scope;
         accepted = new ValidatedTokens.Accepted(
             checkedWith, jwt.ValidTo, [.. claims.Select(claim => (claim.Type, claim.Value))], project, database, scope, allowlists, key);
         validated.Add(cacheKey, accepted);
         return Success(accepted, token);
     }
 
+    private (string Project, JsonWebToken Token)? TenantToken(string token)
+    {
+        try
+        {
+            if (!Tokens.CanReadToken(token))
+            {
+                return null;
+            }
+
+            var jwt = Tokens.ReadJsonWebToken(token);
+            return jwt.TryGetPayloadValue<string>(JwtRegisteredClaimNames.Iss, out var issuer) && TenantKeys.ProjectOf(terraBase, issuer) is { } project
+                ? (project, jwt)
+                : null;
+        }
+        catch (Exception error) when (error is ArgumentException or SecurityTokenException or JsonException or FormatException)
+        {
+            return null;
+        }
+    }
+
+    private async Task<AuthenticateResult> AuthenticateTenantAsync(string token, JsonWebToken unverified, string project)
+    {
+        if (!string.Equals(Context.Request.RouteValues["project"] as string, project, StringComparison.Ordinal))
+        {
+            return AuthenticateResult.Fail("a project tenant token only reaches its own project's routes");
+        }
+
+        if (unverified.IsEncrypted || string.IsNullOrEmpty(unverified.EncodedSignature) || string.IsNullOrEmpty(unverified.Kid)
+            || !TenantTypes.Contains(unverified.Typ, StringComparer.Ordinal) || !TenantAlgorithms.Contains(unverified.Alg, StringComparer.Ordinal)
+            || !unverified.TryGetPayloadValue<string>(JwtRegisteredClaimNames.Sub, out var user) || !EntityIds.IsValid(user)
+            || !unverified.Audiences.Contains(TenantKeys.Audience(project), StringComparer.Ordinal)
+            || TenantRefusedClaims.Any(name => unverified.TryGetPayloadValue<object>(name, out _)))
+        {
+            return AuthenticateResult.Fail("invalid project tenant token");
+        }
+
+        var keys = await tenantKeys.KeysAsync(project, user, Context.RequestAborted).ConfigureAwait(false);
+        if (keys.Value is NotFound)
+        {
+            return AuthenticateResult.Fail("the token's project is unknown");
+        }
+
+        if (keys.Value is not IReadOnlyList<SecurityKey> signing)
+        {
+            Context.Features.Set(TokenKeysPending.Instance);
+            return AuthenticateResult.Fail(TokenKeysPending.Message);
+        }
+
+        var cacheKey = ValidatedTokens.KeyOf(token);
+        if (validated.TryGet(cacheKey, signing, out var accepted))
+        {
+            return Success(accepted, token);
+        }
+
+        var result = await Tokens.ValidateTokenAsync(token, TenantParameters(project, signing)).ConfigureAwait(false);
+        if (result.Exception is SecurityTokenSignatureKeyNotFoundException)
+        {
+            switch ((await tenantKeys.RefreshAsync(project, user, Context.RequestAborted).ConfigureAwait(false)).Value)
+            {
+                case NotFound:
+                    return AuthenticateResult.Fail("the token's project is unknown");
+                case Unavailable:
+                    Context.Features.Set(TokenKeysPending.Instance);
+                    return AuthenticateResult.Fail(TokenKeysPending.Message);
+                case IReadOnlyList<SecurityKey> refreshed when !ReferenceEquals(refreshed, signing):
+                    signing = refreshed;
+                    result = await Tokens.ValidateTokenAsync(token, TenantParameters(project, signing)).ConfigureAwait(false);
+                    break;
+            }
+        }
+
+        if (!result.IsValid || result.SecurityToken is not JsonWebToken jwt)
+        {
+            return AuthenticateResult.Fail(result.Exception?.GetType().Name ?? "invalid token");
+        }
+
+        using var payload = JsonDocument.Parse(Base64UrlEncoder.DecodeBytes(jwt.EncodedPayload));
+        var root = payload.RootElement;
+        var custom = root.TryGetProperty("token_kind", out var kind) && kind.ValueKind == JsonValueKind.String && kind.GetString() == "custom";
+        var interactive = root.TryGetProperty("token_use", out var use) && use.ValueKind == JsonValueKind.String && use.GetString() == "user";
+        string? database = null;
+        if (root.TryGetProperty("token_kind", out _) && !custom
+            || !custom && !interactive || custom && root.TryGetProperty("token_use", out _) && !interactive
+            || root.TryGetProperty("database", out var named) && (!custom || named.ValueKind != JsonValueKind.String || !EntityIds.IsValid(database = named.GetString()))
+            || RulesAuth.Read(user, root, custom) is not { } auth)
+        {
+            return AuthenticateResult.Fail("invalid project tenant token claims");
+        }
+
+        List<(string Type, string Value)> claims =
+            [(ClaimTypes.NameIdentifier, user), ("project_id", project), ("token_kind", "end_user"), ("scope", "sql:read"), ("scope", "sql:write")];
+        if (database is not null)
+        {
+            claims.Add(("database", database));
+        }
+
+        accepted = new ValidatedTokens.Accepted(signing, jwt.ValidTo, claims, project, database, EndUserScope, [], null) { Auth = auth };
+        validated.Add(cacheKey, accepted);
+        return Success(accepted, token);
+    }
+
+    private TokenValidationParameters TenantParameters(string project, IReadOnlyList<SecurityKey> keys) =>
+        Parameters(TenantKeys.Issuer(terraBase, project), [TenantKeys.Audience(project)], keys, TenantAlgorithms, TenantTypes, time);
+
     private AuthenticateResult Success(ValidatedTokens.Accepted accepted, string token)
     {
+        Context.Features.Set(accepted.Auth);
         var principal = new ClaimsPrincipal(new ClaimsIdentity(accepted.Claims.Select(claim => new Claim(claim.Type, claim.Value)), SchemeName));
         Context.Features.Set(new ProjectToken(accepted.Project, accepted.Database, accepted.Scope, new DateTimeOffset(accepted.ValidTo, TimeSpan.Zero), accepted.Allowlists,
             accepted.Key is var (id, generation) ? new KeyToken(id, generation, accepted.Project, token)
@@ -265,26 +385,30 @@ internal sealed class UserAuthenticationHandler(
 
     private TokenValidationParameters Parameters(IReadOnlyList<SecurityKey> keys) => Parameters(terraBase, keys, time);
 
-    internal static TokenValidationParameters Parameters(TerraBaseOptions terraBase, IReadOnlyList<SecurityKey> keys, TimeProvider? time) => new()
-    {
-        ValidIssuer = terraBase.AuthIssuer,
-        ValidAudiences = terraBase.AuthAudiences,
-        IgnoreTrailingSlashWhenValidatingAudience = false,
-        IssuerSigningKeys = keys,
-        TryAllIssuerSigningKeys = false,
-        ValidAlgorithms = Algorithms,
-        AlgorithmValidator = (algorithm, key, _, _) => Algorithms.Contains(algorithm, StringComparer.Ordinal)
-            && (key is not JsonWebKey jwk || (string.IsNullOrEmpty(jwk.Alg) || jwk.Alg == algorithm)
-                && (jwk.KeyOps.Count == 0 || jwk.KeyOps.Contains("verify", StringComparer.Ordinal))),
-        ValidTypes = Types,
-        RequireSignedTokens = true,
-        RequireExpirationTime = true,
-        ClockSkew = ClockSkew,
-        LifetimeValidator = (notBefore, expires, _, _) =>
+    internal static TokenValidationParameters Parameters(TerraBaseOptions terraBase, IReadOnlyList<SecurityKey> keys, TimeProvider? time) =>
+        Parameters(terraBase.AuthIssuer, terraBase.AuthAudiences, keys, Algorithms, Types, time);
+
+    private static TokenValidationParameters Parameters(
+        string? issuer, IReadOnlyList<string> audiences, IReadOnlyList<SecurityKey> keys, string[] algorithms, string[] types, TimeProvider? time) => new()
         {
-            var now = (time ?? TimeProvider.System).GetUtcNow().UtcDateTime;
-            return expires is { } end && now < end
-                && (notBefore is not { } start || start <= end && start <= now + ClockSkew);
-        },
-    };
+            ValidIssuer = issuer,
+            ValidAudiences = audiences,
+            IgnoreTrailingSlashWhenValidatingAudience = false,
+            IssuerSigningKeys = keys,
+            TryAllIssuerSigningKeys = false,
+            ValidAlgorithms = algorithms,
+            AlgorithmValidator = (algorithm, key, _, _) => algorithms.Contains(algorithm, StringComparer.Ordinal)
+                && (key is not JsonWebKey jwk || (string.IsNullOrEmpty(jwk.Alg) || jwk.Alg == algorithm)
+                    && (jwk.KeyOps.Count == 0 || jwk.KeyOps.Contains("verify", StringComparer.Ordinal))),
+            ValidTypes = types,
+            RequireSignedTokens = true,
+            RequireExpirationTime = true,
+            ClockSkew = ClockSkew,
+            LifetimeValidator = (notBefore, expires, _, _) =>
+            {
+                var now = (time ?? TimeProvider.System).GetUtcNow().UtcDateTime;
+                return expires is { } end && now < end
+                    && (notBefore is not { } start || start <= end && start <= now + ClockSkew);
+            },
+        };
 }

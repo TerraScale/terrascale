@@ -7,9 +7,9 @@ using TerraBase.Primitives;
 
 namespace TerraBase.Features.UserAuth;
 
-internal static class ProjectGrants
+internal static class ProjectAccessResolver
 {
-    internal static async ValueTask<ProjectGrant> GrantAsync(HttpContext context, ClaimsIdentity jwt, string project, bool bucketCreation)
+    internal static async ValueTask<ProjectAccessResult> ResolveAsync(HttpContext context, ClaimsIdentity jwt, string project, bool bucketCreation)
     {
         var actor = jwt.FindFirst(ClaimTypes.NameIdentifier)!.Value;
         var catalog = context.RequestServices.GetRequiredService<IProjectCatalog>();
@@ -41,11 +41,13 @@ internal static class ProjectGrants
             }
         }
 
+        var auth = context.Features.Get<RulesAuth>();
         return new ProjectAccess(actor, project, organization, restricted, restrictedId)
         {
             IsEndUser = jwt.HasClaim("token_kind", "end_user"),
             Roles = jwt.FindAll("roles").Select(claim => claim.Value).ToFrozenSet(StringComparer.Ordinal),
-            Tables = jwt.FindAll("tables").Select(claim => claim.Value).ToFrozenSet(StringComparer.Ordinal),
+            Tables = auth is null ? new TokenTables(jwt.FindAll("tables").Select(claim => claim.Value).ToFrozenSet(StringComparer.Ordinal)) : TokenTables.Every,
+            Auth = auth,
         };
     }
 }
