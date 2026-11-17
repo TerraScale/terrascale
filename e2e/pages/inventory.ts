@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { expect, type Locator, type Page } from '@playwright/test';
 import { regionsSettled } from '../support/overview';
+import { deployFunction, functionAccess, functionUrl } from '../support/functions';
 import { keyId } from '../support/api-key';
 import type { Journey } from '../support/state';
 
@@ -106,7 +107,7 @@ const databaseTabs: [string, string, Identity][] = [
 ];
 
 const tabStates: Record<string, PagePattern['query']> = {
-  functions: { function: /^([a-z0-9][a-z0-9_-]{0,62})?$/, edit: /^(new)?$/, trigger: /^(http|cron)?$/, status: /^(ok|error)?$/, deployed: /^1?$/ },
+  functions: { function: /^([a-z0-9][a-z0-9_-]{0,62})?$/, edit: /^(new)?$/, trigger: /^(http|cron)?$/, status: /^(ok|error)?$/, window: /^(1h|24h|7d)?$/, deployed: /^1?$/ },
   sql: { result: optionalId, savedQueryId: optionalId, created: /^.{0,128}$/ },
   tables: { table: /^[A-Za-z0-9_]*$/, created: /^.{0,128}$/ },
 };
@@ -264,6 +265,25 @@ export const dashboardStates: readonly PageState[] = [
     data: async (page, journey) => {
       await databaseHeader(page, journey);
       await expect(page.locator('#grants, #backup-schedule, #danger-zone-title')).toHaveCount(0);
+    },
+  },
+  {
+    name: 'function metrics and expanded invocation',
+    url: async (journey, page) => {
+      const name = `metrics-${journey.runId}`.toLowerCase();
+      const headers = await functionAccess(page.request);
+      await deployFunction(page.request, headers, name);
+      expect((await page.request.post(`${functionUrl(name)}/invoke`, { headers, data: {} })).status()).toBe(200);
+      return `${database(journey)}/functions?function=${name}&window=1h&status=ok`;
+    },
+    covers: { path: databasePath('functions'), query: tabStates.functions },
+    heading: title('Latest invocations', 2),
+    data: async (page) => {
+      await expect(page.locator('#function-stats .ts-stat').filter({ hasText: 'Invocations' }).locator('dd')).toHaveText('1');
+      await expect(page.getByRole('link', { name: 'Last hour', exact: true })).toHaveAttribute('aria-current', 'page');
+      await page.locator('#function-logs summary').click();
+      await expect(page.locator('#function-logs details')).toHaveAttribute('open', '');
+      await expect(page.locator('#function-logs pre')).toContainText('functions journey');
     },
   },
   ...databaseTabs.map(

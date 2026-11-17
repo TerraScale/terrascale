@@ -52,3 +52,5 @@ More: [development](development.md), [state storage](state-storage.md), [state s
 [zero-configuration contract](zero-configuration.md), [metric definitions](metrics.md).
 
 - [Background jobs across instances](background-jobs.md)
+
+- [Function metrics](function-metrics.md)

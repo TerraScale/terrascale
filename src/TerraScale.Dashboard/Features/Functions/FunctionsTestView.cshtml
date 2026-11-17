@@ -6,16 +6,19 @@
 @if(Model.RunResult.Length > 0){<div class="ts-field"><span class="ts-label">Result</span><pre class="ts-code" id="function-result">@Model.RunResult</pre></div>}
 </form>
 </div></section>
-<section class="ts-card ts-card-boxed ts-card-flush" id="function-logs-card" aria-labelledby="function-logs-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="function-logs-title">Latest invocations</h2></div><div class="ts-card-actions"><form class="ts-filters" method="get" action="@DatabaseService.Path(Model.Database.Id, "functions")"><input type="hidden" name="function" value="@(Model.Selected?.Name)" /><label class="ts-sr-only" for="function-logs-trigger">Trigger</label><select class="ts-select" id="function-logs-trigger" name="trigger" data-on:change="el.form.requestSubmit()"><option value="" selected="@(Model.LogsTrigger.Length == 0)">All triggers</option><option value="http" selected="@(Model.LogsTrigger == "http")">HTTP</option><option value="cron" selected="@(Model.LogsTrigger == "cron")">Cron</option></select><label class="ts-sr-only" for="function-logs-status">Status</label><select class="ts-select" id="function-logs-status" name="status" data-on:change="el.form.requestSubmit()"><option value="" selected="@(Model.LogsStatus.Length == 0)">All statuses</option><option value="ok" selected="@(Model.LogsStatus == "ok")">OK</option><option value="error" selected="@(Model.LogsStatus == "error")">Error</option></select></form></div></header><div class="ts-card-body">
-@if(Model.Logs.Count == 0){<div class="ts-empty" role="status"><p class="ts-empty-title">No invocations yet.</p></div>}else{
-<ul class="ts-rows" id="function-logs">
-@foreach(var log in Model.Logs){<li><span class="ts-dot" data-tone="@(log.Status == "ok" ? "success" : "danger")" aria-hidden="true"></span><div class="ts-stack-sm"><span class="ts-rows-title"><time datetime="@log.At.ToString("O", CultureInfo.InvariantCulture)">@log.At.UtcDateTime.ToString("MMM d HH:mm:ss", CultureInfo.InvariantCulture)</time></span><span class="ts-rows-meta">@Meta(log)</span></div><span class="ts-badge ts-badge-tone" data-tone="@(log.Status == "ok" ? "success" : "danger")">@log.Status</span><span class="ts-rows-size">@log.DurationMs.ToString("0.##", CultureInfo.InvariantCulture) ms</span><div class="ts-rows-actions"></div></li>}
+<section class="ts-card ts-card-boxed ts-card-flush" id="function-logs-card" aria-labelledby="function-logs-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="function-logs-title">Latest invocations</h2></div><div class="ts-card-actions"><form class="ts-filters" method="get" action="@DatabaseService.Path(Model.Database.Id, "functions")"><input type="hidden" name="function" value="@(Model.Selected?.Name)" /><input type="hidden" name="window" value="@Model.Window" /><label class="ts-sr-only" for="function-logs-trigger">Trigger</label><select class="ts-select" id="function-logs-trigger" name="trigger" data-on:change="el.form.requestSubmit()"><option value="" selected="@(Model.LogsTrigger.Length == 0)">All triggers</option><option value="http" selected="@(Model.LogsTrigger == "http")">HTTP</option><option value="cron" selected="@(Model.LogsTrigger == "cron")">Cron</option></select><label class="ts-sr-only" for="function-logs-status">Status</label><select class="ts-select" id="function-logs-status" name="status" data-on:change="el.form.requestSubmit()"><option value="" selected="@(Model.LogsStatus.Length == 0)">All</option><option value="ok" selected="@(Model.LogsStatus == "ok")">Succeeded</option><option value="error" selected="@(Model.LogsStatus == "error")">Failed</option></select></form></div></header><div class="ts-card-body">
+@if(Model.Logs.Count == 0){<div class="ts-empty" role="status"><p class="ts-empty-title">@(Model.Stats?.Invocations == 0 ? "No invocations in this window yet. Run it from the Test tab or call its HTTPS URL." : "No invocations match these filters.")</p></div>}else{
+<ul class="ts-functions-invocations" id="function-logs">
+@foreach(var log in Model.Logs){<li><details><summary><span class="ts-functions-invocation-summary">
+<time datetime="@log.At.ToString("O", CultureInfo.InvariantCulture)">@log.At.UtcDateTime.ToString("MMM d HH:mm:ss 'UTC'", CultureInfo.InvariantCulture)</time>
+<span>@log.Trigger</span><span class="ts-badge ts-badge-tone" data-tone="@(log.Status == "ok" ? "success" : "danger")">@(log.Status == "ok" ? "Succeeded" : "Failed")</span>
+<span>HTTP @(log.HttpStatus?.ToString(CultureInfo.InvariantCulture) ?? "—")</span><span>@log.DurationMs.ToString("0.##", CultureInfo.InvariantCulture) ms</span>
+<span>SQL calls @log.SqlCalls.ToString(CultureInfo.InvariantCulture)</span><span>SQL @log.SqlMs.ToString(CultureInfo.InvariantCulture) ms</span>
+<span>Rows read @log.RowsRead.ToString(CultureInfo.InvariantCulture)</span><span>Rows written @log.RowsWritten.ToString(CultureInfo.InvariantCulture)</span><span>Response @log.ResponseBytes.ToString(CultureInfo.InvariantCulture) B</span>
+</span></summary><div class="ts-stack-sm">
+@if(log.Lines.Count > 0){<pre class="ts-code" aria-label="Console output">@string.Join("\n", log.Lines)</pre>}
+@if(log.Error is { Length: > 0 } error){<pre class="ts-code ts-functions-error" aria-label="Invocation error">@error</pre>}
+@if(log.Lines.Count == 0 && log.Error is not { Length: > 0 }){<p>No console output.</p>}
+</div></details></li>}
 </ul>}
 </div></section>
-@functions {
-    private static string Meta(TerraScale.Dashboard.Features.Functions.FunctionInvocation log)
-    {
-        var output = log.Error is { Length: > 0 } failure ? failure : log.Lines.Count > 0 ? string.Join(" · ", log.Lines) : "";
-        return output.Length > 0 ? log.Trigger + " · " + output : log.Trigger;
-    }
-}
