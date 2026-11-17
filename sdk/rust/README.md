@@ -272,8 +272,8 @@ through another session before deciding whether to repeat it.
 
 ## Live data
 
-The source SDK supports filtered table subscriptions through HTTP long-polling.
-This API is not yet published; WebSocket hints remain pending.
+The source SDK supports filtered table subscriptions with authenticated WebSocket
+hints and HTTP long-poll fallback. This API is not yet published.
 
 ```rust
 use futures_util::StreamExt;
@@ -293,7 +293,8 @@ while let Some(view) = shape.next().await {
 ```
 
 Each view owns an immutable `Arc<[SqlRecord]>` with the same typed accessors as
-SQL query rows. Views arrive after every snapshot page and applied diff batch.
+SQL query rows. Column ordinals preserve projection order, or stored declaration
+order without a projection. Views arrive after every snapshot page and applied diff batch.
 Status is `Loading`, `Live`, or `Reconnecting`; temporary failures back off and
 resume from the last applied offset. `must_refetch` clears the view and starts a
 new snapshot. Credential errors yield the existing SDK error and end the stream.

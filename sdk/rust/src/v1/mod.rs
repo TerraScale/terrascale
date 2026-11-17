@@ -37,6 +37,7 @@ mod sql_exec;
 mod sql_session;
 mod system;
 mod table_shape;
+mod table_shape_hints;
 mod types;
 
 pub use agent::{

@@ -4,9 +4,12 @@ use std::time::Duration;
 
 use futures_util::{stream, Stream};
 use reqwest::{Method, StatusCode};
-use serde::Deserialize;
+use serde::de::{MapAccess, Visitor};
+use serde::{Deserialize, Deserializer};
+use tokio::time::Instant;
 
 use super::client::{backoff, Req};
+use super::table_shape_hints::{Hint, Hints};
 use super::{Database, Error, Result, SqlRecord, SqlValue};
 
 /// Synchronization state of an immutable shape view.
@@ -127,12 +130,38 @@ struct Pending {
 struct Op {
     op: String,
     key: String,
-    row: Option<BTreeMap<String, SqlValue>>,
+    row: Option<OrderedRow>,
     #[serde(rename = "move")]
     movement: Option<String>,
 }
 
-type Rows = BTreeMap<String, BTreeMap<String, SqlValue>>;
+#[derive(Clone)]
+struct OrderedRow(Vec<(String, SqlValue)>);
+
+impl<'de> Deserialize<'de> for OrderedRow {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        struct RowVisitor;
+        impl<'de> Visitor<'de> for RowVisitor {
+            type Value = OrderedRow;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("an ordered SQL row object")
+            }
+            fn visit_map<M: MapAccess<'de>>(
+                self,
+                mut map: M,
+            ) -> std::result::Result<Self::Value, M::Error> {
+                let mut row = Vec::new();
+                while let Some(entry) = map.next_entry()? {
+                    row.push(entry);
+                }
+                Ok(OrderedRow(row))
+            }
+        }
+        deserializer.deserialize_map(RowVisitor)
+    }
+}
+
+type Rows = BTreeMap<String, OrderedRow>;
 
 struct State {
     shape: Shape,
@@ -145,6 +174,10 @@ struct State {
     status: ShapeStatus,
     attempt: u32,
     delay: Option<Duration>,
+    hints_advertised: bool,
+    hints: Option<Hints>,
+    hint_retry_at: Option<Instant>,
+    hint_attempt: u32,
 }
 
 impl State {
@@ -160,6 +193,10 @@ impl State {
             status: ShapeStatus::Loading,
             attempt: 0,
             delay: None,
+            hints_advertised: false,
+            hints: None,
+            hint_retry_at: None,
+            hint_attempt: 0,
         }
     }
 
@@ -172,7 +209,7 @@ impl State {
         Ok(ShapeView {
             rows: rows
                 .into_values()
-                .map(SqlRecord::from_shape)
+                .map(|row| SqlRecord::from_shape(row.0))
                 .collect::<Vec<_>>()
                 .into(),
             status: self.status,
@@ -181,11 +218,86 @@ impl State {
         })
     }
 
+    fn query(&self) -> Vec<(&'static str, String)> {
+        let mut query = vec![("offset", self.offset.clone())];
+        if !self.handle.is_empty() {
+            query.push(("handle", self.handle.clone()));
+        }
+        if let Some(filter) = &self.shape.filter {
+            query.push(("where", filter.clone()));
+        }
+        if let Some(columns) = &self.shape.columns {
+            query.push(("columns", columns.join(",")));
+        }
+        query
+    }
+
+    fn reset(&mut self) {
+        self.rows.clear();
+        self.pending.clear();
+        self.handle.clear();
+        self.offset = "-1".into();
+        self.cursor = None;
+        self.local = "0".into();
+        self.status = ShapeStatus::Loading;
+        self.hints = None;
+        self.hint_retry_at = None;
+        self.attempt = 0;
+        self.hint_attempt = 0;
+    }
+
+    async fn hint(&mut self) -> Result<Hint> {
+        let mut hints = match self.hints.take() {
+            Some(hints) => hints,
+            None => {
+                Hints::open(
+                    self.shape.db.client(),
+                    self.shape.db.name(),
+                    &self.shape.table,
+                    &self.query(),
+                )
+                .await?
+            }
+        };
+        let hint = hints.wait(&self.handle, &self.offset, &self.local).await?;
+        self.hints = Some(hints);
+        Ok(hint)
+    }
+
     async fn next(&mut self) -> Result<ShapeView> {
         loop {
             if let Some(delay) = self.delay.take() {
                 tokio::time::sleep(delay).await;
             }
+            let hint = if self.status == ShapeStatus::Live
+                && self.hints_advertised
+                && self.hint_retry_at.is_none_or(|at| Instant::now() >= at)
+            {
+                match self.hint().await {
+                    Ok(hint) => {
+                        self.hint_attempt = 0;
+                        Some(hint)
+                    }
+                    Err(error) if error.code() == Some("must_refetch") => {
+                        self.reset();
+                        return self.view();
+                    }
+                    Err(error) if super::table_shape_hints::terminal(&error) => return Err(error),
+                    Err(error) => {
+                        self.hints = None;
+                        self.hint_retry_at = Some(
+                            Instant::now()
+                                .checked_add(reconnect_delay(&error, self.hint_attempt))
+                                .ok_or_else(|| Error::Decode("invalid hint Retry-After".into()))?,
+                        );
+                        self.hint_attempt = self.hint_attempt.saturating_add(1);
+                        self.status = ShapeStatus::Reconnecting;
+                        return self.view();
+                    }
+                }
+            } else {
+                None
+            };
             let mut req = Req::new(
                 Method::GET,
                 vec![
@@ -197,17 +309,8 @@ impl State {
                     "shape",
                 ],
             );
-            req.query.push(("offset", self.offset.clone()));
-            if !self.handle.is_empty() {
-                req.query.push(("handle", self.handle.clone()));
-            }
-            if let Some(filter) = &self.shape.filter {
-                req.query.push(("where", filter.clone()));
-            }
-            if let Some(columns) = &self.shape.columns {
-                req.query.push(("columns", columns.join(",")));
-            }
-            let live = self.status == ShapeStatus::Live;
+            req.query = self.query();
+            let live = self.status == ShapeStatus::Live && !matches!(hint, Some(Hint::Data));
             if live {
                 req.query.push(("live", "true".into()));
                 req.query.push(("local", self.local.clone()));
@@ -218,30 +321,12 @@ impl State {
             let response = match self.shape.db.client().read_shape(req).await {
                 Ok(response) => response,
                 Err(error) if error.code() == Some("must_refetch") => {
-                    self.rows.clear();
-                    self.pending.clear();
-                    self.handle.clear();
-                    self.offset = "-1".into();
-                    self.cursor = None;
-                    self.local = "0".into();
-                    self.status = ShapeStatus::Loading;
+                    self.reset();
                     return self.view();
                 }
                 Err(error) if transient(&error) => {
-                    let retry_after = match &error {
-                        Error::Response { retry_after, .. } => *retry_after,
-                        _ => None,
-                    };
-                    self.delay = Some(retry_after.unwrap_or_else(|| {
-                        backoff(
-                            &super::RetryPolicy {
-                                base_delay: Duration::from_millis(250),
-                                max_delay: Duration::from_secs(30),
-                                ..Default::default()
-                            },
-                            self.attempt,
-                        )
-                    }));
+                    self.delay = Some(reconnect_delay(&error, self.attempt));
+                    self.hints = None;
                     self.attempt = self.attempt.saturating_add(1);
                     self.status = ShapeStatus::Reconnecting;
                     return self.view();
@@ -271,11 +356,15 @@ impl State {
                 }
                 continue;
             }
+            if let Some(protocol) = response.header("TB-Shape-Hints") {
+                self.hints_advertised = protocol == super::table_shape_hints::PROTOCOL;
+            }
             let page: Page = response.decode()?;
             if !valid_handle(&page.handle)
                 || !self.handle.is_empty() && page.handle != self.handle
                 || page.offset != self.offset
                 || !(snapshot(&page.next_offset) || decimal(&page.next_offset))
+                || page.up_to_date && !decimal(&page.next_offset)
             {
                 return Err(Error::Decode("invalid shape page boundary".into()));
             }
@@ -299,13 +388,7 @@ impl State {
             if let Some(pending) = page.provisional {
                 let local = page
                     .local
-                    .filter(|local| {
-                        local == "0"
-                            || local.len() == 16
-                                && local
-                                    .bytes()
-                                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-                    })
+                    .filter(|local| valid_local(local))
                     .ok_or_else(|| Error::Decode("invalid shape local boundary".into()))?;
                 self.pending = pending;
                 self.local = local;
@@ -326,6 +409,24 @@ impl State {
             return self.view();
         }
     }
+}
+
+fn reconnect_delay(error: &Error, attempt: u32) -> Duration {
+    if let Error::Response {
+        retry_after: Some(delay),
+        ..
+    } = error
+    {
+        return *delay;
+    }
+    backoff(
+        &super::RetryPolicy {
+            base_delay: Duration::from_millis(250),
+            max_delay: Duration::from_secs(30),
+            ..Default::default()
+        },
+        attempt,
+    )
 }
 
 fn transient(error: &Error) -> bool {
@@ -350,12 +451,20 @@ fn transient(error: &Error) -> bool {
     }
 }
 
-fn valid_handle(value: &str) -> bool {
+pub(super) fn valid_handle(value: &str) -> bool {
     value.len() == 19
         && value.starts_with("h1-")
         && value[3..]
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+pub(super) fn valid_local(value: &str) -> bool {
+    value == "0"
+        || value.len() == 16
+            && value
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 fn decimal(value: &str) -> bool {

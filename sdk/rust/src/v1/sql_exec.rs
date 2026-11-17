@@ -308,17 +308,22 @@ pub struct SqlRecord {
 }
 
 impl SqlRecord {
-    pub(super) fn from_shape(row: BTreeMap<String, SqlValue>) -> Self {
-        let columns = row
-            .keys()
-            .map(|name| SqlColumn {
-                name: name.clone(),
-                decltype: None,
+    pub(super) fn from_shape(row: Vec<(String, SqlValue)>) -> Self {
+        let (columns, values): (Vec<_>, Vec<_>) = row
+            .into_iter()
+            .map(|(name, value)| {
+                (
+                    SqlColumn {
+                        name,
+                        decltype: None,
+                    },
+                    value,
+                )
             })
-            .collect::<Vec<_>>();
+            .unzip();
         Self {
             columns: Arc::new(Columns::new(&columns)),
-            values: row.into_values().collect(),
+            values,
         }
     }
 

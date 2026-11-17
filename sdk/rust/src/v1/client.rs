@@ -803,12 +803,23 @@ impl Client {
         subprotocol: &'static str,
         max_message: usize,
     ) -> Result<WebSocket> {
+        self.open_socket_query(segments, &[], subprotocol, max_message)
+            .await
+    }
+
+    pub(super) async fn open_socket_query(
+        &self,
+        segments: Vec<&str>,
+        query: &[(&str, String)],
+        subprotocol: &'static str,
+        max_message: usize,
+    ) -> Result<WebSocket> {
         if self.inner.project.is_none() {
             return Err(Error::InvalidInput(
                 "this operation requires a C# TerraBase project client".into(),
             ));
         }
-        let mut url = self.url(&self.inner.base, &segments, &[])?;
+        let mut url = self.url(&self.inner.base, &segments, query)?;
         let tls = url.scheme() == "https";
         url.set_scheme(if tls { "wss" } else { "ws" })
             .map_err(|()| Error::InvalidInput("base URL cannot carry a WebSocket".into()))?;
@@ -844,7 +855,8 @@ impl Client {
                     }
                 }
                 let config = tungstenite::protocol::WebSocketConfig::default()
-                    .max_message_size(Some(max_message));
+                    .max_message_size(Some(max_message))
+                    .max_frame_size(Some(max_message));
                 let response =
                     match tokio_tungstenite::client_async_with_config(request, io, Some(config))
                         .await
