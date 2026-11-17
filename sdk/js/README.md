@@ -165,6 +165,28 @@ choice to stay pinned for the session. Atlas discovery integration is deferred
 to TS-507; this release sends to `https://api.terrascale.tech` unless a URL or
 resolver is supplied.
 
+## Rules (unreleased)
+
+`db.rules.get()`, `db.rules.deploy(rules, currentVersion)`, `db.rules.versions({ after, limit })`,
+`db.rules.version(version)`, `db.rules.restore(version, currentVersion)` and `db.rules.test(request)` manage
+Rules and simulate requests on a server database handle. Reads and the simulator require `databases:read`;
+deploy and restore require `databases:write`.
+
+```js
+const db = createTerraBaseClientFromEnvironment().database("app");
+const current = await db.rules.get().catch(error => error.code === "no_rules" ? null : Promise.reject(error));
+const deployed = await db.rules.deploy({ tables: { todos: {
+  read: "row.owner_id = auth.uid", create: "auth.uid IS NOT NULL",
+  columns: ["id", "owner_id", "title"], writable: ["title"], set: { create: { owner_id: "auth.uid" } },
+} } }, current?.version ?? null);
+const decision = await db.rules.test({ operation: "read", table: "todos", auth: { uid: "alice" }, row: { owner_id: "bob" } });
+```
+
+Pass the current version for `If-Match`, or `null` for `If-None-Match: *` on first deployment. Versions are newest
+first; pass the page's `next` as `after` to fetch older versions. Each restore creates a new version. A refused deploy
+throws `TerraBaseV1Error`: `400 invalid_rules` carries the compiler problems in `error.details.details.problems`, and a
+stale version answers `412 version_mismatch`. The simulator evaluates deployed or draft Rules without accessing rows.
+
 ## Browser apps with Rules
 
 The following API is in the next SDK release. A project admin registers a public tenant OAuth client with the

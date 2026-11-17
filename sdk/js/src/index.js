@@ -83,6 +83,18 @@ export { V1Functions } from "./v1/functions.js";
 /** @typedef {import("./v1/functions.js").V1FunctionInvokeRequest} V1FunctionInvokeRequest */
 /** @typedef {import("./v1/functions.js").V1FunctionResponse} V1FunctionResponse */
 
+export { V1DatabaseRules } from "./v1/rules.js";
+/** @typedef {import("./v1/rules.js").V1Rules} V1Rules */
+/** @typedef {import("./v1/rules.js").V1RulesSet} V1RulesSet */
+/** @typedef {import("./v1/rules.js").V1RulesTable} V1RulesTable */
+/** @typedef {import("./v1/rules.js").V1RulesValues} V1RulesValues */
+/** @typedef {import("./v1/rules.js").V1RulesProblem} V1RulesProblem */
+/** @typedef {import("./v1/rules.js").V1RulesVersion} V1RulesVersion */
+/** @typedef {import("./v1/rules.js").V1RulesVersionPage} V1RulesVersionPage */
+/** @typedef {import("./v1/rules.js").V1RulesTestAuth} V1RulesTestAuth */
+/** @typedef {import("./v1/rules.js").V1RulesTestRequest} V1RulesTestRequest */
+/** @typedef {import("./v1/rules.js").V1RulesTestResult} V1RulesTestResult */
+
 export { createTerraBaseSystemClient, V1Health, V1Platform, V1Regions } from "./v1/system.js";
 /** @typedef {import("./v1/system.js").TerraBaseSystemClientConfig} TerraBaseSystemClientConfig */
 /** @typedef {import("./v1/system.js").V1ProbeStatus} V1ProbeStatus */

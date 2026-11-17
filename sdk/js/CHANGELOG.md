@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Database handles expose `rules`: get, conditional deploy, versions, one version, restore and the simulator, the same
+operations the .NET, Go, Python and Rust SDKs have. The journey runs them, mints a custom token and reads and writes
+rows with it through `rows(table)`.
+
 Added `BrowserAuth` for public tenant PKCE, hosted magic links, guest sign-in, in-memory tokens, proactive refresh,
 current user and revocation. Database handles now expose typed-result `rows(table).get/create/update/delete`
 and atomic `batchRows`. Existing live shapes refetch on Rules changes. The browser-origin journey covers the

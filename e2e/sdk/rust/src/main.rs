@@ -913,6 +913,18 @@ impl Runner {
                 if status != 404 || body["error"]["code"] != "row_not_found" {
                     return Err("custom token revealed another user's row".into());
                 }
+                let update = browser
+                    .patch(format!("{path}{key}"))
+                    .bearer_auth(&custom.access_token)
+                    .json(&json!({"row": {"label": "changed"}}))
+                    .send()
+                    .await
+                    .map_err(|error| error.to_string())?;
+                let status = update.status().as_u16();
+                let body: Value = update.json().await.map_err(|error| error.to_string())?;
+                if status != 403 || body["error"]["code"] != "rule_denied" {
+                    return Err("custom token update was not denied".into());
+                }
                 self.db()
                     .sql()
                     .execute(

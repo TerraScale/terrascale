@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -157,6 +158,9 @@ func (r *runner) customTokenWriteRead() error {
 	if err := r.customTokenRow(r.ctx, custom.AccessToken, user, "700002", true); err != nil {
 		return err
 	}
+	if err := r.customTokenDeniedUpdate(r.ctx, custom.AccessToken, written.Key); err != nil {
+		return err
+	}
 	_, err = r.db.Execute(r.ctx, fmt.Sprintf("DELETE FROM %s WHERE rowid = 700002 OR label = 'custom-token'", r.table))
 	return err
 }
@@ -189,4 +193,128 @@ func (r *runner) customTokenRow(ctx context.Context, token, user, key string, hi
 		return errors.New("custom token revealed another user's row")
 	}
 	return nil
+}
+
+func (r *runner) customTokenDeniedUpdate(ctx context.Context, token, key string) error {
+	path := fmt.Sprintf("https://api.terrascale.tech/v1/projects/%s/databases/%s/tables/%s/rows/%s",
+		r.project, os.Getenv("E2E_DATABASE_ID"), r.table, key)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPatch, path, strings.NewReader(`{"row":{"label":"changed"}}`))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	var body struct{ Error struct{ Code string } }
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		return err
+	}
+	if response.StatusCode != 403 || body.Error.Code != "rule_denied" {
+		return fmt.Errorf("custom token update was not denied: %d %s", response.StatusCode, body.Error.Code)
+	}
+	return nil
+}
+
+func (r *runner) ts(dir string, args ...string) (int, []byte, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return 0, nil, err
+	}
+	command := exec.CommandContext(r.ctx, filepath.Join(filepath.Dir(self), "ts"), append([]string{"-project", r.project}, args...)...)
+	command.Dir = dir
+	var stderr strings.Builder
+	command.Stderr = &stderr
+	out, err := command.Output()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		return exit.ExitCode(), out, nil
+	}
+	if err != nil {
+		return 0, nil, fmt.Errorf("ts %s: %w: %s", strings.Join(args, " "), err, stderr.String())
+	}
+	return 0, out, nil
+}
+
+func (r *runner) rulesCLI() error {
+	database := os.Getenv("E2E_DATABASE_ID")
+	dir, err := os.MkdirTemp("", "ts-rules-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	exit, out, err := r.ts(dir, "rules", "pull", database, "--json")
+	if err != nil {
+		return err
+	}
+	var pulled struct {
+		Path    string      `json:"path"`
+		Version *string     `json:"version"`
+		Rules   v1.RulesSet `json:"rules"`
+	}
+	if err := json.Unmarshal(out, &pulled); err != nil || exit != 0 || pulled.Path != "terrascale.rules.json" {
+		return fmt.Errorf("ts rules pull: exit %d: %s", exit, out)
+	}
+	live, err := r.db.GetRules(r.ctx)
+	if err != nil && code(err) != "no_rules" {
+		return err
+	}
+	if err == nil && (pulled.Version == nil || *pulled.Version != live.Version) || err != nil && pulled.Version != nil {
+		return fmt.Errorf("ts rules pull version %v differs from the SDK", pulled.Version)
+	}
+	read := "row.id = auth.uid"
+	rules := v1.RulesSet{Tables: map[string]v1.RulesTable{r.table: {Read: &read, Columns: []string{"id", "label"}}}}
+	body, err := json.Marshal(rules)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "terrascale.rules.json"), body, 0o600); err != nil {
+		return err
+	}
+	exit, out, err = r.ts(dir, "rules", "deploy", database, "--yes", "--json")
+	if err != nil {
+		return err
+	}
+	var deployed v1.Rules
+	if err := json.Unmarshal(out, &deployed); err != nil || exit != 0 {
+		return fmt.Errorf("ts rules deploy: exit %d: %s", exit, out)
+	}
+	current, err := r.db.GetRules(r.ctx)
+	if err != nil {
+		return err
+	}
+	if current.Version != deployed.Version || pulled.Version != nil && deployed.Version == *pulled.Version ||
+		current.Tables[r.table].Read == nil || *current.Tables[r.table].Read != read {
+		return errors.New("ts rules deploy differs from the SDK read")
+	}
+	for _, uid := range []string{"owner", "other"} {
+		exit, out, err := r.ts(dir, "rules", "test", database, "--operation", "read", "--table", r.table,
+			"--auth", `{"uid":"`+uid+`"}`, "--row", `{"id":"owner","label":"a"}`, "--json")
+		if err != nil {
+			return err
+		}
+		var cli v1.RulesTestResult
+		if err := json.Unmarshal(out, &cli); err != nil {
+			return fmt.Errorf("ts rules test %s: exit %d: %s", uid, exit, out)
+		}
+		sdk, err := r.db.TestRules(r.ctx, v1.RulesTestRequest{Operation: "read", Table: r.table, Auth: v1.RulesTestAuth{UID: uid},
+			Row: map[string]any{"id": "owner", "label": "a"}})
+		if err != nil {
+			return err
+		}
+		allowed := uid == "owner"
+		if cli.Allowed != allowed || sdk.Allowed != allowed || (exit == 0) != allowed || cli.DecidedBy != sdk.DecidedBy ||
+			strings.Join(cli.Columns, ",") != strings.Join(sdk.Columns, ",") {
+			return fmt.Errorf("ts rules test %s: exit %d %+v, SDK %+v", uid, exit, cli, *sdk)
+		}
+	}
+	if pulled.Version != nil {
+		_, err = r.db.RestoreRules(r.ctx, *pulled.Version, &deployed.Version)
+	} else {
+		_, err = r.db.DeployRules(r.ctx, v1.RulesSet{Tables: map[string]v1.RulesTable{}}, &deployed.Version)
+	}
+	return err
 }

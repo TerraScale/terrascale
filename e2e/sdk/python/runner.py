@@ -338,6 +338,9 @@ def rules_manage(op):
             same(row.json()["row"], {"id": uid, "label": label}, "custom token readable row")
             hidden = browser.get(path + "700002")
             same([hidden.status_code, hidden.json()["error"]["code"]], [404, "row_not_found"], "custom token hidden row")
+            if issued is token:
+                update = browser.patch(path + created.json()["key"], json={"row": {"label": "changed"}})
+                same([update.status_code, update.json()["error"]["code"]], [403, "rule_denied"], "custom token denied update")
     db.execute(f"DELETE FROM {table} WHERE rowid = 700002 OR label IN ('custom-token','async-custom-token')")
     allowed = db.test_rules(RulesTestRequest("read", table, RulesTestAuth("owner", claims={"plan": "pro"}), row={"id": "owner"}))
     same([allowed.allowed, allowed.columns, allowed.problems], [True, ["id", "label"], []], "rules owner")

@@ -272,17 +272,16 @@
     },
     {
       "id": "rules.manage",
-      "requests": 21,
+      "requests": 22,
       "group": "a",
-      "sdks": ["dotnet", "go", "python", "rust"],
-      "title": "deploy Rules conditionally, get and page versions, simulate allow and deny, reject stale and invalid deployments, restore; mint a database-bound custom token and write and read an allowed row while hiding another user row"
+      "title": "deploy Rules conditionally, get and page versions, simulate allow and deny, reject stale and invalid deployments, restore; mint a database-bound custom token, write and read an allowed row, and get a hidden row and a denied update"
     },
     {
-      "id": "custom_tokens.mint",
+      "id": "rules.cli",
       "requests": 8,
       "group": "a",
-      "sdks": ["js"],
-      "title": "mint through the server JS SDK, write and read a row under Rules, hide another user's row"
+      "sdks": ["go"],
+      "title": "ts rules pull, deploy and test against the journey database; pull and deploy match the Go SDK's rules and the simulator answers match the Go SDK's"
     },
     {
       "id": "agent.create_ttl",

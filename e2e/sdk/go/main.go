@@ -524,6 +524,8 @@ func (r *runner) do(op operation) error {
 		return originRule(ctx, r.project, op.Cases)
 	case "rules.manage":
 		return r.rules()
+	case "rules.cli":
+		return r.rulesCLI()
 	case "functions.stats":
 		name := "stats-" + r.run
 		if _, err := r.db.DeployFunction(ctx, name, v1.FunctionRequest{Source: "async function handler() { return { ok: true }; }"}); err != nil {
