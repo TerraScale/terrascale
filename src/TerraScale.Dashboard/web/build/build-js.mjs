@@ -49,11 +49,18 @@ const shared = {
 const workers = {
   'editor-worker': resolve(monacoDist, 'editor-worker-main.mjs'),
   'json-worker': resolve(monacoDist, 'lsp/json/worker.mjs'),
+  'typescript-worker': resolve(monacoDist, 'lsp/typescript/worker.mjs'),
 };
 
 // The JSON language service would fetch any http(s) $schema a JSON buffer names,
 // from a worker the page's CSP does not govern; schemas stay local.
 const workerPatches = {
+  'lsp/typescript/worker.mjs': [
+    [/const libNames = Object\.keys\(libs\);/, 'const libNames = [];'],
+    [/if \(ext === "\.tsx" \|\| ext\?\.endsWith\("ts"\)\) \{/, 'if (ext === ".tsx" || ext?.endsWith("ts") || (this.#compilerOptions.checkJs && /\\.[cm]?jsx?$/.test(ext ?? ""))) {'],
+    [/const documentation = ts\.displayPartsToString\(details\.documentation\);/, 'const documentation = [ts.displayPartsToString(details.documentation), ...(details.tags ?? []).map(tagStringify)].join("\\n\\n");'],
+    [/signature\.documentation = ts\.displayPartsToString\(item\.documentation\);/, 'signature.documentation = [ts.displayPartsToString(item.documentation), ...(item.tags ?? []).map(tagStringify)].join("\\n\\n");'],
+  ],
   'lsp/json/worker.mjs': [
     [/return cache\.fetch\(url\)\.then\(\(res\) => res\.text\(\)\);/, 'return Promise.reject(new Error("Remote JSON schemas are disabled"));'],
   ],
@@ -80,6 +87,10 @@ function monacoPatches(workerFiles, codiconFile) {
       [/new URL\("\.\/editor-worker-main\.mjs", import\.meta\.url\)/, `new URL("./${workerFiles['editor-worker']}", import.meta.url)`],
       [/url\(data:font\/ttf;base64,[A-Za-z0-9+/=]+\)/, `url(/js/${codiconFile})`],
       styleElements,
+    ],
+    'lsp/typescript/setup.mjs': [
+      [/new URL\("\.\/worker\.mjs", import\.meta\.url\)/, `new URL("./${workerFiles['typescript-worker']}", import.meta.url)`],
+      [/types: typesStore\.types,/, 'types: { ...typesStore.types, ...languageSettings?.extraLibs },'],
     ],
     'lsp/json/setup.mjs': [
       [/new URL\("\.\/worker\.mjs", import\.meta\.url\)/, `new URL("./${workerFiles['json-worker']}", import.meta.url)`],

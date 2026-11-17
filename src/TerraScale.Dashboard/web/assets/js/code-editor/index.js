@@ -64,7 +64,8 @@ class CodeEditor extends HTMLElement {
     // A Uri per model: modern-monaco's fallback model URI is a plain string,
     // which Monaco's marker lookups never match, so diagnostics would not show.
     const language = this.dataset.language || 'plaintext';
-    const uri = api.Uri.file(`/${++models}/${textarea.name || 'field'}.${language}`);
+    const extension = language === 'javascript' ? 'js' : language;
+    const uri = api.Uri.file(`/${++models}/${textarea.name || 'field'}.${extension}`);
     const model = api.editor.createModel(textarea.value, language, uri);
     const editor = api.editor.create(container, {
       model,
