@@ -109,7 +109,6 @@ export const pingRegions = (root, signal) => {
     if (cached && Date.now() - cached.at < cacheTtlMs && cached.ms !== undefined) render(badge, cached.ms);
   }
   let cancelled = false;
-  signal.addEventListener('abort', () => { cancelled = true; });
   const run = async force => {
     if (selectable) clearLowest(badges);
     const settle = badges.map(async badge => {
@@ -128,10 +127,11 @@ export const pingRegions = (root, signal) => {
     await Promise.allSettled(settle);
   };
   run(false);
-  root.querySelector('[data-ping-refresh]')?.addEventListener('click', () => {
-    const entries = readCache();
-    for (const badge of badges) delete entries[urlOf(badge)];
-    writeCache(entries);
-    run(true);
-  }, { signal });
+  const interval = setInterval(() => {
+    if (document.visibilityState === 'visible') run(true);
+  }, 30_000);
+  signal.addEventListener('abort', () => {
+    cancelled = true;
+    clearInterval(interval);
+  }, { once: true });
 };

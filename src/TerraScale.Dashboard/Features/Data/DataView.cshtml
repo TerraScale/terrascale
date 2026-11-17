@@ -5,7 +5,7 @@
 @inject AssetUrls Assets
 <main class="ts-page" data-database-id="@Model.Database.Id">
 @(await RenderPartialAsync<TerraScale.Dashboard.Common.Databases.DatabaseFrame,DatabaseFrameModel>(new(Model.Database, "sql")))
-<header class="ts-page-header"><h1 class="ts-page-title">SQL editor</h1></header>
+<h1 class="ts-sr-only">SQL editor</h1>
 @{ var catalog = Model.Catalog ?? SqlCatalog.Empty; }
 <div class="ts-data-sql" data-sql-catalog="sql-catalog" data-sql-diagnostics="sql-diagnostics" data-sql-check="/api/v1/dashboard/data/sql/check">
 <script type="application/json" id="sql-catalog" nonce="@Model.Shell.Nonce">@(new Microsoft.AspNetCore.Html.HtmlString(JsonSerializer.Serialize(catalog,new JsonSerializerOptions(JsonSerializerDefaults.Web))))</script>
