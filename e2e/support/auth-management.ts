@@ -194,7 +194,7 @@ export async function prepareAuthManagement(page: Page, sdk: string, current: Au
   await page.goto('/api-keys?create=key');
   const csrf = await page.locator('#create-key input[name="_csrf"]').inputValue();
   const keys: string[] = [];
-  for (const level of ['read', 'write', 'tokens:mint']) {
+  for (const level of ['read', 'write']) {
     const created = await page.request.post('/api/v1/dashboard/credentials/key', {
       headers: { Accept: 'application/json' },
       form: { _csrf: csrf, name: `auth-${sdk}-${level}`, scopes: `auth:${level}` },
@@ -204,8 +204,14 @@ export async function prepareAuthManagement(page: Page, sdk: string, current: Au
     saveSecret(`auth-${sdk}-${level}`, key);
     keys.push(key);
   }
-  const [readKey, writeKey, mintKey] = keys;
+  const [readKey, writeKey] = keys;
   const ownerToken = await signInToken(page.request, 'auth-owner');
+  const minter = await page.request.post(`${auth}/v1/terrascale/organizations/${current.organizationId}/projects/${current.projectId}/api-keys`, {
+    headers: { Authorization: 'Bearer ' + ownerToken }, data: { name: `auth-${sdk}-tokens-mint`, scopes: ['auth:tokens:mint'] },
+  });
+  expect(minter.status()).toBe(201);
+  const mintKey = (await minter.json()).key as string;
+  saveSecret(`auth-${sdk}-tokens:mint`, mintKey);
   if (sdk === 'dotnet') await checkMemberAuthority(page, writeKey, ownerToken);
   const email = await newAddress(`auth-${sdk}-${current.runId}`);
   const started = await page.request.post(`${auth}/ui/${current.projectId}/sign-up`, {

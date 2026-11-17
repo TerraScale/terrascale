@@ -291,7 +291,7 @@ const operations = {
     const exchange = await fetch('https://auth.terrascale.tech/terrascale/oauth/token', {
       method: 'POST',
       headers: { Authorization: 'Basic ' + Buffer.from(keyId + ':' + apiKey).toString('base64') },
-      body: new URLSearchParams({ grant_type: 'client_credentials', project, scope: 'sql:read sql:write' }),
+      body: new URLSearchParams({ grant_type: 'client_credentials', project, scope: 'databases:read databases:write' }),
     });
     same(exchange.status, 200, 'Rules owner token');
     const ownerToken = (await exchange.json()).access_token;
@@ -323,7 +323,9 @@ const operations = {
       const identity = createTerraScaleProjectIdentityClient({
         apiBaseUrl: 'https://auth.terrascale.tech', project, projectApiKey: process.env.E2E_AUTH_MINT_KEY,
       });
-      const token = await identity.mintEndUserToken({ user_id: user, database, claims: { plan: 'pro', roles: ['editor'] } });
+      const minted = await identity.mintEndUserToken({ user_id: user, database, claims: { plan: 'pro', roles: ['editor'] } });
+      check(minted.ok, `custom token mint: ${minted.ok ? '' : `${minted.status} ${minted.error.code} ${minted.error.message}`}`);
+      const token = minted.value;
       writeFileSync(join(process.env.E2E_SECRETS, 'custom-token-js'), token.access_token, { mode: 0o600 });
       same([token.token_type, token.expires_in], ['Bearer', 300], 'custom token lifetime');
       await state.db.execute('INSERT INTO ' + table + "(rowid,id,label) VALUES (700002,'other','hidden')");
