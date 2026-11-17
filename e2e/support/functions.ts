@@ -34,6 +34,8 @@ type FunctionTools = {
   list_functions: { functions: { name: string }[] };
   get_function: { function: { source: string }; invokeUrl: string };
   list_function_logs: { logs: { lines: string[] }[] };
+  get_function_stats: { window: string; invocations: number; errors: number; p50Ms: number; p95Ms: number; p99Ms: number; maxMs: number; sqlCalls: number; rowsRead: number; rowsWritten: number;
+    buckets: { at: string; invocations: number; errors: number; p50Ms: number; p95Ms: number }[]; error?: { code: string; message: string } };
 };
 
 export async function functionTool<T extends keyof FunctionTools>(request: APIRequestContext, token: string, name: T, args: Record<string, unknown>, isError = false): Promise<FunctionTools[T]> {
@@ -48,10 +50,12 @@ export async function functionTool<T extends keyof FunctionTools>(request: APIRe
     : JSON.parse(body);
   expect(message.error, `MCP ${name} protocol`).toBeUndefined();
   expect(message.result.isError === true, `MCP ${name} result`).toBe(isError);
-  if (['get_functions_reference', 'deploy_function', 'invoke_function'].includes(name)) {
+  if (['get_functions_reference', 'deploy_function', 'invoke_function', 'get_function_stats'].includes(name)) {
     const result = message.result.structuredContent;
-    const trimmed = name === 'get_functions_reference' ? { reference: result.reference.slice(0, 220) + ' [trimmed]' } : result;
-    console.log('Functions MCP transcript ' + JSON.stringify({ request: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }, response: { jsonrpc: '2.0', id: 1, result: { isError: message.result.isError === true, structuredContent: trimmed } } }));
+    const bucketCount = name === 'get_function_stats' && !isError ? result.buckets.length : undefined;
+    const trimmed = name === 'get_functions_reference' ? { reference: result.reference.slice(0, 220) + ' [trimmed]' }
+      : bucketCount !== undefined ? { ...result, buckets: result.buckets.slice(0, 1) } : result;
+    console.log('Functions MCP transcript ' + JSON.stringify({ request: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }, response: { jsonrpc: '2.0', id: 1, result: { isError: message.result.isError === true, structuredContent: trimmed } }, bucketCount }));
   }
   return message.result.structuredContent;
 }

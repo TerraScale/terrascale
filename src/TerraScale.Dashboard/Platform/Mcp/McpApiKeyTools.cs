@@ -29,7 +29,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
             "get_context", "list_databases", "get_database", "create_database", "fork_database", "set_database_ttl", "delete_database",
             "execute_sql", "run_sql", "check_sql", "get_database_schema", "create_scoped_key",
             "create_backup", "restore_backup", "get_restore_status",
-            "get_functions_reference", "deploy_function", "invoke_function", "list_functions", "get_function", "list_function_logs",
+            "get_functions_reference", "deploy_function", "invoke_function", "list_functions", "get_function", "list_function_logs", "get_function_stats",
             "delete_project", "delete_saved_query", "delete_function", "delete_file_bucket", "delete_file"
         };
 
@@ -118,7 +118,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                     throw new AccountAccessException("Scoped key minting was refused. The parent key must be active, unscoped and grant the requested database and access.", (int)(error.StatusCode ?? HttpStatusCode.BadGateway));
                 }
             }
-            var functionTool = tool is "deploy_function" or "invoke_function" or "list_functions" or "get_function" or "list_function_logs";
+            var functionTool = tool is "deploy_function" or "invoke_function" or "list_functions" or "get_function" or "list_function_logs" or "get_function_stats";
             var write = functionTool && tool != "invoke_function" || tool is "create_database" or "fork_database" or "set_database_ttl" or "create_backup" or "restore_backup";
             var dataTool = functionTool || tool is "execute_sql" or "run_sql" or "check_sql" or "get_database_schema";
             var sql = Text("sql").Trim();
@@ -201,6 +201,13 @@ namespace TerraScale.Dashboard.Platform.Mcp
                                 var logs = (await AtHomeAsync(async client => await client.LogsAsync(scope.ProjectId, databaseId, name, 25), ct)).Select(FunctionBackend.Invocation).ToArray();
                                 FunctionBackend.Validate(logs);
                                 return FunctionMcpOutput.Reply(new McpFunctionLogs(logs), FunctionMcpJson.Default.McpFunctionLogs);
+                            case "get_function_stats":
+                                var window = Text("window", "24h");
+                                if (window is not ("1h" or "24h" or "7d")) return FunctionMcpOutput.Invalid("validation", "window must be 1h, 24h or 7d");
+                                var stats = await AtHomeAsync(async client => await client.StatsAsync(scope.ProjectId, databaseId, name, window), ct);
+                                FunctionBackend.Validate(stats);
+                                if (stats.Window != window) throw new JsonException("Functions returned the wrong stats window.");
+                                return FunctionMcpOutput.Reply(stats, FunctionMcpJson.Default.TerraBaseFunctionStats);
                         }
 
                         string InvokeUrl(string functionName) => "https://api.terrascale.tech/v1/projects/" + Uri.EscapeDataString(scope.ProjectId)
