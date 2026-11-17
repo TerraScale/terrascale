@@ -81,6 +81,12 @@ pub enum Error {
         status: Option<u16>,
         error: SqlError,
     },
+    #[error("terrabase: 412 version_mismatch")]
+    VersionMismatch,
+    #[error("terrabase: 428 precondition_required")]
+    PreconditionRequired,
+    #[error("terrabase: 400 invalid_rules")]
+    InvalidRules { problems: Vec<super::RulesProblem> },
     /// Any other non-2xx response.
     #[error("terrabase: {status} {code}{}", fmt_msg(message))]
     Api {
@@ -192,6 +198,9 @@ impl Error {
             Self::Forbidden => 403,
             Self::InvalidKey | Self::KeyRevoked { .. } | Self::KeyExpired { .. } => 401,
             Self::InternalError => 500,
+            Self::VersionMismatch => 412,
+            Self::PreconditionRequired => 428,
+            Self::InvalidRules { .. } => 400,
             Self::Api { status, .. } => *status,
             Self::Sql { status, .. } => return *status,
             Self::Transport(_) | Self::InvalidInput(_) | Self::Decode(_) => return None,
@@ -213,6 +222,9 @@ impl Error {
             Self::KeyRevoked { .. } => "key_revoked",
             Self::KeyExpired { .. } => "key_expired",
             Self::InternalError => "internal_error",
+            Self::VersionMismatch => "version_mismatch",
+            Self::PreconditionRequired => "precondition_required",
+            Self::InvalidRules { .. } => "invalid_rules",
             Self::Api { code, .. } => code,
             Self::Sql { error, .. } => &error.code,
             Self::ResponseTooLarge { .. }
@@ -383,6 +395,32 @@ pub(crate) fn from_response(status: u16, retry_after: Option<Duration>, body: &[
         };
     }
     match (status, code.as_str()) {
+        (412, "version_mismatch") => Error::VersionMismatch,
+        (428, "precondition_required") => Error::PreconditionRequired,
+        (400, "invalid_rules") => {
+            #[derive(Deserialize)]
+            struct Details {
+                problems: Vec<super::RulesProblem>,
+            }
+            #[derive(Deserialize)]
+            struct Invalid {
+                details: Details,
+            }
+            match raw
+                .as_ref()
+                .and_then(|r| serde_json::from_str::<Invalid>(r.get()).ok())
+            {
+                Some(invalid) => Error::InvalidRules {
+                    problems: invalid.details.problems,
+                },
+                None => Error::Api {
+                    status,
+                    code,
+                    message,
+                    details: raw,
+                },
+            }
+        }
         (404, "not_found") => Error::NotFound,
         (421, "home_region_required") => Error::HomeRegionRequired,
         (503, "commit_uncertain") => Error::CommitUncertain,

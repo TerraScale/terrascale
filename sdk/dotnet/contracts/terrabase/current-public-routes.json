@@ -1,5 +1,5 @@
 {
-  "serverCommit": "a8fc2729137590fe24b4b2e98d804d3f3b0842e4",
+  "serverCommit": "074168049478cd0ec5e882e86471919950c24e79",
   "scope": "TerraBase /openapi/v1.json public inventory (ApiReferenceExtensions.ShouldInclude) at serverCommit",
   "operations": [
     {
@@ -283,11 +283,6 @@
       "operation": "connectSql"
     },
     {
-      "method": "GET",
-      "path": "/v1/projects/{project}/databases/{database}/tables/{table}/rows/{key}",
-      "operation": "getRow"
-    },
-    {
       "method": "POST",
       "path": "/v1/projects/{project}/databases/{database}/tables/{table}/rows",
       "operation": "createRow"
@@ -296,6 +291,11 @@
       "method": "DELETE",
       "path": "/v1/projects/{project}/databases/{database}/tables/{table}/rows/{key}",
       "operation": "deleteRow"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/tables/{table}/rows/{key}",
+      "operation": "getRow"
     },
     {
       "method": "PATCH",

@@ -295,6 +295,43 @@ def ids(op):
     same([is_valid_id(new_id()), is_valid_id(op["invalid"])], [True, False], "validation")
 
 
+def rules_manage(op):
+    from terrascale.database_rules import RulesSet, RulesTable, RulesTestAuth, RulesTestRequest
+    from terrascale.errors import InvalidRulesError, NotFoundError, VersionMismatchError
+
+    db = state["db"]
+    before = None
+    try:
+        before = db.get_rules()
+    except NotFoundError as error:
+        same(error.code, "no_rules", "missing rules")
+    rules = RulesSet({table: RulesTable(read="row.id = auth.uid", columns=["id", "label"])})
+    deployed = db.deploy_rules(rules, before.version if before else None)
+    got = db.get_rules()
+    same([got.version, got.tables], [deployed.version, rules.tables], "rules read")
+    allowed = db.test_rules(RulesTestRequest("read", table, RulesTestAuth("owner"), row={"id": "owner"}))
+    same([allowed.allowed, allowed.columns, allowed.problems], [True, ["id", "label"], []], "rules owner")
+    denied = db.test_rules(RulesTestRequest("read", table, RulesTestAuth("other"), row={"id": "owner"}))
+    same([denied.allowed, denied.decided_by], [False, "read"], "rules other user")
+    invalid = refused(lambda: db.deploy_rules(RulesSet({table: RulesTable(columns=["missing_column"])}), deployed.version))
+    same([isinstance(invalid, InvalidRulesError), invalid.status, bool(invalid.problems)], [True, 400, True], "invalid rules")
+    stale = refused(lambda: db.deploy_rules(rules, None))
+    same([isinstance(stale, VersionMismatchError), stale.status], [True, 412], "stale rules")
+    updated = db.deploy_rules(RulesSet({}), deployed.version)
+    page = db.list_rules_versions(limit=1)
+    same([len(page.items), page.items[0].version, bool(page.next)], [1, updated.version, True], "rules first page")
+    next_page = db.list_rules_versions(after=page.next, limit=1)
+    same([len(next_page.items), next_page.items[0].version], [1, deployed.version], "rules second page")
+    version = db.get_rules_version(deployed.version)
+    same([version.version, version.tables], [deployed.version, rules.tables], "rules version")
+    restored = db.restore_rules(deployed.version, updated.version)
+    same([restored.version != deployed.version, restored.tables], [True, rules.tables], "rules restore")
+    if before:
+        db.restore_rules(before.version, restored.version)
+    else:
+        db.deploy_rules(RulesSet({}), restored.version)
+
+
 def functions_stats(op):
     from terrascale.functions import DatabaseFunctions, FunctionDeployment
 
@@ -505,6 +542,7 @@ operations = {
     "ids.new_validate": ids,
     "origin.rule": origin_rule,
     "functions.stats": functions_stats,
+    "rules.manage": rules_manage,
     "agent.create_ttl": create_ttl,
     "agent.set_ttl": set_ttl,
     "agent.clear_ttl": clear_ttl,
@@ -520,6 +558,7 @@ group = [
     op
     for op in spec["operations"]
     if op["group"] == os.environ["E2E_GROUP"]
+    and ("sdks" not in op or "python" in op["sdks"])
     and ("needs" not in op or os.environ.get("E2E_REGIONS") == "2" and op["id"].startswith("placement."))
 ]
 if os.environ["E2E_GROUP"] in ("a", "c"):

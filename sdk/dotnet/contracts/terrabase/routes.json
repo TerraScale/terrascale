@@ -231,6 +231,42 @@
       "operation": "connectShapeHints",
       "method": "GET",
       "path": "/v1/projects/{project}/databases/{database}/tables/{table}/shape/ws"
+    },
+    {
+      "client": "database",
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/rules",
+      "operation": "getDatabaseRules"
+    },
+    {
+      "client": "database",
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/rules/versions/{version}",
+      "operation": "getDatabaseRulesVersion"
+    },
+    {
+      "client": "database",
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/rules/versions",
+      "operation": "listDatabaseRulesVersions"
+    },
+    {
+      "client": "database",
+      "method": "PUT",
+      "path": "/v1/projects/{project}/databases/{database}/rules",
+      "operation": "putDatabaseRules"
+    },
+    {
+      "client": "database",
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/rules/versions/{version}/restore",
+      "operation": "restoreDatabaseRulesVersion"
+    },
+    {
+      "client": "database",
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/rules:test",
+      "operation": "testDatabaseRules"
     }
   ],
   "producerCommit": "2445e81e60e1832a6589553a236a470fde49ecff"

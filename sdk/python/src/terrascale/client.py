@@ -13,6 +13,7 @@ import httpx
 from . import _spec, models
 from . import auth_organizations as _organizations
 from . import backups as _backups
+from . import database_rules as _rules
 from . import sql as _sql
 from ._spec import Call
 from ._version import __version__
@@ -626,6 +627,24 @@ class Database:
 
     def info(self) -> models.Database:
         return self._c._send(_spec.get_database(*self._p))
+
+    def get_rules(self) -> _rules.Rules:
+        return self._c._send(_rules.rules_call(*self._p, "get"))
+
+    def deploy_rules(self, rules: _rules.RulesSet, current_version: str | None) -> _rules.Rules:
+        return self._c._send(_rules.rules_call(*self._p, "deploy", rules=rules, current_version=current_version))
+
+    def list_rules_versions(self, *, after: str | None = None, limit: int | None = None) -> _rules.RulesVersionPage:
+        return self._c._send(_rules.rules_call(*self._p, "versions", after=after, limit=limit))
+
+    def get_rules_version(self, version: str) -> _rules.Rules:
+        return self._c._send(_rules.rules_call(*self._p, "version", version=version))
+
+    def restore_rules(self, version: str, current_version: str | None) -> _rules.Rules:
+        return self._c._send(_rules.rules_call(*self._p, "restore", version=version, current_version=current_version))
+
+    def test_rules(self, request: _rules.RulesTestRequest) -> _rules.RulesTestResult:
+        return self._c._send(_rules.rules_call(*self._p, "test", request=request))
 
     def list_database_logs(self, status: str | None = None) -> models.DatabaseRequestLogs:
         """The newest 100 recorded requests within 24 hours; ``status`` filters by HTTP status class.

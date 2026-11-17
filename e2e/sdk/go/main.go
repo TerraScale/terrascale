@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 )
 
 type operation struct {
+	SDKs          []string       `json:"sdks"`
 	PasswordHash  string         `json:"password_hash"`
 	ID            string         `json:"id"`
 	Group         string         `json:"group"`
@@ -520,6 +522,8 @@ func (r *runner) do(op operation) error {
 		return r.placementSet()
 	case "origin.rule":
 		return originRule(ctx, r.project, op.Cases)
+	case "rules.manage":
+		return r.rules()
 	case "functions.stats":
 		name := "stats-" + r.run
 		if _, err := r.db.DeployFunction(ctx, name, v1.FunctionRequest{Source: "async function handler() { return { ok: true }; }"}); err != nil {
@@ -751,7 +755,7 @@ func main() {
 	}
 	failed := false
 	for _, op := range spec.Operations {
-		if op.Group != group || op.Needs != "" && !(os.Getenv("E2E_REGIONS") == "2" && strings.HasPrefix(op.ID, "placement.")) {
+		if len(op.SDKs) > 0 && !slices.Contains(op.SDKs, "go") || op.Group != group || op.Needs != "" && !(os.Getenv("E2E_REGIONS") == "2" && strings.HasPrefix(op.ID, "placement.")) {
 			continue
 		}
 		started := time.Now()

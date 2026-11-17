@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add database Rules management, pagination, simulator and typed Rules errors to synchronous and asynchronous clients.
+
+## Unreleased
+
 - `create_api_key` on the client and the async client no longer takes
   `step_up_proof`: ts-auth creates an API key without a confirmation proof and
   issues no proof for key creation. A call that still passes it raises

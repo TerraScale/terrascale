@@ -271,6 +271,13 @@
       "title": "deploy a function, invoke it and read aggregated invocation stats"
     },
     {
+      "id": "rules.manage",
+      "requests": 13,
+      "group": "a",
+      "sdks": ["dotnet", "go", "python", "rust"],
+      "title": "deploy Rules conditionally, get and page versions, simulate allow and deny, reject stale and invalid deployments, restore"
+    },
+    {
       "id": "agent.create_ttl",
       "group": "b",
       "title": "createDatabase with a TTL",

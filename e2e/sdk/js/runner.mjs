@@ -342,7 +342,7 @@ const operations = {
   },
 };
 
-const group = spec.operations.filter((op) => op.group === process.env.E2E_GROUP && (!op.needs || process.env.E2E_REGIONS === '2' && op.id.startsWith('placement.')));
+const group = spec.operations.filter((op) => op.group === process.env.E2E_GROUP && (!op.sdks || op.sdks.includes("js")) && (!op.needs || process.env.E2E_REGIONS === '2' && op.id.startsWith('placement.')));
 state.db = ['a', 'c'].includes(process.env.E2E_GROUP) ? client.database(process.env.TERRASCALE_DATABASE_NAME) : undefined;
 let failed = false;
 for (const op of group) {
