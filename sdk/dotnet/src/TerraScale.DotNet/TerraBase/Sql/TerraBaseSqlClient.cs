@@ -150,6 +150,9 @@ public sealed class TerraBaseSqlDatabase
         this.path = path;
     }
 
+    /// <summary>Creates a live table view; each WatchAsync enumeration owns its connection and row set.</summary>
+    public LiveShape Shape(string table, ShapeOptions? options = null) => new(connection, path, table, options ?? new());
+
     /// <summary>Reads selected regions and writer-observed pull progress; a pull is not an application acknowledgement.</summary>
     public async Task<TerraBaseDatabaseRegions> GetRegionsAsync(CancellationToken cancellationToken = default) =>
         (await connection.SendAsync(HttpMethod.Get, path + "/regions", null,
