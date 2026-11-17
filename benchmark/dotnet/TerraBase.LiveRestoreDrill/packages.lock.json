@@ -166,11 +166,6 @@
           "Microsoft.Extensions.Logging": "11.0.0"
         }
       },
-      "Microsoft.Extensions.ObjectPool": {
-        "type": "Transitive",
-        "resolved": "8.0.1",
-        "contentHash": "X21b8D6z58EG34OMLH955750mFaEaGs5xLGe9Vyi3059Cgb3sk+p2k/JlQXaieEBRrk+SVlFzDei3Q6PdVzJOA=="
-      },
       "Microsoft.IdentityModel.Abstractions": {
         "type": "Transitive",
         "resolved": "8.23.0",
@@ -452,6 +447,12 @@
         "resolved": "1.3.1",
         "contentHash": "VIo1LtpoFvp5LlCDkTiQsKrjX+GMA7N37OEJoqHMhCOdIeNoi8uFocnwi8h3TklSySB3U4Y1+gThB00fJTnfGA=="
       },
+      "SqlParser": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.Extensions.ObjectPool": "[11.0.0, )"
+        }
+      },
       "terrabase": {
         "type": "Project",
         "dependencies": {
@@ -472,7 +473,7 @@
           "OpenTelemetry.Exporter.Prometheus.AspNetCore": "[1.19.1-beta.1, )",
           "OpenTelemetry.Extensions.Hosting": "[1.19.1, )",
           "OpenTelemetry.Instrumentation.Runtime": "[1.19.0, )",
-          "SqlParserCS": "[0.6.5, )",
+          "SqlParser": "[0.6.5, )",
           "TerraScale.Endpoints": "[1.0.0, )",
           "TerraScale.Logging": "[1.0.0, )",
           "TerraScale.TerraBase.Rpc": "[1.0.0, )",
@@ -748,6 +749,12 @@
           "Microsoft.Extensions.Options.ConfigurationExtensions": "11.0.0"
         }
       },
+      "Microsoft.Extensions.ObjectPool": {
+        "type": "CentralTransitive",
+        "requested": "[11.0.0, )",
+        "resolved": "11.0.0",
+        "contentHash": "RdBrj+XP4290tK/fegTdMQQkHLflX6ir2NagnjOGbi8T4QF+Vsz8To11xp2zy6sjp7eQVv/XXYGH2hZ43FED/w=="
+      },
       "Microsoft.Extensions.Options.ConfigurationExtensions": {
         "type": "CentralTransitive",
         "requested": "[11.0.0, )",
@@ -852,15 +859,6 @@
         "requested": "[2.17.13, )",
         "resolved": "2.17.13",
         "contentHash": "+R0eJtJIIHW9owY61rIOgR2lywjZnjqUPAM7ll+lZYML7mZ4LxokG6wpAmkuyaLS1Ml4fI4kdAC2U6KkdrDDiA=="
-      },
-      "SqlParserCS": {
-        "type": "CentralTransitive",
-        "requested": "[0.6.5, )",
-        "resolved": "0.6.5",
-        "contentHash": "IKLnqJCGYrZPVpSUIBS+63c19YzETWN+/qY+KSili715vEmiNcJsH7XOTwBurhWbFaiUwkJcS2eYvgN9BmZUeA==",
-        "dependencies": {
-          "Microsoft.Extensions.ObjectPool": "8.0.1"
-        }
       },
       "Ulid": {
         "type": "CentralTransitive",

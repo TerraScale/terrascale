@@ -1,0 +1,63 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<LangVersion>12.0</LangVersion>
+		<TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<Title>SqlParser - Extensible SQL Parser for .NET</Title>
+		<Authors>Tyler Brinks</Authors>
+		<Company />
+		<Description>Friendly SQL Parser for .NET</Description>
+		<Copyright>2026 Tyler Brinks</Copyright>
+		<PackageProjectUrl>https://github.com/TylerBrinks/SqlParser-cs</PackageProjectUrl>
+		<RepositoryUrl>https://github.com/TylerBrinks/SqlParser-cs</RepositoryUrl>
+		<RepositoryType>git</RepositoryType>
+		<PublishRepositoryUrl>true</PublishRepositoryUrl>
+		<PackageTags>SQL, Parser,Lexer, AST, Dialect, Postgres, MySQL, MsSql, Redshift, Snowflake, SQLite</PackageTags>
+		<PackageIcon>icon.jpg</PackageIcon>
+		<PackageId>SqlParserCS</PackageId>
+		<PublishRepositoryUrl>true</PublishRepositoryUrl>
+		<GenerateAssemblyConfigurationAttribute>false</GenerateAssemblyConfigurationAttribute>
+		<GenerateAssemblyCompanyAttribute>false</GenerateAssemblyCompanyAttribute>
+		<GenerateAssemblyProductAttribute>false</GenerateAssemblyProductAttribute>
+		<SignAssembly>true</SignAssembly>
+		<AssemblyOriginatorKeyFile>sqlparser.snk</AssemblyOriginatorKeyFile>
+		<EmbedUntrackedSources>true</EmbedUntrackedSources>
+		<IncludeSymbols>true</IncludeSymbols>
+		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
+		<PackageReadmeFile>README.md</PackageReadmeFile>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<InternalsVisibleTo Include="SqlParser.Tests, PublicKey=002400000480000094000000060200000024000052534131000400000100010099467834d460ca875e5d2c8f2320f197aa5cc1e4f11186ec69ed29f0eb866afd16bf403d82854a4590d2b36af8f46b974acc55a5a409c0b1c83182125d840527fd930979046a9f6646d86ceceb0e886136c37463ae195b78622b387ee0ddc2fc51b0c081d03b270fcc81aad3d4979d2bc47d0fb20f8698291e034e352c9758a9" />
+	</ItemGroup>
+	<ItemGroup>
+		<ProjectCapability Include="ConfigurableFileNesting" />
+		<ProjectCapability Include="ConfigurableFileNestingFeatureEnabled" />
+	</ItemGroup>
+	<ItemGroup>
+		<Compile Remove="Docs\**" />
+		<EmbeddedResource Remove="Docs\**" />
+		<None Remove="Docs\**" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<None Remove="sqlparser.snk" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <None Include="..\..\docs\images\icon.jpg">
+	    <Pack>True</Pack>
+	    <PackagePath>\</PackagePath>
+	  </None>
+	  <None Include="..\..\README.md">
+	    <Pack>True</Pack>
+	    <PackagePath>\</PackagePath>
+	  </None>
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.Extensions.ObjectPool" Version="8.0.1" />
+	</ItemGroup>
+</Project>

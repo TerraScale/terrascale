@@ -47,6 +47,7 @@
     <PackageVersion Include="Microsoft.Extensions.Http" Version="11.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Logging" Version="11.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Configuration" Version="11.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.ObjectPool" Version="11.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="11.0.0" />
   </ItemGroup>
   <!-- Interpolated log calls (src/TerraBase, src/TerraScale.Logging) and allocation-light strings on hot paths:
@@ -118,10 +119,6 @@
     <PackageVersion Include="NativeCompressions" Version="0.6.1" />
     <PackageVersion Include="Ulid" Version="1.4.1" />
     <PackageVersion Include="NUlid" Version="1.7.3" />
-  </ItemGroup>
-  <!-- Management SQL subset (Features/Management/Queries): parses read-only SELECT into engine queries. -->
-  <ItemGroup Label="SQL parsing">
-    <PackageVersion Include="SqlParserCS" Version="0.6.5" />
   </ItemGroup>
   <!-- Benchmarks (benchmark/dotnet): BenchmarkDotNet 0.16 is the first release with net11.0 support. -->
   <ItemGroup Label="Benchmarks">

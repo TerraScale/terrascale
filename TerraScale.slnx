@@ -18,6 +18,7 @@
     <Project Path="src/TerraScale.TerraBase.Rpc/TerraScale.TerraBase.Rpc.csproj" />
   </Folder>
   <Folder Name="/vendor/">
+    <Project Path="src/vendor/SqlParserCS/SqlParserCS.csproj" />
     <Project Path="src/vendor/Turso.Data.Sqlite/src/Turso.Raw/Turso.Raw.csproj" />
     <Project Path="src/vendor/Turso.Data.Sqlite/src/Turso.Data/Turso.Data.csproj" />
     <Project Path="src/vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/Turso.Data.Sqlite.csproj" />
