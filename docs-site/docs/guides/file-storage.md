@@ -38,7 +38,7 @@ Bucket creation, listing, access-rule changes and deletion require unrestricted 
 
 ## Upload and download in your application
 
-Use the user's project sign-in access token, or a custom token your backend mints for the signed-in user, as described in [end-user authentication](/guides/end-user-authentication#data-access-for-your-users); a custom token is never minted in the browser. Bucket role policies match the trusted claim `claims.roles`. An ID token or a token intended only for your own API does not authorize file access. Your token provider should return a current access token for each request.
+Use the user's project sign-in access token, or a custom token without a database restriction that your backend mints for the signed-in user, as described in [end-user authentication](/guides/end-user-authentication#data-access-for-your-users); a custom token is never minted in the browser. Bucket role policies match the trusted claim `claims.roles`. An ID token or a token intended only for your own API does not authorize file access. Your token provider should return a current access token for each request.
 
 ```js
 import { createTerraBaseClient } from '@terrascale/sdk'
@@ -62,16 +62,16 @@ await bucket.deleteFile(file.id)
 
 `upload()` accepts a `Blob` or `Uint8Array`, takes a private byte snapshot, computes its SHA-256 checksum, requests a signed upload URL, sends the bytes, then verifies completion. The SDK does not forward the project or user token to the signed URL. Files contain 1–104857600 bytes (100 MiB), and metadata is a JSON object of at most 16 KiB.
 
-The API denies a different user access with 403 unless a read or write grant permits that operation. Lists include only readable completed files, with permission filtering applied before pagination. Pass `{ after: page.next }` to continue a list when `next` is non-null. Pages contain up to 50 items. All SDK operations accept an abort signal in their options.
+The API denies a different user access with 403 unless a read or write policy permits that operation. Lists include only readable completed files, with permission filtering applied before pagination. Pass `{ after: page.next }` to continue a list when `next` is non-null. Pages contain up to 50 items. All SDK operations accept an abort signal in their options.
 
-## Owner, public and role grants
+## Owner, public and role policies
 
-Read and write policies are independent. Any matching grant permits that operation; missing grants deny it.
+Read and write policies are independent. Any matching policy permits that operation; missing policies deny it.
 
-| Grant | Who it permits |
+| Policy | Who it permits |
 | --- | --- |
 | `owner: true` | The end user whose signed subject matches the owner field in file metadata |
-| `public: true` | All authenticated end users of the project; it does not allow anonymous access |
+| `public: true` | Signed-in users who are not guests; guests need `guests: true` on the policy |
 | `roles: ['editor']` | End users with a matching trusted ts-auth role; role names are case-sensitive |
 
 For example, let every signed-in user read avatars while only their owner can write:
@@ -84,7 +84,7 @@ await admin.storage.bucket(bucketId).setRules({
 })
 ```
 
-Role grants must come from the signed token. Adding a role to file metadata does not grant that role.
+Roles must come from the signed token's trusted `claims.roles` list. Adding a role to file metadata does not assign that role.
 
 ## Signed transfers
 
