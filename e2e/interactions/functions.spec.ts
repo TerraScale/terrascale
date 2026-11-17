@@ -191,6 +191,18 @@ test('function metrics include SQL calls and zero-filled latency buckets', async
   expect(logs).toHaveLength(2);
   expect(logs[0]).toMatchObject({ sqlCalls: 1, rowsRead: 0, rowsWritten: 0, responseBytes: 11, httpStatus: 201 });
   expect(logs[0].sqlMs).toBeGreaterThanOrEqual(0);
+  expect(logs[0].sqlMs).toBeLessThanOrEqual(logs[0].durationMs);
+  const failedSource = 'async function handler() { await sql.query("SELECT 1 AS ok"); throw new Error("metrics failure"); }';
+  expect((await request.put(url, { headers, data: { source: failedSource } })).status()).toBe(200);
+  const failed = await request.post(`${url}/invoke`, { headers, data: {} });
+  expect(failed.status()).toBe(500);
+  expect((await failed.json()).error.code).toBe('function_error');
+  const failedLogs = await request.get(`${url}/logs?limit=1`, { headers });
+  expect(failedLogs.status()).toBe(200);
+  expect((await failedLogs.json())[0]).toMatchObject({ status: 'error', sqlCalls: 1, httpStatus: null });
+  const failedStats = await request.get(`${url}/stats`, { headers });
+  expect(failedStats.status()).toBe(200);
+  expect(await failedStats.json()).toMatchObject({ invocations: 3, errors: 1, sqlCalls: 3 });
   const invalid = await request.get(`${url}/stats?window=2h`, { headers });
   expect(invalid.status()).toBe(400);
   expect((await invalid.json()).error.code).toBe('invalid_request');
