@@ -507,11 +507,15 @@ export async function checkMachineClient(page: Page, ownerToken: string, project
   const context = page.request;
   const proof = await stepUp(context, ownerToken, 'create_oauth_client', password);
   const clients = auth + '/v1/' + project + '/clients';
-  const created = await context.post(clients, {
+  const machineClient = (allowed_audiences: string[]) => context.post(clients, {
     headers: { Authorization: 'Bearer ' + ownerToken, 'X-TerraScale-Step-Up-Proof': proof },
     data: { name: 'journey machine', type: 'machine', redirect_uris: [], allowed_scopes: ['invoices:read'],
-      allowed_audiences: ['https://invoices.example', dataAudience], token_lifetime_minutes: 15 },
+      allowed_audiences, token_lifetime_minutes: 15 },
   });
+  const dataClient = await machineClient(['https://invoices.example', dataAudience]);
+  expect(dataClient.status(), 'a machine client naming the data audience').toBe(400);
+  expect((await dataClient.json()).error.code).toBe('invalid_request');
+  const created = await machineClient(['https://invoices.example']);
   expect(created.status()).toBe(201);
   const client = await created.json();
   saveSecret('machine-client-secret', client.client_secret);
@@ -547,10 +551,7 @@ export async function checkMachineClient(page: Page, ownerToken: string, project
   const wrongAudience = await context.post(endpoint, { form: { ...form, resource: 'https://other.example' } });
   expect(wrongAudience.status()).toBe(400);
   const dataGrant = await context.post(endpoint, { form: { ...form, resource: dataAudience } });
-  expect(dataGrant.status(), 'a machine token for the data audience').toBe(200);
-  const machineToken = (await dataGrant.json()).access_token as string;
-  saveSecret('machine-data-access-token', machineToken);
-  expect(JSON.parse(Buffer.from(machineToken.split('.')[1], 'base64url').toString())).toMatchObject({ aud: dataAudience, token_use: 'machine' });
+  expect(dataGrant.status(), 'a machine token for the data audience').toBe(400);
   const crossProject = await context.post(auth + '/00000000000000000000000001/oauth/token', { form });
   expect(crossProject.status()).not.toBe(200);
   const interactiveProof = await stepUp(context, ownerToken, 'create_oauth_client', password);
@@ -592,5 +593,5 @@ export async function checkMachineClient(page: Page, ownerToken: string, project
   expect(removedUserClient.status()).toBe(204);
   const deleted = await context.delete(clients + '/' + client.client_id, { headers: { Authorization: 'Bearer ' + ownerToken } });
   expect(deleted.status()).toBe(204);
-  return { user: userToken, machine: machineToken };
+  return { user: userToken, machine: token };
 }

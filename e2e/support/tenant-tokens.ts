@@ -40,7 +40,7 @@ export async function checkTenantTokens(context: APIRequestContext, project: str
     const otherProjectRead = await context.get(projects + otherProject + '/databases/' + id + shape, { headers: tenant, maxRedirects: 0 });
     expect(otherProjectRead.status(), 'a tenant token on another project\'s route').toBe(401);
     const machineRead = await context.get(database + shape, { headers: { Authorization: 'Bearer ' + tokens.machine }, maxRedirects: 0 });
-    expect(machineRead.status(), 'a tenant machine-client token for the data audience').toBe(401);
+    expect(machineRead.status(), 'a tenant machine-client token').toBe(401);
   } finally {
     const removed = await context.delete(database, { headers: owner });
     expect(removed.status()).toBe(204);

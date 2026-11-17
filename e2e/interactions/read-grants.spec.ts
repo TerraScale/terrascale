@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { expect, test, type APIRequestContext } from '@playwright/test';
+import { signInToken } from '../support/auth-management';
 import { auth } from '../support/stack';
 import { journey, saveSecret } from '../support/state';
 
@@ -27,10 +28,22 @@ async function projectToken(request: APIRequestContext): Promise<string> {
   return credential;
 }
 
-async function endUserToken(request: APIRequestContext, user: string, table: string): Promise<string> {
+async function mintKey(request: APIRequestContext): Promise<string> {
+  const current = journey();
+  const token = await signInToken(request, 'read-grant-owner');
+  const response = await request.post(`${auth}/v1/terrascale/organizations/${current.organizationId}/projects/${current.projectId}/api-keys`, {
+    headers: { authorization: 'Bearer ' + token }, data: { name: 'read grant mint', scopes: ['auth:tokens:mint'] },
+  });
+  expect(response.status()).toBe(201);
+  const key = (await response.json()).key as string;
+  saveSecret('read-grant-mint-key', key);
+  return key;
+}
+
+async function endUserToken(request: APIRequestContext, key: string, user: string, table: string): Promise<string> {
   const current = journey();
   const response = await request.post(`${auth}/v1/terrascale/projects/${current.projectId}/end-user-tokens`, {
-    headers: { authorization: 'Bearer ' + current.apiKey },
+    headers: { authorization: 'Bearer ' + key },
     data: { user_id: user, database: current.databaseId, tables: [table] },
   });
   expect(response.status()).toBe(200);
@@ -39,7 +52,7 @@ async function endUserToken(request: APIRequestContext, user: string, table: str
   return credential;
 }
 
-test('end-user shape reads see only granted columns and their own rows, under handles bound to the user and the grant', async ({ request }) => {
+test('end-user shape reads see only granted columns and their own rows, under handles bound to the user and the grant', async ({ request, page }) => {
   const current = journey();
   const database = `${api}/v1/projects/${current.projectId}/databases/${current.databaseId}`;
   const table = 'grant_notes_' + randomBytes(4).toString('hex');
@@ -66,8 +79,9 @@ test('end-user shape reads see only granted columns and their own rows, under ha
     expect((await duplicate.json()).error.code).toBe('duplicate_column');
     expect((await putGrant(['id', 'owner', 'body'])).status()).toBe(200);
 
-    const aliceToken = await endUserToken(request, alice, table);
-    const bobToken = await endUserToken(request, bob, table);
+    const mint = await mintKey(page.request);
+    const aliceToken = await endUserToken(request, mint, alice, table);
+    const bobToken = await endUserToken(request, mint, bob, table);
     const read = (credential: string, query: string, maxRedirects = 20) =>
       request.get(`${shape}?${query}`, { headers: { authorization: 'Bearer ' + credential }, maxRedirects });
 
