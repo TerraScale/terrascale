@@ -117,8 +117,9 @@ Settings = {
 User    = { id, email, created_at, disabled: bool }
 Session = { id, user_id, email, created_at, expires_at }
 Client  = { client_id, name, type: "public"|"confidential", redirect_uris: [string],
-            created_at, client_secret?: string }
-POST /clients body = { name, type, redirect_uris }
+            allowed_origins: [string], allow_anonymous: bool, created_at, client_secret?: string }
+POST /clients body = { name, type, redirect_uris, allowed_origins?, allow_anonymous? }
+PUT /clients/{client_id} body = { name, redirect_uris, allowed_origins?, allow_anonymous? }
 WebhookEndpoint = { id, url, event_types: [string], created_at, secret?: string }
 WebhookSecret   = { id, secret, previous_secret_expires_at }
 POST /webhook-endpoints body = { url, event_types }
@@ -135,6 +136,9 @@ Webhook endpoints are described in [webhooks.md](webhooks.md).
   project's name and the default theme.
 - Redirect URIs are absolute `https` URLs, or `http` on `localhost` and loopback
   addresses, without fragments; 1 to 10 per client.
+- `allowed_origins` (default `[]`, at most 10) and `allow_anonymous` (default `false`) let a browser app call the
+  token, userinfo, revocation and guest routes cross-origin and admit guests; see
+  [guest accounts and browser APIs](consumer-integration.md).
 - Errors use the platform API's error body `{error: {code, message}}`.
 
 Project security settings and the account-unlock contract are described in [attack protection](attack-protection.md).
