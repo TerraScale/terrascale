@@ -1,10 +1,12 @@
 import { randomBytes } from 'node:crypto';
 import type { APIRequestContext, APIResponse, Page } from '@playwright/test';
-import { expect, test } from '../support/audit';
+import { expect, test as base } from '../support/audit';
 import { mcpTool } from '../support/mcp';
 import { signInToken } from '../support/auth-management';
 import { auth } from '../support/stack';
-import { journey, saveSecret } from '../support/state';
+import { waitForCreatedDatabase } from '../support/database';
+import { createDedicatedProjectOwner } from '../support/project-owner';
+import { saveSecret } from '../support/state';
 
 const api = 'https://api.terrascale.tech';
 const crockford = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
@@ -12,14 +14,48 @@ const crockford = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 type ShapeRow = Record<string, unknown>;
 type ShapeBody = { handle: string; next_offset: string; changes: { ops: { op: string; row: ShapeRow }[] }[] };
 
+type RulesOwner = Awaited<ReturnType<typeof createDedicatedProjectOwner>>;
+type RulesAccount = Omit<RulesOwner, 'current'> & {
+  current: RulesOwner['current'] & { databaseId: string; databaseName: string };
+};
+
+const test = base.extend<{ rulesAccount: RulesAccount }>({
+  rulesAccount: async ({ browser }, use, info) => {
+    const account = await createDedicatedProjectOwner(browser, info, 'Rules owner');
+    try {
+      const { page } = account;
+      const name = 'rules-' + randomBytes(6).toString('hex');
+      await page.goto('/databases');
+      await page.getByRole('button', { name: 'New database', exact: true }).first().click();
+      await page.locator('#database-name').fill(name);
+      const databasesUrl = page.url();
+      await page.locator('#create-database form').getByRole('button', { name: 'Create database', exact: true }).click();
+      const created = await waitForCreatedDatabase(page, name, databasesUrl);
+      try {
+        await use({ ...account, current: { ...account.current, databaseId: created.id, databaseName: name } });
+      } finally {
+        await page.goto(`/databases/${created.id}/danger`);
+        await page.locator('main').getByRole('button', { name: 'Delete database', exact: true }).click();
+        const dialog = page.locator('dialog[open]');
+        await dialog.locator('input[name="confirmName"]').fill(name);
+        await dialog.getByRole('button', { name: 'Delete database', exact: true }).click();
+        await page.waitForURL(url => url.pathname === '/databases');
+        await expect(page.locator('main tr').filter({ hasText: name })).toHaveCount(0);
+        if (info.status === info.expectedStatus) await account.audit.finish();
+      }
+    } finally {
+      await account.remove();
+    }
+  },
+});
+
 test.describe.configure({ mode: 'serial' });
 
 function ulid(): string {
   return '01' + Array.from(randomBytes(24), byte => crockford[byte % 32]).join('');
 }
 
-async function mintKey(request: APIRequestContext): Promise<string> {
-  const current = journey();
+async function mintKey(request: APIRequestContext, current: RulesAccount['current']): Promise<string> {
   const token = await signInToken(request, 'rules-reads-owner');
   const response = await request.post(`${auth}/v1/terrascale/organizations/${current.organizationId}/projects/${current.projectId}/api-keys`, {
     headers: { authorization: 'Bearer ' + token }, data: { name: 'rules reads mint', scopes: ['auth:tokens:mint'] },
@@ -30,8 +66,7 @@ async function mintKey(request: APIRequestContext): Promise<string> {
   return key;
 }
 
-async function endUserToken(request: APIRequestContext, key: string, user: string): Promise<string> {
-  const current = journey();
+async function endUserToken(request: APIRequestContext, key: string, user: string, current: RulesAccount['current']): Promise<string> {
   const response = await request.post(`${auth}/v1/${current.projectId}/custom-tokens`, {
     headers: { authorization: 'Bearer ' + key }, data: { user_id: user, database: current.databaseId },
   });
@@ -46,8 +81,7 @@ type Simulation = { allowed: boolean; decidedBy: string; clause: string | null; 
 
 type RulesBody = { version: string; tables: Record<string, Record<string, unknown>>; problems?: Problem[]; warnings?: Problem[]; updatedAt: string; updatedBy: string };
 
-async function ownerToken(request: APIRequestContext): Promise<string> {
-  const current = journey();
+async function ownerToken(request: APIRequestContext, current: RulesOwner['current']): Promise<string> {
   const response = await request.post(auth + '/terrascale/oauth/token', {
     form: {
       grant_type: 'client_credentials', client_id: current.apiKey.slice(0, 26), client_secret: current.apiKey,
@@ -67,12 +101,11 @@ async function answer<T>(response: APIResponse, status: number, code?: string): 
   return body as T;
 }
 
-test('rules compile, keep versions, simulate deployed and draft requests and restore an earlier version', async ({ request, page }) => {
-  const current = journey();
+test('rules compile, keep versions, simulate deployed and draft requests and restore an earlier version', async ({ request, rulesAccount: { current, page } }) => {
   const database = `${api}/v1/projects/${current.projectId}/databases/${current.databaseId}`;
   const table = 'rules_todos_' + randomBytes(4).toString('hex');
   const otherTable = table + '_other';
-  const owner = await ownerToken(request);
+  const owner = await ownerToken(request, current);
   const headers = (extra: Record<string, string> = {}) => ({ authorization: 'Bearer ' + owner, ...extra });
   const execute = async (sql: string) => {
     const response = await request.post(database + '/sql/execute', { headers: headers(), data: { statements: [{ sql }] } });
@@ -257,13 +290,12 @@ test('rules compile, keep versions, simulate deployed and draft requests and res
   }
 });
 
-test('end users read only the rows and columns the rules allow, under handles bound to the user and the rules version', async ({ request, page }) => {
-  const current = journey();
+test('end users read only the rows and columns the rules allow, under handles bound to the user and the rules version', async ({ request, rulesAccount: { current, page } }) => {
   const database = `${api}/v1/projects/${current.projectId}/databases/${current.databaseId}`;
   const table = 'rules_notes_' + randomBytes(4).toString('hex');
   const shape = `${database}/tables/${table}/shape`;
   const rows = `${database}/tables/${table}/rows/`;
-  const owner = await ownerToken(request);
+  const owner = await ownerToken(request, current);
   const headers = (extra: Record<string, string> = {}) => ({ authorization: 'Bearer ' + owner, ...extra });
   const execute = async (sql: string) => {
     const response = await request.post(database + '/sql/execute', { headers: headers(), data: { statements: [{ sql }] } });
@@ -274,13 +306,16 @@ test('end users read only the rows and columns the rules allow, under handles bo
     return answer<RulesBody>(await request.put(database + '/rules', { headers: headers({ 'if-match': `"${deployed.version}"` }), data: { tables } }), 200);
   };
   const [alice, bob] = [ulid(), ulid()];
+  await answer(await request.put(database + '/rules', {
+    headers: headers({ 'if-none-match': '*' }), data: { tables: {} },
+  }), 200);
 
   await execute(`CREATE TABLE ${table} (id INTEGER PRIMARY KEY, owner TEXT NOT NULL, body TEXT NOT NULL, secret TEXT NOT NULL)`);
   try {
     await execute(`INSERT INTO ${table} (id, owner, body, secret) VALUES (1, '${alice}', 'a1', 'pin-1111'), (2, '${alice}', 'a2', 'pin-2222'), (3, '${bob}', 'b1', 'pin-3333')`);
-    const mint = await mintKey(page.request);
-    const aliceToken = await endUserToken(request, mint, alice);
-    const bobToken = await endUserToken(request, mint, bob);
+    const mint = await mintKey(page.request, current);
+    const aliceToken = await endUserToken(request, mint, alice, current);
+    const bobToken = await endUserToken(request, mint, bob, current);
     const read = (credential: string, query: string, maxRedirects = 20) =>
       request.get(`${shape}?${query}`, { headers: { authorization: 'Bearer ' + credential }, maxRedirects });
     const row = (credential: string, key: string) => request.get(rows + key, { headers: { authorization: 'Bearer ' + credential } });
@@ -351,11 +386,10 @@ async function playground(page: Page, operation: string, table: string, auth: un
   await page.getByRole('button', { name: 'Run test', exact: true }).click();
 }
 
-test('the Rules page deploys with If-Match, lists problems, runs the playground, compares and restores versions, and so do the MCP tools', async ({ request, page, audit }) => {
-  const current = journey();
+test('the Rules page deploys with If-Match, lists problems, runs the playground, compares and restores versions, and so do the MCP tools', async ({ request, rulesAccount: { current, page, audit } }) => {
   const database = `${api}/v1/projects/${current.projectId}/databases/${current.databaseId}`;
   const table = 'rules_page_' + randomBytes(4).toString('hex');
-  const owner = await ownerToken(request);
+  const owner = await ownerToken(request, current);
   const headers = (extra: Record<string, string> = {}) => ({ authorization: 'Bearer ' + owner, ...extra });
   const execute = async (sql: string) => {
     const response = await request.post(database + '/sql/execute', { headers: headers(), data: { statements: [{ sql }] } });
