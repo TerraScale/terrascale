@@ -33,9 +33,14 @@ test('functions list, detail, invocation logs and deletion work through the page
     await page.getByRole('link', { name: window, exact: true }).click();
     await expect(page.locator('#function-stats .ts-stat').filter({ hasText: 'Invocations' }).locator('dd')).toHaveText('2');
   }
+  const failedFilter = page.waitForURL(url => url.searchParams.get('function') === name && url.searchParams.get('status') === 'error');
   await page.locator('#function-logs-status').selectOption('error');
+  await failedFilter;
   await expect(page.locator('#function-logs-card')).toContainText('No invocations match these filters.');
+  const succeededFilter = page.waitForURL(url => url.searchParams.get('function') === name && url.searchParams.get('status') === 'ok');
   await page.locator('#function-logs-status').selectOption('ok');
+  await succeededFilter;
+  await expect(page.locator('#function-logs li')).toHaveCount(2);
   await page.locator('#function-logs summary').first().click();
   await expect(page.locator('#function-logs')).toContainText('functions journey');
   await audit.check('function detail and real invocation logs');
