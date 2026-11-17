@@ -13,7 +13,7 @@ internal static class ClientCors
             .WithHeaders("X-TerraScale-Region-Pin")
             .WithExposedHeaders("X-TerraBase-Region", "X-Request-ID", "Retry-After"));
         cors.AddPolicy(Policy, policy => policy.AllowAnyOrigin()
-            .WithMethods("GET", "HEAD", "POST")
+            .WithMethods("GET", "HEAD", "POST", "PATCH", "DELETE")
             .WithHeaders("Authorization", "Content-Type", "If-None-Match", "TB-Shape-Resume", "X-TerraScale-Region-Pin")
             .WithExposedHeaders("ETag", "Location", "Retry-After", "TB-Shape-Hints", "TB-Shape-Cursor", "TB-Shape-Handle", "TB-Shape-Next-Offset", "TB-Shape-Up-To-Date", "X-TerraBase-Region", "X-TerraBase-Machine", "X-Request-ID"));
     });
@@ -47,6 +47,7 @@ internal static class ClientCors
             && string.Equals(segments[2], "projects", StringComparison.OrdinalIgnoreCase)
             && string.Equals(segments[4], "databases", StringComparison.OrdinalIgnoreCase)
             && (string.Equals(segments[6], "sql", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(segments[6], "tables", StringComparison.OrdinalIgnoreCase));
+                || string.Equals(segments[6], "tables", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(segments[6], "rows:batch", StringComparison.OrdinalIgnoreCase));
     }
 }

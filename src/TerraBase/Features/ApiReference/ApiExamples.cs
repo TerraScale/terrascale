@@ -15,6 +15,7 @@ internal static class ApiExamples
     private const string ReadGrant = """{"table":"notes","where":"owner_id = :sub","columns":["id","owner_id","body"],"updatedAt":"2026-11-04T12:00:00Z"}""";
     private const string RulesTables = """{"todos":{"read":"row.owner_id = auth.uid","create":"new.owner_id = auth.uid","columns":["id","owner_id","title","done"],"writable":["title","done"],"set":{"create":{"owner_id":"auth.uid"}}}}""";
     private const string Rules = "{\"tables\":" + RulesTables + "}";
+    private const string Row = """{"key":"1","row":{"id":1,"owner_id":"01ARZ3NDEKTSV4RRFFQ69G5FAE","title":"Buy milk","done":0}}""";
     private const string RulesVersion = """{"version":"01ARZ3NDEKTSV4RRFFQ69G5FAR","updatedAt":"2026-11-17T12:00:00Z","updatedBy":"01ARZ3NDEKTSV4RRFFQ69G5FAE","digest":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"}""";
     private const string DeclaredSchema = """{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","required":["name"],"properties":{"name":{"type":"string"}}}""";
     private const string BucketRules = """{"owner":"/userId","read":{"owner":true,"public":false,"roles":[]},"write":{"owner":true,"public":false,"roles":[]}}""";
@@ -89,6 +90,9 @@ internal static class ApiExamples
         "putReadGrant" => """{"where":"owner_id = :sub","columns":["id","owner_id","body"]}""",
         "putDatabaseRules" => Rules,
         "testDatabaseRules" => """{"operation":"update","table":"todos","auth":{"uid":"01ARZ3NDEKTSV4RRFFQ69G5FAE","claims":{"roles":["admin"]},"org_id":null,"org_role":null,"is_anonymous":false},"row":{"owner_id":"01ARZ3NDEKTSV4RRFFQ69G5FAF","title":"a"},"new":{"title":"b"},"time":1763337600000}""",
+        "createRow" => """{"row":{"title":"Buy milk","done":0}}""",
+        "updateRow" => """{"row":{"done":1}}""",
+        "batchRows" => """{"operations":[{"op":"create","table":"todos","row":{"title":"Buy milk"}},{"op":"update","table":"todos","key":"1","row":{"done":1}},{"op":"delete","table":"todos","key":"2"}]}""",
         "branchDatabase" or "branchDatabaseIfId" => """{"name":"main_branch","ttlSeconds":3600}""",
         "updateDatabase" => """{"regions":["gru-1","sjc-1"]}""",
         "moveDatabaseHome" => """{"homeRegion":"sjc"}""",
@@ -124,6 +128,8 @@ internal static class ApiExamples
         "putDatabaseRules" or "restoreDatabaseRulesVersion" => "{\"version\":\"01ARZ3NDEKTSV4RRFFQ69G5FAR\",\"tables\":" + RulesTables + ",\"warnings\":[],\"updatedAt\":\"2026-11-17T12:00:00Z\",\"updatedBy\":\"01ARZ3NDEKTSV4RRFFQ69G5FAE\"}",
         "getDatabaseRulesVersion" => "{\"version\":\"01ARZ3NDEKTSV4RRFFQ69G5FAR\",\"tables\":" + RulesTables + ",\"updatedAt\":\"2026-11-17T12:00:00Z\",\"updatedBy\":\"01ARZ3NDEKTSV4RRFFQ69G5FAE\"}",
         "listDatabaseRulesVersions" => "{\"items\":[" + RulesVersion + "],\"next\":null}",
+        "createRow" or "updateRow" => Row,
+        "batchRows" => "{\"results\":[" + Row + ",{\"key\":\"1\",\"row\":null},{\"key\":\"2\",\"row\":null}]}",
         "branchDatabase" or "branchDatabaseIfId" => """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA6","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FA2","name":"main_branch","branchedFrom":"01ARZ3NDEKTSV4RRFFQ69G5FA1","createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[],"allRegions":false,"placementVersion":1,"regions":["gru-1"],"expiresAt":"2026-10-07T13:00:00Z"}""",
         "listDatabases" => Page(Database),
         "createBackup" => Backup,
@@ -161,6 +167,15 @@ internal static class ApiExamples
         "404" when id == "getDatabaseRules" => "unknown_database, no_rules",
         "404" when id is "listDatabaseRulesVersions" or "getDatabaseRulesVersion" or "restoreDatabaseRulesVersion" => "unknown_database, unknown_version",
         "412" when id is "putDatabaseRules" or "restoreDatabaseRulesVersion" => "version_mismatch",
+        "400" when id is "createRow" or "updateRow" or "batchRows" => "unknown_column, constraint_failed, validation_failed, invalid_request",
+        "400" when id == "deleteRow" => "constraint_failed, invalid_request",
+        "403" when id is "createRow" or "updateRow" or "batchRows" => "rule_denied, column_not_writable, rules_invalid, forbidden, forbidden_scope",
+        "403" when id == "deleteRow" => "rule_denied, rules_invalid, forbidden, forbidden_scope",
+        "404" when id is "createRow" => "unknown_table, unknown_database",
+        "404" when id is "updateRow" or "deleteRow" or "batchRows" => "row_not_found, unknown_table, unknown_database",
+        "409" when id is "createRow" or "updateRow" or "batchRows" => "row_exists",
+        "429" when id is "createRow" or "updateRow" or "deleteRow" or "batchRows" => "quota_exceeded, tenant_busy, tenant_memory",
+        "503" when id is "createRow" or "updateRow" or "deleteRow" or "batchRows" => "storage_busy, unavailable, write_outcome_unknown",
         "428" => "precondition_required",
         "400" => "invalid_request",
         "401" => "invalid_key",

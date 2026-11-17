@@ -1,8 +1,8 @@
 # TerraBase Rules: end-user reads and writes
 
-Status: Partly built. The rules set, deploy checks, the condition compiler, versions, restore and the section 7 routes
-are live; end-user reads and writes do not use rules yet, and [shape read grants](shape-read-grants.md) still decide
-end-user reads. When enforced, rules replace read grants and the `tables` claim of
+Status: Partly built. The rules set, deploy checks, the condition compiler, versions, restore, the section 7 routes and
+the section 5 row writes are live; end-user reads do not use rules yet, and [shape read grants](shape-read-grants.md)
+still decide them. When enforced, rules replace read grants and the `tables` claim of
 [scoped end-user tokens](../auth/scoped-end-user-tokens.md).
 
 A project's end users sign in with the project's own ts-auth tenant and read and write a database straight from the
@@ -362,7 +362,8 @@ A region that holds a replica forwards an end-user write to the home through hom
 (`src/TerraBase/Features/Regions/HomeForwarding.cs`) and returns the home's answer; end-user writes never take the
 local write path of [write routing](sql/write-routing.md), because rules must see the authoritative row. When the
 home cannot be reached, or the region holds no replica, it answers `421 wrong_region` naming the home with nothing
-applied. TerraBase never replays a write itself.
+applied. When the home may have received the request but did not answer, the write answers `503
+write_outcome_unknown`, since the home may have committed it. TerraBase never replays a write itself.
 
 Chrome and Edge resend a buffered body once after a `421` (`sdk/js/README.md:248`). A `421` means nothing was applied,
 so the resend cannot apply a write twice, but the JS client cannot stop it either; the browser client (W3) must close

@@ -95,6 +95,43 @@ test('one node never acknowledges a write locally', async ({ cells, request }) =
   }
 });
 
+test('row writes from a replica region are answered by the home, and a region without a replica answers 421', async ({ cells }) => {
+  const notes = 'CREATE TABLE notes (id INTEGER PRIMARY KEY, value TEXT NOT NULL)';
+  const replicated = await json<{ id: string }>(await cells.post(`${home}${project()}/databases`, {
+    data: { name: name('rows-forward'), regions: ['gru', 'fra'] },
+  }), 201);
+  try {
+    await sql(cells, home, replicated.id, notes);
+    await held(cells, replicated.id, 'SELECT count(*) FROM notes');
+    const forwarded = await cells.post(`${replica}${database(replicated.id)}/tables/notes/rows`, { data: { row: { value: 'via fra' } } });
+    const answer = await json<{ key: string; row: { value: string } }>(forwarded, 201);
+    expect(answer.row.value).toBe('via fra');
+    expect(forwarded.headers()['x-terrabase-region'], 'the home answered the forwarded write').toBe('gru');
+    expect((await sql(cells, home, replicated.id, 'SELECT value FROM notes')).results[0].rows).toEqual([['via fra']]);
+    console.log(`POST fra …/tables/notes/rows -> ${forwarded.status()} answered by ${forwarded.headers()['x-terrabase-region']}`);
+  } finally {
+    await removeDatabase(cells, replicated.id);
+  }
+
+  const homeOnly = await json<{ id: string }>(await cells.post(`${home}${project()}/databases`, {
+    data: { name: name('rows-home'), regions: ['gru'] },
+  }), 201);
+  try {
+    await sql(cells, home, homeOnly.id, notes);
+    let misdirected: APIResponse | undefined;
+    await expect.poll(async () => {
+      misdirected = await cells.post(`${replica}${database(homeOnly.id)}/tables/notes/rows`, { data: { row: { value: 'via fra' } } });
+      return misdirected.status();
+    }, { message: 'fra knows the database and refuses the row write' }).toBe(421);
+    expect((await misdirected!.json()).error.code).toBe('wrong_region');
+    expect(misdirected!.headers()['x-terrabase-database-home']).toBe('gru');
+    expect((await sql(cells, home, homeOnly.id, 'SELECT count(*) FROM notes')).results[0].rows).toEqual([[0]]);
+    console.log(`POST fra …/tables/notes/rows (no replica in fra) -> ${misdirected!.status()} wrong_region`);
+  } finally {
+    await removeDatabase(cells, homeOnly.id);
+  }
+});
+
 async function held(cells: Cells, id: string, statement = 'SELECT 1') {
   await expect.poll(async () => {
     const response = await cells.post(`${replica}${database(id)}/sql/execute`, { data: { statements: [{ sql: statement }] } });

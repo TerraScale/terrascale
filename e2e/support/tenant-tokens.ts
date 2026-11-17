@@ -35,8 +35,10 @@ export async function checkTenantTokens(context: APIRequestContext, project: str
     const shape = '/tables/notes/shape?offset=-1';
     const ownerRead = await context.get(database + shape, { headers: owner, maxRedirects: 0 });
     expect(ownerRead.status(), 'the project token reads the shape').toBe(307);
-    const wrongAudience = await context.get(database + shape, { headers: tenant, maxRedirects: 0 });
-    expect(wrongAudience.status(), 'a tenant token without this project\'s data audience').toBe(401);
+    const audiences = [JSON.parse(Buffer.from(tokens.user.split('.')[1], 'base64url').toString()).aud].flat() as string[];
+    expect(audiences.some(audience => audience.endsWith('/v1/projects/' + project)), 'a signed-in tenant user names this project\'s data audience').toBe(true);
+    const userRead = await context.get(database + shape, { headers: tenant, maxRedirects: 0 });
+    expect(userRead.status(), 'a signed-in tenant user reads through the read grant').toBe(307);
     const otherProjectRead = await context.get(projects + otherProject + '/databases/' + id + shape, { headers: tenant, maxRedirects: 0 });
     expect(otherProjectRead.status(), 'a tenant token on another project\'s route').toBe(401);
     const machineRead = await context.get(database + shape, { headers: { Authorization: 'Bearer ' + tokens.machine }, maxRedirects: 0 });

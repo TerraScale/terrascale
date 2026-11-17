@@ -29,7 +29,7 @@ internal sealed record RulesVersionItem(string Version, DateTimeOffset UpdatedAt
 
 internal sealed record RulesVersionPage(IReadOnlyList<RulesVersionItem> Items, string? Next);
 
-internal sealed record RulesTableSchema(ShapeTableStatus Status, IReadOnlyList<string> Columns);
+internal sealed record RulesTableSchema(ShapeTableStatus Status, IReadOnlyList<string> Columns, string? RowId = null);
 
 internal sealed record RulesBody(
     string Version,
@@ -88,6 +88,8 @@ internal interface IRulesStorage
 
 internal interface IRulesWriter : IRulesStorage
 {
+    ValueTask<RulesTableSchema> ReadRulesTableAsync(string table, CancellationToken cancellationToken);
+
     ValueTask WriteRulesAsync(StoredRules rules, CancellationToken cancellationToken);
 }
 

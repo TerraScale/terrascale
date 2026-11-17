@@ -41,6 +41,17 @@ public static class Listeners
         ArgumentNullException.ThrowIfNull(context);
         return context.Features.Get<IConnectionItemsFeature>()?.Items.ContainsKey(ForwardedKey) == true;
     }
+    public static bool CanForwardTo(HttpContext context, string region)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        if (context.Features.Get<IConnectionItemsFeature>()?.Items.TryGetValue(ForwardedKey, out var from) != true)
+        {
+            return true;
+        }
+
+        var local = context.RequestServices.GetRequiredService<TerraBaseOptions>().Region;
+        return from is string sender && sender == local && region != local;
+    }
     public static TerraBaseListener? ArrivedOn(HttpContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -233,10 +244,12 @@ public static class Listeners
                     return;
                 }
 
+                var sender = context.Request.Headers[HomeForwarding.ForwardedRegionHeader] is [{ } named] && TerraBaseOptions.IsRegion(named) ? named : "";
                 context.Request.Headers.Remove(HomeForwarding.ForwardedForHeader);
+                context.Request.Headers.Remove(HomeForwarding.ForwardedRegionHeader);
                 context.Request.Headers.Remove(InternalCredential.HeaderName);
                 context.Connection.RemoteIpAddress = client;
-                context.Features.Set<IConnectionItemsFeature>(new AcceptedConnection(TerraBaseListener.Client) { Items = { [ForwardedKey] = true } });
+                context.Features.Set<IConnectionItemsFeature>(new AcceptedConnection(TerraBaseListener.Client) { Items = { [ForwardedKey] = sender } });
             }
 
             await next(context).ConfigureAwait(false);
