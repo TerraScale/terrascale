@@ -117,6 +117,10 @@ Options go before or after the command and its operands; -- ends options.
   functions delete <db> <name>            delete a function and its logs
   sql <db> <statement>                    run one SQL statement in its own
                                           transaction; rows print as JSON lines
+  rules pull <db>                         write terrascale.rules.json and version state
+  rules deploy <db>                       show diff and confirm deployment; -yes consents
+  rules test <db>                         simulate --operation --table --auth --row --new;
+                                          --draft uses terrascale.rules.json
   schema pull <db>                        write schema.sql from <db>
   schema diff <db> <schema.sql>           print DDL for <db>
   schema apply <db> <schema.sql>          apply atomically; -dry-run previews;
@@ -240,6 +244,9 @@ var commands = map[string][]int{
 	"functions logs":     {2},
 	"functions stats":    {1, 2},
 	"functions delete":   {2},
+	"rules pull":         {1},
+	"rules deploy":       {1},
+	"rules test":         {1},
 	"schema pull":        {1},
 	"schema diff":        {2},
 	"schema apply":       {2},
@@ -270,7 +277,8 @@ func runWithInput(ctx context.Context, args []string, out io.Writer, in io.Reade
 		err = finishJSONStream(w)
 	}
 	if err != nil {
-		if !w.failed {
+		var reported *jsonFailure
+		if !w.failed && !errors.As(err, &reported) {
 			err = errors.Join(err, emitJSONError(w, err))
 		}
 		return &jsonFailure{err}
@@ -323,6 +331,12 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	}
 	if name == "shell" {
 		beginJSONStream(out)
+	}
+	var rules rulesFlags
+	if strings.HasPrefix(name, "rules ") {
+		if operands, err = rules.parse(name, operands); err != nil {
+			return err
+		}
 	}
 	var fn functionFlags
 	if strings.HasPrefix(name, "functions ") {
@@ -439,7 +453,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	if langSet && (name != "init" || *lang != "" && initSnippets[*lang].install == "") {
 		return fmt.Errorf("-lang needs ts init and one of js, go, python, dotnet or rust: %w", errUsage)
 	}
-	if yesSet && !slices.Contains([]string{"db delete", "db branch delete", "orgs delete", "projects delete", "backup destination", "backup rewind", "functions delete", "keys revoke", "init"}, name) {
+	if yesSet && !slices.Contains([]string{"db delete", "db branch delete", "orgs delete", "projects delete", "backup destination", "backup rewind", "functions delete", "keys revoke", "init", "rules deploy"}, name) {
 		return fmt.Errorf("-yes is only accepted for destructive commands: %w", errUsage)
 	}
 	if name == "backup rewind" && !*yes {
@@ -491,6 +505,9 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 				return err
 			}
 			return dbImport(ctx, s.tb.Database(s.project, operands[0]), operands[1], start, in, out, prompt)
+		}
+		if strings.HasPrefix(name, "rules ") {
+			return runRules(ctx, s.tb.Database(s.project, operands[0]), name, rules, commandInput{in: in, prompt: prompt, tty: tty, yes: *yes}, out)
 		}
 		if strings.HasPrefix(name, "db branch ") || name == "db url" {
 			if name == "db branch delete" {
