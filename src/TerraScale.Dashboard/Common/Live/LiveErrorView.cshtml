@@ -1,0 +1,5 @@
+@inherits RazorSlice<TerraScale.Dashboard.Common.Live.LiveError>
+<section id="@Model.Id" class="ts-card ts-card-boxed"><div class="ts-card-body">
+@if(Model.Status == 404){@(await RenderPartialAsync<TerraScale.Dashboard.Features.NotFound.NotFoundCopy>())}
+else{<div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Message</p></div>}
+</div></section>

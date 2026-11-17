@@ -156,6 +156,9 @@ export class Audit {
   }
 
   private response(response: Response): void {
+    if (response.headers()['content-type']?.startsWith('text/event-stream')) {
+      this.inflight.delete(response.request());
+    }
     if (response.status() < 400) return;
     const expected = this.expected.find((candidate) => candidate.status === response.status() && candidate.url.test(response.url()));
     if (expected) {

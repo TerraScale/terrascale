@@ -458,7 +458,11 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
 
     private static void Clear(HttpContext context)
     {
-        context.Response.Cookies.Delete(Cookie);
+        if (!context.Response.HasStarted)
+        {
+            context.Response.Cookies.Delete(Cookie);
+        }
+
         Csrf.Bind(context, null);
     }
 

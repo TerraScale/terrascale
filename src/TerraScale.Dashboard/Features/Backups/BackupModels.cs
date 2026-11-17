@@ -86,12 +86,15 @@ namespace TerraScale.Dashboard.Features.Backups
     {
         public const int PageSize = 10;
 
+        public BackupListState State { get; init; } = new();
+
         public bool CanManage => Shell.Context.CanManage && Database.Status == "ready";
         public bool CanRestore => CanManage && Shell.Context.Organization?.CanProvision(Shell.Context.UserId) == true;
     }
     public sealed record BackupPage(ShellModel Shell, DatabaseRecord Database, BackupListing? Listing,
         string Error = "", string RestoreId = "", string Name = "", string? FullBackupCron = null, string? RetentionDays = null)
     {
+        public string? VisibleThrough { get; init; }
         public BackupBucketView? Bucket { get; init; }
         public bool BucketRead { get; init; }
         public RestoreProgress? Restore { get; init; }

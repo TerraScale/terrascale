@@ -1,5 +1,4 @@
 using TerraScale.Dashboard.Platform.Datastar;
-using TerraScale.Dashboard.Common.UI;
 using TerraScale.Endpoints;
 namespace TerraScale.Dashboard.Features.Backups
 {
@@ -35,13 +34,10 @@ namespace TerraScale.Dashboard.Features.Backups
                         }
                     }
 
-                    IReadOnlyList<BackupView> page = boundary < 0 ? [] : [.. listing.Backups.Skip(boundary + 1).Take(RestorePointsModel.PageSize)];
-                    var next = boundary >= 0 && listing.Backups.Count > boundary + 1 + page.Count
-                        ? listing.Backups[boundary + page.Count].Id : null;
-                    http.Response.Headers["datastar-selector"] = "#restore-points-more";
-                    http.Response.Headers["datastar-mode"] = "outer";
-                    await DatastarEvents.PatchElementsAsync(http, RestorePointsView.Create(
-                        new(ShellModel.For(http, context, database.Name + " · Backups"), database, "", "", "", page, next)));
+                    var count = Math.Min(listing.Backups.Count, Math.Max(0, boundary + 1) + RestorePointsModel.PageSize);
+                    var state = BackupListState.Read(http.Request) with
+                    { Through = count > 0 ? listing.Backups[count - 1].Id : null };
+                    await DatastarEvents.PatchElementsAsync(http, BackupRestorePointsView.Create(state.Page(http, context, database, listing)));
                     return Results.Empty;
                 }
 
