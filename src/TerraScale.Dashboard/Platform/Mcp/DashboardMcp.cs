@@ -33,6 +33,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
             var serializer = new JsonSerializerOptions(McpJsonUtilities.DefaultOptions);
             serializer.TypeInfoResolverChain.Insert(0, TerraScale.Dashboard.Features.Databases.DatabaseConflictJson.Default);
             serializer.TypeInfoResolverChain.Insert(0, FunctionMcpJson.Default);
+            serializer.TypeInfoResolverChain.Insert(0, TerraScale.Dashboard.Features.Rules.RulesMcpJson.Default);
             Type[] toolTypes =
             [
                 typeof(DashboardMcpTools),
@@ -41,6 +42,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 typeof(TerraScale.Dashboard.Features.ApiKeys.ApiKeyMcpTools),
                 typeof(TerraScale.Dashboard.Features.Backups.BackupMcpTools),
                 typeof(TerraScale.Dashboard.Features.Functions.FunctionMcpTools),
+                typeof(TerraScale.Dashboard.Features.Rules.RulesMcpTools),
                 typeof(TerraScale.Dashboard.Features.FileStorage.FileStorageMcpTools),
                 typeof(TerraScale.Dashboard.Features.Home.HomeMcpTools),
                 typeof(TerraScale.Dashboard.Features.Notifications.NotificationMcpTools),
@@ -213,7 +215,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
 
             foreach (var (name, value) in arguments)
             {
-                if (!properties.TryGetProperty(name, out var property) || !property.TryGetProperty("type", out var type))
+                if (!properties.TryGetProperty(name, out var property) || property.ValueKind != JsonValueKind.Object || !property.TryGetProperty("type", out var type))
                 {
                     continue;
                 }

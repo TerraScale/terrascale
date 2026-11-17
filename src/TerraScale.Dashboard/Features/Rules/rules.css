@@ -1,0 +1,17 @@
+.ts-rules-diff span {
+  display: block;
+  padding-inline: var(--ts-s2);
+  border-radius: var(--ts-radius-sm);
+}
+
+.ts-rules-diff [data-kind="removed"] {
+  background: color-mix(in oklab, var(--ts-danger) var(--ts-tint-badge), transparent);
+}
+
+.ts-rules-diff [data-kind="added"] {
+  background: color-mix(in oklab, var(--ts-success) var(--ts-tint-badge), transparent);
+}
+
+.ts-rules-history .ts-rows-meta {
+  overflow-wrap: anywhere;
+}

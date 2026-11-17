@@ -20,6 +20,12 @@ Call `get_functions_reference` before writing a function: it returns the handler
 
 Project API keys can use the same function tools. Deploy, list, get, logs and stats require SQL read and write scopes; invoke requires SQL read. The reference tool requires no data scope. Database restrictions and project ownership remain enforced. `list_functions`, `get_function`, `list_function_logs` and `get_function_stats` support inspection; `delete_function` retains its dashboard confirmation handoff.
 
+## Rules
+
+`get_database_rules` returns a database's rules JSON, its version and the problems today's schema causes; `version` is null when none are deployed. `deploy_database_rules` replaces the whole set and takes the version it replaces, so a stale version is refused and the agent reads again. It answers `deployed: false` with every problem by table and field instead of failing the call. `test_database_rules` runs the simulator against the deployed rules or a draft `rules` object and returns `allowed`, `decidedBy`, `clause`, `results`, `columns` and `problems`. `list_database_rules_versions` lists the kept versions newest first, and `restore_database_rules_version` deploys an older one again as a new version, checked like any deploy.
+
+Signed-in users and project API keys can use the rules tools. Reading and testing require `databases:read`; deploying and restoring require `databases:write`. The dashboard's Rules tab of a database shows the same editor, playground and version history.
+
 ## SQL and database lifecycle
 
 SQL operates on real tables. TerraBase owns SQL validation, read/write scopes, transaction and result bounds, SQLSTATEs, storage quotas and usage accounting. Use parameters for values. A failure is not an empty result; preserve the upstream error.

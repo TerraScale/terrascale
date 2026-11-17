@@ -31,6 +31,7 @@ using TerraScale.Dashboard.Features.Usage;
 using TerraScale.Dashboard.Features.Settings;
 using TerraScale.Dashboard.Features.FileStorage;
 using TerraScale.Dashboard.Features.Functions;
+using TerraScale.Dashboard.Features.Rules;
 using TerraScale.Dashboard.Features.Logs;
 using TerraScale.Dashboard.Features.Organizations.Sso;
 using TerraScale.Dashboard.Features.Organizations.Wizard;
@@ -242,6 +243,10 @@ namespace TerraScale.Dashboard
                 EndpointRegistration.Create<DeleteFunctionEndpoint>(),
                 EndpointRegistration.Create<DeployFunctionEndpoint>(),
                 EndpointRegistration.Create<InvokeFunctionEndpoint>(),
+                EndpointRegistration.Create<RulesPageEndpoint>(),
+                EndpointRegistration.Create<DeployRulesEndpoint>(),
+                EndpointRegistration.Create<TestRulesEndpoint>(),
+                EndpointRegistration.Create<RestoreRulesEndpoint>(),
                 EndpointRegistration.Create<HomePageEndpoint>(),
                 EndpointRegistration.Create<HomeRegionsEndpoint>(),
                 EndpointRegistration.Create<DatabaseLogsPageEndpoint>(),
@@ -326,7 +331,8 @@ namespace TerraScale.Dashboard
                 context.Items["nonce"] = nonce;
                 var path = context.Request.Path.Value ?? "";
                 var editorStyles = path.StartsWith("/api/v1/dashboard/data/", StringComparison.Ordinal) ||
-                    path.StartsWith("/databases/", StringComparison.Ordinal) && (path.EndsWith("/sql", StringComparison.Ordinal) || path.EndsWith("/tables", StringComparison.Ordinal)) ||
+                    path.StartsWith("/databases/", StringComparison.Ordinal) && (path.EndsWith("/sql", StringComparison.Ordinal) || path.EndsWith("/tables", StringComparison.Ordinal) || path.EndsWith("/rules", StringComparison.Ordinal)) ||
+                    path.StartsWith("/api/v1/dashboard/rules/", StringComparison.Ordinal) ||
                     path.StartsWith("/api/v1/dashboard/functions/", StringComparison.Ordinal) ||
                     path.StartsWith("/databases/", StringComparison.Ordinal) && path.EndsWith("/functions", StringComparison.Ordinal);
                 var reference = context.Request.Path.StartsWithSegments("/reference");
