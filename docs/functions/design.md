@@ -78,6 +78,11 @@ for moving execution onto dedicated function hosts; v1 shares the TerraBase proc
 Cron events are
 `{trigger: "cron", scheduledAt}`. Any returned object with an integer `status` from 200 to 599 is treated as the response wrapper: only `status` and `body` are used, and other properties are discarded. For example, `return {status: 200, items: rows}` produces an empty response. Preserve a data object's own `status` field by returning `{status: 200, body: {id: 1, status: 404}}`. Values without a top-level `status` property use HTTP 200; `undefined` becomes JSON null. Treat top-level `status` as reserved and wrap data containing that field inside `body`.
 
+RPC invoke and MCP `invoke_function` accept an optional `query` map of string keys and string values.
+The dashboard test run accepts a URL query string in Query parameters. All three invoke paths forward to the same
+HTTPS route, which decodes query keys and values and joins repeated values with commas in `event.query`.
+Omitting query parameters produces an empty `event.query` object.
+
 Function names are lowercase, at most 63 characters. Deleting the database deletes its functions.
 
 ## Secrets

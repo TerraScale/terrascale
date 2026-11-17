@@ -64,7 +64,7 @@ test('functions list, detail, invocation logs and deletion work through the page
     const reference = await functionTool(page.request, credential, 'get_functions_reference', {});
     expect(reference.reference).toContain('sql.transaction');
     expect(reference.reference).toContain('get_function_stats');
-    expect(reference.reference).toContain('event.query is empty');
+    expect(reference.reference).toContain('query object maps strings to strings');
     expect(reference.reference).toContain('strict mode');
     expect(reference.reference).toContain('SQLite dialect');
     expect(reference.reference).toContain('ALWAYS a response wrapper');
@@ -74,10 +74,11 @@ test('functions list, detail, invocation logs and deletion work through the page
     expect(deployed.cron).toBeNull();
     expect(Date.parse(deployed.updated_at)).toBeGreaterThan(0);
     expect(new URL(deployed.invoke_url).protocol).toBe('https:');
-    const invoked = await functionTool(page.request, credential, 'invoke_function', { ...scope, name: args.name, body: { hello: 'agent' } });
+    const query = { name: 'Terra Scale', encoded: 'a&b=c+%', empty: '', city: 'São Paulo', tag: 'first,second' };
+    const invoked = await functionTool(page.request, credential, 'invoke_function', { ...scope, name: args.name, body: { hello: 'agent' }, query });
     expect(invoked.status).toBe(201);
     expect(invoked.content_type).toContain('application/json');
-    expect(invoked.body).toEqual({ echo: { hello: 'agent' }, query: {} });
+    expect(invoked.body).toEqual({ echo: { hello: 'agent' }, query });
     expect(invoked.log?.status).toBe('ok');
     expect(invoked.log?.duration_ms).toBeGreaterThanOrEqual(0);
     expect(invoked.log?.lines).toContain('MCP debug {"hello":"agent"}');
@@ -363,6 +364,31 @@ test('a handler status is the test-run result', async ({ page }) => {
   await expect(result).toContainText(/\{\s*"missing"\s*:\s*true\s*\}/);
   await expect(page.locator('#function-event-error')).toHaveCount(0);
   console.log('Functions test run: a handler 404 and its JSON body are the result.');
+});
+
+test('function query parameters match HTTPS in the dashboard test run', async ({ page, request, audit }) => {
+  const name = unique('query');
+  const headers = await functionAccess(request);
+  const source = 'async function handler(event) { return event.query; }';
+  expect((await request.put(functionUrl(name), { headers, data: { source } })).status()).toBe(200);
+  const query = 'name=Terra+Scale&tag=first&tag=second&encoded=a%26b%3Dc%2B%25&empty=&city=S%C3%A3o+Paulo';
+  const expected = { name: 'Terra Scale', tag: 'first,second', encoded: 'a&b=c+%', empty: '', city: 'São Paulo' };
+  const direct = await request.post(`${functionUrl(name)}/invoke?${query}`, { headers, data: {} });
+  expect(direct.status()).toBe(200);
+  expect(await direct.json()).toEqual(expected);
+  await page.goto(`/databases/${journey().databaseId}/functions?function=${name}`);
+  await page.getByLabel('Query parameters', { exact: true }).fill(query);
+  await page.getByLabel('Event JSON', { exact: true }).fill('{');
+  await page.getByRole('button', { name: 'Run', exact: true }).click();
+  await expect(page.locator('#function-event-error')).toHaveText('Event must be JSON.');
+  await expect(page.getByLabel('Query parameters', { exact: true })).toHaveValue(query);
+  await page.getByLabel('Event JSON', { exact: true }).fill('{}');
+  await page.getByRole('button', { name: 'Run', exact: true }).click();
+  const result = page.locator('#function-result');
+  await expect(result).toContainText('Terra Scale');
+  expect(JSON.parse((await result.innerText()).split('\n').slice(2).join('\n'))).toEqual(expected);
+  await expect(page.getByLabel('Query parameters', { exact: true })).toHaveValue(query);
+  await audit.check('function test run returns decoded and repeated query parameters');
 });
 
 test('function metrics include SQL calls and zero-filled latency buckets', async ({ request, page, audit }) => {

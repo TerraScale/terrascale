@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using Microsoft.AspNetCore.WebUtilities;
 using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.TerraBase.Contracts;
@@ -17,7 +18,7 @@ namespace TerraScale.Dashboard.Features.Functions
         string? InvokeUrl, IReadOnlyList<FunctionInvocation> Logs, string Error, bool NoAccess, string DeleteName,
         string Notice = "", FunctionForm? Form = null, string RunEvent = "", string RunResult = "", string RunError = "",
         string LogsTrigger = "", string LogsStatus = "", string DeployError = "", TerraBaseFunctionStats? Stats = null,
-        IReadOnlyList<TerraBaseFunctionSecret>? Secrets = null, string SecretName = "", string SecretError = "")
+        IReadOnlyList<TerraBaseFunctionSecret>? Secrets = null, string SecretName = "", string SecretError = "", string RunQuery = "")
     {
         public string Window => Stats?.Window ?? "24h";
     }
@@ -266,6 +267,7 @@ namespace TerraScale.Dashboard.Features.Functions
             catch (AccountAccessException error) { return DatabaseResults.PageFailure(http, context, error); }
             var name = form["name"].ToString();
             var raw = form["event"].ToString();
+            var query = form["query"].ToString();
             var trigger = form["trigger"].ToString() is "http" or "cron" ? form["trigger"].ToString() : "";
             var status = form["status"].ToString() is "ok" or "error" ? form["status"].ToString() : "";
             FunctionRecord? selected = null;
@@ -277,7 +279,7 @@ namespace TerraScale.Dashboard.Features.Functions
                 logs = Filter(await functions.LogsAsync(context, database, name, http.RequestAborted), trigger, status);
                 if (!JsonEvent(raw))
                 {
-                    return await RunView(http, functions, context, database, selected, logs, raw, "", "Event must be JSON.", trigger, status);
+                    return await RunView(http, functions, context, database, selected, logs, raw, "", "Event must be JSON.", trigger, status, query);
                 }
 
                 var body = raw.Trim().Length == 0 ? "{}" : raw;
@@ -285,7 +287,8 @@ namespace TerraScale.Dashboard.Features.Functions
                 TerraBaseException? fault = null;
                 try
                 {
-                    var call = await functions.InvokeAsync(context, database, name, body, http.RequestAborted);
+                    var call = await functions.InvokeAsync(context, database, name, body, QueryHelpers.ParseQuery(query)
+                        .ToDictionary(pair => pair.Key, pair => pair.Value.ToString(), StringComparer.OrdinalIgnoreCase), http.RequestAborted);
                     result = string.Concat(call.Status.ToString(CultureInfo.InvariantCulture), "\n", call.ContentType, "\n", call.Body);
                 }
                 catch (TerraBaseException error)
@@ -295,12 +298,12 @@ namespace TerraScale.Dashboard.Features.Functions
 
                 logs = Filter(await functions.LogsAsync(context, database, name, http.RequestAborted), trigger, status);
                 return fault is null
-                    ? await RunView(http, functions, context, database, selected, logs, body, result, "", trigger, status)
-                    : await RunView(http, functions, context, database, selected, logs, body, "", fault.Message, trigger, status);
+                    ? await RunView(http, functions, context, database, selected, logs, body, result, "", trigger, status, query)
+                    : await RunView(http, functions, context, database, selected, logs, body, "", fault.Message, trigger, status, query);
             }
             catch (Exception error) when (KnownFailure(error, http))
             {
-                return await RunView(http, functions, context, database, selected, logs, raw, "", FailureText(error), trigger, status);
+                return await RunView(http, functions, context, database, selected, logs, raw, "", FailureText(error), trigger, status, query);
             }
         }
 
@@ -379,28 +382,28 @@ namespace TerraScale.Dashboard.Features.Functions
         private static RazorSlices.RazorSlice<FunctionsPage> View(HttpContext http, AccountContext context, DatabaseRecord database, IReadOnlyList<FunctionRecord> items, FunctionRecord? selected,
             IReadOnlyList<FunctionInvocation> logs, string error = "", int status = 200, bool noAccess = false, string deleteName = "", string notice = "", FunctionForm? form = null,
             string runEvent = "", string runResult = "", string runError = "", string logsTrigger = "", string logsStatus = "", TerraBaseFunctionStats? stats = null,
-            IReadOnlyList<TerraBaseFunctionSecret>? secrets = null, string secretName = "", string secretError = "")
+            IReadOnlyList<TerraBaseFunctionSecret>? secrets = null, string secretName = "", string secretError = "", string runQuery = "")
         {
             var page = FunctionsView.Create(new(ShellModel.For(http, context, database.Name + " · Functions"), database, items, selected,
                 selected is null ? null : FunctionBackend.InvokeUrl(context, database, selected.Name), logs, error, noAccess, deleteName, notice, form, runEvent, runResult, runError, logsTrigger, logsStatus, Stats: stats,
-                Secrets: secrets, SecretName: secretName, SecretError: secretError));
+                Secrets: secrets, SecretName: secretName, SecretError: secretError, RunQuery: runQuery));
             page.StatusCode = status;
             return page;
         }
 
         private static async Task<IResult> RunView(HttpContext http, FunctionBackend functions, AccountContext context, DatabaseRecord database, FunctionRecord? selected, IReadOnlyList<FunctionInvocation> logs,
-            string runEvent, string runResult, string runError, string trigger = "", string status = "")
+            string runEvent, string runResult, string runError, string trigger = "", string status = "", string runQuery = "")
         {
             var stats = selected is null ? null : await ReadStatsAsync(http, functions, context, database, selected.Name);
             logs = Filter(logs, trigger, status, stats);
             if (!http.Request.IsDatastarRequest)
             {
-                return View(http, context, database, [], selected, logs, runEvent: runEvent, runResult: runResult, runError: runError, logsTrigger: trigger, logsStatus: status, stats: stats);
+                return View(http, context, database, [], selected, logs, runEvent: runEvent, runResult: runResult, runError: runError, logsTrigger: trigger, logsStatus: status, stats: stats, runQuery: runQuery);
             }
 
             var model = new FunctionsPage(ShellModel.For(http, context, database.Name + " · Functions"), database, [], selected,
                 selected is null ? null : FunctionBackend.InvokeUrl(context, database, selected.Name), logs, "", false, "", "", null, runEvent, runResult, runError,
-                trigger, status, Stats: stats);
+                trigger, status, Stats: stats, RunQuery: runQuery);
             await DatastarEvents.PatchElementsAsync(http, FunctionsRunView.Create(model));
             return Results.Empty;
         }

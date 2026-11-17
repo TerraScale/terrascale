@@ -172,11 +172,11 @@ namespace TerraScale.Dashboard.Features.Functions
             }
         }
 
-        public async Task<TerraBaseFunctionCall> InvokeAsync(AccountContext context, DatabaseRecord database, string name, string body, CancellationToken ct)
+        public async Task<TerraBaseFunctionCall> InvokeAsync(AccountContext context, DatabaseRecord database, string name, string body, IReadOnlyDictionary<string, string>? query, CancellationToken ct)
         {
             CheckName(name);
             var target = await ClientAsync(context, database, false, ReadScopes, ct);
-            return await target.Client.InvokeAsync(target.ProjectId, target.Database, name, body);
+            return await target.Client.InvokeAsync(target.ProjectId, target.Database, name, body, query);
         }
 
         internal static void ValidateDeploy(string name, string source)
@@ -192,11 +192,11 @@ namespace TerraScale.Dashboard.Features.Functions
             }
         }
 
-        internal async Task<McpFunctionRun> InvokeForMcpAsync(AccountContext context, DatabaseRecord database, string name, string body, CancellationToken ct)
+        internal async Task<McpFunctionRun> InvokeForMcpAsync(AccountContext context, DatabaseRecord database, string name, string body, IReadOnlyDictionary<string, string>? query, CancellationToken ct)
         {
             CheckName(name);
             var target = await ClientAsync(context, database, false, ReadScopes, ct);
-            var call = await target.Client.InvokeAsync(target.ProjectId, target.Database, name, body);
+            var call = await target.Client.InvokeAsync(target.ProjectId, target.Database, name, body, query);
             return await FunctionMcpOutput.CompleteAsync(call, target.Context.CanWriteProjectData, ReadNewestAsync, logger, ct);
 
             async Task<IReadOnlyList<FunctionInvocation>> ReadNewestAsync(CancellationToken cancellationToken)
