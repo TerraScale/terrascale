@@ -112,6 +112,20 @@ async function sqlCompletion(page: Page, id: string, screen: string): Promise<vo
     }
   }
   await page.keyboard.press('Escape');
+  for (const sql of [
+    'sql.query({ sql: "',
+    'sql.batch(["',
+    'sql.batch([{ sql: "',
+    'sql.transaction(async connection => { await connection.query("',
+    'sql.transaction(async connection => { await connection.batch([{ sql: "',
+  ]) {
+    await setSource(page, `const handler = async event => { await ${sql}`, id);
+    await editor.locator('.inputarea').focus();
+    await page.keyboard.press('ControlOrMeta+End');
+    await page.keyboard.insertText('SEL');
+    await expect(page.locator('.suggest-widget.visible')).toContainText('SELECT');
+    await page.keyboard.press('Escape');
+  }
 }
 
 test('create, deploy, test run, edit and redeploy a function from the editor', async ({ page }) => {
