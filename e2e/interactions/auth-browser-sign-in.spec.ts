@@ -1,3 +1,8 @@
+import { createServer } from 'node:http';
+import { once } from 'node:events';
+import { holdSync } from '../support/ports';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { type APIResponse } from '@playwright/test';
 import { auditedContext, expect, test } from '../support/audit';
@@ -7,10 +12,10 @@ import { newAddress, nextMail } from '../support/inbox';
 import { createDedicatedProjectOwner } from '../support/project-owner';
 import { enterSecret } from '../support/secret';
 import { auth, desktop } from '../support/stack';
-import { saveSecret } from '../support/state';
+import { saveCookies, saveSecret } from '../support/state';
+import { createTsAuthClient } from '../../sdk/js/src/ts-auth.js';
 
 const api = 'https://api.terrascale.tech';
-const app = 'https://app.journey.terrascale.tech';
 const unlisted = 'https://other.journey.terrascale.tech';
 
 type Tokens = { access_token: string; refresh_token: string; id_token: string };
@@ -26,7 +31,33 @@ function cors(label: string, response: APIResponse) {
   return headers;
 }
 
-test('a browser app on an allowed origin signs in guests and users with no backend, and guests reach their own rows', async ({ browser, request }, info) => {
+const browserTest = test.extend<{ site: { origin: string; example: (source: string) => void } }>({
+  site: async ({}, use) => {
+    const lease = holdSync({ browser_app: 8050 });
+    let example = '';
+    const server = createServer((request, response) => {
+      const path = new URL(request.url ?? '/', 'http://localhost').pathname;
+      const file = path === '/browser.mjs' ? resolve(__dirname, '../sdk/js/browser.mjs') :
+        path === '/ulid.js' ? resolve(__dirname, '../../sdk/js/node_modules/ulid/dist/browser/index.js') :
+        path.startsWith('/sdk/src/') ? resolve(__dirname, '../../sdk/js', path.slice(5)) : undefined;
+      response.setHeader('Content-Type', file || path === '/readme.mjs' ? 'text/javascript' : 'text/html');
+      response.end(file ? readFileSync(file) : path === '/readme.mjs' ? example :
+        '<!doctype html><title>Notes</title><script type="importmap">{"imports":{"ulid":"/ulid.js","@terrascale/sdk":"/sdk/src/index.js"}}</script>');
+    });
+    try {
+      server.listen(lease.ports.browser_app, '127.0.0.1');
+      await once(server, 'listening');
+      await use({ origin: 'http://127.0.0.1:' + lease.ports.browser_app, example: source => { example = source; } });
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+      lease.stop();
+    }
+  },
+});
+
+browserTest('a browser app on an allowed origin signs in guests and users with no backend, and guests reach their own rows', async ({ browser, request, site }, info) => {
+  const app = site.origin;
   const account = await createDedicatedProjectOwner(browser, info, 'Browser app owner');
   const { current, page } = account;
   const project = current.projectId;
@@ -72,11 +103,80 @@ test('a browser app on an allowed origin signs in guests and users with no backe
   const client = await registered.json() as { client_id: string; allowed_origins: string[]; allow_anonymous: boolean };
   expect(client).toMatchObject({ allowed_origins: [app], allow_anonymous: true });
 
+  const example = /```js\n([\s\S]*?)```/.exec(readFileSync(resolve(__dirname, '../../sdk/js/README.md'), 'utf8').split('## Browser apps with Rules')[1])![1];
+  const exampleModule = 'const { project, clientId, database } = ' + JSON.stringify({ project, clientId: client.client_id, database: database.split('/').at(-1) }) + ';\n'
+    + example + '\nexport { auth, signedIn, created };';
+  site.example(exampleModule);
   const context = await auditedContext(browser, { viewport: desktop, storageState: { cookies: [], origins: [] } });
+  await context.route(url => url.origin === app, route => route.continue());
+  const tokenReads: Promise<void>[] = [];
   try {
-    await context.route((url) => url.origin === app, (route) => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Notes</title>' }));
     const browserApp = await context.newPage();
+
+    context.on('requestfinished', request => {
+      if (request.method() !== 'POST' || !request.url().startsWith(auth + '/' + project + '/oauth/') ||
+          !/\/(token|anonymous)$/.test(request.url())) return;
+      tokenReads.push((async () => {
+        const response = await request.response();
+        if (response?.status() !== 200) return;
+        const body = await response.json();
+        for (const name of ['access_token', 'refresh_token', 'id_token'])
+          if (typeof body[name] === 'string') saveSecret('sdk-browser-' + name, body[name]);
+      })());
+    });
+    browserApp.on('framenavigated', frame => {
+      if (frame !== browserApp.mainFrame()) return;
+      const code = new URL(frame.url()).searchParams.get('code');
+      if (code) saveSecret('sdk-browser-pkce-code', code);
+    });
     await browserApp.goto(app + '/');
+    const sdkConfig = { project, clientId: client.client_id, authBaseUrl: auth, redirectUri: redirect,
+      database: database.split('/').at(-1)!, baseUrl: api };
+    const sdk = (method: string) => browserApp.evaluate(async method => {
+      const module = await import(location.origin + '/browser.mjs');
+      return module[method]();
+    }, method);
+    const configureSdk = () => browserApp.evaluate(async config => {
+      const module = await import(location.origin + '/browser.mjs');
+      module.configure(config);
+    }, sdkConfig);
+    await configureSdk();
+    const proof = await sdk('guestProof');
+    expect(proof.user.is_anonymous).toBe(true);
+    expect(await browserApp.evaluate(() => Object.keys(sessionStorage))).toEqual([]);
+    expect(proof.second.sub).not.toBe(proof.user.sub);
+    expect(proof.observed).toEqual([expect.objectContaining({ title: 'SDK guest note', owner_id: proof.user.sub })]);
+    expect(proof.read.row).toEqual({ owner_id: proof.user.sub, title: 'SDK guest note' });
+    expect(proof.updated.row.title).toBe('SDK renamed');
+    expect(proof.batchSize).toBe(2);
+    expect(proof.denied).toMatchObject({ ok: false, status: 404, error: { code: 'row_not_found' } });
+    expect(proof.forbidden).toMatchObject({ ok: false, status: 403, error: { code: 'column_not_writable', details: { column: 'owner_id' } } });
+    expect(proof.rolledBack).toMatchObject({ ok: false, status: 404, error: { code: 'row_not_found', details: { index: 1 } } });
+    expect(proof.retained.row.title).toBe('SDK batch update');
+    expect(proof.refreshed.sub).toBe(proof.user.sub);
+    console.log('Browser SDK: guest sign-in, own create/read/update/delete/batch, foreign update 404, refresh and live insert passed');
+    await sdk('watchRulesReset');
+    const rulesUpdate = await request.put(database + '/rules', {
+      headers: { ...owner, 'if-match': deployed.headers().etag },
+      data: { tables: { notes: {
+        read: "row.owner_id = auth.uid AND row.title <> 'SDK batch update'", create: 'auth.is_anonymous = 1',
+        update: 'row.owner_id = auth.uid', delete: 'row.owner_id = auth.uid',
+        columns: ['id', 'owner_id', 'title'], writable: ['title'], set: { create: { owner_id: 'auth.uid' } },
+      } } },
+    });
+    expect(rulesUpdate.status(), await rulesUpdate.text()).toBe(200);
+    expect(await sdk('rulesReset')).toEqual([]);
+    expect((await sdk('stop')).ok).toBe(true);
+    console.log('Browser SDK: live shape refetched after Rules deploy and dropped the hidden row');
+    const sample = await browserApp.evaluate(async () => {
+      const example = await import(location.origin + '/readme.mjs');
+      const signedOut = await example.auth.signOut();
+      return { signedIn: example.signedIn, created: example.created, signedOut };
+    });
+    expect(sample.signedIn).toMatchObject({ ok: true, value: { is_anonymous: true } });
+    expect(sample.created).toMatchObject({ ok: true, status: 201, value: { row: { title: 'SDK guest note' } } });
+    expect(sample.signedOut.ok).toBe(true);
+    console.log('README Browser apps with Rules sample: guest sign-in -> ok; notes.create -> 201');
     const fetched = (path: string, init: { method: string; form?: Record<string, string>; bearer?: string }) =>
       browserApp.evaluate(async ({ url, init }) => {
         const response = await fetch(url, {
@@ -168,6 +268,57 @@ test('a browser app on an allowed origin signs in guests and users with no backe
     console.log(`browser POST /{project}/oauth/revoke from ${app} -> ${revoked.status}`);
     expect(revoked.status).toBe(200);
 
+    await hosted.close();
+    await context.clearCookies();
+    await configureSdk();
+    await Promise.all([browserApp.waitForURL(url => url.origin === new URL(auth).origin), sdk('beginSignIn')]);
+    await hostedReady(browserApp);
+    await browserApp.locator('#sign-in-email').fill(email);
+    await browserApp.locator('button[formaction*="sign-in/password"]').click();
+    await enterSecret(browserApp.locator('#sign-in-password'), password);
+    await browserApp.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await browserApp.waitForURL(redirect + '?**');
+    await configureSdk();
+    const signedIn = await sdk('complete');
+    expect(signedIn.ok).toBe(true);
+    expect(signedIn.value.email).toBe(email);
+    expect(new URL(browserApp.url()).searchParams.has('code')).toBe(false);
+    expect((await sdk('refresh')).ok).toBe(true);
+    expect((await sdk('signOut')).ok).toBe(true);
+    expect(await sdk('currentUser')).toBeNull();
+    console.log('Browser SDK: S256 PKCE redirect, callback cleanup, current user, refresh and sign-out passed');
+    const methods = await page.request.put(auth + '/v1/' + project + '/settings', {
+      headers: { Authorization: 'Bearer ' + signIn }, data: { methods: { magic_link: true } },
+    });
+    expect(methods.status(), await methods.text()).toBe(200);
+    const magicEmail = await newAddress('browser-magic-' + randomBytes(5).toString('hex'));
+    const imported = await createTsAuthClient({ apiBaseUrl: auth, instanceSlug: 'terrascale' }).projects.importUsers(signIn, project, {
+      users: [{ email: magicEmail, email_verified: true }],
+    });
+    if (!imported.ok) throw new Error(JSON.stringify(imported.error));
+    expect(imported.value.errors).toEqual([]);
+    await context.clearCookies();
+    await browserApp.goto(app + '/');
+    await configureSdk();
+    await Promise.all([browserApp.waitForURL(url => url.origin === new URL(auth).origin), sdk('beginSignIn')]);
+    await hostedReady(browserApp);
+    await browserApp.locator('#sign-in-email').fill(magicEmail);
+    await browserApp.getByRole('button', { name: 'Email a sign-in link', exact: true }).click();
+    await hostedReady(browserApp);
+    await expect(browserApp.locator('#sign-in-error')).toHaveCount(0);
+    const magicMail = await nextMail(magicEmail, 0);
+    const magicLink = magicMail.text.match(/https:\/\/auth\.terrascale\.tech\/ui\/[^\s<>]+\/sign-in\/magic\?token=[^\s<>]+/)?.[0] ?? '';
+    expect(magicLink).not.toBe('');
+    saveSecret('sdk-browser-magic-link', magicLink);
+    await browserApp.goto(magicLink);
+    await browserApp.waitForURL(redirect + '?**');
+    await configureSdk();
+    const linked = await sdk('complete');
+    expect(linked).toMatchObject({ ok: true, value: { email: magicEmail } });
+    expect((await sdk('signOut')).ok).toBe(true);
+    console.log('Browser SDK: hosted magic link completed PKCE sign-in');
+    await Promise.all(tokenReads);
+
     const preflight = (origin: string, path: string, method: string) => request.fetch(auth + '/' + project + path, {
       method: 'OPTIONS', headers: { Origin: origin, 'Access-Control-Request-Method': method, 'Access-Control-Request-Headers': 'authorization, content-type' },
     });
@@ -195,6 +346,8 @@ test('a browser app on an allowed origin signs in guests and users with no backe
     expect(closed.status()).toBe(400);
     expect((await closed.json()).error).toBe('unauthorized_client');
   } finally {
+    await Promise.all(tokenReads);
+    await saveCookies(context);
     await context.close();
     const removed = await page.request.delete(clients + '/' + client.client_id, { headers: { Authorization: 'Bearer ' + current.apiKey } });
     expect(removed.status()).toBe(204);

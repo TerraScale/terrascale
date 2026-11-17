@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased — SQL only
+## Unreleased
+
+Added `BrowserAuth` for public tenant PKCE, hosted magic links, guest sign-in, in-memory tokens, proactive refresh,
+current user and revocation. Database handles now expose typed-result `rows(table).get/create/update/delete`
+and atomic `batchRows`. Existing live shapes refetch on Rules changes. The browser-origin journey covers the
+new auth and row APIs; the README describes native HTTP 421 resends and uncertain-create reconciliation.
 
 `@terrascale/sdk/prisma` maps refused SQL statements to Prisma's driver-adapter
 error kinds by SQLSTATE: unique, not-null and foreign-key violations, missing

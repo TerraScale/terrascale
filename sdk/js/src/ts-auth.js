@@ -123,13 +123,14 @@ import { requireId } from "./ids.js";
  *   readonly expires_in: number;
  *   readonly scope: string;
  *   readonly refresh_token?: string | null | undefined; // Omitted for client_credentials; nullable for user code/device issuance.
- *   readonly id_token?: string | undefined; // Present only on code/device issuance with openid scope; omitted on refresh.
+ *   readonly id_token?: string | undefined;
  * }} TsAuthOidcTokenResponse
  */
 
 /**
  * @typedef {{
  *   readonly sub: import("./ids.js").EntityId;
+ *   readonly is_anonymous?: boolean | undefined;
  *   readonly email?: string | undefined;
  *   readonly email_verified?: boolean | undefined;
  *   readonly name?: string | undefined;
@@ -281,7 +282,7 @@ export class TsAuthOidcClient {
    * client secret. ts-auth rotates the refresh token on every use.
    * @param {string} clientId
    * @param {string} refreshToken
-   * @param {TsAuthRequestOptions} [options={}]
+   * @param {TsAuthRequestOptions & { readonly scope?: string }} [options={}]
    * @returns {Promise<TerraScaleResult<TsAuthOidcTokenResponse>>}
    */
   refreshPublic(clientId, refreshToken, options = {}) {
@@ -293,11 +294,39 @@ export class TsAuthOidcClient {
       "refresh_token",
       requireText(refreshToken, "refreshToken"),
     );
+    if (options.scope !== undefined) form.set("scope", requireOauthScope(options.scope));
+    const pending = this.#postForm(`${this.#slug}/oauth/token`, "tsauth.oidc.token", form, options);
     return oauthResponse(
-      this.#postForm(`${this.#slug}/oauth/token`, "tsauth.oidc.token", form, options),
+      pending.then(result => result.ok && oauthRecord(result.value) && !Object.hasOwn(result.value, "scope") && options.scope !== undefined
+        ? { ...result, value: { ...result.value, scope: options.scope } } : result),
       /** @returns {value is TsAuthOidcTokenResponse} */
       (value) => isTokenResponse(value, "refresh_token"),
     );
+  }
+
+  /** @param {string} clientId @param {string} code @param {string} redirectUri @param {string} verifier @param {TsAuthRequestOptions} [options] */
+  exchangePublic(clientId, code, redirectUri, verifier, options = {}) {
+    return oauthResponse(this.#postForm(`${this.#slug}/oauth/token`, "tsauth.oidc.token",
+      new URLSearchParams({ client_id: requireId(clientId, "clientId"), grant_type: "authorization_code",
+        code: requireText(code, "code"), redirect_uri: requireText(redirectUri, "redirectUri"), code_verifier: requireText(verifier, "verifier") }), options),
+      /** @returns {value is TsAuthOidcTokenResponse} */
+      value => isTokenResponse(value, "authorization_code"));
+  }
+
+  /** @param {string} clientId @param {TsAuthRequestOptions} [options] */
+  signInGuest(clientId, options = {}) {
+    const pending = this.#postForm(`${this.#slug}/oauth/anonymous`, "tsauth.oidc.anonymous",
+      new URLSearchParams({ client_id: requireId(clientId, "clientId") }), options);
+    return oauthResponse(pending.then(result => result.ok && oauthRecord(result.value) && !Object.hasOwn(result.value, "scope")
+      ? { ...result, value: { ...result.value, scope: "openid offline_access" } } : result),
+      /** @returns {value is TsAuthOidcTokenResponse} */
+      value => isTokenResponse(value, "authorization_code"));
+  }
+
+  /** @param {string} clientId @param {string} token @param {TsAuthRequestOptions} [options] @returns {Promise<TerraScaleResult<void>>} */
+  revokePublic(clientId, token, options = {}) {
+    return this.#postForm(`${this.#slug}/oauth/revoke`, "tsauth.oidc.revoke",
+      new URLSearchParams({ client_id: requireId(clientId, "clientId"), token: requireText(token, "token") }), options);
   }
 
   /**
@@ -663,7 +692,8 @@ function isTokenResponse(value, grant) {
   if (grant !== "client_credentials") fields.push("refresh_token");
   const idToken =
     (grant === "authorization_code" ||
-      grant === "urn:ietf:params:oauth:grant-type:device_code") &&
+      grant === "urn:ietf:params:oauth:grant-type:device_code" ||
+      grant === "refresh_token" && Object.hasOwn(value, "id_token")) &&
     value.scope.split(/[\t\n\f\r ]+/u).includes("openid");
   if (idToken) fields.push("id_token");
   return (

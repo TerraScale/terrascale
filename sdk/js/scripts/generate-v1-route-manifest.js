@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "./browser-row-manifest.js";
 import assert from "node:assert/strict";
 import { v1Route } from "../src/v1/routes.js";
 import { readFile, writeFile } from "node:fs/promises";

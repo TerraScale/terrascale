@@ -165,6 +165,62 @@ choice to stay pinned for the session. Atlas discovery integration is deferred
 to TS-507; this release sends to `https://api.terrascale.tech` unless a URL or
 resolver is supplied.
 
+## Browser apps with Rules
+
+The following API is in the next SDK release. A project admin registers a public tenant OAuth client with the
+app's exact origin in `allowed_origins`, its callback in `redirect_uris`, and guest admission when needed.
+Deploy [Rules](../../docs/terrabase/rules.md) before serving data; no rules denies end users.
+The browser needs the public project and client IDs. Keep project keys out of the app.
+
+```js
+import { BrowserAuth, createTerraBaseClient } from "@terrascale/sdk";
+
+const auth = new BrowserAuth({
+  project, clientId, authBaseUrl: "https://auth.terrascale.tech",
+  redirectUri: location.origin + "/callback",
+});
+const db = createTerraBaseClient({
+  project, token: () => auth.accessToken(),
+}).database(database);
+
+const signedIn = await auth.signInGuest();
+if (!signedIn.ok) throw new Error(signedIn.error.code);
+const created = await db.rows("notes").create({ title: "SDK guest note" });
+if (!created.ok) throw new Error(created.error.code);
+```
+
+For hosted sign-in, call `await auth.signIn()`; on the registered callback page recreate `auth` and call
+`await auth.completeSignIn()`. This uses S256 PKCE, checks one-use state and removes the code from browser
+history. Choose **Email a sign-in link** on the hosted page when the tenant offers magic links; it finishes the
+same PKCE callback in the requesting browser. Registered callbacks and the project's redirect allowlist still apply.
+
+`auth.currentUser` is the signed-in user or `null`; guests have `is_anonymous: true`. Access, refresh and ID tokens
+stay in memory. Reloading requires sign-in again; only the temporary PKCE verifier and state use session storage
+and expire after ten minutes. Access tokens refresh thirty seconds before `exp`, also checked on every data
+request; concurrent refresh calls share one rotation. A refused or failed refresh clears the local sign-in.
+`await auth.signOut()` clears local credentials and revokes the refresh family. Navigate to `auth.logoutUrl`
+to end the separate hosted cookie session through ts-auth's confirmation page. Already issued access tokens
+remain usable until their expiry, subject to the [revocation limits](../../docs/terrabase/rules.md#35-revocation).
+
+`db.rows(table).get(key, { columns })` reads one row; `create(row)`, `update(key, row)` and `delete(key)` write rows.
+`db.batchRows([{ op: "create", table: "notes", row: { title: "Next" } }])` writes 1–100 operations atomically,
+including updates and deletes across tables. Row methods return `TerraScaleResult`: check `ok`, then `value` or
+`error.code`, `error.status` and `error.details`. Rules codes include `rule_denied`, `column_not_writable`,
+`validation_failed`, `row_exists` and `row_not_found`; a failed batch includes `error.details.index`.
+Keys are decimal row IDs, as shapes report them. Blob values use `{ base64: "…" }`; exact numbers retain the
+SDK's `ExactDecimal` encoding. Mutation results have `{ key, row }`, with `row: null` when Rules hide the stored row.
+
+`db.shape("notes", { where: "title <> ''", columns: ["id", "title"] }).subscribe(state => render(state.rows))`
+reads an authorized snapshot then live changes. Close the returned subscription when leaving the view.
+A `409 must_refetch`, including after a Rules deploy, discards its handle and refetches with current authorization.
+Close subscriptions and discard displayed data when changing users or signing out.
+
+A `421 wrong_region` means nothing was applied. Chrome and Edge can resend a buffered request once after 421;
+the browser SDK cannot prevent that native resend. A timeout or `503 write_outcome_unknown` can mean a write
+committed: never automatically replay it. For creates that need reconciliation, choose a client ULID in a writable,
+UNIQUE `id` column instead of `set.create.id: request.ulid`. A subsequent `409 row_exists` identifies that create;
+`details.key` is included only when the conflicting row is readable.
+
 ## SQL and catalog
 
 The database catalog routes are in [sdk-v1-route-manifest.json](sdk-v1-route-manifest.json), checked against the

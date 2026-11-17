@@ -1,0 +1,84 @@
+import { BrowserAuth, createTerraBaseClient } from "/sdk/src/index.js";
+
+let auth;
+let db;
+let config;
+let subscription;
+let latest;
+let waiters = [];
+let reset;
+
+function value(result) {
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
+
+function waitFor(predicate) {
+  if (latest && predicate(latest)) return Promise.resolve(latest);
+  return new Promise((resolve, reject) => { waiters.push({ predicate, resolve, reject }); });
+}
+
+export function configure(options) {
+  config = options;
+  auth = new BrowserAuth(config);
+  db = createTerraBaseClient({ project: config.project, baseUrl: config.baseUrl, token: () => auth.accessToken() }).database(config.database);
+}
+
+export async function guestProof() {
+  const user = value(await auth.signInGuest());
+  const notes = db.rows("notes");
+  subscription = db.shape("notes", { where: "title <> ''", columns: ["id", "owner_id", "title"] }).subscribe(state => {
+    if (!state.upToDate) return;
+    latest = [...state.rows.values()];
+    const pending = waiters;
+    waiters = [];
+    for (const waiter of pending) {
+      if (waiter.predicate(latest)) waiter.resolve(latest);
+      else waiters.push(waiter);
+    }
+  });
+  void subscription.done.catch(error => {
+    for (const waiter of waiters) waiter.reject(error);
+    waiters = [];
+  });
+  await waitFor(rows => rows.length === 0);
+  const created = value(await notes.create({ title: "SDK guest note" }));
+  const observed = await waitFor(rows => rows.some(row => row.title === "SDK guest note"));
+  const read = value(await notes.get(created.key, { columns: ["owner_id", "title"] }));
+  const updated = value(await notes.update(created.key, { title: "SDK renamed" }));
+  const batch = value(await db.batchRows([
+    { op: "create", table: "notes", row: { title: "SDK batch note" } },
+    { op: "update", table: "notes", key: created.key, row: { title: "SDK batch update" } },
+  ]));
+  value(await notes.delete(batch.results[0].key));
+  const foreign = new BrowserAuth(config);
+  const second = value(await foreign.signInGuest());
+  const otherDb = createTerraBaseClient({ project: config.project, baseUrl: config.baseUrl, token: () => foreign.accessToken() }).database(config.database);
+  const denied = await otherDb.rows("notes").update(created.key, { title: "stolen" });
+  value(await foreign.signOut());
+  const forbidden = await notes.update(created.key, { owner_id: second.sub });
+  const rolledBack = await db.batchRows([
+    { op: "update", table: "notes", key: created.key, row: { title: "must roll back" } },
+    { op: "update", table: "notes", key: "1", row: { title: "stolen" } },
+  ]);
+  const retained = value(await notes.get(created.key));
+  const rotated = await Promise.all([auth.refresh(), auth.refresh()]);
+  const refreshed = value(rotated[0]);
+  value(rotated[1]);
+  return { user, second, key: created.key, observed, read, updated, denied, forbidden, rolledBack, retained, refreshed, batchSize: batch.results.length };
+}
+
+export function watchRulesReset() { reset = waitFor(rows => rows.length === 0); }
+export async function rulesReset() { return reset; }
+
+export async function stop() {
+  subscription?.close();
+  if (subscription) await subscription.done;
+  return auth.signOut();
+}
+
+export async function beginSignIn() { await auth.signIn(); }
+export async function complete() { return auth.completeSignIn(); }
+export async function refresh() { return auth.refresh(); }
+export function currentUser() { return auth.currentUser; }
+export async function signOut() { return auth.signOut(); }

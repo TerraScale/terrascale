@@ -1,5 +1,4 @@
-// The TerraBase v1 client: SQL over REST and WebSocket, SQL table shapes, backups and usage
-// for the project-scoped C# API (sdk/SQL-API.md).
+import { V1Rows, batchRows } from "./rows.js";
 import { V1FileStorage } from "./file-storage.js";
 import { requireId } from "../ids.js";
 import { requireDatabaseSelector, requireName } from "./ids.js";
@@ -124,6 +123,12 @@ export class V1Database {
   shape(table, request = {}) {
     return new V1TableShape(this.#transport, this.name, table, request);
   }
+
+  /** @param {string} table @returns {V1Rows} */
+  rows(table) { return new V1Rows(this.#transport, this.name, table); }
+
+  /** @param {readonly import("./rows.js").RowMutation[]} operations @param {V1RequestOptions} [options] */
+  batchRows(operations, options = {}) { return batchRows(this.#transport, this.name, operations, options); }
 
   /**
    * Opens a SQL WebSocket session: lower latency per statement and interactive transactions.

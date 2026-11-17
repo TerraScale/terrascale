@@ -343,7 +343,7 @@ function buildUrl(origin, path, query) {
  * @returns {boolean}
  */
 function strictOauthRoute(routeName) {
-  return routeName === "tsauth.oidc.token";
+  return routeName === "tsauth.oidc.token" || routeName === "tsauth.oidc.anonymous";
 }
 
 /** @param {TsAuthRequest<unknown>} request */
