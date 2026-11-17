@@ -1,0 +1,28 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Rules.RulesPage>
+<div id="rules-diff">@if(Model.Comparison is { } comparison){
+var restorable = Model.CanWrite && Model.Current is { } live && live.Version != comparison.Version.Version;
+<section class="ts-card ts-card-boxed" aria-labelledby="rules-diff-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="rules-diff-title">Changes since @ValueFormat.UtcDate(comparison.Version.UpdatedAt)</h2></div><div class="ts-card-actions"><a class="ts-btn ts-btn-secondary ts-btn-sm" href="@Model.Path">Close</a>@if(restorable){<button class="ts-btn ts-btn-primary ts-btn-sm" type="button" command="show-modal" commandfor="restore-rules">Restore</button>}</div></header><div class="ts-card-body">
+<pre class="ts-code ts-rules-diff">@foreach(var line in comparison.Lines){<span data-kind="@Kind(line.Kind)">@Mark(line.Kind) @line.Text</span>}</pre>
+</div></section>
+@if(restorable){
+<dialog class="ts-dialog" id="restore-rules" closedby="any" aria-labelledby="restore-rules-title" aria-describedby="restore-rules-description"><div class="ts-dialog-content"><header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="restore-rules-title">Restore the rules from @ValueFormat.UtcDate(comparison.Version.UpdatedAt)?</h2><p class="ts-dialog-description" id="restore-rules-description">They replace the current rules for every end user.</p></div><button class="ts-icon-btn" type="button" aria-label="Close" command="close" commandfor="restore-rules">@Icons.Render("X",18)</button></header>
+<form method="post" action="/api/v1/dashboard/rules/restore" class="ts-form" data-submit-once><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="databaseId" value="@Model.Database.Id" /><input type="hidden" name="restore" value="@comparison.Version.Version" /><input type="hidden" name="version" value="@Model.Current!.Version" /><div class="ts-dialog-footer"><button class="ts-btn ts-btn-secondary" type="button" command="close" commandfor="restore-rules" autofocus>Cancel</button><button class="ts-btn ts-btn-primary" type="submit">Restore version</button></div></form></div></dialog>
+}
+}</div>
+@functions {
+    private static string Kind(TerraScale.Dashboard.Features.Rules.RulesDiffKind kind) => kind switch
+    {
+        TerraScale.Dashboard.Features.Rules.RulesDiffKind.Same => "same",
+        TerraScale.Dashboard.Features.Rules.RulesDiffKind.Removed => "removed",
+        TerraScale.Dashboard.Features.Rules.RulesDiffKind.Added => "added",
+        _ => throw new System.Diagnostics.UnreachableException(),
+    };
+
+    private static string Mark(TerraScale.Dashboard.Features.Rules.RulesDiffKind kind) => kind switch
+    {
+        TerraScale.Dashboard.Features.Rules.RulesDiffKind.Same => " ",
+        TerraScale.Dashboard.Features.Rules.RulesDiffKind.Removed => "-",
+        TerraScale.Dashboard.Features.Rules.RulesDiffKind.Added => "+",
+        _ => throw new System.Diagnostics.UnreachableException(),
+    };
+}

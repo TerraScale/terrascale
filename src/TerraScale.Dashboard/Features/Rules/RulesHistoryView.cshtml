@@ -1,0 +1,9 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Rules.RulesPage>
+<div class="ts-stack ts-rules-history" id="rules-history"><section class="ts-card ts-card-boxed ts-card-flush" aria-labelledby="rules-history-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="rules-history-title">History</h2></div></header><div class="ts-card-body">
+@if(Model.Versions.Count == 0){<div class="ts-empty" role="status"><p class="ts-empty-title">No rules deployed yet.</p></div>}else{
+<ul class="ts-rows" id="rules-versions">
+@foreach(var version in Model.Versions){var current = version.Version == Model.Current?.Version;
+<li data-version="@version.Version"><span class="ts-dot" data-tone="@(current ? "success" : "neutral")" aria-hidden="true"></span><div class="ts-stack-sm"><span class="ts-rows-title">@ValueFormat.UtcDate(version.UpdatedAt)</span><span class="ts-rows-meta">@Model.Author(version.UpdatedBy)</span></div>@if(current){<span class="ts-badge ts-badge-tone" data-tone="success">Current</span>}else{<div class="ts-rows-actions"><a class="ts-btn ts-btn-secondary ts-btn-sm" href="@(Model.Path + "?compare=" + version.Version)" aria-current="@(Model.Comparison?.Version.Version == version.Version ? "true" : null)">Compare</a></div>}</li>
+}
+</ul>}
+</div></section></div>

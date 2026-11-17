@@ -1,5 +1,7 @@
 import { randomBytes } from 'node:crypto';
-import { expect, test, type APIRequestContext, type APIResponse } from '@playwright/test';
+import type { APIRequestContext, APIResponse, Page } from '@playwright/test';
+import { expect, test } from '../support/audit';
+import { mcpTool } from '../support/mcp';
 import { signInToken } from '../support/auth-management';
 import { auth } from '../support/stack';
 import { journey, saveSecret } from '../support/state';
@@ -326,6 +328,143 @@ test('end users read only the rows and columns the rules allow, under handles bo
     await answer(await read(aliceToken, 'offset=-1'), 403, 'rules_invalid');
     await answer(await row(aliceToken, '1'), 403, 'rules_invalid');
     await deploy({});
+  } finally {
+    await execute(`DROP TABLE IF EXISTS ${table}`);
+  }
+});
+
+async function setRules(page: Page, rules: unknown): Promise<void> {
+  const source = JSON.stringify(rules, null, 2);
+  await page.locator('#rules-source').evaluate((editor: HTMLTextAreaElement, text: string) => {
+    editor.value = text;
+    editor.dispatchEvent(new Event('input', { bubbles: true }));
+  }, source);
+  await expect(page.locator('#rules-source')).toHaveValue(source);
+}
+
+async function playground(page: Page, operation: string, table: string, auth: unknown, row: unknown): Promise<void> {
+  await page.locator('#rules-operation').selectOption(operation);
+  await page.locator('#rules-table').fill(table);
+  await page.locator('#rules-auth').fill(JSON.stringify(auth));
+  await page.locator('#rules-row').fill(JSON.stringify(row));
+  await page.locator('#rules-new').fill('{}');
+  await page.getByRole('button', { name: 'Run test', exact: true }).click();
+}
+
+test('the Rules page deploys with If-Match, lists problems, runs the playground, compares and restores versions, and so do the MCP tools', async ({ request, page, audit }) => {
+  const current = journey();
+  const database = `${api}/v1/projects/${current.projectId}/databases/${current.databaseId}`;
+  const table = 'rules_page_' + randomBytes(4).toString('hex');
+  const owner = await ownerToken(request);
+  const headers = (extra: Record<string, string> = {}) => ({ authorization: 'Bearer ' + owner, ...extra });
+  const execute = async (sql: string) => {
+    const response = await request.post(database + '/sql/execute', { headers: headers(), data: { statements: [{ sql }] } });
+    expect(response.status(), sql).toBe(200);
+  };
+  const live = async () => {
+    const response = await request.get(database + '/rules', { headers: headers() });
+    return response.status() === 404 ? null : await answer<RulesBody>(response, 200);
+  };
+  const owned = { read: 'row.owner_id = auth.uid', columns: ['id', 'owner_id', 'title'] };
+  const closed = { read: 'FALSE' };
+
+  await execute(`CREATE TABLE ${table} (id INTEGER PRIMARY KEY, owner_id TEXT NOT NULL, title TEXT NOT NULL, secret TEXT)`);
+  try {
+    await page.goto(`/databases/${current.databaseId}/rules`);
+    await expect(page).toHaveTitle(`${current.databaseName} · Rules · TerraScale`);
+    const before = await live();
+    expect(JSON.parse(await page.locator('#rules-source').inputValue())).toEqual({ tables: before?.tables ?? {} });
+    await audit.check('rules page with the current rules');
+
+    await setRules(page, { tables: { [table]: { read: 'row.missing = auth.uid', columns: ['id', 'nope'] } } });
+    await page.getByRole('button', { name: 'Deploy rules', exact: true }).click();
+    await expect(page.locator('#rules-error')).toHaveText('The rules were not deployed.');
+    const problems = page.locator('#rules-problem-list tbody tr');
+    await expect(problems).toHaveCount(2);
+    await expect(problems.nth(0)).toHaveAttribute('data-code', 'unknown_column');
+    await expect(problems.nth(0).locator('td').nth(0)).toHaveText(table);
+    await expect(problems.nth(0).locator('td').nth(1)).toHaveText('columns');
+    await expect(problems.nth(1).locator('td').nth(1)).toHaveText('read');
+    expect((await live())?.version).toBe(before?.version);
+    await audit.check('rules deploy problems listed per table and field');
+
+    const racing = await answer<RulesBody>(await request.put(database + '/rules', {
+      headers: headers(before ? { 'if-match': `"${before.version}"` } : { 'if-none-match': '*' }), data: { tables: { [table]: closed } },
+    }), 200);
+    await setRules(page, { tables: { [table]: owned } });
+    await page.getByRole('button', { name: 'Deploy rules', exact: true }).click();
+    await expect(page.locator('#rules-error')).toHaveText('These rules changed since you loaded them.');
+    expect((await live())?.version).toBe(racing.version);
+    await audit.check('rules changed since they were loaded');
+    await page.getByRole('link', { name: 'Reload rules', exact: true }).click();
+    await expect(page.locator('#rules-source')).toHaveValue(/"read": "FALSE"/);
+
+    await setRules(page, { tables: { [table]: owned } });
+    await page.getByRole('button', { name: 'Deploy rules', exact: true }).click();
+    await expect(page.locator('#rules-notice')).toHaveText('Rules deployed.');
+    const deployed = (await live())!;
+    expect(deployed.version).not.toBe(racing.version);
+    expect(deployed.tables).toEqual({ [table]: owned });
+    const history = page.locator('#rules-versions li');
+    await expect(history.first()).toHaveAttribute('data-version', deployed.version);
+    await expect(history.first()).toContainText('Current');
+    await expect(history.nth(1)).toHaveAttribute('data-version', racing.version);
+    await expect(history.first().locator('.ts-rows-meta')).toHaveText(current.email);
+
+    await playground(page, 'read', table, { uid: 'alice', claims: {}, is_anonymous: false }, { id: 1, owner_id: 'alice', title: 'a', secret: 's' });
+    await expect(page.locator('#rules-allowed')).toHaveText('Allowed');
+    await expect(page.locator('#rules-decided-by')).toHaveText('read');
+    await expect(page.locator('#rules-clause')).toHaveText(owned.read);
+    await expect(page.locator('#rules-columns')).toHaveText('id, owner_id, title');
+    await audit.check('rules playground allows the owner');
+    await playground(page, 'read', table, { uid: 'bob', claims: {}, is_anonymous: false }, { id: 1, owner_id: 'alice', title: 'a', secret: 's' });
+    await expect(page.locator('#rules-allowed')).toHaveText('Denied');
+    await expect(page.locator('#rules-clause')).toHaveText(owned.read);
+    await audit.check('rules playground denies another user');
+    await setRules(page, { tables: { [table]: { read: 'TRUE' } } });
+    await page.getByRole('button', { name: 'Run test', exact: true }).click();
+    await expect(page.locator('#rules-allowed')).toHaveText('Allowed');
+    await expect(page.locator('#rules-clause')).toHaveText('TRUE');
+    expect((await live())?.version).toBe(deployed.version);
+
+    await history.nth(1).getByRole('link', { name: 'Compare', exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`[?&]compare=${racing.version}(&|$)`));
+    await expect(page.locator('#rules-diff [data-kind="removed"]').filter({ hasText: '"read": "FALSE"' })).toHaveCount(1);
+    await expect(page.locator('#rules-diff [data-kind="added"]').filter({ hasText: `"read": "${owned.read}"` })).toHaveCount(1);
+    await audit.check('rules version diff against the current rules');
+
+    await page.locator('#rules-diff').getByRole('button', { name: 'Restore', exact: true }).click();
+    const dialog = page.locator('dialog[open]');
+    await expect(dialog).toContainText('They replace the current rules for every end user.');
+    await audit.check('rules restore confirmation');
+    await dialog.getByRole('button', { name: 'Restore version', exact: true }).click();
+    await expect(page).toHaveURL(/[?&]restored=1(&|$)/);
+    await expect(page.locator('#rules-notice')).toHaveText('Version restored.');
+    await expect(page.locator('#rules-source')).toHaveValue(/"read": "FALSE"/);
+    const restored = (await live())!;
+    expect(restored.tables).toEqual({ [table]: closed });
+    await expect(history.first()).toHaveAttribute('data-version', restored.version);
+    console.log('Rules page: problems listed, 412 reload, deploy, playground allowed and denied, diff and restore ' + JSON.stringify({ deployed: deployed.version, restored: restored.version }));
+
+    const scope = { databaseId: current.databaseId, organizationId: current.organizationId, projectId: current.projectId };
+    const read = await mcpTool(request, current.apiKey, 'get_database_rules', scope);
+    expect(read).toMatchObject({ version: restored.version, rules: { tables: { [table]: closed } }, problems: [] });
+    const versions = await mcpTool(request, current.apiKey, 'list_database_rules_versions', scope);
+    expect(versions.versions.slice(0, 3).map((item: { version: string }) => item.version)).toEqual([restored.version, deployed.version, racing.version]);
+    const tested = await mcpTool(request, current.apiKey, 'test_database_rules', {
+      ...scope, operation: 'read', table, auth: { uid: 'alice' }, row: { id: 1, owner_id: 'alice', title: 'a' }, rules: { tables: { [table]: owned } },
+    });
+    expect(tested).toMatchObject({ allowed: true, decidedBy: 'read', clause: owned.read, columns: owned.columns, problems: [] });
+    const deniedByDeployed = await mcpTool(request, current.apiKey, 'test_database_rules', { ...scope, operation: 'read', table, auth: { uid: 'alice' }, row: { owner_id: 'alice' } });
+    expect(deniedByDeployed).toMatchObject({ allowed: false, decidedBy: 'read', clause: 'FALSE' });
+    const refused = await mcpTool(request, current.apiKey, 'deploy_database_rules', { ...scope, version: restored.version, rules: { tables: { [table]: { read: 'new.title = 1' } } } });
+    expect(refused).toMatchObject({ deployed: false, version: null, problems: [{ table, field: 'read', code: 'reference_not_allowed' }] });
+    await mcpTool(request, current.apiKey, 'deploy_database_rules', { ...scope, version: deployed.version, rules: { tables: { [table]: owned } } }, 'The rules changed since that version.');
+    const back = await mcpTool(request, current.apiKey, 'restore_database_rules_version', { ...scope, version: deployed.version, currentVersion: restored.version });
+    expect(back).toMatchObject({ deployed: true, problems: [] });
+    expect((await live())).toMatchObject({ version: back.version, tables: { [table]: owned } });
+    const cleared = await mcpTool(request, current.apiKey, 'deploy_database_rules', { ...scope, version: back.version, rules: { tables: {} } });
+    expect(cleared).toMatchObject({ deployed: true, problems: [] });
   } finally {
     await execute(`DROP TABLE IF EXISTS ${table}`);
   }

@@ -1,0 +1,6 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Rules.RulesPage>
+@(await RenderPartialAsync<TerraScale.Dashboard.Features.Rules.RulesAlertsView,TerraScale.Dashboard.Features.Rules.RulesPage>(Model))
+@(await RenderPartialAsync<TerraScale.Dashboard.Features.Rules.RulesProblemsView,TerraScale.Dashboard.Features.Rules.RulesPage>(Model))
+@(await RenderPartialAsync<TerraScale.Dashboard.Features.Rules.RulesDiffView,TerraScale.Dashboard.Features.Rules.RulesPage>(Model))
+@(await RenderPartialAsync<TerraScale.Dashboard.Features.Rules.RulesResultView,TerraScale.Dashboard.Features.Rules.RulesPage>(Model))
+@(await RenderPartialAsync<TerraScale.Dashboard.Features.Rules.RulesHistoryView,TerraScale.Dashboard.Features.Rules.RulesPage>(Model))

@@ -1,0 +1,8 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Rules.RulesPage>
+<div class="ts-stack" id="rules-result" aria-live="polite">
+@if(Model.PlaygroundError.Length > 0){<p class="ts-field-error" id="rules-playground-error" role="alert">@Model.PlaygroundError</p>}
+@if(Model.Result is { } result){
+<dl class="ts-kv" id="rules-decision"><div><dt>Decision</dt><dd><span class="ts-badge ts-badge-tone" data-tone="@(result.Allowed ? "success" : "danger")" id="rules-allowed">@(result.Allowed ? "Allowed" : "Denied")</span></dd></div><div><dt>Decided by</dt><dd class="ts-mono" id="rules-decided-by">@result.DecidedBy</dd></div>@if(result.Clause is { } clause){<div><dt>Clause</dt><dd class="ts-mono ts-break" id="rules-clause">@clause</dd></div>}<div><dt>Columns</dt><dd class="ts-mono ts-break" id="rules-columns">@string.Join(", ", result.Columns)</dd></div></dl>
+@if(result.Problems.Count > 0){<ul class="ts-stack-sm" id="rules-result-problems">@foreach(var problem in result.Problems){<li class="ts-field-error"><span class="ts-mono">@problem.Table @problem.Field</span> @problem.Message</li>}</ul>}
+}
+</div>

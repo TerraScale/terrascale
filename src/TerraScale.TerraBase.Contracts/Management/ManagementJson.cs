@@ -11,6 +11,10 @@ namespace TerraScale.TerraBase.Contracts.Management
     [JsonSerializable(typeof(TerraBaseDatabasePlacement))]
     [JsonSerializable(typeof(TerraBaseDatabaseTtl))]
     [JsonSerializable(typeof(TerraBaseMoveHome))]
+    [JsonSerializable(typeof(TerraBaseRules))]
+    [JsonSerializable(typeof(TerraBaseRulesVersionPage))]
+    [JsonSerializable(typeof(TerraBaseRulesTestResult))]
+    [JsonSerializable(typeof(IReadOnlyList<TerraBaseRulesProblem>))]
     [JsonSerializable(typeof(JsonElement))]
     public sealed partial class ManagementJson : JsonSerializerContext;
 }

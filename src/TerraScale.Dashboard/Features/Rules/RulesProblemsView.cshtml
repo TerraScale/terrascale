@@ -1,0 +1,9 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Rules.RulesPage>
+@{ var problems = Model.Problems.Count > 0 ? Model.Problems : Model.Current?.Problems ?? []; }
+<div class="ts-stack" id="rules-problems">
+@foreach(var (title, id, list) in new[] { ("Problems", "rules-problem-list", problems), ("Warnings", "rules-warning-list", Model.Warnings) }){
+if(list.Count > 0){<div class="ts-table-wrap"><table class="ts-table" id="@id"><caption class="ts-sr-only">@title</caption><thead><tr><th scope="col">Table</th><th scope="col">Field</th><th scope="col">@(title == "Problems" ? "Problem" : "Warning")</th></tr></thead><tbody>
+@foreach(var problem in list.OrderBy(item => item.Table, StringComparer.Ordinal).ThenBy(item => item.Field, StringComparer.Ordinal)){<tr data-code="@problem.Code"><td class="ts-mono">@problem.Table</td><td class="ts-mono">@problem.Field</td><td class="ts-break">@problem.Message</td></tr>}
+</tbody></table></div>}
+}
+</div>

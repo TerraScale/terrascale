@@ -6,6 +6,7 @@ using TerraScale.Dashboard.Features.ApiKeys;
 using TerraScale.Dashboard.Features.Onboarding;
 using TerraScale.Dashboard.Features.Backups;
 using TerraScale.Dashboard.Features.Functions;
+using TerraScale.Dashboard.Features.Rules;
 using TerraScale.Dashboard.Features.Logs;
 using TerraScale.Dashboard.Features.Home;
 using TerraScale.Dashboard.Features.Usage;
@@ -22,7 +23,7 @@ namespace TerraScale.Dashboard.Features.Databases
             .AddSingleton<DatabaseConflicts>().AddSingleton<DataService>().AddSingleton<SavedQueryService>().AddSingleton<SqlRuns>()
             .AddSingleton<ApiKeyService>().AddSingleton<IWorkspacePlacement, WorkspacePlacement>()
             .AddSingleton<IOnboardingProjectProvisioner, OnboardingProjectProvisioner>()
-            .AddSingleton<IBackupBackend, BackupBackend>().AddSingleton<BackupService>().AddSingleton<WholeDatabaseRecovery>().AddDatabaseLogs().AddDatabaseFunctions();
+            .AddSingleton<IBackupBackend, BackupBackend>().AddSingleton<BackupService>().AddSingleton<WholeDatabaseRecovery>().AddDatabaseLogs().AddDatabaseFunctions().AddDatabaseRules();
         }
 
         public static IEndpointRouteBuilder MapDatabaseFeatures(this IEndpointRouteBuilder endpoints)

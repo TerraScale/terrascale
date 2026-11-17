@@ -94,6 +94,7 @@ async function mcpConsent(page: Page): Promise<string> {
 
 const databaseTabs: [string, string, Identity][] = [
   ['tables', 'Tables', currentTab('Database sections', 'Tables')],
+  ['rules', 'Rules', currentTab('Database sections', 'Rules')],
   ['sql', 'SQL editor', currentTab('Database sections', 'SQL editor')],
   ['functions', 'Functions', currentTab('Database sections', 'Functions')],
   ['replication', 'Replication', title('Region sync', 2)],
@@ -107,6 +108,7 @@ const databaseTabs: [string, string, Identity][] = [
 
 const tabStates: Record<string, PagePattern['query']> = {
   functions: { function: /^([a-z0-9][a-z0-9_-]{0,62})?$/, edit: /^(new)?$/, trigger: /^(http|cron)?$/, status: /^(ok|error)?$/, window: /^(1h|24h|7d)?$/, deployed: /^1?$/ },
+  rules: { compare: optionalId, restored: /^1?$/ },
   sql: { result: optionalId, savedQueryId: optionalId, created: /^.{0,128}$/ },
   tables: { table: /^[A-Za-z0-9_]*$/, created: /^.{0,128}$/ },
 };
@@ -295,6 +297,10 @@ export const dashboardStates: readonly PageState[] = [
         await expect(page).toHaveTitle(`${journey.databaseName} · ${label} · TerraScale`);
         await databaseHeader(page, journey);
         if (tab === 'backups') await expect(page.locator('#grants, #danger-zone-title')).toHaveCount(0);
+        if (tab === 'rules') {
+          expect(Object.keys(JSON.parse(await page.locator('#rules-source').inputValue()))).toEqual(['tables']);
+          await expect(page.getByRole('heading', { level: 2, name: 'Playground', exact: true })).toBeVisible();
+        }
         if (tab === 'replication') {
           await expect(page.getByRole('heading', { level: 2, name: 'Regions', exact: true })).toBeVisible();
           await regionPicked(page, 'database-regions', journey);

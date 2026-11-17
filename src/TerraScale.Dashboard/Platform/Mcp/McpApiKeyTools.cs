@@ -10,6 +10,7 @@ using TerraScale.Dashboard.Features.Backups;
 using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Features.Functions;
+using TerraScale.Dashboard.Features.Rules;
 using TerraScale.TerraBase.Contracts;
 using TerraScale.TerraBase.Contracts.Functions;
 using TerraScale.Dashboard.Platform.Rpc;
@@ -30,6 +31,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
             "execute_sql", "run_sql", "check_sql", "get_database_schema", "create_scoped_key",
             "create_backup", "restore_backup", "get_restore_status",
             "get_functions_reference", "deploy_function", "invoke_function", "list_functions", "get_function", "list_function_logs", "get_function_stats",
+            "get_database_rules", "deploy_database_rules", "test_database_rules", "list_database_rules_versions", "restore_database_rules_version",
             "delete_project", "delete_saved_query", "delete_function", "delete_file_bucket", "delete_file"
         };
 
@@ -119,7 +121,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 }
             }
             var functionTool = tool is "deploy_function" or "invoke_function" or "list_functions" or "get_function" or "list_function_logs" or "get_function_stats";
-            var write = functionTool && tool != "invoke_function" || tool is "create_database" or "fork_database" or "set_database_ttl" or "create_backup" or "restore_backup";
+            var write = functionTool && tool != "invoke_function" || tool is "create_database" or "fork_database" or "set_database_ttl" or "create_backup" or "restore_backup" || RulesMcpTools.Writes.Contains(tool);
             var dataTool = functionTool || tool is "execute_sql" or "run_sql" or "check_sql" or "get_database_schema";
             var sql = Text("sql").Trim();
             if (tool is "execute_sql" or "run_sql" or "check_sql")
@@ -235,6 +237,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 ?? throw new AccountAccessException("The database home region is unavailable.", 503);
             management = rpc.User<IManagementService>(scope.AccessToken, region.Id).WithCancellationToken(ct);
             if (tool == "get_database") return Reply(Output(database), McpAgentJson.Default.McpDatabase);
+            if (RulesMcpTools.Names.Contains(tool)) return await RulesMcpTools.CallAsync(management, scope.ProjectId, databaseId, tool, arguments);
             if (tool == "fork_database")
             {
                 var ttl = DatabaseTtl.Seconds(Hours());
