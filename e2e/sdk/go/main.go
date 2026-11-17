@@ -520,6 +520,33 @@ func (r *runner) do(op operation) error {
 		return r.placementSet()
 	case "origin.rule":
 		return originRule(ctx, r.project, op.Cases)
+	case "functions.stats":
+		name := "stats-" + r.run
+		if _, err := r.db.DeployFunction(ctx, name, v1.FunctionRequest{Source: "async function handler() { return { ok: true }; }"}); err != nil {
+			return err
+		}
+		response, err := r.db.InvokeFunction(ctx, name, []byte("{}"), nil)
+		if err != nil {
+			return err
+		}
+		if err := same(response.StatusCode, 200, "invocation status"); err != nil {
+			return err
+		}
+		stats, err := r.db.FunctionStats(ctx, name, "1h")
+		if err != nil {
+			return err
+		}
+		if err := same([]any{stats.Window, stats.Invocations >= 1, len(stats.Buckets)}, []any{"1h", true, 60}, "stats"); err != nil {
+			return err
+		}
+		logs, err := r.db.FunctionLogs(ctx, name, 1)
+		if err != nil {
+			return err
+		}
+		if len(logs) != 1 || logs[0].HTTPStatus == nil || *logs[0].HTTPStatus != 200 || logs[0].ResponseBytes < 0 {
+			return fmt.Errorf("log metrics differ: %+v", logs[:1])
+		}
+		return r.db.DeleteFunction(ctx, name)
 	case "agent.create_ttl":
 		ttl := op.TTLSeconds
 		before := time.Now().UTC()

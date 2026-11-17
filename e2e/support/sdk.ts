@@ -19,7 +19,7 @@ const pro: Plan = { label: 'pro', requestsPerSecond: 500, burst: 1000 };
 const plans: Record<Group, Plan> = { a: hobby, b: hobby, c: pro };
 const headroom = 20;
 const twoRegions = !production && process.env.E2E_REGIONS === '2';
-const requestsPerRunner: Record<Group, number> = { a: 37, b: twoRegions ? 110 : 6, c: 7 };
+const requestsPerRunner: Record<Group, number> = { a: 42, b: twoRegions ? 110 : 6, c: 7 };
 const terrabaseMetrics = 'http://127.0.0.1:9091/metrics';
 
 type Lane = { admitted: number; refused: Record<string, number>; body: string };

@@ -7,8 +7,8 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
 use terrascale::v1::{
     is_valid_id, new_id, Client, CreateDatabaseOptions, Database, DatabasePlacement, Error,
-    ForkDatabaseOptions, ManagedDatabase, ScopedKeyAccess, ScopedKeyOptions, SqlRecord, SqlSession,
-    SqlStatement, SqlStatementResult, SqlValue,
+    ForkDatabaseOptions, FunctionDeployment, ManagedDatabase, ScopedKeyAccess, ScopedKeyOptions,
+    SqlRecord, SqlSession, SqlStatement, SqlStatementResult, SqlValue,
 };
 use terrascale::ClientConfig;
 
@@ -790,6 +790,45 @@ impl Runner {
                 "validation",
             ),
             "origin.rule" => origin_rule(&self.project, &text(op, "cases")),
+            "functions.stats" => {
+                let name = format!("stats-{}", self.run);
+                self.db()
+                    .deploy_function(
+                        &name,
+                        &FunctionDeployment {
+                            source: "async function handler() { return { ok: true }; }".into(),
+                            cron: None,
+                        },
+                    )
+                    .await
+                    .map_err(e)?;
+                let response = self
+                    .db()
+                    .invoke_function_response(&name, &json!({}))
+                    .await
+                    .map_err(e)?;
+                same(json!(response.status), &json!(200), "invocation status")?;
+                let stats = self
+                    .db()
+                    .get_function_stats(&name, Some("1h"))
+                    .await
+                    .map_err(e)?;
+                same(
+                    json!([stats.window, stats.invocations >= 1, stats.buckets.len()]),
+                    &json!(["1h", true, 60]),
+                    "stats",
+                )?;
+                let logs = self.db().list_function_logs(&name).await.map_err(e)?;
+                let log = logs.first().ok_or("no invocation log")?;
+                if logs.len() != 1 || log.http_status != Some(200) {
+                    return Err(format!(
+                        "log metrics differ: {} logs, status {:?}",
+                        logs.len(),
+                        log.http_status
+                    ));
+                }
+                self.db().delete_function(&name).await.map_err(e)
+            }
             "agent.create_ttl" => {
                 let options = CreateDatabaseOptions {
                     ttl_seconds: op["ttlSeconds"].as_u64(),

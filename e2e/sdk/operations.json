@@ -266,6 +266,11 @@
       "cases": "origins.json"
     },
     {
+      "id": "functions.stats",
+      "group": "a",
+      "title": "deploy a function, invoke it and read aggregated invocation stats"
+    },
+    {
       "id": "agent.create_ttl",
       "group": "b",
       "title": "createDatabase with a TTL",

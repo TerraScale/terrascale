@@ -283,6 +283,17 @@ const operations = {
           wrong.push(`#${index} ${JSON.stringify(raw.slice(0, 60))} ${column}: expected ${expected ?? 'refused'}, got ${got ?? 'refused'}`);
     check(wrong.length === 0, `origin rule: ${wrong.length} of ${2 * cases.length} checks differ: ${wrong.join('; ')}`);
   },
+  async 'functions.stats'() {
+    const name = `stats-${run}`;
+    await state.db.functions.deploy(name, { source: 'async function handler() { return { ok: true }; }' });
+    const response = await state.db.functions.invoke(name, {});
+    same(response.status, 200, 'invocation status');
+    const stats = await state.db.functions.stats(name, '1h');
+    same([stats.window, stats.invocations >= 1, stats.buckets.length], ['1h', true, 60], 'stats');
+    const logs = await state.db.functions.logs(name, 1);
+    check(logs.length === 1 && logs[0].httpStatus === 200 && logs[0].responseBytes >= 0, 'log metrics');
+    await state.db.functions.delete(name);
+  },
   async 'agent.create_ttl'(op) {
     const before = Date.now();
     const created = await client.createDatabase(project, fill(op.name), { ttlSeconds: op.ttlSeconds });

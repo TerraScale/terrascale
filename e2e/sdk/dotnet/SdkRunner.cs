@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Diagnostics;
 using System.Globalization;
+using System.Net;
 using System.Runtime.Versioning;
 using System.Text;
 using System.Text.Json;
@@ -89,6 +90,7 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
         "conflicts.query" => ConflictsAsync(op, cancellationToken),
         "ids.new_validate" => IdsAsync(op),
         "origin.rule" => OriginRuleAsync(op, cancellationToken),
+        "functions.stats" => FunctionsStatsAsync(cancellationToken),
         "agent.create_ttl" => CreateWithTtlAsync(op, cancellationToken),
         "agent.set_ttl" => SetTtlAsync(op, cancellationToken),
         "agent.clear_ttl" => ClearTtlAsync(cancellationToken),
@@ -349,6 +351,28 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
         {
             throw new InvalidOperationException($"origin rule: {wrong.Count} of {2 * cases.GetArrayLength()} checks differ: {string.Join("; ", wrong)}");
         }
+    }
+
+    private async Task FunctionsStatsAsync(CancellationToken cancellationToken)
+    {
+        var apiKey = Required("TERRASCALE_API_KEY");
+        using var http = new HttpClient(TerraBaseHttp.CreateHandler());
+        var auth = new TerraScaleAuthClient(http, new TerraScaleAuthClientOptions { BaseAddress = new Uri("https://auth.terrascale.tech"), InstanceSlug = "terrascale" });
+        var keyId = apiKey.StartsWith("sk_", StringComparison.Ordinal) ? apiKey[3..29] : apiKey[..26];
+        var token = await auth.Oidc.RequestClientCredentialsTokenAsync(keyId, apiKey, project: project, cancellationToken: cancellationToken);
+        RegisterSecret("function-token-dotnet", token.AccessToken);
+        var functions = new TerraBaseDatabaseClient(http, new TerraBaseDatabaseClientOptions { AccessTokenProvider = _ => ValueTask.FromResult(token.AccessToken) })
+            .Database(project, Required("TERRASCALE_DATABASE_NAME"));
+        var name = $"stats-{run}";
+        await functions.DeployFunctionAsync(name, new("async function handler() { return { ok: true }; }"), cancellationToken);
+        var invoked = await functions.InvokeFunctionAsync(name, "{}"u8.ToArray(), cancellationToken: cancellationToken);
+        if (invoked.StatusCode != HttpStatusCode.OK) throw new InvalidOperationException($"Invocation answered {(int)invoked.StatusCode}.");
+        var stats = await functions.GetStatsAsync(name, "1h", cancellationToken);
+        if (stats.Window != "1h" || stats.Invocations < 1 || stats.Buckets.Count != 60)
+            throw new InvalidOperationException($"Stats differ: window {stats.Window}, invocations {stats.Invocations}, {stats.Buckets.Count} buckets.");
+        var log = (await functions.ListFunctionLogsAsync(name, 1, cancellationToken))[0];
+        if (log.HttpStatus != 200 || log.ResponseBytes < 0) throw new InvalidOperationException($"Log metrics differ: status {log.HttpStatus}, {log.ResponseBytes} bytes.");
+        await functions.DeleteFunctionAsync(name, cancellationToken);
     }
 
     private static void Compare(List<string> wrong, int index, string raw, string column, string? expected, Uri? got)
