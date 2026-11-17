@@ -1,3 +1,6 @@
+import { V1TableShape } from "../v1/table-shape.js";
+import { ShapeQueryObserver } from "../v1/shape-query.js";
+/** @typedef {import("../v1/shape-query.js").ShapeQueryState} ShapeQueryState */
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import {
   ReactiveMutationObserver,
@@ -16,30 +19,48 @@ import {
 export * from "./core.js";
 
 /**
- * React's external-store primitive gives useQuery one SSR-safe snapshot and
- * makes every server update flow through the typed reactive subscription.
- * Keep the source object stable between renders.
- *
+ * @overload
+ * @param {V1TableShape} source
+ * @returns {ShapeQueryState}
+ */
+/**
  * @template TValue
+ * @overload
  * @param {ReactiveQuerySource<TValue>} source
  * @param {ReactiveQueryOptions<TValue>} [options]
  * @returns {ReactiveQueryState<TValue> & { readonly refetch: () => void }}
  */
+/**
+ * Subscribes directly to a live table shape or a typed reactive source.
+ * @template TValue
+ * @param {V1TableShape | ReactiveQuerySource<TValue>} source
+ * @param {ReactiveQueryOptions<TValue>} [options]
+ * @returns {ShapeQueryState | (ReactiveQueryState<TValue> & { readonly refetch: () => void })}
+ */
 export function useQuery(source, options = {}) {
-  const observer = useMemo(
-    () => new ReactiveQueryObserver(source, options),
-    [source],
-  );
-  observer.updateOptions(options);
+  const previous = useRef(/** @type {ShapeQueryObserver | undefined} */ (undefined));
+  const identity = source instanceof V1TableShape ? source.key : source;
+  const observer = useMemo(() => {
+    if (source instanceof V1TableShape) {
+      return new ShapeQueryObserver(source, previous.current?.getSnapshot().data);
+    }
+    return new ReactiveQueryObserver(source, options);
+  }, [identity]);
+  if (observer instanceof ReactiveQueryObserver) observer.updateOptions(options);
   const state = useSyncExternalStore(
     observer.subscribe,
-    observer.getSnapshot,
+    /** @type {() => ShapeQueryState | ReactiveQueryState<TValue>} */ (observer.getSnapshot),
     observer.getServerSnapshot,
   );
-  const refetch = useCallback(() => {
-    observer.refetch();
+  useEffect(() => {
+    previous.current = observer instanceof ShapeQueryObserver ? observer : undefined;
   }, [observer]);
-  return useMemo(() => Object.freeze({ ...state, refetch }), [state, refetch]);
+  const refetch = useCallback(() => {
+    if (observer instanceof ReactiveQueryObserver) observer.refetch();
+  }, [observer]);
+  return useMemo(() => observer instanceof ShapeQueryObserver
+    ? /** @type {ShapeQueryState} */ (state)
+    : Object.freeze({ .../** @type {ReactiveQueryState<TValue>} */ (state), refetch }), [observer, state, refetch]);
 }
 
 /**

@@ -66,7 +66,7 @@ committing request sent rejects with `transaction_rolled_back` (40000). Other cl
 Values are `null`, numbers, strings and `Uint8Array` blobs; integers beyond 2^53 arrive as `ExactDecimal`
 (`BigInt(String(value))`) and go out as `bigint`.
 
-For live data, `db.shape("todos").subscribe(({ rows }) => …)` keeps every row of a table current (see
+For live data, `useQuery(db.shape("todos"))` in React or `createQuery(db.shape("todos"))` in Svelte keeps rows current (see
 [Live SQL table shapes](#live-sql-table-shapes)).
 
 ## Databases for agents
@@ -251,15 +251,59 @@ remain failing in this draft. See the [HTTP 421 assessment](docs/fetch-421-asses
 
 ## Live SQL table shapes
 
+Read changing data with a live shape. The React and Svelte bindings below describe the next SDK release.
+
+```jsx
+import { useQuery } from "@terrascale/sdk/react";
+
+function Todos({ db, where = "done = 0" }) {
+  const { data, status, error } = useQuery(db.shape("todos", {
+    where, columns: ["id", "title"],
+  }));
+  if (status === "error") return <p role="alert">{String(error)}</p>;
+  return <ul aria-busy={status === "loading"}>
+    {data.map(todo => <li key={String(todo.id)}>{String(todo.title)}</li>)}
+  </ul>;
+}
+```
+
+```svelte
+<script>
+  import { createQuery } from "@terrascale/sdk/svelte";
+
+  let { db, where = "done = 0" } = $props();
+  const todos = createQuery(db.shape("todos", { where, columns: ["id", "title"] }));
+  $effect(() => todos.setShape(db.shape("todos", { where, columns: ["id", "title"] })));
+</script>
+
+<ul aria-busy={$todos.status === "loading"}>
+  {#each $todos.data as todo (todo.id)}
+    <li>{todo.title}</li>
+  {/each}
+</ul>
+```
+
+`data` is a live row array, ordered by the shape's row keys (numeric rowids sort numerically). `status` is
+`"loading"`, `"live"`, `"reconnecting"` or `"error"`; a terminal error is available as `error` and stops delivery.
+Changing `where` or `columns` retains the previous rows with `status: "loading"` until the new snapshot arrives.
+Svelte's `setShape` changes the source of the existing readable store. A server `must_refetch` changes status to
+`"loading"` while refreshing the snapshot; a lost connection changes it to `"reconnecting"` while resuming.
+
+Equivalent shapes on the same client share one subscription across React, Svelte and direct subscribers.
+Unmounting the last consumer closes the stream after two seconds; a remount during that period reuses it.
+No application refresh callback is needed. Optimistic mutation reconciliation is a separate follow-up.
+
+Outside a framework, subscribe directly:
+
 ```js
-const todos = db.shape("todos").subscribe(({ rows, upToDate }) => {
-  render([...rows.values()]);
+const todos = db.shape("todos").subscribe(({ rows, status }) => {
+  render([...rows.values()], status);
 });
 todos.close();
 ```
 
 `shape(table).subscribe()` loads every row of the table, then keeps it current with each committed change. The
-listener runs after the snapshot and after every change, with `rows` keyed by row id (a decimal string) and
+listener runs on delivery status changes, after the snapshot and after every change, with `rows` keyed by row id (a decimal string) and
 `upToDate` once the shape reached the table's head. Row values decode like SQL results (`Uint8Array` blobs).
 In a region that holds the database, writes made there show at once; `provisional` holds the keys of rows whose values the
 database's writer has not confirmed yet (such inserts have keys starting with `~`). A write the writer rejects disappears

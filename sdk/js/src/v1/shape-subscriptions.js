@@ -1,6 +1,6 @@
 /** @import { V1TableShapeState } from "./table-shape.js" */
 /** @typedef {{ listener: (state: V1TableShapeState) => void; resolve: () => void; reject: (error: unknown) => void }} Observer */
-/** @typedef {{ controller: AbortController; observers: Set<Observer>; latest?: V1TableShapeState; done: Promise<void> }} Group */
+/** @typedef {{ controller: AbortController; observers: Set<Observer>; latest?: V1TableShapeState; done: Promise<void>; release?: ReturnType<typeof setTimeout> }} Group */
 /** @type {WeakMap<object, Map<string, Group>>} */
 const subscriptions = new WeakMap();
 
@@ -12,6 +12,7 @@ const subscriptions = new WeakMap();
  * @param {AbortSignal | undefined} external
  */
 export function subscribeShape(transport, key, run, listener, external) {
+  if (external?.aborted) return { close: () => {}, done: Promise.resolve() };
   let groups = subscriptions.get(transport);
   if (groups === undefined) { groups = new Map(); subscriptions.set(transport, groups); }
   let group = groups.get(key);
@@ -22,6 +23,15 @@ export function subscribeShape(transport, key, run, listener, external) {
     groups.set(key, group);
   }
   const shared = group;
+  clearTimeout(shared.release);
+  delete shared.release;
+  const release = () => {
+    if (shared.observers.size !== 0 || shared.release !== undefined) return;
+    shared.release = setTimeout(() => {
+      if (groups.get(key) === shared) groups.delete(key);
+      shared.controller.abort(new DOMException("The shape subscription was closed.", "AbortError"));
+    }, 2000);
+  };
   if (shared.observers.size >= 4096) throw new RangeError("A shape supports at most 4096 listeners per client.");
   let resolveDone = () => {};
   /** @type {(error: unknown) => void} */
@@ -34,11 +44,8 @@ export function subscribeShape(transport, key, run, listener, external) {
     closed = true;
     external?.removeEventListener("abort", close);
     shared.observers.delete(observer);
-    if (shared.observers.size === 0) {
-      if (groups.get(key) === shared) groups.delete(key);
-      shared.controller.abort(new DOMException("The shape subscription was closed.", "AbortError"));
-      shared.done.then(observer.resolve, observer.resolve);
-    } else observer.resolve();
+    observer.resolve();
+    release();
   };
   shared.observers.add(observer);
   external?.addEventListener("abort", close, { once: true });
@@ -52,12 +59,13 @@ export function subscribeShape(transport, key, run, listener, external) {
             try { entry.listener(state); }
             catch (error) { shared.observers.delete(entry); entry.reject(error); }
           }
-          if (shared.observers.size === 0) shared.controller.abort();
+          release();
         }, shared.controller.signal);
         for (const entry of shared.observers) entry.resolve();
       } catch (error) {
         if (!shared.controller.signal.aborted) for (const entry of shared.observers) entry.reject(error);
       } finally {
+        clearTimeout(shared.release);
         if (groups.get(key) === shared) groups.delete(key);
         shared.observers.clear();
       }

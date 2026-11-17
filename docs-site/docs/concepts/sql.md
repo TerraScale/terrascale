@@ -96,15 +96,49 @@ Reads need the `sql:read` scope; writes and schema changes also need `sql:write`
 
 ## Live shapes and table grants
 
-Live shapes send a table snapshot followed by committed changes. Select rows with `where` and select columns with
-`columns`; rows enter or leave the shape as they start or stop matching. In the JavaScript SDK:
+Live shapes send a table snapshot followed by committed changes. Use React's `useQuery` or Svelte's `createQuery`
+to read data that changes. These framework examples require the next JavaScript SDK release.
+Select rows with `where` and columns with `columns`; rows enter or leave the shape as they start or stop matching.
 
-```js
-const open = db.shape("todos", { where: "done = 0", columns: ["id", "title"] })
-  .subscribe(({ rows }) => render(rows));
-// When the view closes:
-open.close();
+```jsx
+import { useQuery } from "@terrascale/sdk/react";
+
+function Todos({ db, where = "done = 0" }) {
+  const { data, status, error } = useQuery(db.shape("todos", {
+    where, columns: ["id", "title"],
+  }));
+  if (status === "error") return <p role="alert">{String(error)}</p>;
+  return <ul aria-busy={status === "loading"}>
+    {data.map(todo => <li key={String(todo.id)}>{String(todo.title)}</li>)}
+  </ul>;
+}
 ```
+
+```svelte
+<script>
+  import { createQuery } from "@terrascale/sdk/svelte";
+
+  let { db, where = "done = 0" } = $props();
+  const todos = createQuery(db.shape("todos", { where, columns: ["id", "title"] }));
+  $effect(() => todos.setShape(db.shape("todos", { where, columns: ["id", "title"] })));
+</script>
+
+<ul aria-busy={$todos.status === "loading"}>
+  {#each $todos.data as todo (todo.id)}
+    <li>{todo.title}</li>
+  {/each}
+</ul>
+```
+
+`data` is the live row array in stable row-key order. Status is `loading` until the snapshot arrives, `live` at the
+current head, `reconnecting` while resuming a lost connection, or `error` with a terminal error. A server
+`must_refetch` returns to `loading` while replacing the snapshot. Previous rows remain visible while React
+switches filters or Svelte's `setShape` switches the store's source.
+
+Equivalent shapes on one client share one stream. It closes two seconds after the last consumer unmounts;
+a quick remount reuses it. No application refresh callback is needed.
+For code outside a framework, use `db.shape("todos", { where: "done = 0" }).subscribe(({ rows }) => render(rows))`
+and call the returned subscription's `close()` when the view closes.
 
 End-user tokens can read live shapes for tables with a table read grant. A filter limits the shape result; authorization comes from
 the grant, not the filter. Keep privileged API keys on your server. See the

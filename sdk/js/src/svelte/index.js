@@ -1,3 +1,6 @@
+import { V1TableShape } from "../v1/table-shape.js";
+import { ShapeQueryObserver } from "../v1/shape-query.js";
+/** @typedef {import("../v1/shape-query.js").ShapeQueryState} ShapeQueryState */
 import {
   ReactiveMutationObserver,
   ReactiveQueryObserver,
@@ -43,32 +46,50 @@ export * from "../react/core.js";
  */
 
 /**
- * One reactive query as a Svelte store. The observer lifecycle follows the
- * store subscription count, so `$query` in a component starts delivery on
- * mount and disposes the transport on unmount. Keep the source object stable
- * between renders.
- *
+ * @typedef {SvelteReadable<ShapeQueryState> & { readonly setShape: (shape: V1TableShape) => void }} SvelteShapeQuery
+ */
+
+/**
+ * @overload
+ * @param {V1TableShape} source
+ * @returns {SvelteShapeQuery}
+ */
+/**
  * @template TValue
+ * @overload
  * @param {ReactiveQuerySource<TValue>} source
  * @param {ReactiveQueryOptions<TValue>} [options]
  * @returns {SvelteQuery<TValue>}
  */
+/**
+ * A live shape or typed reactive query as a readable Svelte store.
+ * @template TValue
+ * @param {V1TableShape | ReactiveQuerySource<TValue>} source
+ * @param {ReactiveQueryOptions<TValue>} [options]
+ * @returns {SvelteShapeQuery | SvelteQuery<TValue>}
+ */
 export function createQuery(source, options = {}) {
-  /** @type {ReactiveQueryObserver<TValue>} */
+  if (source instanceof V1TableShape) {
+    const observer = new ShapeQueryObserver(source);
+    return Object.freeze({
+      /** @param {SvelteSubscriber<ShapeQueryState>} run */
+      subscribe: run => {
+        const stop = observer.subscribe(() => run(observer.getSnapshot()));
+        run(observer.getSnapshot());
+        return stop;
+      },
+      /** @param {V1TableShape} shape */
+      setShape: shape => observer.setShape(shape),
+    });
+  }
   const observer = new ReactiveQueryObserver(source, options);
-  /**
-   * @param {SvelteSubscriber<ReactiveQueryState<TValue>>} run
-   * @returns {SvelteUnsubscriber}
-   */
+  /** @param {SvelteSubscriber<ReactiveQueryState<TValue>>} run */
   const subscribe = run => {
     const stop = observer.subscribe(() => run(observer.getSnapshot()));
     run(observer.getSnapshot());
     return stop;
   };
-  /** @returns {void} */
-  const refetch = () => {
-    observer.refetch();
-  };
+  const refetch = () => observer.refetch();
   return Object.freeze({ subscribe, refetch });
 }
 
