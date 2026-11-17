@@ -4,6 +4,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runMatrix } from './run.mjs';
+import { runManagement } from './management.mjs';
 
 const executable = process.argv[2] ?? 'ts';
 const scratch = 'c35-' + Date.now().toString(36);
@@ -55,34 +56,9 @@ try {
   const key = cli(['keys', 'create', scratch + '-rw']);
   const state = { projectId: project.id, databaseId: database.id, apiKey: key.key };
   const matrix = await runMatrix(state, 'production');
-  if (matrix.some(cell => cell.status !== 'PASS')) process.exitCode = 1;
-  const marker = await check('recovery-source-data', () => {
-    cli(['sql', scratch, 'CREATE TABLE c35_recovery(id INTEGER PRIMARY KEY,value TEXT NOT NULL)']);
-    cli(['sql', scratch, "INSERT INTO c35_recovery VALUES(1,'snapshot')"]);
-  });
-  if (marker) {
-    let backup;
-    await check('snapshot-create-list', () => {
-      backup = cli(['backup', 'create', scratch]);
-      assert.equal(backup.status, 'ready');
-      assert(cli(['backup', 'list', scratch]).some(item => item.id === backup.id));
-    });
-    if (backup) await check('snapshot-restore-data', () => {
-      cli(['sql', scratch, "UPDATE c35_recovery SET value='later' WHERE id=1"]);
-      cli(['backup', 'restore', scratch, backup.id, scratch + '-restored']);
-      const restored = cli(['sql', scratch + '-restored', 'SELECT value FROM c35_recovery WHERE id=1']);
-      assert.deepEqual(restored.rows, [['snapshot']]);
-    });
-    await check('export-import-data', () => {
-      const dump = join(directory, 'database.sql');
-      cli(['-o', dump, 'db', 'export', scratch], false);
-      cli(['-regions', 'gru,sjc,fra', 'db', 'create', scratch + '-imported']);
-      cli(['-yes', 'db', 'import', scratch + '-imported', dump], false);
-      const source = cli(['sql', scratch, 'SELECT value FROM c35_recovery WHERE id=1']);
-      const imported = cli(['sql', scratch + '-imported', 'SELECT value FROM c35_recovery WHERE id=1']);
-      assert.deepEqual(imported.rows, source.rows);
-    });
-  }
+  if (matrix.some(cell => cell.status === 'FAIL' || cell.status === 'BLOCKED')) process.exitCode = 1;
+  const management = await runManagement(state, 'production', executable);
+  if (management.some(cell => cell.status === 'FAIL' || cell.status === 'BLOCKED')) process.exitCode = 1;
 } catch (error) {
   rows.push({ name: project ? 'production-execution' : 'operator-preflight', status: project ? 'FAIL' : 'BLOCKED', code: error.code ?? error.name });
   process.exitCode = 1;

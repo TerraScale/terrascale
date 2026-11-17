@@ -23,9 +23,9 @@ export async function transport(surface, region, project, database, credential, 
         body: JSON.stringify({ statements }), signal: AbortSignal.timeout(30000), redirect: 'error',
       });
       const body = await response.json();
-      if (body.error) throw Object.assign(new Error('SQL response'), body.error, { status: response.status });
+      if (body.error) throw Object.assign(new Error('SQL response'), body.error, { status: response.status, ddl: statements.some(item => /^(CREATE|ALTER|DROP) /i.test(item.sql)) });
       if (!response.ok || !Array.isArray(body.results)) throw new Error('SQL response HTTP ' + response.status);
-      return body.results;
+      return Object.assign(body.results, { region: response.headers.get('x-terrabase-region'), route: response.headers.get('terrascale-write-route') });
     },
     close: async () => {},
   };
@@ -41,8 +41,8 @@ export async function transport(surface, region, project, database, credential, 
       if (body.error) waiting.reject(Object.assign(new Error('SQL frame'), body.error));
       else waiting.resolve(body.results);
     });
-    socket.addEventListener('close', () => {
-      for (const waiting of pending.values()) waiting.reject(new Error('SQL socket closed'));
+    socket.addEventListener('close', event => {
+      for (const waiting of pending.values()) waiting.reject(Object.assign(new Error('SQL socket closed'), { closeCode: event.code }));
       pending.clear();
     });
     await once(socket, 'open', { signal: AbortSignal.timeout(15000) });
@@ -63,17 +63,20 @@ export async function transport(surface, region, project, database, credential, 
       socket.close();
       throw error;
     }
-    return { execute: statements => send('execute', { statements }), control: type => send(type), close: async () => { socket.close(); } };
+    return { execute: statements => send('execute', { statements }).catch(error => { throw Object.assign(error, { ddl: statements.some(item => /^(CREATE|ALTER|DROP) /i.test(item.sql)) }); }), control: type => send(type), close: async () => { socket.close(); } };
   }
   const { default: pg } = await import('pg');
   const address = ports ? { address: '127.0.0.1' } : await lookup(region + '.api.terrascale.tech', { family: 4 });
   const client = new pg.Client({ host: address.address, port: ports ? ports[region === 'gru' ? 'postgres' : 'postgres_fra'] : 5432, database: project + '/' + database,
     user: 'any', password: credential.apiKey, ssl: ports ? false : { servername: 'pg.terrascale.tech', rejectUnauthorized: true },
     connectionTimeoutMillis: 15000, query_timeout: 30000 });
+  let broken;
+  client.on('error', error => { broken = error; });
   await client.connect();
   const execute = async statements => {
     const results = [];
     for (const statement of statements) {
+      if (broken) throw Object.assign(new Error(broken.message), { sqlstate: broken.code });
       let sql = statement.sql;
       let values;
       if (statement.named) {
@@ -86,13 +89,14 @@ export async function transport(surface, region, project, database, credential, 
         values = statement.args.map(value => value?.base64 ? Buffer.from(value.base64, 'base64') : value);
       }
       try {
-        const result = await client.query({ text: sql, values, rowMode: 'array' });
-        results.push({ rows: result.rows });
+        const types = statement.oids ? Object.assign([...statement.oids], { getTypeParser: pg.types.getTypeParser }) : undefined;
+        const result = await client.query({ text: sql, values, types, rowMode: 'array' });
+        for (const part of Array.isArray(result) ? result : [result]) results.push({ rows: part.rows });
       } catch (error) {
-        throw Object.assign(new Error(error.message), { sqlstate: error.code });
+        throw Object.assign(new Error(error.message), { sqlstate: error.code, ddl: /^(CREATE|ALTER|DROP) /i.test(statement.sql) });
       }
     }
     return results;
   };
-  return { execute, control: type => execute([{ sql: type.toUpperCase() }]), close: () => client.end(), address: address.address };
+  return { execute, control: type => execute([{ sql: type.toUpperCase() }]), close: async () => { await client.end(); if (broken) throw Object.assign(new Error(broken.message), { sqlstate: broken.code }); }, address: address.address };
 }

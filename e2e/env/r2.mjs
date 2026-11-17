@@ -164,6 +164,15 @@ createServer((request, response) => {
     const at = pair.indexOf('=');
     query.append(decode(at < 0 ? pair : pair.slice(0, at)), at < 0 ? '' : decode(pair.slice(at + 1)));
   }
+  if (request.headers.host === 'shapes-ts-terrabase-shapes-prod.terrascale.tech'
+    && request.method === 'GET' && /^\/v1\/shapes\/h1-[0-9a-f]{16}\/[0-9a-f]{64}$/.test(rawPath) && rawQuery === '') {
+    const account = readFileSync(`${process.env.E2E_STATE}/r2`, 'utf8').split('\n')[0];
+    const stored = objects.get(`${account}/ts-terrabase-shapes-prod${rawPath}`);
+    if (!stored) return fail(response, 404, 'NoSuchKey', 'Object does not exist.');
+    log.calls.push('GET /v1/shapes/<sealed-object>');
+    response.writeHead(200, { 'content-type': stored.type, 'content-length': stored.body.length, etag: stored.etag });
+    return response.end(stored.body);
+  }
   const platform = platformObject.exec(rawPath);
   const target = bucket.exec(rawPath) ?? platform;
   const listed = request.method === 'GET' ? listing.exec(rawPath) : null;

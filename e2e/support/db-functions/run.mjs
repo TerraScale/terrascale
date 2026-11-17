@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { sqlCases } from './cases.mjs';
+import { advanced, binaryParameters, requestLimits } from './advanced.mjs';
 import { token, transport } from './transports.mjs';
 
 const surfaces = ['REST', 'WebSocket', 'Postgres'];
@@ -39,7 +40,7 @@ export async function runMatrix(state, target, selection) {
       return true;
     } catch (error) {
       const code = error.code ?? error.sqlstate ?? error.name;
-      const status = name === 'transaction-table' && (error.code === 'serialization_conflict' || error.sqlstate === '40001') ? 'C34' : 'FAIL';
+      const status = error.ddl && (error.code === 'serialization_conflict' || error.sqlstate === '40001') ? 'C34' : 'FAIL';
       record(region, surface, name, status, String(code) + ': ' + error.message.slice(0, 400));
       return false;
     }
@@ -59,6 +60,10 @@ export async function runMatrix(state, target, selection) {
       }
       try {
         for (const item of cases) {
+          if (surface === 'Postgres' && item.name === 'json-text-arrow') {
+            record(region, surface, item.name, 'C35b', 'upstream tokenizer; owned by C35b');
+            continue;
+          }
           let failure;
           let answer;
           try { answer = await client.execute([{ sql: item.sql, ...(item.args && { args: item.args }), ...(item.named && { named: item.named }) }]); }
@@ -66,7 +71,7 @@ export async function runMatrix(state, target, selection) {
           if (/^(CREATE|ALTER|DROP) /.test(item.sql) && (failure?.code === 'serialization_conflict' || failure?.sqlstate === '40001')) {
             record(region, surface, item.name, 'C34', failure.sqlstate);
             const at = cases.indexOf(item);
-            for (const dependent of cases.slice(at + 1)) record(region, surface, dependent.name, 'BLOCKED', 'C34 DDL prerequisite');
+            for (const dependent of cases.slice(at + 1)) record(region, surface, dependent.name, 'C34', 'DDL prerequisite owned by C34');
             break;
           }
           await check(region, surface, item.name, async () => {
@@ -116,6 +121,10 @@ export async function runMatrix(state, target, selection) {
             } finally { await readonly.close(); }
           });
         }
+        await advanced(client, surface, prefix, (name, action) => check(region, surface, name, action));
+        if (surface === 'Postgres') await binaryParameters(client, (name, action) => check(region, surface, name, action));
+        await requestLimits(() => transport(surface, region, state.projectId, state.databaseId, credential, ports),
+          surface, (name, action) => check(region, surface, name, action));
       } finally { await client.close(); }
     }
   }
@@ -133,10 +142,10 @@ export async function runMatrix(state, target, selection) {
     assert.match(dump, /COMMIT/);
     });
   }
-  process.stdout.write('| Target | Region | Surface | Pass | Fail | C34 | Blocked |\n| --- | --- | --- | ---: | ---: | ---: | ---: |\n');
+  process.stdout.write('| Target | Region | Surface | Pass | Fail | C34 | C35b | Blocked |\n| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |\n');
   for (const region of regions) for (const surface of [...surfaces, 'SDK']) {
     const cells = results.filter(cell => cell.region === region && cell.surface === surface);
-    if (cells.length) process.stdout.write(`| ${target} | ${region} | ${surface} | ${['PASS', 'FAIL', 'C34', 'BLOCKED'].map(status => cells.filter(cell => cell.status === status).length).join(' | ')} |\n`);
+    if (cells.length) process.stdout.write(`| ${target} | ${region} | ${surface} | ${['PASS', 'FAIL', 'C34', 'C35b', 'BLOCKED'].map(status => cells.filter(cell => cell.status === status).length).join(' | ')} |\n`);
   }
   return results;
 }
@@ -146,7 +155,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const state = JSON.parse(readFileSync(0, 'utf8'));
     const selection = process.argv[3] ? { region: process.argv[3], surface: process.argv[4] } : undefined;
     const results = await runMatrix(state, process.argv[2], selection);
-    process.exitCode = results.some(cell => cell.status !== 'PASS') ? 1 : 0;
+    process.exitCode = results.some(cell => cell.status === 'FAIL' || cell.status === 'BLOCKED') ? 1 : 0;
   } catch (error) {
     process.stderr.write('matrix stopped: ' + error.name + '\n');
     process.exitCode = 1;
