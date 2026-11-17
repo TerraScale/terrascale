@@ -168,7 +168,7 @@ internal sealed partial class TsAuthKeys
         .Where(Verifies)
         .Select(key => new PublicIssuerKey(key.Kty, key.Kid, key.Alg, key.Use, key.KeyOps.Count > 0 ? [.. key.KeyOps] : null, key.Crv, key.X, key.Y, key.N, key.E, [.. key.X5c]))]);
 
-    private static JsonWebKeySet ReadKeySet(string json)
+    internal static JsonWebKeySet ReadKeySet(string json)
     {
         var root = JsonNode.Parse(json) as JsonObject ?? throw new InvalidDataException("the key set is not an object");
         var entries = root["keys"] as JsonArray ?? throw new InvalidDataException("the key set lists no keys");
@@ -214,7 +214,7 @@ internal sealed partial class TsAuthKeys
             && (key.KeyOps.Count == 0 || key.KeyOps.Contains("verify", StringComparer.Ordinal));
     }
 
-    private static List<SecurityKey> SigningKeys(JsonWebKeySet set)
+    internal static List<SecurityKey> SigningKeys(JsonWebKeySet set)
     {
         List<SecurityKey> keys = [];
         foreach (var key in set.Keys.Where(Verifies))

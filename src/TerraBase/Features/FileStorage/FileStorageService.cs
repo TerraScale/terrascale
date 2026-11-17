@@ -477,7 +477,7 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
     }
 
     private static bool BucketWide(FileAccessPolicy? policy, ProjectAccess access) =>
-        policy is not null && (policy.Public || policy.Roles is { } roles && roles.Any(access.Roles.Contains));
+        policy is not null && (policy.Public && access.Auth is not { IsAnonymous: true } || policy.Roles is { } roles && roles.Any(access.Roles.Contains));
 
     private static bool Granted(FileAccessRules? rules, ProjectAccess access, bool write) =>
         (write ? rules?.Write : rules?.Read) is { } policy && (BucketWide(policy, access) || policy.Owner && access.Actor.Length > 0);

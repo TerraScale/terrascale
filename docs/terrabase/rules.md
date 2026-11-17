@@ -142,8 +142,7 @@ TerraBase accepts a tenant token offline when:
 
 1. The unverified `iss` is exactly `{O}/{P}`, where `O` is the origin of TerraBase's configured `AuthIssuer`
    (`https://auth.terrascale.tech` in production) and `P` a canonical ULID equal to the route's `{project}`. `terrascale` is never a project id, so a platform token cannot pass as a tenant token, and a token of
-   project A answers `404 unknown_database` on project B's routes, as [cross-project errors](cross-project-errors.md)
-   do today.
+   project A answers `401` on project B's routes: the issuer is bound to the route before any key is fetched.
 2. Its signature verifies against `P`'s own JWKS (`{iss}/.well-known/jwks.json`). TerraBase fetches it only for a
    project its catalog knows, caches it per project like the platform ring today (`IIssuerKeys`), and refreshes
    once on an unknown `kid`. Keys of one tenant never verify another tenant's tokens. A deleted project's JWKS

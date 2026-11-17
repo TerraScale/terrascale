@@ -43,7 +43,7 @@ internal static class ProjectCatalog
 
         var bucketCreation = endpoint?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName == "createFileBucket"
             && !identity.HasClaim("token_kind", "end_user") && identity.FindFirst("database") is null;
-        var granted = await ProjectGrants.GrantAsync(context, identity, project, bucketCreation).ConfigureAwait(false);
+        var granted = await ProjectAccessResolver.ResolveAsync(context, identity, project, bucketCreation).ConfigureAwait(false);
         if (granted is not ProjectAccess grant)
         {
             await (granted switch

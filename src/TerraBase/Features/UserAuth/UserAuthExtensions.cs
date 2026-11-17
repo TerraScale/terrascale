@@ -41,6 +41,7 @@ internal static class UserAuthExtensions
             .RemoveAllLoggers();
         services.AddSingleton<TsAuthKeys>();
         services.AddSingleton<ValidatedTokens>();
+        services.AddSingleton<TenantKeys>();
         services.AddSingleton<IIssuerKeys>(provider => provider.GetRequiredService<TsAuthKeys>());
         services.AddSingleton<IProjectAuthorityVerifier, TsAuthProjectAuthorityVerifier>();
         services.AddSingleton<TsAuthKeyExchange>();

@@ -14,7 +14,10 @@ internal sealed class ValidatedTokens([FromKeyedServices(UserAuthenticationHandl
 
     internal sealed record Accepted(
         IReadOnlyList<SecurityKey> Keys, DateTime ValidTo, IReadOnlyList<(string Type, string Value)> Claims,
-        string? Project, string? Database, string? Scope, IReadOnlyList<IPNetwork[]> Allowlists, (string Id, string Generation)? Key);
+        string? Project, string? Database, string? Scope, IReadOnlyList<IPNetwork[]> Allowlists, (string Id, string Generation)? Key)
+    {
+        public RulesAuth? Auth { get; init; }
+    }
 
     public static string KeyOf(string token) => Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
 

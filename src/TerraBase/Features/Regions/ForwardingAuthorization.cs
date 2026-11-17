@@ -112,7 +112,7 @@ internal static class ForwardingAuthorization
         if (key is null && context.Features.Get<ProjectAccess>() is null
             && UserAuthExtensions.Identity(context.User) is { } identity)
         {
-            switch (await ProjectGrants.GrantAsync(context, identity, project, bucketCreation: false).ConfigureAwait(false))
+            switch (await ProjectAccessResolver.ResolveAsync(context, identity, project, bucketCreation: false).ConfigureAwait(false))
             {
                 case ProjectAccess access:
                     context.Features.Set(access);
