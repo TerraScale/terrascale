@@ -20,6 +20,8 @@ export type Journey = {
   apiKey: string;
 };
 
+export type SetupJourney = Journey & { userId: string; mintKey: string };
+
 const setupOf = (info: TestInfo) => String(info.project.metadata.setup);
 const journeyFile = (info: TestInfo) => join(stateDir, `${setupOf(info)}.journey.json`);
 

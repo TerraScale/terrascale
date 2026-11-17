@@ -3,7 +3,8 @@ import type { Page } from '@playwright/test';
 import { waitForCreatedDatabase } from '../support/database';
 import { test, expect } from '../support/audit';
 import { cloudflareSendCount, newAddress, nextMail } from '../support/inbox';
-import { saveJourney, saveSecret, saveSession } from '../support/state';
+import { saveJourney, saveSecret, saveSession, type SetupJourney } from '../support/state';
+import { signInToken } from '../support/auth-management';
 import { provisionProjectOwner } from '../support/project-owner';
 import { shell } from '../support/shell';
 import { hostedReady } from '../support/hosted';
@@ -241,9 +242,17 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
   expect((await page.content()).includes(apiKey), 'the API key secret is gone after a reload').toBe(false);
   await shell(page, identity);
   await audit.check('API keys after reload');
+  const ownerToken = await signInToken(page.request, 'setup-owner');
+  const userId = JSON.parse(Buffer.from(ownerToken.split('.')[1], 'base64url').toString()).sub as string;
+  const minter = await page.request.post(`${auth}/v1/terrascale/organizations/${organizationId}/projects/${projectId}/api-keys`, {
+    headers: { Authorization: 'Bearer ' + ownerToken }, data: { name: `journey-mint-${runId}`, scopes: ['auth:tokens:mint'] },
+  });
+  expect(minter.status()).toBe(201);
+  const mintKey = (await minter.json()).key as string;
+  saveSecret('journey-mint-key', mintKey);
 
   await saveSession(context);
-  saveJourney({
+  saveJourney<SetupJourney>({
     runId,
     email,
     password,
@@ -257,6 +266,8 @@ test('sign up, verify the email, onboard on Free, create a database and an API k
     databaseRegion: region,
     apiKeyName,
     apiKey,
+    userId,
+    mintKey,
   });
   if (info.project.name === 'setup') await provisionProjectOwner(browser, info);
 });

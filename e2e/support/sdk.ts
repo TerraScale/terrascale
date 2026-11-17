@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
 import type { PaidJourney } from './paid';
 import { e2eRoot, production, stateDir } from './stack';
-import { journey, mask, type Journey } from './state';
+import { journey, mask, type Journey, type SetupJourney } from './state';
 
 export const sdks = ['dotnet', 'go', 'python', 'js', 'rust'] as const;
 export type Sdk = (typeof sdks)[number];
@@ -113,7 +113,7 @@ function execute(sdk: Sdk, env: NodeJS.ProcessEnv): Promise<{ code: number | nul
   });
 }
 
-export async function runOperations(sdk: Sdk, group: Group, management?: { user: string; readKey: string; writeKey: string; mintKey: string }): Promise<void> {
+export async function runOperations(sdk: Sdk, group: Group, management?: { user: string; readKey: string; writeKey: string }): Promise<void> {
   const current = journey<Journey & Partial<Pick<PaidJourney, 'secondDatabaseName'>>>();
   mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
   const planned = operations.filter((op) => op.group === group && (!op.sdks || op.sdks.includes(sdk)));
@@ -128,7 +128,7 @@ export async function runOperations(sdk: Sdk, group: Group, management?: { user:
       TERRASCALE_PROJECT_ID: current.projectId,
       TERRASCALE_DATABASE_NAME: current.databaseName,
       E2E_DATABASE_ID: current.databaseId,
-      ...(management ? { E2E_AUTH_USER: management.user, E2E_AUTH_READ_KEY: management.readKey, E2E_AUTH_WRITE_KEY: management.writeKey, E2E_AUTH_MINT_KEY: management.mintKey } : {}),
+      ...(management ? { E2E_AUTH_USER: management.user, E2E_AUTH_READ_KEY: management.readKey, E2E_AUTH_WRITE_KEY: management.writeKey, E2E_AUTH_MINT_KEY: journey<SetupJourney>().mintKey } : {}),
       ...(current.secondDatabaseName ? { E2E_OTHER_DATABASE: current.secondDatabaseName } : {}),
       E2E_GROUP: group,
       E2E_RUN_ID: `${current.runId}${Date.now().toString(36)}`,
