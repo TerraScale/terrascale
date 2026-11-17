@@ -333,6 +333,7 @@ namespace TerraScale.Dashboard
                 context.Items["nonce"] = nonce;
                 var path = context.Request.Path.Value ?? "";
                 var editorStyles = path.StartsWith("/api/v1/dashboard/data/", StringComparison.Ordinal) ||
+                    path == "/api/v1/dashboard/databases/tables" ||
                     path.StartsWith("/databases/", StringComparison.Ordinal) && (path.EndsWith("/sql", StringComparison.Ordinal) || path.EndsWith("/tables", StringComparison.Ordinal) || path.EndsWith("/rules", StringComparison.Ordinal)) ||
                     path.StartsWith("/api/v1/dashboard/rules/", StringComparison.Ordinal) ||
                     path.StartsWith("/api/v1/dashboard/functions/", StringComparison.Ordinal) ||
