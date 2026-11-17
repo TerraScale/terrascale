@@ -207,6 +207,13 @@
       "contract": "function-invocations.json"
     },
     {
+      "client": "database",
+      "operation": "getFunctionStats",
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/functions/{function}/stats",
+      "contract": "functions.json"
+    },
+    {
       "client": "project",
       "operation": "getProjectMetrics",
       "method": "GET",

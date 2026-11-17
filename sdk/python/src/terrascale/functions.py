@@ -56,8 +56,8 @@ class FunctionLog:
     @classmethod
     def from_json(cls, b: dict[str, Any]) -> FunctionLog:
         return cls(b["id"], b["at"], b["trigger"], b["status"], int(b["durationMs"]), b["lines"], b["error"],
-                   int(b["sqlCalls"]), int(b["sqlMs"]), int(b["rowsRead"]), int(b["rowsWritten"]),
-                   int(b["responseBytes"]), None if b["httpStatus"] is None else int(b["httpStatus"]))
+                   int(b.get("sqlCalls", 0)), int(b.get("sqlMs", 0)), int(b.get("rowsRead", 0)), int(b.get("rowsWritten", 0)),
+                   int(b.get("responseBytes", 0)), None if b.get("httpStatus") is None else int(b["httpStatus"]))
 
 
 @dataclass(frozen=True)

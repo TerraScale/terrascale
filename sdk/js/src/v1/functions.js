@@ -1,6 +1,6 @@
 import { requireId } from "../ids.js";
 import { requireDatabaseSelector, requireName } from "./ids.js";
-import { list, nullable, numeric, optional, record, text } from "./management-decode.js";
+import { list, nullable, numeric, optional, record, text, defaulted } from "./management-decode.js";
 import { members, mutationOptions } from "./management-validation.js";
 import { stringifyExactJson } from "./json.js";
 /** @import { V1Transport } from "./transport.js" */
@@ -8,8 +8,9 @@ import { stringifyExactJson } from "./json.js";
 
 const functionBody = record({ name: text, source: optional(nullable(text)), cron: nullable(text), createdAt: text, updatedAt: text });
 const logBody = record({ id: requireId, at: text, trigger: text, status: text, durationMs: numeric,
-  lines: list(text), error: nullable(text), sqlCalls: numeric, sqlMs: numeric, rowsRead: numeric, rowsWritten: numeric,
-  responseBytes: numeric, httpStatus: nullable(numeric) });
+  lines: list(text), error: nullable(text), sqlCalls: defaulted(0, numeric), sqlMs: defaulted(0, numeric),
+  rowsRead: defaulted(0, numeric), rowsWritten: defaulted(0, numeric), responseBytes: defaulted(0, numeric),
+  httpStatus: defaulted(null, nullable(numeric)) });
 const statsBucketBody = record({ at: text, invocations: numeric, errors: numeric, p50Ms: numeric, p95Ms: numeric });
 const statsBody = record({ window: text, invocations: numeric, errors: numeric, p50Ms: numeric, p95Ms: numeric,
   p99Ms: numeric, maxMs: numeric, sqlCalls: numeric, rowsRead: numeric, rowsWritten: numeric, buckets: list(statsBucketBody) });

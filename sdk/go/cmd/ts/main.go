@@ -111,7 +111,8 @@ Options go before or after the command and its operands; -- ends options.
                                           -data <json> sends a body, - stdin
   functions logs <db> <name>              print recent invocations as JSON
                                           lines, newest first; -limit 1..100
-  functions stats <db> <name>             print invocation metrics;
+  functions stats [<db>] <name>           print invocation metrics; without <db>
+                                          the saved context database;
                                           -window 1h|24h|7d, default 24h
   functions delete <db> <name>            delete a function and its logs
   sql <db> <statement>                    run one SQL statement in its own
@@ -237,7 +238,7 @@ var commands = map[string][]int{
 	"functions list":     {1},
 	"functions invoke":   {2},
 	"functions logs":     {2},
-	"functions stats":    {2},
+	"functions stats":    {1, 2},
 	"functions delete":   {2},
 	"schema pull":        {1},
 	"schema diff":        {2},
@@ -583,6 +584,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	if name == "context set" {
 		return selectCLIContext(ctx, u, token, operands, out)
 	}
+	var savedDatabase string
 	if name != "whoami" && !strings.HasPrefix(name, "orgs") && !strings.HasPrefix(name, "projects") {
 		path, err := contextPath()
 		if err != nil {
@@ -596,13 +598,12 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			Sub string `json:"sub"`
 		}
 		decodeClaims(token, &claims)
-		var database string
-		*org, *project, database, err = contextDefaults(c, claims.Sub, *org, *project)
+		*org, *project, savedDatabase, err = contextDefaults(c, claims.Sub, *org, *project)
 		if err != nil {
 			return err
 		}
 		if usesDatabaseOperand(name) {
-			operands, err = contextDatabase(operands, database)
+			operands, err = contextDatabase(operands, savedDatabase)
 			if err != nil {
 				return err
 			}
@@ -626,7 +627,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		if err != nil {
 			return err
 		}
-		selected, err := open(ctx, u, token, p.OrganizationID, p.ID)
+		selected, err := open(ctx, u, token, p.OrganizationID, p.ID, "")
 		if err != nil {
 			return err
 		}
@@ -634,7 +635,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	case "projects create":
 		return createProject(ctx, u, *org, operands[0], out)
 	}
-	s, err := open(ctx, u, token, *org, *project)
+	s, err := open(ctx, u, token, *org, *project, savedDatabase)
 	if err != nil {
 		return err
 	}
@@ -683,6 +684,12 @@ func (s *session) dispatch(ctx context.Context, name string, fn functionFlags, o
 		}
 	}
 	if strings.HasPrefix(name, "functions ") {
+		if name == "functions stats" && len(operands) == 1 {
+			if s.database == "" {
+				return fmt.Errorf("functions stats needs a database: run ts functions stats <database> <name>, or ts context set <org> <project> <database>: %w", errUsage)
+			}
+			return functions(ctx, s.tb.Database(s.project, s.database), name, fn, operands, out)
+		}
 		return functions(ctx, s.tb.Database(s.project, operands[0]), name, fn, operands[1:], out)
 	}
 	if name == "keys revoke" {
@@ -945,13 +952,14 @@ func openKey(ctx context.Context, key, project string) (*session, error) {
 
 // session is the signed-in user's TerraBase client for one project.
 type session struct {
-	tb      *v1.Client
-	user    *tsauth.User
-	org     string
-	project string
+	tb       *v1.Client
+	user     *tsauth.User
+	org      string
+	project  string
+	database string
 }
 
-func open(ctx context.Context, u *tsauth.User, token, organization, project string) (*session, error) {
+func open(ctx context.Context, u *tsauth.User, token, organization, project, database string) (*session, error) {
 	var matches []tsauth.Project
 	for p, err := range projects(ctx, u, organization) {
 		if err != nil {
@@ -980,7 +988,7 @@ func open(ctx context.Context, u *tsauth.User, token, organization, project stri
 	if err != nil {
 		return nil, err
 	}
-	return &session{tb, u, p.OrganizationID, p.ID}, nil
+	return &session{tb, u, p.OrganizationID, p.ID, database}, nil
 }
 
 // pages yields every item of a paged list; list gets the previous Next.
