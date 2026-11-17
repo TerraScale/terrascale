@@ -54,6 +54,11 @@ async function restorePair(cells: Cells, endpoint: string, region: string, page:
     await expect(page.locator(`#restore-points-list button[command="show-modal"][commandfor="restore-${backup.id}"]`)).toBeVisible();
     await expect(page).toHaveURL(viewUrl);
     await expect(page.locator('html')).toHaveAttribute('data-in-place', 'live-backups');
+    const unavailableRestore = new URL(viewUrl);
+    unavailableRestore.searchParams.set('restore', 'unavailable');
+    await page.goto(unavailableRestore.href);
+    await expect(page.locator('#restore-status [role="alert"]')).toHaveText('That restore is no longer available.');
+    await expect(page.locator('#restore-status[data-init]')).toHaveCount(0);
     const elsewhere = await cells.post(`${home}${database(source.id)}/backups/${backup.id}/restore`, {
       data: { name: name('snapshot-' + region) },
     });

@@ -1,6 +1,8 @@
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Encodings.Web;
+using Microsoft.AspNetCore.Html;
 using RazorSlices;
 using TerraScale.Dashboard.Platform.Datastar;
 
@@ -10,6 +12,12 @@ public sealed record LiveFragment(RazorSlice Slice, bool Complete = false);
 
 public sealed class LiveView(TimeProvider time)
 {
+    public static HtmlString Initializer(string path)
+    {
+        var expression = "@get('" + JavaScriptEncoder.Default.Encode(path) + "', {retry: 'always'})";
+        return new("data-init=\"" + HtmlEncoder.Default.Encode(expression) + "\"");
+    }
+
     public async Task StreamAsync(HttpContext http, Func<CancellationToken, Task<LiveFragment>> read,
         IAsyncEnumerable<DateTimeOffset> changes, CancellationToken cancellationToken)
     {
