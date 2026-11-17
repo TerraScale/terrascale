@@ -37,9 +37,20 @@ internal static class RulesSimulator
 {
     internal static RulesTestBody Test(RulesTestRequest request, RulesSet rules, IRulesEvaluation engine)
     {
-        var problems = RulesChecks.Problems(rules, engine);
-        var schema = engine.RulesTable(request.Table);
+        var operation = request.Operation switch
+        {
+            "read" => RulesOperation.Read,
+            "create" => RulesOperation.Create,
+            "update" => RulesOperation.Update,
+            "delete" => RulesOperation.Delete,
+            _ => throw new UnreachableException(),
+        };
         rules.Tables.TryGetValue(request.Table, out var rule);
+        var checkedRules = request.Rules is not null ? rules : new RulesSet(rule is null
+            ? new Dictionary<string, RulesTable>()
+            : new Dictionary<string, RulesTable> { [request.Table] = Required(rule, operation) });
+        var problems = RulesChecks.Problems(checkedRules, engine);
+        var schema = engine.RulesTable(request.Table);
         var columns = rule?.Columns ?? schema.Columns;
         if (problems.Count > 0)
         {
@@ -57,14 +68,11 @@ internal static class RulesSimulator
             }
         }
 
-        var operation = request.Operation switch
+        if (operation is RulesOperation.Update or RulesOperation.Delete && !Check("read", rule?.Read, RulesOperation.Read))
         {
-            "read" => RulesOperation.Read,
-            "create" => RulesOperation.Create,
-            "update" => RulesOperation.Update,
-            "delete" => RulesOperation.Delete,
-            _ => throw new UnreachableException(),
-        };
+            return new RulesTestBody(false, "read", rule?.Read, results, columns, []);
+        }
+
         var set = operation == RulesOperation.Create ? rule?.Set?.Create : rule?.Set?.Update;
         if (operation is RulesOperation.Create or RulesOperation.Update)
         {
@@ -141,6 +149,18 @@ internal static class RulesSimulator
             ? list ? claim.ValueKind == JsonValueKind.Array ? claim.GetRawText() : null : Scalar(claim)
             : null;
     }
+
+    private static RulesTable Required(RulesTable rule, RulesOperation operation) => operation switch
+    {
+        RulesOperation.Read => new RulesTable(Read: rule.Read, Columns: rule.Columns),
+        RulesOperation.Create => new RulesTable(Create: rule.Create, Writable: rule.Writable, Validate: rule.Validate,
+            Set: new RulesValues(Create: rule.Set?.Create)),
+        RulesOperation.Update => new RulesTable(Read: rule.Read, Update: rule.Update, Columns: rule.Columns, Writable: rule.Writable,
+            Validate: rule.Validate, Set: new RulesValues(Update: rule.Set?.Update)),
+        RulesOperation.Delete => new RulesTable(Read: rule.Read, Delete: rule.Delete, Columns: rule.Columns),
+        RulesOperation.Validate => throw new UnreachableException(),
+        _ => throw new UnreachableException(),
+    };
 
     private static Dictionary<string, object?> Values(IReadOnlyDictionary<string, JsonElement>? values) =>
         values?.ToDictionary(pair => pair.Key, pair => Scalar(pair.Value), StringComparer.OrdinalIgnoreCase) ?? new(StringComparer.OrdinalIgnoreCase);

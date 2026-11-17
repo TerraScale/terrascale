@@ -36,6 +36,7 @@ test('rules compile, keep versions, simulate deployed and draft requests and res
   const current = journey();
   const database = `${api}/v1/projects/${current.projectId}/databases/${current.databaseId}`;
   const table = 'rules_todos_' + randomBytes(4).toString('hex');
+  const otherTable = table + '_other';
   const owner = await ownerToken(request);
   const headers = (extra: Record<string, string> = {}) => ({ authorization: 'Bearer ' + owner, ...extra });
   const execute = async (sql: string) => {
@@ -126,16 +127,26 @@ test('rules compile, keep versions, simulate deployed and draft requests and res
     const allowed = await answer<Simulation>(await simulate(simulated), 200);
     expect(allowed).toEqual({
       allowed: true, decidedBy: 'update', clause: owners.update,
-      results: [{ rule: 'update', value: true }, ...owners.validate.map((_, index) => ({ rule: `validate[${index}]`, value: true }))],
+      results: [{ rule: 'read', value: true }, { rule: 'update', value: true }, ...owners.validate.map((_, index) => ({ rule: `validate[${index}]`, value: true }))],
       columns: owners.columns, problems: [],
     });
     console.log('POST /rules:test allowed -> 200 ' + JSON.stringify(allowed));
-    const denied = await answer<Simulation>(await simulate({ ...simulated, auth: { ...simulated.auth, uid: 'someone-else' } }), 200);
+    const denied = await answer<Simulation>(await simulate({ ...simulated, auth: { ...simulated.auth, uid: 'someone-else', claims: { roles: ['admin'] } } }), 200);
     expect(denied).toEqual({
-      allowed: false, decidedBy: 'update', clause: owners.update, results: [{ rule: 'update', value: false }], columns: owners.columns, problems: [],
+      allowed: false, decidedBy: 'update', clause: owners.update, results: [{ rule: 'read', value: true }, { rule: 'update', value: false }], columns: owners.columns, problems: [],
     });
     console.log('POST /rules:test denied -> 200 ' + JSON.stringify(denied));
     console.log('rules simulator request: ' + JSON.stringify(simulated));
+
+    for (const operation of ['update', 'delete']) {
+      const unreadable = await answer<Simulation>(await simulate({
+        ...simulated, operation, rules: { tables: { [table]: { ...owners, read: 'FALSE', update: 'TRUE', delete: 'TRUE' } } },
+      }), 200);
+      expect(unreadable).toEqual({
+        allowed: false, decidedBy: 'read', clause: 'FALSE', results: [{ rule: 'read', value: false }], columns: owners.columns, problems: [],
+      });
+      console.log('POST /rules:test unreadable ' + operation + ' -> 200 ' + JSON.stringify(unreadable));
+    }
 
     const validation = await answer<Simulation>(await simulate({ ...simulated, new: { title: '' } }), 200);
     expect(validation).toMatchObject({ allowed: false, decidedBy: 'validate[0]', clause: owners.validate[0] });
@@ -188,12 +199,25 @@ test('rules compile, keep versions, simulate deployed and draft requests and res
     expect((await answer<{ items: { version: string }[] }>(await get('/versions?limit=3'), 200)).items.map(item => item.version))
       .toEqual([restored.version, second.version, first.version]);
 
+    await execute(`CREATE TABLE ${otherTable} (id INTEGER PRIMARY KEY, flag INTEGER)`);
+    const withOther = { tables: { ...restored.tables, [otherTable]: { read: 'row.flag = 1' } } };
+    const otherVersion = await answer<RulesBody>(await put(withOther, { 'if-match': `"${restored.version}"` }), 200);
+    await execute(`DROP TABLE ${otherTable}`);
+    const deployedRead = await answer<Simulation>(await simulate({ ...simulated, operation: 'read' }), 200);
+    expect(deployedRead).toMatchObject({ allowed: true, problems: [], results: [{ rule: 'read', value: true }] });
+    const draftRead = await answer<Simulation>(await simulate({ ...simulated, operation: 'read', rules: withOther }), 200);
+    expect(draftRead).toMatchObject({ allowed: false, results: [], problems: [{ table: otherTable, code: 'unknown_table' }] });
+    console.log('POST /rules:test deployed after unrelated drift -> 200 ' + JSON.stringify(deployedRead));
+    console.log('POST /rules:test draft after unrelated drift -> 200 ' + JSON.stringify(draftRead));
+    const clean = await answer<RulesBody>(await put({ tables: restored.tables }, { 'if-match': `"${otherVersion.version}"` }), 200);
+
     await execute(`DROP TABLE ${table}`);
     const drifted = await answer<RulesBody>(await get(), 200);
     expect(drifted.problems?.map(problem => `${problem.table}:${problem.code}`)).toEqual([`${table}:unknown_table`]);
-    await answer(await restore(second.version, { 'if-match': `"${restored.version}"` }), 400, 'invalid_rules');
-    await answer(await put({ tables: {} }, { 'if-match': `"${restored.version}"` }), 200);
+    await answer(await restore(second.version, { 'if-match': `"${clean.version}"` }), 400, 'invalid_rules');
+    await answer(await put({ tables: {} }, { 'if-match': `"${clean.version}"` }), 200);
   } finally {
     await execute(`DROP TABLE IF EXISTS ${table}`);
+    await execute(`DROP TABLE IF EXISTS ${otherTable}`);
   }
 });
