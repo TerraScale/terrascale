@@ -51,7 +51,6 @@ public sealed class OidcApplication
     /// <summary>Exact authorization redirect URIs.</summary>
     public IReadOnlyList<string> RedirectUris { get; set; } = [];
 
-    /// <summary>Canonical browser origins whose cross-origin token, userinfo, revocation and guest requests are answered with CORS.</summary>
     public IReadOnlyList<string> AllowedOrigins { get; set; } = [];
 
     /// <summary>Requirements such as PKCE.</summary>
