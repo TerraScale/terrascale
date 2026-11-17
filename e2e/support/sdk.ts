@@ -148,8 +148,10 @@ export async function runOperations(sdk: Sdk, group: Group, management?: { user:
   else await test.info().attach(`${sdk} group ${group}`, { body: `${result.stdout}\n${result.stderr}`, contentType: 'text/plain' });
   if (twoRegions) process.stdout.write(result.stdout.split('\n').filter(line => line.includes('placement:')).join('\n') + '\n');
   const lines = result.stdout.split('\n').filter((line) => line.startsWith('{')).map((line) => JSON.parse(line) as Line);
+  if (lines.some((line) => ['rules.manage', 'custom_tokens.mint'].includes(line.id) && line.ok)) {
+    process.stdout.write(`${sdk} custom token mint, Rules write and read: PASS\n`);
+  }
   if (lines.some((line) => line.id === 'rules.manage' && line.ok)) {
-    process.stdout.write(`${sdk} custom token mint and Rules read: PASS\n`);
     for (const operation of ['get', 'deploy', 'test', 'versions', 'version', 'restore']) {
       process.stdout.write(`${sdk} Rules ${operation}: PASS\n`);
     }

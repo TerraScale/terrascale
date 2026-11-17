@@ -791,7 +791,9 @@ impl Runner {
             ),
             "origin.rule" => origin_rule(&self.project, &text(op, "cases")),
             "rules.manage" => {
-                use terrascale::v1::{RulesSet, RulesTable, RulesTestAuth, RulesTestRequest};
+                use terrascale::v1::{
+                    RulesSet, RulesTable, RulesTestAuth, RulesTestRequest, RulesValues,
+                };
                 let before = match self.db().get_rules().await {
                     Ok(rules) => Some(rules),
                     Err(error) if error.code() == Some("no_rules") => None,
@@ -802,7 +804,13 @@ impl Runner {
                         self.table.clone(),
                         RulesTable {
                             read: Some("row.id = auth.uid AND auth.claims.plan = 'pro'".into()),
+                            create: Some("auth.claims.plan = 'pro'".into()),
                             columns: Some(vec!["id".into(), "label".into()]),
+                            writable: Some(vec!["label".into()]),
+                            set: Some(RulesValues {
+                                create: Some([("id".into(), "auth.uid".into())].into()),
+                                ..Default::default()
+                            }),
                             ..Default::default()
                         },
                     )]
@@ -846,7 +854,17 @@ impl Runner {
                 if custom.token_type != "Bearer" || custom.expires_in != 300 {
                     return Err("custom token lifetime differs".into());
                 }
-                self.db().sql().execute(&format!("INSERT INTO {}(rowid,id,label) VALUES (700001,?,'custom-token'),(700002,'other','hidden')", self.table), &[user.clone().into()]).await.map_err(|error| error.to_string())?;
+                self.db()
+                    .sql()
+                    .execute(
+                        &format!(
+                            "INSERT INTO {}(rowid,id,label) VALUES (700002,'other','hidden')",
+                            self.table
+                        ),
+                        &[],
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?;
                 let browser = reqwest::Client::builder()
                     .add_root_certificate(
                         reqwest::Certificate::from_pem(&self.ca)
@@ -858,8 +876,23 @@ impl Runner {
                     "https://api.terrascale.tech/v1/projects/{}/databases/{}/tables/{}/rows/",
                     self.project, database, self.table
                 );
+                let created = browser
+                    .post(path.trim_end_matches('/'))
+                    .bearer_auth(&custom.access_token)
+                    .json(&json!({"row": {"label": "custom-token"}}))
+                    .send()
+                    .await
+                    .map_err(|error| error.to_string())?;
+                let status = created.status().as_u16();
+                let written: Value = created.json().await.map_err(|error| error.to_string())?;
+                if status != 201 || written["row"] != json!({"id": user, "label": "custom-token"}) {
+                    return Err("custom token Rules write differs".into());
+                }
+                let key = written["key"]
+                    .as_str()
+                    .ok_or("custom token row key missing")?;
                 let row = browser
-                    .get(format!("{path}700001"))
+                    .get(format!("{path}{key}"))
                     .bearer_auth(&custom.access_token)
                     .send()
                     .await
@@ -883,7 +916,10 @@ impl Runner {
                 self.db()
                     .sql()
                     .execute(
-                        &format!("DELETE FROM {} WHERE rowid IN (700001,700002)", self.table),
+                        &format!(
+                            "DELETE FROM {} WHERE rowid = 700002 OR label = 'custom-token'",
+                            self.table
+                        ),
                         &[],
                     )
                     .await

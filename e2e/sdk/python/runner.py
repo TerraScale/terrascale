@@ -296,7 +296,7 @@ def ids(op):
 
 
 def rules_manage(op):
-    from terrascale.database_rules import RulesSet, RulesTable, RulesTestAuth, RulesTestRequest
+    from terrascale.database_rules import RulesSet, RulesTable, RulesTestAuth, RulesTestRequest, RulesValues
     from terrascale.errors import InvalidRulesError, NotFoundError, VersionMismatchError
 
     db = state["db"]
@@ -305,7 +305,8 @@ def rules_manage(op):
         before = db.get_rules()
     except NotFoundError as error:
         same(error.code, "no_rules", "missing rules")
-    rules = RulesSet({table: RulesTable(read="row.id = auth.uid AND auth.claims.plan = 'pro'", columns=["id", "label"])})
+    rules = RulesSet({table: RulesTable(read="row.id = auth.uid AND auth.claims.plan = 'pro'", create="auth.claims.plan = 'pro'",
+                                        columns=["id", "label"], writable=["label"], set=RulesValues(create={"id": "auth.uid"}))})
     deployed = db.deploy_rules(rules, before.version if before else None)
     got = db.get_rules()
     same([got.version, got.tables], [deployed.version, rules.tables], "rules read")
@@ -316,23 +317,28 @@ def rules_manage(op):
     secret.touch(mode=0o600)
     secret.write_text(token.access_token)
     same([token.token_type, token.expires_in], ["Bearer", 300], "custom token lifetime")
+    async_user = new_id()
     async def mint_async():
         async with AsyncTerraScale(api_key=os.environ["E2E_AUTH_MINT_KEY"], project=project) as backend:
-            return await backend.mint_custom_token(user)
+            return await backend.mint_custom_token(async_user, claims={"plan": "pro"})
     unbound = asyncio.run(mint_async())
     secret = Path(os.environ["E2E_SECRETS"]) / "custom-token-python-unbound"
     secret.touch(mode=0o600)
     secret.write_text(unbound.access_token)
     same([unbound.token_type, unbound.expires_in], ["Bearer", 300], "async custom token lifetime")
-    db.execute(f"INSERT INTO {table}(rowid,id,label) VALUES (700001,?,'custom-token'),(700002,'other','hidden')", [user])
-    with httpx.Client(headers={"Authorization": "Bearer " + token.access_token}) as browser:
-        path = f"https://api.terrascale.tech/v1/projects/{project}/databases/{os.environ['E2E_DATABASE_ID']}/tables/{table}/rows/"
-        row = browser.get(path + "700001")
-        same(row.status_code, 200, "custom token Rules read")
-        same(row.json()["row"], {"id": user, "label": "custom-token"}, "custom token readable row")
-        hidden = browser.get(path + "700002", headers={"Authorization": "Bearer " + unbound.access_token})
-        same([hidden.status_code, hidden.json()["error"]["code"]], [404, "row_not_found"], "custom token hidden row")
-    db.execute(f"DELETE FROM {table} WHERE rowid IN (700001,700002)")
+    db.execute(f"INSERT INTO {table}(rowid,id,label) VALUES (700002,'other','hidden')")
+    path = f"https://api.terrascale.tech/v1/projects/{project}/databases/{os.environ['E2E_DATABASE_ID']}/tables/{table}/rows/"
+    for issued, uid, label in [(token, user, "custom-token"), (unbound, async_user, "async-custom-token")]:
+        with httpx.Client(headers={"Authorization": "Bearer " + issued.access_token}) as browser:
+            created = browser.post(path.rstrip("/"), json={"row": {"label": label}})
+            same(created.status_code, 201, "custom token Rules write")
+            same(created.json()["row"], {"id": uid, "label": label}, "custom token written row")
+            row = browser.get(path + created.json()["key"])
+            same(row.status_code, 200, "custom token Rules read")
+            same(row.json()["row"], {"id": uid, "label": label}, "custom token readable row")
+            hidden = browser.get(path + "700002")
+            same([hidden.status_code, hidden.json()["error"]["code"]], [404, "row_not_found"], "custom token hidden row")
+    db.execute(f"DELETE FROM {table} WHERE rowid = 700002 OR label IN ('custom-token','async-custom-token')")
     allowed = db.test_rules(RulesTestRequest("read", table, RulesTestAuth("owner", claims={"plan": "pro"}), row={"id": "owner"}))
     same([allowed.allowed, allowed.columns, allowed.problems], [True, ["id", "label"], []], "rules owner")
     denied = db.test_rules(RulesTestRequest("read", table, RulesTestAuth("other", claims={"plan": "pro"}), row={"id": "owner"}))

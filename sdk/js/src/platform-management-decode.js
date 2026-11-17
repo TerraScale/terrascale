@@ -53,7 +53,7 @@ export const linkedProviders = record({ providers: list(text) });
 export const deletionHistory = record({ erasureId: text, requestedAt: instant, authLogicalVerifiedAt: nullable(instant),
   historyStatus: nullable(text), historyCompletedAt: nullable(instant) });
 const tokenBody = record({ access_token: text, token_type: oneOf(/** @type {const} */ (["Bearer"])),
-  expires_in: value => nonnegativeInteger(value, 900) });
+  expires_in: value => nonnegativeInteger(value, 300) });
 /** @param {JsonValue | undefined} value */
 export function endUserToken(value) {
   const result = tokenBody(value);
