@@ -361,10 +361,9 @@ triggers and cascades then do to other rows.
 A region that holds a replica forwards an end-user write to the home through home forwarding
 (`src/TerraBase/Features/Regions/HomeForwarding.cs`) and returns the home's answer; end-user writes never take the
 local write path of [write routing](sql/write-routing.md), because rules must see the authoritative row. When the
-region knows no address for the home, or holds no replica, it answers `421 wrong_region` naming the home with nothing
-applied. A forward the home does not answer keeps home forwarding's answers: `503 unavailable` when nothing was sent,
-`503 write_outcome_unknown` once the body was sent, since the home may have committed it. TerraBase never replays a
-write itself.
+home cannot be reached, or the region holds no replica, it answers `421 wrong_region` naming the home with nothing
+applied. When the home may have received the request but did not answer, the write answers `503
+write_outcome_unknown`, since the home may have committed it. TerraBase never replays a write itself.
 
 Chrome and Edge resend a buffered body once after a `421` (`sdk/js/README.md:248`). A `421` means nothing was applied,
 so the resend cannot apply a write twice, but the JS client cannot stop it either; the browser client (W3) must close

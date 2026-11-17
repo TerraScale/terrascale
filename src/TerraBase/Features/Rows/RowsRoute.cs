@@ -50,18 +50,13 @@ internal static class RowsRoute
 
     private static async ValueTask<IResult> UnknownAsync(HttpContext context, RowsRouteServices services, NotFound error, CancellationToken cancellationToken)
     {
-        if (Listeners.IsForwarded(context))
-        {
-            return ErrorResponse.From(error);
-        }
-
         if (!await ForwardingAuthorization.CheckAsync(context, cancellationToken).ConfigureAwait(false))
         {
             return Results.Empty;
         }
 
         return await services.Locator.LocateAsync(DatabaseRoute.Project(context), DatabaseRoute.Database(context), cancellationToken).ConfigureAwait(false)
-            is { } home && home.Region != services.Options.Region
+            is { } home && home.Region != services.Options.Region && Listeners.CanForwardTo(context, home.Region)
             ? DatabaseRegions.HomeRegion(home.Region, [home.Region])
             : ErrorResponse.From(error);
     }
@@ -105,7 +100,7 @@ internal static class RowsRoute
         var region = services.Options.Region;
         if (placement.Home != region)
         {
-            var peer = Listeners.IsForwarded(context) || !placement.PlacedIn(region)
+            var peer = !Listeners.CanForwardTo(context, placement.Home) || !placement.PlacedIn(region)
                 ? null
                 : (await services.Peers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false)).FirstOrDefault(candidate => candidate.Region == placement.Home);
             if (peer is null)

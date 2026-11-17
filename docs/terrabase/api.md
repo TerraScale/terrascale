@@ -50,7 +50,8 @@ applied. Errors are `{"error":{"code","message","details"}}`: `400 unknown_colum
 (`details.clause`) or `invalid_request`; `403 rule_denied` (`details.operation`, `details.table`), `column_not_writable`
 (`details.column`) or `rules_invalid`; `404 row_not_found`, `unknown_table` or `unknown_database`; `409 row_exists`
 (`details.key` when the caller may read that row). A failed batch answers its first failing operation's error with
-`details.index` and applies nothing. Writes count against the monthly write allowance like SQL writes.
+`details.index` and applies nothing; a foreign key failure found only at commit, or a transaction the engine ended, has no
+`details.index`. Writes count against the monthly write allowance like SQL writes.
 
 ## Management
 
