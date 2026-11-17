@@ -11,6 +11,8 @@ namespace TerraScale.Dashboard.Features.Notifications
             var inbox = NotificationCommands.Inbox(shell.Context, status, int.TryParse(rawPage, out var parsed) ? parsed : 1);
             return new(shell, inbox.Items, inbox.Status, inbox.Unread, inbox.Critical, inbox.Total, inbox.Page, inbox.PageCount, dialog);
         }
+        public string LivePath => "/notifications/live?view=" + (Dialog ? "dialog" : "inbox") + "&status=" + Status + "&page=" + Page;
+
         public string Href(int page, bool dialog = false)
         {
             return WorkspaceUrl.For(Shell.Context, (dialog ? "/notifications/dialog" : "/notifications") +

@@ -1,15 +1,111 @@
 import { once } from 'node:events';
+import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { connect } from 'node:http2';
 import { join } from 'node:path';
 import { expect, type Page } from '@playwright/test';
 import { extendPeers, startRegion, type RegionProcess } from './fleet';
-import { localPort, production, stateDir } from '../support/stack';
-import { journey, ownerSession } from '../support/state';
+import { auth, localPort, production, stateDir } from '../support/stack';
+import { journey, ownerSession, saveSecret } from '../support/state';
+import { signInToken } from '../support/auth-management';
+import { ulid } from '../support/status-worker';
+import { Nats, putKey, seal } from '../replication/push.mjs';
 import { test, home, replica, project, database, name, json, sql, removeDatabase, type Cells } from './support';
 
 test.skip(production || process.env.E2E_REGIONS !== '2' || process.env.E2E_NODES_PER_REGION !== '1',
   'one node in each of two regions, with port 8380 free for sjc');
+
+test('a newly recorded conflict appears without reloading or replacing draft filters', async ({ cells, page }) => {
+  const current = journey();
+  const source = await json<{ id: string }>(await cells.post(`${home}${project()}/databases`, {
+    data: { name: name('live-conflicts'), regions: ['gru', 'fra'] },
+  }), 201);
+  const nats = new Nats(readFileSync(join(stateDir, 'nats-token'), 'utf8'), localPort('nats', 4222));
+  try {
+    await sql(cells, home, source.id, 'CREATE TABLE live_conflicts (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
+    await sql(cells, home, source.id, "INSERT INTO live_conflicts VALUES (1, 'winning')");
+    await page.context().addCookies(JSON.parse(readFileSync(ownerSession(), 'utf8')).cookies);
+    await page.goto(`/databases/${source.id}/conflicts?organizationId=${current.organizationId}&projectId=${current.projectId}`);
+    const url = page.url();
+    await page.locator('html').evaluate(el => el.setAttribute('data-in-place', 'live-conflicts'));
+    await page.locator('#conflict-table').fill('draft_table');
+    const scope = `${current.organizationId}/${current.projectId}/${source.id}`;
+    const secrets = readFileSync(join(stateDir, 'secrets'), 'utf8').trim().split('\n');
+    const encryptionId = ulid();
+    const key = randomBytes(32);
+    saveSecret('live-conflict-key', key.toString('base64'));
+    await putKey({ master: Buffer.from(secrets[1], 'base64'), access: secrets[12], secret: secrets[13] }, scope, encryptionId, key);
+    await nats.connect();
+    const transaction = {
+      id: ulid(), region: 'fra', hlc: { physicalMilliseconds: Date.now() - 60_000, logical: 0, nodeId: 'journey-2' },
+      changes: [{ op: 'update', table: 'live_conflicts', key: { id: 1 }, values: { value: 'losing' } }],
+    };
+    const applied = nats.event(`terrabase.applied.fra.${scope.replaceAll('/', '.')}`, (result: { id?: string }) => result.id === transaction.id);
+    expect((await nats.request(`terrabase.push.fra.gru.${scope.replaceAll('/', '.')}`, seal(transaction, scope, encryptionId, key))).error).toBeUndefined();
+    expect(await applied).toMatchObject({ state: 'confirmed', conflicts: [{ kind: 'superseded' }] });
+    await expect(page.locator('#conflict-results tbody')).toContainText('losing');
+    await expect(page.locator('#conflict-results tbody')).toContainText('winning');
+    await expect(page.locator('#conflict-table')).toHaveValue('draft_table');
+    await expect(page.locator('html')).toHaveAttribute('data-in-place', 'live-conflicts');
+    await expect(page).toHaveURL(url);
+  } finally {
+    nats.close();
+    await removeDatabase(cells, source.id);
+  }
+  await expect(page.locator('#conflict-results')).toContainText('We can’t find that page.');
+  await expect(page.locator('#conflict-results[data-init]')).toHaveCount(0);
+});
+
+test('notification inbox, dialog and both shell counts reflect an API change and another tab marking read', async ({ page }) => {
+  const current = journey();
+  const streams: string[] = [];
+  page.on('request', request => {
+    const url = new URL(request.url());
+    if (url.pathname === '/notifications/live' && url.searchParams.get('view') === 'shell') streams.push(url.href);
+  });
+  await page.context().addCookies(JSON.parse(readFileSync(ownerSession(), 'utf8')).cookies);
+  await page.goto('/notifications?status=unread');
+  const url = page.url();
+  await page.locator('html').evaluate(el => el.setAttribute('data-in-place', 'live-inbox'));
+  const token = await signInToken(page.request, 'live-notification');
+  const keys = `${auth}/v1/terrascale/organizations/${current.organizationId}/projects/${current.projectId}/api-keys`;
+  const name = `live-inbox-${current.runId}`;
+  const created = await page.request.post(keys, {
+    headers: { Authorization: `Bearer ${token}` },
+    data: { name, scopes: ['sql:read'], expires_at: new Date(Date.now() + 86400_000).toISOString() },
+  });
+  expect(created.status()).toBe(201);
+  const key = await created.json();
+  saveSecret('live-notification-key', key.key);
+  try {
+    await expect(page.locator('#notification-inbox')).toContainText(`API key ${name} expires`);
+    await expect(page.locator('#ts-notifications-topbar')).toHaveAttribute('aria-label', /unread/);
+    await expect(page.locator('#ts-notifications-menu')).toHaveAttribute('aria-label', /unread/);
+    expect(streams).toHaveLength(1);
+    await page.locator('#ts-notifications-topbar').click();
+    await expect(page.locator('#ts-notifications-body')).toContainText(`API key ${name} expires`);
+    const tab = await page.context().newPage();
+    try {
+      await tab.goto('/notifications?status=unread');
+      await tab.locator('#notification-inbox').getByRole('button', { name: 'Mark all read', exact: true }).click();
+      await expect(page.locator('#ts-notifications-body .ts-notification-unread')).toHaveCount(0);
+      await expect(page.locator('#notification-inbox')).toContainText('No unread notifications in this scope.');
+      await expect(page.locator('#ts-notifications-topbar')).toHaveAttribute('aria-label', 'Notifications');
+      await expect(page.locator('#ts-notifications-menu')).toHaveAttribute('aria-label', 'Notifications');
+      expect(streams).toHaveLength(1);
+      await expect(page.locator('html')).toHaveAttribute('data-in-place', 'live-inbox');
+      await expect(page).toHaveURL(url);
+    } finally {
+      await tab.close();
+    }
+    const live = await page.locator('#ts-notifications-body').getAttribute('data-init');
+    expect(live).toContain('/notifications/live');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#ts-notifications-body[data-init]')).toHaveCount(0);
+  } finally {
+    expect((await page.request.delete(`${keys}/${key.api_key.id}`, { headers: { Authorization: `Bearer ${token}` } })).status()).toBe(204);
+  }
+});
 
 test('snapshot and point-in-time restore run in fra', async ({ cells, page }) => {
   await publish('pro');

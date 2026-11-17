@@ -81,16 +81,22 @@ test('database settings, grants and filters save without navigating', async ({ p
   await expect(page).toHaveURL(replicationUrl);
   await expect(page.locator('html')).toHaveAttribute('data-in-place', 'replication');
 
+  const conflictsLive = page.waitForResponse(response => new URL(response.url()).pathname === path + '/conflicts/live');
   await page.goto(path + '/conflicts');
+  expect((await conflictsLive).status()).toBe(200);
   await page.locator('html').evaluate(el => el.setAttribute('data-in-place', 'filters'));
   await page.locator('#conflict-table').fill('records');
+  audit.expectStreamCancellation(/\/conflicts\/live\?table=&/);
   await page.locator('#conflict-table').press('Enter');
   await expect(page).toHaveURL(url => url.pathname === path + '/conflicts' && url.searchParams.get('table') === 'records' && url.searchParams.get('organizationId') === current.organizationId && url.searchParams.get('projectId') === current.projectId);
   await expect(page.locator('#conflicts')).toContainText('No conflicts match these filters.');
   await expect(page.locator('html')).toHaveAttribute('data-in-place', 'filters');
   await audit.check('conflict filters applied in place');
+  const logsLive = page.waitForResponse(response => new URL(response.url()).pathname === path + '/logs/live');
   await page.goto(path + '/logs');
+  expect((await logsLive).status()).toBe(200);
   await page.locator('html').evaluate(el => el.setAttribute('data-in-place', 'logs'));
+  audit.expectStreamCancellation(/\/logs\/live\?/);
   await page.locator('#request-status').selectOption('5xx');
   await expect(page).toHaveURL(url => url.pathname === path + '/logs' && url.searchParams.get('status') === '5xx' && url.searchParams.get('organizationId') === current.organizationId && url.searchParams.get('projectId') === current.projectId);
   await expect(page.locator('#request-status')).toHaveValue('5xx');

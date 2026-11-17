@@ -7,6 +7,7 @@ namespace TerraScale.Dashboard.Features.Logs
 {
     public sealed record DatabaseLogPage(ShellModel Shell, DatabaseRecord Database, string Status, DatabaseLogBatch? Logs, string Error, LogDrain? Drain = null, string DrainError = "")
     {
+        public bool Live => Status.Length == 0;
         public bool CanManageDrain => Shell.Context.Role == "owner";
     }
 
