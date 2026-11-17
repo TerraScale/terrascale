@@ -235,7 +235,7 @@ export async function requestLimits(open, surface, check) {
     const client = await open();
     let observed;
     const validate = error => {
-      if (surface === 'REST') assert.equal(error.status, 413);
+      if (surface === 'REST') assert.equal(error.status, 413, `${error.cause?.code ?? error.code ?? error.name}: ${error.message}`);
       if (surface === 'WebSocket') assert.equal(error.closeCode, 1009);
       if (surface === 'Postgres') assert.equal(error.sqlstate, '08P01');
       observed = error;

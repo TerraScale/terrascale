@@ -34,9 +34,9 @@ export async function runManagement(state, target, executable) {
       return false;
     }
   };
-  const request = async (region, id, suffix, method = 'GET', body) => {
+  const request = async (region, id, suffix, method = 'GET', body, precondition = {}) => {
     const response = await fetch(origin(region) + root + id + suffix, {
-      method, headers: { authorization: 'Bearer ' + credential.token, 'content-type': 'application/json' },
+      method, headers: { authorization: 'Bearer ' + credential.token, 'content-type': 'application/json', ...precondition },
       ...(body && { body: JSON.stringify(body) }), signal: AbortSignal.timeout(15000), redirect: 'error',
     });
     const value = response.status === 204 ? null : await response.json();
@@ -209,12 +209,26 @@ export async function runManagement(state, target, executable) {
         await subscription.done;
       }
     }, home, 'SDK');
-    await check('table-shape-grants', async () => {
-      const grant = await request(home, source, '/tables/c35_recovery/read-grant', 'PUT', { columns: ['id', 'value'], where: 'id = 1' });
-      assert.deepEqual(grant.columns, ['id', 'value']);
-      const saved = await request(home, source, '/tables/c35_recovery/read-grant');
-      assert.equal(saved.where, 'id = 1');
-      await request(home, source, '/tables/c35_recovery/read-grant', 'DELETE');
+    await check('table-shape-rules', async () => {
+      const tables = { c35_recovery: { columns: ['id', 'value'], read: 'row.id = 1' } };
+      const deployed = await request(home, source, '/rules', 'PUT', { tables }, { 'if-none-match': '*' });
+      assert.match(deployed.version, /^[0-9A-HJKMNP-TV-Z]{26}$/);
+      assert.deepEqual(deployed.tables, tables);
+      const saved = await request(home, source, '/rules');
+      assert.equal(saved.version, deployed.version);
+      assert.deepEqual(saved.tables, tables);
+      await assert.rejects(request(home, source, '/rules', 'PUT', { tables: {} }, { 'if-none-match': '*' }),
+        { code: 'version_mismatch', status: 412 });
+      const cleared = await request(home, source, '/rules', 'PUT', { tables: {} }, { 'if-match': '"' + saved.version + '"' });
+      assert.notEqual(cleared.version, saved.version);
+      assert.deepEqual((await request(home, source, '/rules')).tables, {});
+      const versions = await request(home, source, '/rules/versions');
+      assert.deepEqual(versions.items.map(item => item.version), [cleared.version, deployed.version]);
+      const restored = await request(home, source, '/rules/versions/' + deployed.version + '/restore', 'POST', undefined,
+        { 'if-match': '"' + cleared.version + '"' });
+      assert.notEqual(restored.version, deployed.version);
+      assert.deepEqual(restored.tables, tables);
+      assert.deepEqual((await request(home, source, '/rules')).tables, tables);
     });
     for (const region of (target === 'local' ? ['gru', 'fra'] : ['gru', 'sjc', 'fra']).filter(value => value !== home)) {
       await check('cross-region-lag-and-home-read', async () => {
