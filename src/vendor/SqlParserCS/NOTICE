@@ -1,0 +1,7 @@
+SqlParserCS 0.6.5, TylerBrinks/SqlParser-cs, upstream commit d95fb53f6bbee0a0aa6d8143a8cdd3e51d690fac (tag v0.6.5).
+Source: https://github.com/TylerBrinks/SqlParser-cs/tree/d95fb53f6bbee0a0aa6d8143a8cdd3e51d690fac
+License: MIT; see LICENSE.
+The SqlParser directory is byte-identical to upstream src/SqlParser except Tokenizer.cs: TokenizeLongArrow no longer advances before ConsumeForBinOp.
+Identical fix merged upstream: https://github.com/TylerBrinks/SqlParser-cs/pull/84 (e1929977a96290f937e9a2a67e3c823b7dc25cd2).
+SqlParserCS.csproj supplies the monorepo build configuration separately from the preserved upstream project.
+The wrapper retains upstream C# 12 and excludes repository analyzers with RunAnalyzers=false; compiler warnings remain errors.
