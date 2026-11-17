@@ -25,7 +25,8 @@ Body and grant: `{"table":"notes","where":"owner_id = :sub","columns":["id","own
 - `where` is optional. It takes the same expressions as the shape `where` parameter (this table's columns, literals,
   operators, `CASE`, `CAST`, `COLLATE` and deterministic functions; no subqueries), plus one parameter, `:sub`, the
   end user's id from the token. Any other parameter is refused (`unsafe_where`).
-- `columns` is optional: 1 to 256 column names. End users receive only these columns.
+- `columns` is optional: 1 to 256 column names. End users receive only these columns. A name listed twice, compared
+  without case as the table compares column names, answers `400 duplicate_column`.
 - `PUT` checks the grant against the table before it saves: an unknown table answers `404 unknown_table`, an unknown
   column `400 unknown_column`, an invalid condition `400 unsafe_where`.
 - API keys and project tokens are not limited by grants.
@@ -53,11 +54,15 @@ On `GET …/tables/{table}/shape`, `…/shape/keys` and `…/shape/manifest` wit
 2. `table` must be in the token's `tables`, and the table must have a grant; otherwise `403 not_granted`.
 3. The grant's `where`, with `:sub` bound to the token's subject as a string literal, is joined with the request's
    `where` as `(grant) AND (request)`. Each is validated on its own first, so a request cannot escape the grant.
+   When the grant lists `columns`, the request's `where` may name only those columns: any other name in a column's
+   place, hidden or unknown, answers `403 column_not_granted` before a row is read, so a filter cannot reveal a hidden
+   column's values or whether it exists. The grant's own `where` may use every column of the table.
 4. Requested columns outside the grant's `columns` are dropped; with no `columns`, the shape carries every granted
    column. If none remain, `403 column_not_granted`.
 
-Each end user's shape has its own handle, so cached bodies and epoch keys never cross users. A changed grant gives a new
-handle; clients holding the old one get `409 must_refetch`. A grant whose condition no longer fits the table answers
+Each end user's shape has its own handle: the handle binds the token's subject and the grant's `updatedAt`, so cached
+bodies and epoch keys never cross users, even under a grant without `:sub`. Every `PUT` of a grant gives a new
+handle; clients holding the old one get `409 must_refetch`. Reads by API keys and project tokens keep their handles. A grant whose condition no longer fits the table answers
 `403 grant_invalid`.
 
 End-user tokens cannot run SQL or reach management routes (`403`). An expired or tampered token answers `401`.

@@ -117,6 +117,10 @@ Every error body carries a `docsUrl` pointing at the entry below for its `code`.
 
 503 — the node is out of disk space. Wait for capacity or contact support. Retry: yes, after `Retry-After`.
 
+### `duplicate_column`
+
+400 — a read grant's `columns` names the same column twice. Send each column once. Retry: no.
+
 ### `duplicate_object`
 
 400, SQLSTATE 42P07 — a schema object of that name already exists. Choose another name or drop the existing object. Retry: no.

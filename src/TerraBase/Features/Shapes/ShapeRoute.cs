@@ -91,7 +91,11 @@ internal static class ShapeRoute
                                 return NotGranted;
                             }
 
-                            query = query with { Grant = new ShapeGrantRule(bound, grant.Columns is { } columns ? string.Join(',', columns) : null) };
+                            query = query with
+                            {
+                                Grant = new ShapeGrantRule(bound, grant.Columns is { } columns ? string.Join(',', columns) : null,
+                                    string.Join('\0', grant.UpdatedAt.UtcTicks.ToString(CultureInfo.InvariantCulture), access.Actor)),
+                            };
                             break;
                         case NotFound:
                             return NotGranted;

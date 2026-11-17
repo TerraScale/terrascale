@@ -58,6 +58,11 @@ internal static class ShapeGrantRoute
             return new Validation($"columns must name 1 to {MaxColumns} columns without commas");
         }
 
-        return new ShapeGrant(table!, request.Where, request.Columns?.Distinct(StringComparer.Ordinal).ToList(), now);
+        if (request.Columns?.GroupBy(column => column, StringComparer.OrdinalIgnoreCase).FirstOrDefault(group => group.Count() > 1) is { } repeated)
+        {
+            return new Validation($"columns names {repeated.Key} twice", "duplicate_column");
+        }
+
+        return new ShapeGrant(table!, request.Where, request.Columns, now);
     }
 }
