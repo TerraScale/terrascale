@@ -48,6 +48,9 @@ public class TerraBaseException : HttpRequestException
     /// <summary>Bounded JSON Schema validation details, when supplied.</summary>
     public IReadOnlyList<TerraBaseValidationDetail> Details { get; private set; } = [];
 
+    /// <summary>Typed Rules compiler diagnostics returned by invalid_rules.</summary>
+    public IReadOnlyList<TerraBaseRulesProblem> Problems { get; private set; } = [];
+
     internal static async Task<TerraBaseException> FromResponseAsync(HttpResponseMessage response, Exception? inner, CancellationToken cancellationToken)
     {
         var status = response.StatusCode;
@@ -58,6 +61,7 @@ public class TerraBaseException : HttpRequestException
         string? sqlstate = null;
         string? machine = null, outcomeRegion = null;
         var details = new List<TerraBaseValidationDetail>();
+        IReadOnlyList<TerraBaseRulesProblem> problems = [];
         try
         {
             using var body = new BoundedHttpBodyStream(MaxErrorBytes, () => new InvalidDataException(), cancellationToken);
@@ -85,6 +89,10 @@ public class TerraBaseException : HttpRequestException
                                 details.Add(new(path.GetString()!, keyword.GetString()!));
                         }
                     }
+                    if (code == "invalid_rules" && error.TryGetProperty("details", out var ruleDetails)
+                        && ruleDetails.ValueKind == JsonValueKind.Object && ruleDetails.TryGetProperty("problems", out var diagnostics))
+                        problems = diagnostics.Deserialize(TerraBaseRulesJson.Default.IReadOnlyListTerraBaseRulesProblem)
+                            ?? throw new JsonException("Rules problems must be an array.");
                     statement = error.TryGetProperty("statement", out var s) && s.ValueKind == JsonValueKind.Number && s.TryGetInt32(out var index0) ? index0 : null;
                     sqlstate = error.TryGetProperty("sqlstate", out var sc) && sc.ValueKind == JsonValueKind.String ? Clean(sc.GetString()) : null;
                     op = error.TryGetProperty("op", out var o) && o.ValueKind == JsonValueKind.Number && o.TryGetInt32(out var index) ? index : null;
@@ -110,6 +118,7 @@ public class TerraBaseException : HttpRequestException
             409 => new TerraBaseConflictException(status, text, code, op, inner),
             410 when code == "cursor_expired" => new TerraBaseCursorExpiredException(status, text, code, op, inner),
             429 => new TerraBaseRateLimitedException(status, text, code, op, inner),
+            428 => new TerraBasePreconditionRequiredException(status, text, code, op, inner),
             412 => new TerraBasePreconditionFailedException(status, text, code, op, inner),
             421 => new TerraBaseWrongRegionException(status, text, code, op, inner)
             {
@@ -123,6 +132,7 @@ public class TerraBaseException : HttpRequestException
         exception.Machine = machine;
         exception.OutcomeRegion = outcomeRegion;
         exception.Details = details.AsReadOnly();
+        exception.Problems = problems;
         exception.CaptureResponse(response);
         return exception;
     }

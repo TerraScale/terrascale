@@ -790,6 +790,137 @@ impl Runner {
                 "validation",
             ),
             "origin.rule" => origin_rule(&self.project, &text(op, "cases")),
+            "rules.manage" => {
+                use terrascale::v1::{RulesSet, RulesTable, RulesTestAuth, RulesTestRequest};
+                let before = match self.db().get_rules().await {
+                    Ok(rules) => Some(rules),
+                    Err(error) if error.code() == Some("no_rules") => None,
+                    Err(error) => return Err(e(error)),
+                };
+                let rules = RulesSet {
+                    tables: [(
+                        self.table.clone(),
+                        RulesTable {
+                            read: Some("row.id = auth.uid".into()),
+                            columns: Some(vec!["id".into(), "label".into()]),
+                            ..Default::default()
+                        },
+                    )]
+                    .into(),
+                };
+                let deployed = self
+                    .db()
+                    .deploy_rules(&rules, before.as_ref().map(|r| r.version.as_str()))
+                    .await
+                    .map_err(e)?;
+                let got = self.db().get_rules().await.map_err(e)?;
+                if got.version != deployed.version
+                    || got.tables[&self.table].read.as_deref() != Some("row.id = auth.uid")
+                {
+                    return Err("rules read differs".into());
+                }
+                let mut input = RulesTestRequest {
+                    operation: "read".into(),
+                    table: self.table.clone(),
+                    auth: RulesTestAuth {
+                        uid: "owner".into(),
+                        ..Default::default()
+                    },
+                    row: Some([("id".into(), json!("owner"))].into()),
+                    ..Default::default()
+                };
+                let allowed = self.db().test_rules(&input).await.map_err(e)?;
+                if !allowed.allowed
+                    || allowed.columns != ["id", "label"]
+                    || !allowed.problems.is_empty()
+                {
+                    return Err("rules did not allow owner".into());
+                }
+                input.auth.uid = "other".into();
+                let denied = self.db().test_rules(&input).await.map_err(e)?;
+                if denied.allowed || denied.decided_by != "read" {
+                    return Err("rules did not deny other user".into());
+                }
+                let invalid = RulesSet {
+                    tables: [(
+                        self.table.clone(),
+                        RulesTable {
+                            columns: Some(vec!["missing_column".into()]),
+                            ..Default::default()
+                        },
+                    )]
+                    .into(),
+                };
+                match self
+                    .db()
+                    .deploy_rules(&invalid, Some(&deployed.version))
+                    .await
+                {
+                    Err(terrascale::v1::Error::Response { error, .. }) if matches!(*error, terrascale::v1::Error::InvalidRules { ref problems } if !problems.is_empty()) =>
+                        {}
+                    other => return Err(format!("invalid rules diagnostics missing: {other:?}")),
+                }
+                match self.db().deploy_rules(&rules, None).await {
+                    Err(error) if error.code() == Some("version_mismatch") => {}
+                    other => return Err(format!("stale rules accepted: {other:?}")),
+                }
+                let updated = self
+                    .db()
+                    .deploy_rules(&RulesSet::default(), Some(&deployed.version))
+                    .await
+                    .map_err(e)?;
+                let page = self
+                    .db()
+                    .list_rules_versions(None, Some(1))
+                    .await
+                    .map_err(e)?;
+                if page.items.len() != 1
+                    || page.items[0].version != updated.version
+                    || page.next.is_none()
+                {
+                    return Err("rules first page differs".into());
+                }
+                let next = self
+                    .db()
+                    .list_rules_versions(page.next.as_deref(), Some(1))
+                    .await
+                    .map_err(e)?;
+                if next.items.len() != 1 || next.items[0].version != deployed.version {
+                    return Err("rules second page differs".into());
+                }
+                let version = self
+                    .db()
+                    .get_rules_version(&deployed.version)
+                    .await
+                    .map_err(e)?;
+                if version.version != deployed.version
+                    || version.tables[&self.table].read.as_deref() != Some("row.id = auth.uid")
+                {
+                    return Err("rules version differs".into());
+                }
+                let restored = self
+                    .db()
+                    .restore_rules(&deployed.version, Some(&updated.version))
+                    .await
+                    .map_err(e)?;
+                if restored.version == deployed.version
+                    || restored.tables[&self.table].read.as_deref() != Some("row.id = auth.uid")
+                {
+                    return Err("rules restore differs".into());
+                }
+                if let Some(before) = before {
+                    self.db()
+                        .restore_rules(&before.version, Some(&restored.version))
+                        .await
+                        .map_err(e)?;
+                } else {
+                    self.db()
+                        .deploy_rules(&RulesSet::default(), Some(&restored.version))
+                        .await
+                        .map_err(e)?;
+                }
+                Ok(())
+            }
             "functions.stats" => {
                 let name = format!("stats-{}", self.run);
                 self.db()
@@ -1164,6 +1295,10 @@ async fn run() -> i32 {
     let operations = spec["operations"].as_array().cloned().unwrap_or_default();
     for op in operations.iter().filter(|op| {
         op["group"] == group.as_str()
+            && op.get("sdks").is_none_or(|sdks| {
+                sdks.as_array()
+                    .is_some_and(|sdks| sdks.iter().any(|sdk| sdk == "rust"))
+            })
             && (op.get("needs").is_none()
                 || env("E2E_REGIONS") == "2" && text(op, "id").starts_with("placement."))
     }) {

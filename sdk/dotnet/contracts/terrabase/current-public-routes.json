@@ -1,5 +1,5 @@
 {
-  "serverCommit": "a8fc2729137590fe24b4b2e98d804d3f3b0842e4",
+  "serverCommit": "5e70fa60c120e51baa5eb9172eef8b5358f371ce",
   "scope": "TerraBase /openapi/v1.json public inventory (ApiReferenceExtensions.ShouldInclude) at serverCommit",
   "operations": [
     {

@@ -10,7 +10,7 @@ export const sdks = ['dotnet', 'go', 'python', 'js', 'rust'] as const;
 export type Sdk = (typeof sdks)[number];
 
 type Group = 'a' | 'b' | 'c';
-type Operation = { id: string; group: Group; title: string; needs?: string };
+type Operation = { id: string; group: Group; title: string; sdks?: Sdk[]; requests?: number; needs?: string };
 type Line = { id: string; ok: boolean; ms: number; error?: string };
 type Plan = { label: string; requestsPerSecond: number; burst: number };
 
@@ -71,9 +71,8 @@ function tokensAt(time: number, plan: Plan): number {
   return budget ? Math.min(plan.burst, budget.tokens + ((time - budget.at) / 1000) * plan.requestsPerSecond) : 0;
 }
 
-async function paced<T>(group: Group, run: () => Promise<T>): Promise<T> {
+async function paced<T>(group: Group, run: () => Promise<T>, requests = requestsPerRunner[group]): Promise<T> {
   if (budget?.group !== group) budget = { group, tokens: 0, at: Date.now() };
-  const requests = requestsPerRunner[group];
   const plan = plans[group];
   const wait = Math.max(0, ((requests + headroom - tokensAt(Date.now(), plan)) / plan.requestsPerSecond) * 1000);
   test.info().annotations.push({ type: 'paced', description: `waited ${Math.ceil(wait)} ms for ${requests + headroom} tokens` });
@@ -117,10 +116,11 @@ function execute(sdk: Sdk, env: NodeJS.ProcessEnv): Promise<{ code: number | nul
 export async function runOperations(sdk: Sdk, group: Group, management?: { user: string; readKey: string; writeKey: string }): Promise<void> {
   const current = journey<Journey & Partial<Pick<PaidJourney, 'secondDatabaseName'>>>();
   mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
-  const planned = operations.filter((op) => op.group === group);
+  const planned = operations.filter((op) => op.group === group && (!op.sdks || op.sdks.includes(sdk)));
   for (const op of planned.filter((candidate) => !runnable(candidate))) {
     test.info().annotations.push({ type: 'not run', description: `${op.id} (${op.title}): ${op.needs}` });
   }
+  const booked = requestsPerRunner[group] + planned.reduce((sum, op) => sum + (op.requests ?? 0), 0);
   const { before, result } = await paced(group, async () => ({
     before: production ? undefined : await lane(current.organizationId, plans[group]),
     result: await execute(sdk, {
@@ -135,10 +135,9 @@ export async function runOperations(sdk: Sdk, group: Group, management?: { user:
       E2E_OPERATIONS: operationsFile,
       E2E_SECRETS: secretsDir,
     }),
-  }));
+  }), booked);
   if (before) await lane(current.organizationId, plans[group]);
   const used = before && since(await lane(current.organizationId, plans[group]), before);
-  const booked = requestsPerRunner[group];
   if (used) {
     const summary = `${sdk} group ${group}: TerraBase admitted ${used.admitted} of the ${booked} requests booked and refused ${used.refused}${used.reasons ? ` (${used.reasons})` : ''}`;
     process.stdout.write(`${summary}\n`);

@@ -17,6 +17,9 @@ func (c ErrorCode) Error() string { return "terrabase: " + string(c) }
 
 // Error codes TerraBase sends in {"error":{"code":…}} bodies.
 const (
+	ErrVersionMismatch      ErrorCode = "version_mismatch"
+	ErrPreconditionRequired ErrorCode = "precondition_required"
+	ErrInvalidRules         ErrorCode = "invalid_rules"
 	ErrInvalidRequest       ErrorCode = "invalid_request"
 	ErrInvalidCursor        ErrorCode = "invalid_cursor"
 	ErrInvalidKey           ErrorCode = "invalid_key"      // 401: a missing or wrong API key or service credential
@@ -78,8 +81,9 @@ type APIError struct {
 	Header http.Header
 	// Code is error.code; ErrInvalidRequest, ErrForbidden or ErrConflict for
 	// a bare Management message; otherwise a synthesized "http_<status>".
-	Code    ErrorCode
-	Message string
+	Code     ErrorCode
+	Message  string
+	Problems []RulesProblem
 	// RetryAfter is the parsed Retry-After header, if any.
 	RetryAfter time.Duration
 	// Body preserves the complete response body, including malformed errors.
@@ -133,14 +137,23 @@ func parseAPIError(status int, h http.Header, body []byte) *APIError {
 	}
 	if decodeExact(body, &env) == nil && len(env.Error) > 0 {
 		var d struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-			Region  string `json:"region"`
-			Machine string `json:"machine"`
+			Code    string          `json:"code"`
+			Message string          `json:"message"`
+			Region  string          `json:"region"`
+			Machine string          `json:"machine"`
+			Details json.RawMessage `json:"details"`
 		}
 		if decodeExact(env.Error, &d) == nil {
 			e.Code, e.Message = ErrorCode(d.Code), d.Message
 			e.Region, e.Machine = d.Region, d.Machine
+			if e.Code == ErrInvalidRules {
+				var details struct {
+					Problems []RulesProblem `json:"problems"`
+				}
+				if decodeExact(d.Details, &details) == nil {
+					e.Problems = details.Problems
+				}
+			}
 		}
 	} else if decodeExact(body, &e.Message) == nil {
 		// Management answers some errors with a bare JSON string.

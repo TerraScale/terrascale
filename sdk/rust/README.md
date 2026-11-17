@@ -299,3 +299,9 @@ Status is `Loading`, `Live`, or `Reconnecting`; temporary failures back off and
 resume from the last applied offset. `must_refetch` clears the view and starts a
 new snapshot. Credential errors yield the existing SDK error and end the stream.
 Dropping the stream cancels its pending request. See the [wire contract](../../docs/terrabase/shape-reads.md).
+
+## Rules (unreleased)
+
+Database methods `get_rules`, `deploy_rules`, `list_rules_versions`, `get_rules_version`, `restore_rules`, `test_rules` manage Rules and simulate requests. Reads require `databases:read`; deploy and restore require `databases:write`.
+
+Pass the current version for `If-Match`, or `None` for `If-None-Match: *` on first deployment. Versions are newest first; pass the page’s continuation cursor to fetch older versions. Each restore creates a new version. Validation errors retain typed compiler problems; stale versions return `412 version_mismatch`. The simulator evaluates deployed or draft Rules without accessing rows.

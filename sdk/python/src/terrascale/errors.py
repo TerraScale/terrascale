@@ -3,7 +3,10 @@ stable ``code``; common codes map to subclasses so callers can catch them."""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .database_rules import RulesProblem
 
 from .ids import is_valid_id
 
@@ -26,6 +29,9 @@ __all__ = [
     "SqlError",
     "SqlErrorCodes",
     "error_for",
+    "VersionMismatchError",
+    "PreconditionRequiredError",
+    "InvalidRulesError",
 ]
 
 
@@ -87,6 +93,20 @@ class APIError(TerraScaleError):
         if message:
             text += f": {message}"
         super().__init__(text)
+
+
+class VersionMismatchError(APIError):
+    pass
+
+
+class PreconditionRequiredError(APIError):
+    pass
+
+
+class InvalidRulesError(APIError):
+    def __init__(self, *args: Any, problems: list[RulesProblem] | None = None, **kwargs: Any):
+        self.problems = problems or []
+        super().__init__(*args, **kwargs)
 
 
 class InvalidResponseError(APIError):
@@ -217,6 +237,17 @@ def error_for(status: int, body: Any, headers: Any = None, *, mutation: bool = F
     elif mutation and (code in ("commit_uncertain", "write_outcome_unknown", "internal_error")
                        or 500 <= status < 600 and code == f"http_{status}"):
         cls = CommitUncertainError
+    extra: dict[str, Any] = {}
+    if code == "version_mismatch":
+        cls = VersionMismatchError
+    elif code == "precondition_required":
+        cls = PreconditionRequiredError
+    elif code == "invalid_rules":
+        from .database_rules import RulesProblem
+        cls = InvalidRulesError
+        details = err.get("details")
+        if isinstance(details, dict) and isinstance(details.get("problems"), list):
+            extra["problems"] = [RulesProblem(**p) for p in details["problems"]]
     return cls(
         status,
         code,
@@ -227,6 +258,7 @@ def error_for(status: int, body: Any, headers: Any = None, *, mutation: bool = F
         request_id=response_request_id(headers),
         statement=statement,
         sqlstate=sqlstate,
+        **extra,
     )
 
 

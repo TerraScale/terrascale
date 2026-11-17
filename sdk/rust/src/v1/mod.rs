@@ -32,6 +32,7 @@ mod management;
 mod observability;
 mod reporting;
 mod request_logs;
+mod rules;
 mod sql_connect_retry;
 mod sql_exec;
 mod sql_session;
@@ -66,6 +67,10 @@ pub use ids::{is_valid_id, is_valid_name, new_id};
 pub use management::{DatabasePlacement, ManagementPage};
 pub use observability::ServingRegions;
 pub use request_logs::{DatabaseRequestLog, DatabaseRequestLogs};
+pub use rules::{
+    Rules, RulesProblem, RulesSet, RulesTable, RulesTestAuth, RulesTestRequest, RulesTestResult,
+    RulesTestValue, RulesValues, RulesVersion,
+};
 pub use sql_exec::{
     sql_error_codes, Sql, SqlColumn, SqlColumnIndex, SqlRecord, SqlStatement, SqlStatementResult,
     SqlValue, MAX_SQL_BYTES, MAX_SQL_STATEMENTS,

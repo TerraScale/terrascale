@@ -384,3 +384,9 @@ An execute outside a confirmed transaction, or behind unanswered transaction con
 A lost read or non-committing statement inside a confirmed open transaction retains the transaction-lost behavior.
 Only a confirmed refusal or a request proven not sent permits a rollback assertion; reconcile an uncertain write
 through another session before deciding whether to repeat it.
+
+## Rules (unreleased)
+
+Database methods `get_rules`, `deploy_rules`, `list_rules_versions`, `get_rules_version`, `restore_rules`, `test_rules` manage Rules and simulate requests. Both Database and AsyncDatabase expose these operations. Reads require `databases:read`; deploy and restore require `databases:write`.
+
+Pass the current version for `If-Match`, or `None` for `If-None-Match: *` on first deployment. Versions are newest first; pass the page’s continuation cursor to fetch older versions. Each restore creates a new version. Validation errors retain typed compiler problems; stale versions return `412 version_mismatch`. The simulator evaluates deployed or draft Rules without accessing rows.

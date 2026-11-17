@@ -43,7 +43,7 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
         var failed = false;
         foreach (var op in spec.RootElement.GetProperty("operations").EnumerateArray())
         {
-            if (Text(op, "group") != group || op.TryGetProperty("needs", out _) && !(Environment.GetEnvironmentVariable("E2E_REGIONS") == "2" && Text(op, "id").StartsWith("placement.", StringComparison.Ordinal)))
+            if (op.TryGetProperty("sdks", out var sdks) && !sdks.EnumerateArray().Any(sdk => sdk.GetString() == "dotnet") || Text(op, "group") != group || op.TryGetProperty("needs", out _) && !(Environment.GetEnvironmentVariable("E2E_REGIONS") == "2" && Text(op, "id").StartsWith("placement.", StringComparison.Ordinal)))
             {
                 continue;
             }
@@ -90,6 +90,7 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
         "conflicts.query" => ConflictsAsync(op, cancellationToken),
         "ids.new_validate" => IdsAsync(op),
         "origin.rule" => OriginRuleAsync(op, cancellationToken),
+        "rules.manage" => RulesAsync(cancellationToken),
         "functions.stats" => FunctionsStatsAsync(cancellationToken),
         "agent.create_ttl" => CreateWithTtlAsync(op, cancellationToken),
         "agent.set_ttl" => SetTtlAsync(op, cancellationToken),
@@ -351,6 +352,47 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
         {
             throw new InvalidOperationException($"origin rule: {wrong.Count} of {2 * cases.GetArrayLength()} checks differ: {string.Join("; ", wrong)}");
         }
+    }
+
+    private async Task RulesAsync(CancellationToken cancellationToken)
+    {
+        var apiKey = Required("TERRASCALE_API_KEY");
+        using var http = new HttpClient(TerraBaseHttp.CreateHandler());
+        var auth = new TerraScaleAuthClient(http, new TerraScaleAuthClientOptions { BaseAddress = new Uri("https://auth.terrascale.tech"), InstanceSlug = "terrascale" });
+        var keyId = apiKey.StartsWith("sk_", StringComparison.Ordinal) ? apiKey[3..29] : apiKey[..26];
+        var token = await auth.Oidc.RequestClientCredentialsTokenAsync(keyId, apiKey, project: project, cancellationToken: cancellationToken);
+        RegisterSecret("rules-token-dotnet", token.AccessToken);
+        var db = new TerraBaseDatabaseClient(http, new TerraBaseDatabaseClientOptions { AccessTokenProvider = _ => ValueTask.FromResult(token.AccessToken) })
+            .Database(project, Required("TERRASCALE_DATABASE_NAME"));
+        TerraBaseRules? before = null;
+        try { before = await db.GetRulesAsync(cancellationToken); }
+        catch (TerraBaseNotFoundException error) when (error.ErrorCode == "no_rules") { before = null; }
+        var rules = new TerraBaseRulesSet(new Dictionary<string, TerraBaseRulesTable> { [table] = new(Read: "row.id = auth.uid", Columns: ["id", "label"]) });
+        var deployed = await db.DeployRulesAsync(rules, before?.Version, cancellationToken);
+        var got = await db.GetRulesAsync(cancellationToken);
+        if (got.Version != deployed.Version || got.Tables[table].Read != "row.id = auth.uid") throw new InvalidOperationException("Rules read differs.");
+        var input = new TerraBaseRulesTestRequest("read", table, new("owner"), Row: new Dictionary<string, JsonElement> { ["id"] = JsonSerializer.SerializeToElement("owner", RunnerJson.Default.String) });
+        var allowed = await db.TestRulesAsync(input, cancellationToken);
+        if (!allowed.Allowed || allowed.Columns.Count != 2 || allowed.Columns[0] != "id" || allowed.Columns[1] != "label" || allowed.Problems.Count != 0) throw new InvalidOperationException("Rules did not allow owner.");
+        var denied = await db.TestRulesAsync(input with { Auth = new("other") }, cancellationToken);
+        if (denied.Allowed || denied.DecidedBy != "read") throw new InvalidOperationException("Rules did not deny other user.");
+        var invalid = await RefusedAsync<TerraBaseValidationException>(() => db.DeployRulesAsync(
+            new(new Dictionary<string, TerraBaseRulesTable> { [table] = new(Columns: ["missing_column"]) }), deployed.Version, cancellationToken));
+        if (invalid.ErrorCode != "invalid_rules" || invalid.Problems.Count == 0) throw new InvalidOperationException("Rules diagnostics missing.");
+        var stale = await RefusedAsync<TerraBasePreconditionFailedException>(() => db.DeployRulesAsync(rules, null, cancellationToken));
+        if (stale.ErrorCode != "version_mismatch") throw new InvalidOperationException("Rules conflict code differs.");
+        var empty = new TerraBaseRulesSet(new Dictionary<string, TerraBaseRulesTable>());
+        var updated = await db.DeployRulesAsync(empty, deployed.Version, cancellationToken);
+        var page = await db.ListRulesVersionsAsync(limit: 1, cancellationToken: cancellationToken);
+        if (page.Items.Count != 1 || page.Items[0].Version != updated.Version || page.Next is null) throw new InvalidOperationException("Rules first page differs.");
+        var next = await db.ListRulesVersionsAsync(page.Next, 1, cancellationToken);
+        if (next.Items.Count != 1 || next.Items[0].Version != deployed.Version) throw new InvalidOperationException("Rules second page differs.");
+        var version = await db.GetRulesVersionAsync(deployed.Version, cancellationToken);
+        if (version.Version != deployed.Version || version.Tables[table].Read != "row.id = auth.uid") throw new InvalidOperationException("Rules version differs.");
+        var restored = await db.RestoreRulesAsync(deployed.Version, updated.Version, cancellationToken);
+        if (restored.Version == deployed.Version || restored.Tables[table].Read != "row.id = auth.uid") throw new InvalidOperationException("Rules restore differs.");
+        if (before is null) await db.DeployRulesAsync(empty, restored.Version, cancellationToken);
+        else await db.RestoreRulesAsync(before.Version, restored.Version, cancellationToken);
     }
 
     private async Task FunctionsStatsAsync(CancellationToken cancellationToken)
