@@ -1,5 +1,7 @@
 # Shape read grants and end-user tokens (F4)
 
+Superseded by [rules.md](rules.md) once it ships.
+
 App developers let their end users read table shapes straight from the browser. The database owner grants read on a
 table; the developer's backend mints a short-lived end-user token; the browser reads the shape with it. TerraBase
 checks the token offline and applies the grant on every read. Shape reads stay free.
