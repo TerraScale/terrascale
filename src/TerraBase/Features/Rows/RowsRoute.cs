@@ -13,7 +13,8 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Rows;
 
-internal sealed record RowsRouteServices(ITenantDirectory Tenants, IReplicaCatalog Placements, IRegionPeers Peers, TerraBaseOptions Options, RowsService Rows);
+internal sealed record RowsRouteServices(
+    ITenantDirectory Tenants, IReplicaCatalog Placements, IRegionPeers Peers, IHomeLocator Locator, TerraBaseOptions Options, RowsService Rows);
 
 internal static class RowsRoute
 {
@@ -38,72 +39,95 @@ internal static class RowsRoute
             return ErrorResponse.From(invalid);
         }
 
-        return await DatabaseRoute.TenantAsync(context, services.Tenants, async (database, token) =>
+        return await DatabaseRoute.CheckTenantAsync(context, services.Tenants, cancellationToken).ConfigureAwait(false) switch
         {
-            var access = context.Features.Get<ProjectAccess>();
-            if (access is { IsEndUser: true, Auth: null })
-            {
-                return ErrorResponse.From(new Forbidden("row writes need a token from the project's tenant"));
-            }
+            TenantContext database => await PlacedAsync(context, services, database, body, batch, operations, answer, cancellationToken).ConfigureAwait(false),
+            Validation error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
+            NotFound error => await UnknownAsync(context, services, error, cancellationToken).ConfigureAwait(false),
+        };
+    }
 
-            DatabasePlacement placement;
-            switch (await services.Placements.FindAsync(database, token).ConfigureAwait(false))
+    private static async ValueTask<IResult> UnknownAsync(HttpContext context, RowsRouteServices services, NotFound error, CancellationToken cancellationToken)
+    {
+        if (Listeners.IsForwarded(context))
+        {
+            return ErrorResponse.From(error);
+        }
+
+        if (!await ForwardingAuthorization.CheckAsync(context, cancellationToken).ConfigureAwait(false))
+        {
+            return Results.Empty;
+        }
+
+        return await services.Locator.LocateAsync(DatabaseRoute.Project(context), DatabaseRoute.Database(context), cancellationToken).ConfigureAwait(false)
+            is { } home && home.Region != services.Options.Region
+            ? DatabaseRegions.HomeRegion(home.Region, [home.Region])
+            : ErrorResponse.From(error);
+    }
+
+    private static async ValueTask<IResult> PlacedAsync(HttpContext context, RowsRouteServices services, TenantContext database, bool body, bool batch,
+        Func<byte[]?, object> operations, Func<IReadOnlyList<RowAnswer>, IResult> answer, CancellationToken cancellationToken) =>
+        await services.Placements.FindAsync(database, cancellationToken).ConfigureAwait(false) switch
+        {
+            TenantDatabaseRecord record => await WriteAsync(context, services, database, record.Placement, body, batch, operations, answer, cancellationToken)
+                .ConfigureAwait(false),
+            NotFound => ErrorResponse.From(DatabaseRoute.UnknownDatabase),
+            Unavailable error => ErrorResponse.From(error),
+        };
+
+    private static async ValueTask<IResult> WriteAsync(HttpContext context, RowsRouteServices services, TenantContext database, DatabasePlacement placement,
+        bool body, bool batch, Func<byte[]?, object> operations, Func<IReadOnlyList<RowAnswer>, IResult> answer, CancellationToken cancellationToken)
+    {
+        var access = context.Features.Get<ProjectAccess>();
+        if (access is { IsEndUser: true, Auth: null })
+        {
+            return ErrorResponse.From(new Forbidden("row writes need a token from the project's tenant"));
+        }
+
+        byte[]? json = null;
+        if (body)
+        {
+            switch (await DatabaseRoute.CheckBodyAsync(context, MaxBytes, "invalid_request", cancellationToken, DatabaseRoute.JsonMediaType).ConfigureAwait(false))
             {
-                case TenantDatabaseRecord record:
-                    placement = record.Placement;
+                case byte[] read:
+                    json = read;
                     break;
-                case NotFound:
-                    return ErrorResponse.From(DatabaseRoute.UnknownDatabase);
-                case Unavailable error:
+                case Validation error:
                     return ErrorResponse.From(error);
-                default:
-                    throw new InvalidOperationException("the placement lookup answered an unexpected result");
+                case PayloadTooLarge error:
+                    return ErrorResponse.From(error);
+                case UnsupportedMediaType error:
+                    return ErrorResponse.From(error);
+            }
+        }
+
+        var region = services.Options.Region;
+        if (placement.Home != region)
+        {
+            var peer = Listeners.IsForwarded(context) || !placement.PlacedIn(region)
+                ? null
+                : (await services.Peers.OtherRegionsAsync(cancellationToken).ConfigureAwait(false)).FirstOrDefault(candidate => candidate.Region == placement.Home);
+            if (peer is null)
+            {
+                return DatabaseRegions.HomeRegion(placement.Home, placement.Regions);
             }
 
-            byte[]? json = null;
-            if (body)
-            {
-                switch (await DatabaseRoute.CheckBodyAsync(context, MaxBytes, "invalid_request", token, DatabaseRoute.JsonMediaType).ConfigureAwait(false))
-                {
-                    case byte[] read:
-                        json = read;
-                        break;
-                    case Validation error:
-                        return ErrorResponse.From(error);
-                    case PayloadTooLarge error:
-                        return ErrorResponse.From(error);
-                    case UnsupportedMediaType error:
-                        return ErrorResponse.From(error);
-                }
-            }
+            await HomeForwarding.ForwardAsync(context, new HomeNode(peer.Region, peer.Address), json).ConfigureAwait(false);
+            return Results.Empty;
+        }
 
-            var region = services.Options.Region;
-            if (placement.Home != region)
-            {
-                var peer = Listeners.IsForwarded(context) || !placement.PlacedIn(region)
-                    ? null
-                    : (await services.Peers.OtherRegionsAsync(token).ConfigureAwait(false)).FirstOrDefault(candidate => candidate.Region == placement.Home);
-                if (peer is null)
-                {
-                    return DatabaseRegions.HomeRegion(placement.Home, placement.Regions);
-                }
+        var parsed = operations(json);
+        if (parsed is RowRefused refusedRequest)
+        {
+            return Error(refusedRequest);
+        }
 
-                await HomeForwarding.ForwardAsync(context, new HomeNode(peer.Region, peer.Address), json).ConfigureAwait(false);
-                return Results.Empty;
-            }
-
-            var parsed = operations(json);
-            if (parsed is RowRefused refusedRequest)
-            {
-                return Error(refusedRequest);
-            }
-
-            return await services.Rows.WriteAsync(database, access?.Auth, (IReadOnlyList<RowOperation>)parsed, batch, token).ConfigureAwait(false) switch
-            {
-                IReadOnlyList<RowAnswer> answers => answer(answers),
-                RowRefused refused => Error(refused),
-            };
-        }, cancellationToken).ConfigureAwait(false);
+        return await services.Rows.WriteAsync(database, access?.Auth, (IReadOnlyList<RowOperation>)parsed, batch, cancellationToken).ConfigureAwait(false) switch
+        {
+            IReadOnlyList<RowAnswer> answers => answer(answers),
+            RowRefused refused => Error(refused),
+        };
     }
 
     internal static object Table(HttpContext context) =>
