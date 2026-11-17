@@ -1,0 +1,10 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Notifications.NotificationPage>
+@using TerraScale.Dashboard.Common.Live
+@if (Model.Dialog)
+{
+<div id="ts-notifications-body" aria-busy="false" data-attr:aria-busy="$_notificationsPending ? 'true' : 'false'" data-show="!$_notificationsPending &amp;&amp; $_notificationsLoaded" @(LiveView.Initializer(Model.Shell.Context, Model.LivePath))>@(await RenderPartialAsync<TerraScale.Dashboard.Features.Notifications.NotificationInbox, TerraScale.Dashboard.Features.Notifications.NotificationPage>(Model))</div>
+}
+else
+{
+<section id="notification-inbox" class="ts-card" aria-label="Notification inbox" @(LiveView.Initializer(Model.Shell.Context, Model.LivePath))>@(await RenderPartialAsync<TerraScale.Dashboard.Features.Notifications.NotificationInbox, TerraScale.Dashboard.Features.Notifications.NotificationPage>(Model))</section>
+}

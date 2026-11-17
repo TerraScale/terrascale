@@ -7,6 +7,7 @@ const contextParameters = new Set(['organizationId', 'projectId']);
 const chartWindows = new Set(['range', 'reads', 'writes', 'storage', 'latency']);
 
 const journeyPages: readonly PagePattern[] = [
+  { path: /^\/databases\/[0-9A-HJKMNP-TV-Z]{26}\/logs$/, query: { status: /^2xx$/ } },
   { path: /^\/auth\/mfa-sessions$/, query: { saved: /^1$/ } },
   { path: /^\/auth\/(restrictions|invitations|waitlist)$/, query: { saved: /^1$/ } },
   { path: /^\/auth\/sessions$/, query: { user: /^[0-9A-HJKMNP-TV-Z]{26}$/ } },
