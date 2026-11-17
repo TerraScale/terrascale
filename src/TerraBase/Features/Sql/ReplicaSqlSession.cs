@@ -195,6 +195,33 @@ internal sealed class ReplicaSqlSession(
         }
     }
 
+    public async ValueTask<SqlTablesOutcome> ListTablesAsync(CancellationToken cancellationToken)
+    {
+        await UsePrimaryAsync(cancellationToken).ConfigureAwait(false);
+        if (_snapshot is { } snapshot && !_conflicted)
+        {
+            return await SqlService.ListTablesAsync(statement => snapshot.ExecuteAsync(statement, cancellationToken), cancellationToken).ConfigureAwait(false);
+        }
+
+        if (!_primary && _home is not { IsAutocommit: false })
+        {
+            var reader = await replicas.BeginReadAsync(database, _position, cancellationToken).ConfigureAwait(false);
+            if (reader is not null)
+            {
+                await using (reader.ConfigureAwait(false))
+                {
+                    return await SqlService.ListTablesAsync(statement => reader.ExecuteAsync(statement, cancellationToken), cancellationToken).ConfigureAwait(false);
+                }
+            }
+        }
+
+        return await OpenHomeAsync(cancellationToken).ConfigureAwait(false) switch
+        {
+            (_, { } error) => error,
+            (var home, _) => await home!.ListTablesAsync(cancellationToken).ConfigureAwait(false),
+        };
+    }
+
     public async ValueTask DisposeAsync()
     {
         await DropSnapshotAsync().ConfigureAwait(false);

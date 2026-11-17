@@ -770,10 +770,16 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
                 var prepared = new Prepared(parsedStatement, [.. oids]);
                 if (parsedStatement.Kind == PgKind.Sql && Array.Exists(prepared.Oids, oid => oid == 0))
                 {
-                    if (await GuardAsync(session, async (database, token) =>
+                    if (await GuardAsync(session, async (_, token) =>
                     {
-                        PostgresStatements.InferParameters(parsedStatement, prepared.Oids,
-                            await services.GetRequiredService<ISqlService>().ListTablesAsync(database, token).ConfigureAwait(false));
+                        switch (await session.Sql.ListTablesAsync(token).ConfigureAwait(false))
+                        {
+                            case SqlError error:
+                                return PostgresStatements.Error(error);
+                            case IReadOnlyList<SqlTableInfo> tables:
+                                PostgresStatements.InferParameters(parsedStatement, prepared.Oids, tables);
+                                break;
+                        }
                         return Array.Empty<PgResult>();
                     }, cancellationToken).ConfigureAwait(false) is PgError inferring)
                     {
@@ -991,8 +997,11 @@ internal sealed class PostgresConnectionHandler(IServiceProvider services) : Con
 
             return statement.Kind switch
             {
-                PgKind.Catalog => PgCatalog.Answer(statement.Text, session.Database, session.User,
-                    await services.GetRequiredService<ISqlService>().ListTablesAsync(database, token).ConfigureAwait(false)),
+                PgKind.Catalog => await session.Sql.ListTablesAsync(token).ConfigureAwait(false) switch
+                {
+                    IReadOnlyList<SqlTableInfo> tables => PgCatalog.Answer(statement.Text, session.Database, session.User, tables),
+                    SqlError error => PostgresStatements.Error(error),
+                },
                 PgKind.Begin or PgKind.Commit or PgKind.Rollback => await TransactionAsync(session, statement.Kind, statement.Text, token).ConfigureAwait(false),
                 PgKind.Savepoint => await SavepointAsync(session, statement.Text, token).ConfigureAwait(false),
                 _ => await StatementAsync(session, statement, args, token).ConfigureAwait(false),

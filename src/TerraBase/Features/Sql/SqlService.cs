@@ -138,33 +138,7 @@ internal sealed class SqlService(
         return results;
     }
 
-    public async ValueTask<IReadOnlyList<SqlTableInfo>> ListTablesAsync(TenantContext database, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(database);
-        if (replicas.Holds(database) && !await UsePrimaryAsync(database, cancellationToken).ConfigureAwait(false))
-        {
-            var reader = await replicas.BeginReadAsync(database, cancellationToken).ConfigureAwait(false);
-            if (reader is not null)
-            {
-                await using (reader.ConfigureAwait(false))
-                {
-                    return await ListTablesAsync(statement => reader.ExecuteAsync(statement, cancellationToken), cancellationToken).ConfigureAwait(false);
-                }
-            }
-        }
-
-        if (await engine.BeginTransactionAsync(database, write: false, cancellationToken).ConfigureAwait(false) is not { } transaction)
-        {
-            return [];
-        }
-
-        await using (transaction.ConfigureAwait(false))
-        {
-            return await ListTablesAsync(statement => transaction.ExecuteStatementAsync(statement, cancellationToken), cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    private static async ValueTask<IReadOnlyList<SqlTableInfo>> ListTablesAsync(
+    internal static async ValueTask<IReadOnlyList<SqlTableInfo>> ListTablesAsync(
         Func<SqlStatement, ValueTask<SqlStatementResult>> run, CancellationToken cancellationToken)
     {
         var names = await run(SqlSession.Internal("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name")).ConfigureAwait(false);
@@ -403,6 +377,44 @@ internal sealed class SqlSession(
         {
             await LoseAsync(Aborted).ConfigureAwait(false);
             throw;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async ValueTask<SqlTablesOutcome> ListTablesAsync(CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_lost is { } lost)
+            {
+                return lost;
+            }
+
+            if (_pinned is { } pinned)
+            {
+                return await SqlService.ListTablesAsync(statement => pinned.Transaction.ExecuteStatementAsync(statement, cancellationToken), cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            var (transaction, _, failed) = await OpenAsync(write: false, cancellationToken, enterQuota: false).ConfigureAwait(false);
+            if (transaction is null)
+            {
+                return failed!;
+            }
+
+            await using (transaction.ConfigureAwait(false))
+            {
+                return await SqlService.ListTablesAsync(statement => transaction.ExecuteStatementAsync(statement, cancellationToken), cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
+        catch (SqlStatementException error)
+        {
+            return Map(error, canWrite);
         }
         finally
         {
