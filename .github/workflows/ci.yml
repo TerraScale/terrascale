@@ -737,9 +737,7 @@ jobs:
     permissions:
       contents: read
       actions: read
-      # Reads the private TerraBase image to check its revision label.
-      packages: read
-      # ts-orch accepts this job's OIDC token to release the pinned digest.
+      packages: write
       id-token: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -767,19 +765,8 @@ jobs:
           image="ghcr.io/terrascale/terrabase@${ARM64}"
           docker buildx imagetools inspect "$image" --format '{{json .Image}}' |
             jq -e --arg revision "$GITHUB_SHA" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
-          bash scripts/ci/fetch-ts-orch.sh "${RUNNER_TEMP}/ts-orch"
-          status=0
-          for i in $(jq -r 'to_entries | sort_by(.value.region == "gru", .value.region != "sjc", .value.region) | .[].key' "${RUNNER_TEMP}/ts-orch/regions.json"); do
-            jq -c "[.[$i]]" "${RUNNER_TEMP}/ts-orch/regions.json" > "${RUNNER_TEMP}/region.json"
-            echo "Region $(jq -r '.[0].region' "${RUNNER_TEMP}/region.json")" | tee -a "$GITHUB_STEP_SUMMARY"
-            out=$("${RUNNER_TEMP}/ts-orch/terrascale-orchestrator-linux-amd64" release app --service terrabase \
-              --image "$image" --regions "${RUNNER_TEMP}/region.json" 2>&1) || status=1
-            tee -a "$GITHUB_STEP_SUMMARY" <<< "$out"
-            # A superseded release exits 0 without this digest: require this region's own done state.
-            tail -1 <<< "$out" | jq -e '.state == "done" and (.error // "") == ""' > /dev/null || status=1
-            [ "$status" -eq 0 ] || break
-          done
-          exit "$status"
+          gh attestation verify "oci://${image}" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main --source-digest "$GITHUB_SHA" --bundle-from-oci
+          bash scripts/ci/release-app.sh terrabase "$image"
 
   main-auth:
     if: github.event_name == 'workflow_dispatch' && inputs.reconcile_auth && github.ref == 'refs/heads/main' && !inputs.pr_gate
