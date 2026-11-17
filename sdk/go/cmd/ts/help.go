@@ -40,6 +40,8 @@ var commandSyntax = map[string]string{
 	"functions invoke": "functions invoke <database> <name>", "functions logs": "functions logs <database> <name>",
 	"functions stats":  "functions stats [<database>] <name>",
 	"functions delete": "functions delete <database> <name>", "sql": "sql <database> <statement|->",
+	"rules pull": "rules pull <database>", "rules deploy": "rules deploy <database>",
+	"rules test":   "rules test <database> --operation read|create|update|delete --table <table> --auth <json> [--row <json>] [--new <json>] [--draft]",
 	"schema pull":  "schema pull <database>",
 	"schema diff":  "schema diff <database> <schema.sql>",
 	"schema apply": "schema apply <database> <schema.sql> [-dry-run] [-allow-drop]",
@@ -110,7 +112,7 @@ func requestedHelp(args []string, out io.Writer) (bool, error) {
 		if strings.HasPrefix(a, "-") {
 			name, _, equal := strings.Cut(strings.TrimLeft(a, "-"), "=")
 			switch name {
-			case "database", "from", "ttl", "project", "org", "expected-id", "scope", "expires", "allow-cidr", "name", "cron", "data", "limit", "regions", "home-region", "replica-regions", "lang":
+			case "database", "from", "ttl", "project", "org", "expected-id", "scope", "expires", "allow-cidr", "operation", "table", "auth", "row", "new", "name", "cron", "data", "limit", "regions", "home-region", "replica-regions", "lang":
 				if !equal {
 					i++
 				}
@@ -213,6 +215,14 @@ func helpOptions(name string) map[string]string {
 		options["TERRASCALE_API_KEY"] = "required; emits a secret URL scoped to this database, for at most 7d"
 	case name == "db url":
 		options["TERRASCALE_API_KEY"] = "required; emits a secret URL scoped to this database, for at most 7d"
+	case name == "rules deploy":
+		options["-yes"] = "consent to deploying the displayed diff without a terminal"
+	case name == "rules test":
+		options["-operation read|create|update|delete"] = "operation to simulate"
+		options["-table <table>"] = "table to simulate"
+		options["-auth <json>"] = "simulated identity object"
+		options["-row <json> / -new <json>"] = "existing row and incoming row or patch objects"
+		options["-draft"] = "simulate terrascale.rules.json instead of deployed rules"
 	case strings.HasPrefix(name, "schema "):
 		if name == "schema apply" {
 			options["-dry-run"] = "print the plan without writes"

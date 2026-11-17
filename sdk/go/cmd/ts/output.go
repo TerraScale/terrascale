@@ -82,6 +82,7 @@ type cliError struct {
 	code, message string
 	status        int
 	err           error
+	problems      []v1.RulesProblem
 }
 
 func (e *cliError) Error() string {
@@ -140,7 +141,7 @@ func jsonArguments(args []string) (rest []string, enabled bool, err error) {
 		rest = append(rest, a)
 		if strings.HasPrefix(a, "-") && !hasValue {
 			switch name {
-			case "database", "project", "org", "expected-id", "scope", "expires", "allow-cidr", "name", "cron", "data", "limit", "regions":
+			case "database", "project", "org", "expected-id", "scope", "expires", "allow-cidr", "operation", "table", "auth", "row", "new", "name", "cron", "data", "limit", "regions":
 				if i+1 < len(args) {
 					i++
 					rest = append(rest, args[i])
@@ -152,10 +153,11 @@ func jsonArguments(args []string) (rest []string, enabled bool, err error) {
 }
 
 type commandError struct {
-	Code      string `json:"code"`
-	Message   string `json:"message"`
-	Status    int    `json:"status,omitempty"`
-	RequestID string `json:"requestId,omitempty"`
+	Code      string            `json:"code"`
+	Message   string            `json:"message"`
+	Status    int               `json:"status,omitempty"`
+	RequestID string            `json:"requestId,omitempty"`
+	Problems  []v1.RulesProblem `json:"problems,omitempty"`
 }
 
 // Error bodies, headers, URLs, operands and arbitrary error strings can contain
@@ -171,6 +173,7 @@ func emitJSONError(out io.Writer, err error) error {
 		detail.Code, detail.Message = "interrupted", "Command interrupted; output is incomplete."
 	case errors.As(err, &local):
 		detail.Code, detail.Message, detail.Status = local.code, local.message, local.status
+		detail.Problems = local.problems
 	case errors.Is(err, errUsage):
 		detail.Code, detail.Message = "invalid_arguments", errUsage.Error()
 	case errors.As(err, &api):
