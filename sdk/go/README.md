@@ -102,6 +102,39 @@ what to do. `500 internal_error` is never retried. Requests have a fixed
 shortened: `RetryBudgetError` retains the typed API error and full cooldown when
 it cannot fit the remaining deadline. Earlier caller cancellation wins.
 
+## Live data
+
+The package source adds live shapes; this API is not in the published `v0.0.27` module.
+Import `terrascale.tech/sdk/v1` as `terrascale` for this example:
+
+```go
+shape, err := db.Shape(ctx, "todos", terrascale.ShapeOptions{
+    Where: "done = 0", Columns: []string{"id", "title"},
+})
+if err != nil {
+    return err
+}
+for view := range shape.Updates() {
+    for key, row := range view.Rows {
+        title, err := row.String("title")
+        if err != nil {
+            return err
+        }
+        fmt.Println(view.Status, view.Offset, key, title)
+    }
+}
+return shape.Err()
+```
+
+Cancel `ctx` to stop the subscription and close its receive-only updates channel.
+Views own their rows, including blobs, so later updates never change an earlier
+snapshot. Rows are the same `Row` type returned by `Database.Query`.
+`Loading` covers the paged snapshot, `Live` means caught up, and `Reconnecting`
+retains the last data during transport recovery. WebSocket hints use a bearer
+header and trigger HTTP catch-up from the applied offset; HTTP long-polling
+continues when hints are unavailable. A `must_refetch` response clears the rows
+and starts a new snapshot. Credential refusals close updates with `*APIError`.
+
 ### Databases for agents
 
 Use `Config.APIKey` to create a database per agent, session or test run and mint
