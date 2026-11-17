@@ -102,6 +102,7 @@ internal static class ApiExamples
         "setBackupPolicy" => """{"fullBackupCron":"0 2 * * *","retentionDays":7}""",
         "deployFunction" => """{"source":"function handler(event) { return event.body; }","cron":null}""",
         "invokeFunction" => """{"name":"Ada"}""",
+        "setFunctionSecret" => """{"value":"YOUR_SECRET_VALUE"}""",
         "executeSql" => """{"statements":[{"sql":"CREATE TABLE IF NOT EXISTS people (id INTEGER PRIMARY KEY, name TEXT NOT NULL)"}]}""",
         _ => "{}",
     };
@@ -144,6 +145,8 @@ internal static class ApiExamples
         "listFunctions" => "[" + Function.Replace("\"source\":\"function handler(event) { return event.body; }\"", "\"source\":null", StringComparison.Ordinal) + "]",
         "listFunctionLogs" => """[{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAC","at":"2026-10-07T12:00:00Z","trigger":"http","status":"ok","durationMs":3,"lines":["hello Ada"],"error":null}]""",
         "invokeFunction" => """{"hello":"Ada"}""",
+        "setFunctionSecret" => """{"name":"API_TOKEN","updatedAt":"2026-10-07T12:00:00Z"}""",
+        "listFunctionSecrets" => """[{"name":"API_TOKEN","updatedAt":"2026-10-07T12:00:00Z"}]""",
 
         "executeSql" => """{"results":[{"columns":[],"rows":[],"rows_affected":0,"last_insert_rowid":null}]}""",
         _ => "{}",

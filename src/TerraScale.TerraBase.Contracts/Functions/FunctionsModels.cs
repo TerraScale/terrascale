@@ -28,4 +28,12 @@ namespace TerraScale.TerraBase.Contracts.Functions
     /// <summary>An invocation's HTTP status, content type and body as the function returned them.</summary>
     [MessagePackObject(true)]
     public sealed record TerraBaseFunctionCall(int Status, string? ContentType, string Body);
+
+    /// <summary>A function secret's name and last write time; values are write-only and never returned.</summary>
+    [MessagePackObject(true)]
+    public sealed record TerraBaseFunctionSecret(string Name, DateTimeOffset UpdatedAt);
+
+    /// <summary>Body of a secret write: at most 4 KiB of UTF-8, readable only by the handler as <c>event.secrets</c>.</summary>
+    [MessagePackObject(true)]
+    public sealed record TerraBaseFunctionSecretValue(string Value);
 }

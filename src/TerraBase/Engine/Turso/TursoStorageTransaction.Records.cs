@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Text;
 using System.Security.Cryptography;
 using TerraBase.Features.Backup;
+using TerraBase.Features.Functions;
 using TerraBase.Features.Qos;
 using TerraBase.Primitives;
 
@@ -11,7 +12,12 @@ internal sealed partial class TursoStorageTransaction
 {
     private HashSet<string>? _kinds;
 
-    internal static bool CredentialKind(string kind) => kind.StartsWith("backup_destination_history/", StringComparison.Ordinal)
+    internal static bool EnvelopeKind(string kind) => CredentialKind(kind) || FunctionSecretSeal.IsKind(kind);
+
+    internal static string EnvelopeWrappedKey(string kind, ReadOnlyMemory<byte> json) =>
+        CredentialKind(kind) ? CustomerCredentials.ReadRecord(json).Credentials.WrappedKey : FunctionSecretSeal.Read(json.Span).WrappedKey;
+
+    private static bool CredentialKind(string kind) => kind.StartsWith("backup_destination_history/", StringComparison.Ordinal)
         || kind.StartsWith("projects/", StringComparison.Ordinal) && kind.EndsWith("/backup_destination", StringComparison.Ordinal);
 
     public ValueTask<StoredRecord?> GetAsync(string kind, string id, CancellationToken cancellationToken) =>
@@ -54,10 +60,9 @@ internal sealed partial class TursoStorageTransaction
             ThrowIfReadOnly();
             ArgumentException.ThrowIfNullOrEmpty(id);
             var body = StrictJson.Read(json, requireObject: false);
-            if (CredentialKind(kind))
+            if (EnvelopeKind(kind))
             {
-                var record = CustomerCredentials.ReadRecord(json);
-                var key = store.Encryption.Keyring.Unwrap(record.Credentials.WrappedKey);
+                var key = store.Encryption.Keyring.Unwrap(EnvelopeWrappedKey(kind, json));
                 CryptographicOperations.ZeroMemory(key);
             }
             if (_kinds?.Contains(kind) != true)

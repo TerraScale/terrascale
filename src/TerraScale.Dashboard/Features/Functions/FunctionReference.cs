@@ -67,12 +67,22 @@ namespace TerraScale.Dashboard.Features.Functions
             Request body and result: at most 1 MiB each.
             SQL: at most 256 binding calls per invocation; SQL request deadline 5 s; normal SQL statement, row and transaction limits apply.
             Logs: at most 50 lines, each truncated to 1024 characters; latest 100 invocation records retained per function.
-            list_function_logs returns the latest 25. No function secrets binding exists; do not embed credentials in source.
+            list_function_logs returns the latest 25.
             get_function_stats(databaseId, name, window) reads aggregate metrics independently of retained logs.
             window accepts 1h, 24h (default) or 7d; invalid windows return a structured validation error.
             Returns window, invocations, errors, p50Ms, p95Ms, p99Ms, maxMs, sqlCalls, rowsRead, rowsWritten and buckets.
             Buckets are oldest first, include empty intervals, and contain at, invocations, errors, p50Ms and p95Ms.
             Like list_function_logs, stats require SQL read and write access on signed-in and project API-key connections.
+
+            Secrets:
+            event.secrets is a frozen Record<string, string> of this function's secrets on every HTTP and cron event; a missing name is undefined.
+            Example: const token = event.secrets.API_TOKEN; if (token === undefined) throw new Error("set API_TOKEN first");
+            set_function_secret(databaseId, name, secret, value) sets or replaces one; delete_function_secret(databaseId, name, secret) removes one.
+            list_function_secrets(databaseId, name) returns names and updated_at only; no API, log or tool ever returns a value.
+            Changes apply from the next invocation without redeploying; deleting the function deletes its secrets. All three require SQL write access.
+            Secret names: [A-Z_][A-Z0-9_]{0,63}. Values: at most 4 KiB of UTF-8. At most 50 secrets per function.
+            event.secrets is not enumerable, so JSON.stringify(event) and console.log(event) omit it; do not log or return values.
+            Never put credentials in source; store them as secrets.
 
             Example 1: HTTP JSON API over a table (deploy as notes-api)
             async function handler(event) {

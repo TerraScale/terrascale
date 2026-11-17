@@ -282,14 +282,14 @@ internal sealed partial class TursoStorageEngine
         }
     }
 
-    private void CountCredential(ReadOnlyMemory<byte> json, bool startup,
+    private void CountCredential(string kind, ReadOnlyMemory<byte> json, bool startup,
         Dictionary<string, long> counts, Dictionary<string, long> missing)
     {
         string? keyId = null;
         try
         {
-            var record = CustomerCredentials.ReadRecord(json);
-            keyId = Encryption.Keyring.KeyId(record.Credentials.WrappedKey);
+            var wrapped = TursoStorageTransaction.EnvelopeWrappedKey(kind, json);
+            keyId = Encryption.Keyring.KeyId(wrapped);
             if (!Encryption.Keyring.KeyIds.Contains(keyId))
             {
                 Unknown(counts, keyId);
@@ -299,7 +299,7 @@ internal sealed partial class TursoStorageEngine
                 }
                 return;
             }
-            var key = Encryption.Keyring.Unwrap(record.Credentials.WrappedKey);
+            var key = Encryption.Keyring.Unwrap(wrapped);
             CryptographicOperations.ZeroMemory(key);
             if (counts[keyId] >= 0)
             {

@@ -13,7 +13,11 @@ public sealed record FunctionLogBody(string Id, DateTimeOffset At, string Trigge
 
 public sealed record FunctionResponse(int Status, string ContentType, byte[] Body);
 
-public readonly union FunctionResult(FunctionBody, FunctionBody[], FunctionLogBody[], TerraBaseFunctionStats, FunctionResponse, Done, Validation, NotFound, Conflict, Unavailable);
+public sealed record SetFunctionSecretRequest(string? Value);
+
+public sealed record FunctionSecretBody(string Name, DateTimeOffset UpdatedAt);
+
+public readonly union FunctionResult(FunctionBody, FunctionBody[], FunctionLogBody[], FunctionSecretBody, FunctionSecretBody[], TerraBaseFunctionStats, FunctionResponse, Done, Validation, NotFound, Conflict, Unavailable);
 
 public interface IFunctions
 {
@@ -29,11 +33,23 @@ public interface IFunctions
 
     ValueTask<FunctionResult> StatsAsync(TenantContext tenant, string name, string window, CancellationToken cancellationToken);
 
+    ValueTask<FunctionResult> ListSecretsAsync(TenantContext tenant, string name, CancellationToken cancellationToken);
+
+    ValueTask<FunctionResult> SetSecretAsync(TenantContext tenant, string name, string secret, SetFunctionSecretRequest request, CancellationToken cancellationToken);
+
+    ValueTask<FunctionResult> DeleteSecretAsync(TenantContext tenant, string name, string secret, CancellationToken cancellationToken);
+
     ValueTask<FunctionResult> InvokeAsync(TenantContext tenant, string name, string trigger, string eventJson, string? requestId,
         CancellationToken cancellationToken);
 }
 
 internal sealed record FunctionRecord(int Format, string Name, string Source, string Machine, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt,
     string? Cron = null);
+
+internal sealed record FunctionSecretRecord(int Format, string Name, string WrappedKey, string Sealed, DateTimeOffset UpdatedAt);
+
+internal sealed record FunctionCode(string Source, IReadOnlyList<FunctionSecretRecord> Secrets);
+
+internal readonly union FunctionLoad(FunctionCode, NotFound, Unavailable);
 
 internal sealed record FunctionSchedule(TenantContext Tenant, string Name, string Cron, string Machine);

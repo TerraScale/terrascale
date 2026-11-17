@@ -28,6 +28,7 @@
 @(await RenderPartialAsync<TerraScale.Dashboard.Features.Functions.FunctionsStatsView,TerraScale.Dashboard.Features.Functions.FunctionsPage>(Model))
 @(await RenderPartialAsync<TerraScale.Dashboard.Features.Functions.FunctionsCodeView,TerraScale.Dashboard.Features.Functions.FunctionsPage>(Model))
 @(await RenderPartialAsync<TerraScale.Dashboard.Features.Functions.FunctionsTestView,TerraScale.Dashboard.Features.Functions.FunctionsPage>(Model))
+@(await RenderPartialAsync<TerraScale.Dashboard.Features.Functions.FunctionsSecretsView,TerraScale.Dashboard.Features.Functions.FunctionsPage>(Model))
 </div>
 <div class="ts-columns-side">
 @(await RenderPartialAsync<TerraScale.Dashboard.Features.Functions.FunctionsSideView,TerraScale.Dashboard.Features.Functions.FunctionSide>(new(Model, selected.Cron ?? "")))

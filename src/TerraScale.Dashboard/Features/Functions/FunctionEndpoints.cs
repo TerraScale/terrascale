@@ -16,7 +16,8 @@ namespace TerraScale.Dashboard.Features.Functions
     public sealed record FunctionsPage(ShellModel Shell, DatabaseRecord Database, IReadOnlyList<FunctionRecord> Functions, FunctionRecord? Selected,
         string? InvokeUrl, IReadOnlyList<FunctionInvocation> Logs, string Error, bool NoAccess, string DeleteName,
         string Notice = "", FunctionForm? Form = null, string RunEvent = "", string RunResult = "", string RunError = "",
-        string LogsTrigger = "", string LogsStatus = "", string DeployError = "", TerraBaseFunctionStats? Stats = null)
+        string LogsTrigger = "", string LogsStatus = "", string DeployError = "", TerraBaseFunctionStats? Stats = null,
+        IReadOnlyList<TerraBaseFunctionSecret>? Secrets = null, string SecretName = "", string SecretError = "")
     {
         public string Window => Stats?.Window ?? "24h";
     }
@@ -45,7 +46,12 @@ namespace TerraScale.Dashboard.Features.Functions
             var edit = http.Request.Query["edit"].ToString();
             var trigger = http.Request.Query["trigger"].ToString() is "http" or "cron" ? http.Request.Query["trigger"].ToString() : "";
             var status = http.Request.Query["status"].ToString() is "ok" or "error" ? http.Request.Query["status"].ToString() : "";
-            var notice = http.Request.Query["deployed"].ToString() == "1" ? "Function deployed." : "";
+            var notice = http.Request.Query["deployed"].ToString() == "1" ? "Function deployed." : http.Request.Query["secret"].ToString() switch
+            {
+                "saved" => "Secret saved.",
+                "deleted" => "Secret deleted.",
+                _ => "",
+            };
             IReadOnlyList<FunctionRecord> items = [];
             try
             {
@@ -64,7 +70,8 @@ namespace TerraScale.Dashboard.Features.Functions
                     ?? throw new AccountAccessException("This function does not exist.", 404);
                 var stats = await ReadStatsAsync(http, functions, context, database, name);
                 var logs = Filter(await functions.LogsAsync(context, database, name, http.RequestAborted), trigger, status, stats);
-                return View(http, context, database, items, selected, logs, notice: notice, logsTrigger: trigger, logsStatus: status, stats: stats);
+                var secrets = await ReadSecretsAsync(http, functions, context, database, name);
+                return View(http, context, database, items, selected, logs, notice: notice, logsTrigger: trigger, logsStatus: status, stats: stats, secrets: secrets);
             }
             catch (Exception error) when (KnownFailure(error, http))
             {
@@ -178,6 +185,57 @@ namespace TerraScale.Dashboard.Features.Functions
             }
         }
 
+        internal static async Task<IResult> SecretAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, FunctionBackend functions, bool delete)
+        {
+            http.Response.Headers.CacheControl = "no-store";
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+            if (!Csrf.Validate(http, form))
+            {
+                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "functions"), Results.BadRequest("Invalid form token."));
+            }
+
+            var id = form["databaseId"].ToString();
+            DatabaseRecord database;
+            try { database = DatabaseService.Database(context, id); }
+            catch (AccountAccessException error) { return DatabaseResults.PageFailure(http, context, error); }
+            var name = form["name"].ToString();
+            var secret = form["secret"].ToString().Trim();
+            FunctionRecord? selected = null;
+            try
+            {
+                selected = await functions.ReadAsync(context, database, name, http.RequestAborted)
+                    ?? throw new AccountAccessException("This function does not exist.", 404);
+                if (delete)
+                {
+                    if (!await functions.DeleteSecretAsync(context, database, name, secret, http.RequestAborted))
+                    {
+                        throw new AccountAccessException("This secret no longer exists.", 404);
+                    }
+                }
+                else
+                {
+                    await functions.SetSecretAsync(context, database, name, secret, form["value"].ToString(), http.RequestAborted);
+                }
+
+                return HttpRedirects.SeeOther(DatabaseService.Path(id, "functions") + "?function=" + Uri.EscapeDataString(name) + "&secret=" + (delete ? "deleted" : "saved"));
+            }
+            catch (Exception error) when (KnownFailure(error, http))
+            {
+                IReadOnlyList<FunctionInvocation> logs = selected is null ? [] : await OptionalPanel.LoadAsync<IReadOnlyList<FunctionInvocation>>(http, "function-logs",
+                    async () => await functions.LogsAsync(context, database, name, http.RequestAborted), () => []);
+                var secrets = selected is null ? null : await ReadSecretsAsync(http, functions, context, database, name);
+                var stats = selected is null ? null : await ReadStatsAsync(http, functions, context, database, name);
+                return View(http, context, database, [], selected, Filter(logs, "", "", stats), status: Status(error), noAccess: Status(error) == 403, stats: stats, secrets: secrets,
+                    secretName: delete ? "" : secret, secretError: FailureText(error));
+            }
+        }
+
         private static async Task PatchDeployAsync(HttpContext http, FunctionBackend functions, AccountContext context, DatabaseRecord database, FunctionRecord? saved,
             IReadOnlyList<FunctionInvocation> logs, string notice, string error, string trigger, string status)
         {
@@ -251,6 +309,12 @@ namespace TerraScale.Dashboard.Features.Functions
             return [.. logs.Where(log => (stats is null || log.At >= stats.Buckets[0].At) && (trigger.Length == 0 || log.Trigger == trigger) && (status.Length == 0 || log.Status == status))];
         }
 
+        private static Task<IReadOnlyList<TerraBaseFunctionSecret>?> ReadSecretsAsync(HttpContext http, FunctionBackend functions, AccountContext context, DatabaseRecord database, string name)
+        {
+            return OptionalPanel.LoadAsync<IReadOnlyList<TerraBaseFunctionSecret>?>(http, "function-secrets",
+                async () => await functions.SecretsAsync(context, database, name, http.RequestAborted), () => null);
+        }
+
         private static Task<TerraBaseFunctionStats?> ReadStatsAsync(HttpContext http, FunctionBackend functions, AccountContext context, DatabaseRecord database, string name)
         {
             return OptionalPanel.LoadAsync<TerraBaseFunctionStats?>(http, "function-metrics",
@@ -314,10 +378,12 @@ namespace TerraScale.Dashboard.Features.Functions
 
         private static RazorSlices.RazorSlice<FunctionsPage> View(HttpContext http, AccountContext context, DatabaseRecord database, IReadOnlyList<FunctionRecord> items, FunctionRecord? selected,
             IReadOnlyList<FunctionInvocation> logs, string error = "", int status = 200, bool noAccess = false, string deleteName = "", string notice = "", FunctionForm? form = null,
-            string runEvent = "", string runResult = "", string runError = "", string logsTrigger = "", string logsStatus = "", TerraBaseFunctionStats? stats = null)
+            string runEvent = "", string runResult = "", string runError = "", string logsTrigger = "", string logsStatus = "", TerraBaseFunctionStats? stats = null,
+            IReadOnlyList<TerraBaseFunctionSecret>? secrets = null, string secretName = "", string secretError = "")
         {
             var page = FunctionsView.Create(new(ShellModel.For(http, context, database.Name + " · Functions"), database, items, selected,
-                selected is null ? null : FunctionBackend.InvokeUrl(context, database, selected.Name), logs, error, noAccess, deleteName, notice, form, runEvent, runResult, runError, logsTrigger, logsStatus, Stats: stats));
+                selected is null ? null : FunctionBackend.InvokeUrl(context, database, selected.Name), logs, error, noAccess, deleteName, notice, form, runEvent, runResult, runError, logsTrigger, logsStatus, Stats: stats,
+                Secrets: secrets, SecretName: secretName, SecretError: secretError));
             page.StatusCode = status;
             return page;
         }

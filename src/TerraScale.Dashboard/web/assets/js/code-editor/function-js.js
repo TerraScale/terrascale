@@ -37,10 +37,12 @@ export const extraLib = [
   documented('An invocation through POST …/invoke.', 'event.trigger === "http"', 'trigger: "http";'),
   documented('Parsed JSON, otherwise text; null for an empty body. Request limit: 1 MiB.', 'event.body', 'body: JsonValue;'),
   documented('Query string values; repeated values are comma-joined.', 'event.query.name', 'query: Record<string, string>;'),
+  documented('This function\'s secrets; a missing name is undefined. Frozen and not enumerable.', 'event.secrets.API_TOKEN', 'secrets: Readonly<Record<string, string>>;'),
   '}',
   'interface CronEvent {',
   documented('An invocation from the UTC schedule.', 'event.trigger === "cron"', 'trigger: "cron";'),
   documented('Planned execution time as an ISO timestamp.', 'console.log(event.scheduledAt)', 'scheduledAt: string;'),
+  documented('This function\'s secrets; a missing name is undefined. Frozen and not enumerable.', 'event.secrets.API_TOKEN', 'secrets: Readonly<Record<string, string>>;'),
   '}',
   documented('Narrow by trigger to read HTTP or cron fields.', 'if (event.trigger === "http") console.log(event.body)', 'type FunctionEvent = HttpEvent | CronEvent;'),
   'interface FunctionResponse {',
@@ -68,7 +70,7 @@ const snippets = [
 ];
 
 const keywords = ['SELECT', 'FROM', 'WHERE', 'AND', 'OR', 'NOT', 'IN', 'IS', 'NULL', 'ORDER BY', 'ASC', 'DESC', 'LIMIT', 'TRUE', 'FALSE', 'INSERT INTO', 'VALUES', 'UPDATE', 'SET', 'DELETE FROM', 'JOIN', 'ON', 'GROUP BY', 'HAVING', 'AS', 'CREATE TABLE', 'RETURNING'];
-const eventFields = [...extraLib.matchAll(/\/\*\* ((?:(?!\*\/)[\s\S])*?)\*\/ (trigger|body|query|scheduledAt): ([^;]+);/g)]
+const eventFields = [...extraLib.matchAll(/\/\*\* ((?:(?!\*\/)[\s\S])*?)\*\/ (trigger|body|query|scheduledAt|secrets): ([^;]+);/g)]
   .map(match => ({ name: match[2], type: match[2] === 'trigger' ? '"http" | "cron"' : match[3], doc: match[1].replaceAll(/^ \* ?/gm, '').trim() }))
   .filter((field, index, fields) => fields.findIndex(other => other.name === field.name) === index);
 const tokens = /\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)|"(?:\\[\s\S]|[^"\\])*"?|'(?:\\[\s\S]|[^'\\])*'?|`(?:\\[\s\S]|[^`\\])*`?/g;

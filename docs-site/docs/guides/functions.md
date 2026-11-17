@@ -75,6 +75,29 @@ Add `"cron": "*/5 * * * *"` (UTC) to the deploy body to run on a schedule. Deplo
 | `GET /functions/{name}/logs` | Last 100 invocations |
 | `DELETE /functions/{name}` | Delete with schedule and logs |
 
+## Secrets
+
+Keep credentials out of source. Set them as secrets on the function, from the Secrets panel on its dashboard page,
+the MCP `set_function_secret` tool or the API, and read them from `event.secrets`:
+
+```sh
+curl -X PUT "https://api.terrascale.tech/v1/projects/$PROJECT/databases/$DATABASE/functions/notify/secrets/API_TOKEN" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "{\"value\": \"$API_TOKEN\"}"
+```
+
+```js
+async function handler(event) {
+  const token = event.secrets.API_TOKEN;
+  if (token === undefined) throw new Error("set API_TOKEN first");
+  return { configured: true };
+}
+```
+
+Values are write-only: listing (`GET .../functions/notify/secrets`) returns names and update times, never values. A
+change applies from the next invocation without redeploying, and deleting the function deletes its secrets. Values are
+encrypted at rest under TerraScale's master keyring. `event.secrets` is frozen and left out of `JSON.stringify(event)`; don't log
+or return a value yourself.
+
 ## Limits
 
 | Bound | Value |
@@ -85,6 +108,7 @@ Add `"cron": "*/5 * * * *"` (UTC) to the deploy body to run on a schedule. Deplo
 | Request and response | 1 MiB each |
 | SQL | 256 `sql` calls per invocation |
 | Logs | 50 lines of 1 KiB per invocation |
+| Secrets | 50 per function; names `[A-Z_][A-Z0-9_]{0,63}`, values 4 KiB |
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 

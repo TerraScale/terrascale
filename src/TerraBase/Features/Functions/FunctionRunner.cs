@@ -61,9 +61,11 @@ internal static class FunctionRunner
                 return value;
             },
         });
-        function __run(e) {
+        function __run(e, s) {
             if (typeof handler !== "function") throw new Error("the source must define function handler(event)");
-            return Promise.resolve(handler(JSON.parse(e))).then(r => JSON.stringify(r === undefined ? null : r));
+            const event = JSON.parse(e);
+            Object.defineProperty(event, "secrets", { value: Object.freeze(JSON.parse(s)), enumerable: false });
+            return Promise.resolve(handler(event)).then(r => JSON.stringify(r === undefined ? null : r));
         }
         """;
 
@@ -80,7 +82,7 @@ internal static class FunctionRunner
         }
     }
 
-    public static async Task<FunctionRun> RunAsync(string source, string eventJson, FunctionSql sql, CancellationToken cancellationToken)
+    public static async Task<FunctionRun> RunAsync(string source, string eventJson, string secretsJson, FunctionSql sql, CancellationToken cancellationToken)
     {
         var lines = new List<string>();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -106,7 +108,7 @@ internal static class FunctionRunner
         {
             engine.Execute(Prelude);
             engine.Execute(source);
-            var result = (await engine.Invoke("__run", eventJson).UnwrapIfPromiseAsync(deadline.Token).ConfigureAwait(false)).AsString();
+            var result = (await engine.Invoke("__run", eventJson, secretsJson).UnwrapIfPromiseAsync(deadline.Token).ConfigureAwait(false)).AsString();
             return result.Length > MaxResultChars
                 ? new FunctionRun(null, "the result exceeds 1 MiB", lines)
                 : new FunctionRun(result, null, lines);

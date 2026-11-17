@@ -18,13 +18,13 @@ namespace TerraBase.Features.Functions;
 public static class FunctionsExtensions
 {
     public static IServiceCollection AddTerraBaseFunctions(this IServiceCollection services) =>
-        services.AddSingleton<FunctionService>().AddSingleton<IFunctions>(provider => provider.GetRequiredService<FunctionService>())
+        services.AddSingleton<FunctionSecretSeal>().AddSingleton<FunctionService>().AddSingleton<IFunctions>(provider => provider.GetRequiredService<FunctionService>())
             .AddHostedService(provider => provider.GetRequiredService<FunctionService>())
             .AddSingleton<FunctionScheduler>().AddHostedService(provider => provider.GetRequiredService<FunctionScheduler>());
 }
 
 internal sealed partial class FunctionService(SystemCatalog catalog, ISqlService sql, IUsageMeter usage, IMemoryBudget memory,
-    TerraBaseOptions options, TimeProvider time, RegionalIngress ingress, ILogger<FunctionService> logger) : BackgroundService, IFunctions, IHostedLifecycleService
+    TerraBaseOptions options, TimeProvider time, RegionalIngress ingress, FunctionSecretSeal secrets, ILogger<FunctionService> logger) : BackgroundService, IFunctions, IHostedLifecycleService
 {
     public const string Schedules = "function_schedules";
     private const int MaxFunctions = 32;
@@ -112,6 +112,7 @@ internal sealed partial class FunctionService(SystemCatalog catalog, ISqlService
             await transaction.DeleteAsync(Schedules, ScheduleId(tenant, name), cancellationToken).ConfigureAwait(false);
             await transaction.DropKindAsync(Logs(tenant, name), cancellationToken).ConfigureAwait(false);
             await transaction.DropKindAsync(FunctionMetrics.Kind(tenant, name), cancellationToken).ConfigureAwait(false);
+            await transaction.DropKindAsync(Secrets(tenant, name), cancellationToken).ConfigureAwait(false);
             return new Done();
         }, static error => error, cancellationToken).ConfigureAwait(false);
         return result;
@@ -173,11 +174,17 @@ internal sealed partial class FunctionService(SystemCatalog catalog, ISqlService
             {
                 return Busy;
             }
-            if (await GetAsync(tenant, name, cancellationToken).ConfigureAwait(false) is not FunctionBody { Source: { } source })
+            var load = await LoadAsync(tenant, name, cancellationToken).ConfigureAwait(false);
+            if (load is Unavailable catalogDown)
+            {
+                return catalogDown;
+            }
+            if (load is not FunctionCode code)
             {
                 return new NotFound();
             }
-            reserved = memory.TryReserve(FunctionRunner.MemoryBytes + 2 * eventJson.Length, tenant);
+            var secretsJson = await OpenSecretsAsync(tenant, name, code.Secrets, cancellationToken).ConfigureAwait(false);
+            reserved = memory.TryReserve(FunctionRunner.MemoryBytes + 2 * (eventJson.Length + secretsJson.Length), tenant);
             if (reserved is null)
             {
                 return Busy;
@@ -192,7 +199,7 @@ internal sealed partial class FunctionService(SystemCatalog catalog, ISqlService
             {
                 session.BeginRequest();
                 using var running = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _invocationsStopping.Token);
-                run = await Task.Run(() => FunctionRunner.RunAsync(source, eventJson, calls, running.Token), CancellationToken.None)
+                run = await Task.Run(() => FunctionRunner.RunAsync(code.Source, eventJson, secretsJson, calls, running.Token), CancellationToken.None)
                     .ConfigureAwait(false);
             }
 

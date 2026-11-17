@@ -54,6 +54,28 @@ namespace TerraScale.TerraBase.Rpc.Functions
         }
 
         /// <inheritdoc />
+        public async UnaryResult<IReadOnlyList<TerraBaseFunctionSecret>> ListSecretsAsync(string projectId, string database, string name)
+        {
+            var answer = await api.SendAsync(Context, "GET", Item(projectId, database, name) + "/secrets");
+            return RestApi.Read(answer, Json.IReadOnlyListTerraBaseFunctionSecret);
+        }
+
+        /// <inheritdoc />
+        public async UnaryResult<TerraBaseFunctionSecret> SetSecretAsync(string projectId, string database, string name, string secret, TerraBaseFunctionSecretValue request)
+        {
+            var answer = await api.SendAsync(Context, "PUT", Item(projectId, database, name) + "/secrets/" + Uri.EscapeDataString(secret), RestApi.Json(request, Json.TerraBaseFunctionSecretValue));
+            return RestApi.Read(answer, Json.TerraBaseFunctionSecret);
+        }
+
+        /// <inheritdoc />
+        public async UnaryResult<bool> DeleteSecretAsync(string projectId, string database, string name, string secret)
+        {
+            var answer = await api.SendAsync(Context, "DELETE", Item(projectId, database, name) + "/secrets/" + Uri.EscapeDataString(secret));
+            RestApi.Ensure(answer);
+            return true;
+        }
+
+        /// <inheritdoc />
         public async UnaryResult<TerraBaseFunctionCall> InvokeAsync(string projectId, string database, string name, string body)
         {
             var answer = await api.SendAsync(Context, "POST", Item(projectId, database, name) + "/invoke", Encoding.UTF8.GetBytes(body), "application/json");
