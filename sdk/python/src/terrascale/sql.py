@@ -6,6 +6,7 @@ import base64
 import math
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, TypeVar, overload
 
 __all__ = ["MAX_STATEMENTS", "Column", "Row", "Statement", "StatementResult"]
@@ -102,6 +103,7 @@ class Column:
     decltype: str | None = None
 
 
+@dataclass(frozen=True, eq=False)
 class Row(Sequence[Any]):
     """One result row, read by ordinal or column name. ``dict(row)`` and
     ``Model(**row)`` key it by column name; a repeated name keeps its first
@@ -109,10 +111,14 @@ class Row(Sequence[Any]):
 
     __slots__ = ("_ordinals", "_values", "columns")
 
-    def __init__(self, columns: list[Column], ordinals: dict[str, int], values: list[Any]):
-        self.columns = columns
-        self._ordinals = ordinals
-        self._values = values
+    columns: tuple[Column, ...]
+    _ordinals: Mapping[str, int]
+    _values: tuple[Any, ...]
+
+    def __init__(self, columns: Sequence[Column], ordinals: Mapping[str, int], values: Sequence[Any]):
+        object.__setattr__(self, "columns", tuple(columns))
+        object.__setattr__(self, "_ordinals", MappingProxyType(dict(ordinals)))
+        object.__setattr__(self, "_values", tuple(values))
 
     def __len__(self) -> int:
         return len(self._values)
@@ -124,6 +130,8 @@ class Row(Sequence[Any]):
     def __getitem__(self, key: slice) -> list[Any]: ...
 
     def __getitem__(self, key: int | str | slice) -> Any:
+        if isinstance(key, slice):
+            return list(self._values[key])
         return self._values[self.ordinal(key) if isinstance(key, str) else key]
 
     def __iter__(self) -> Iterator[Any]:

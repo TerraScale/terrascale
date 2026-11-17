@@ -388,3 +388,11 @@ def export_database(project: str, db: str) -> Call:
 def execute(project: str, db: str, statements: list[dict[str, Any]]) -> Call:
     return Call("POST", _db(project, db, "sql", "execute"), lambda r: sql_results(r.json(), len(statements)),
                 body={"statements": statements})
+
+
+def read_table_shape(project: str, db: str, table: str) -> Call:
+    return Call("GET", _db(project, db, "tables", table, "shape"), lambda r: r, replay_safe=True)
+
+
+def connect_shape_hints(project: str, db: str, table: str) -> Call:
+    return Call("GET", _db(project, db, "tables", table, "shape", "ws"), lambda r: r, replay_safe=True)

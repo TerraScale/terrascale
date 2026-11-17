@@ -35,6 +35,7 @@ from .errors import (
 from .ids import is_valid_id, new_id, validate_id
 from .models import ApiKey, ApiKeyPage, ApiKeySecret, ProjectClient, ProjectClientPage, ProjectClientSecret, ScopedKey
 from .session import AsyncSqlSession, SqlSession
+from .shapes import AsyncShape, Shape, ShapeView
 from .sql import Column, Row, Statement, StatementResult
 from .webhooks import verify_webhook
 
@@ -55,6 +56,9 @@ __all__ = [
     "ProjectClient",
     "ProjectClientSecret",
     "ProjectClientPage",
+    "Shape",
+    "AsyncShape",
+    "ShapeView",
     "Statement",
     "StatementResult",
     "Column",
