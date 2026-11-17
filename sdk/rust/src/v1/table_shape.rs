@@ -65,9 +65,6 @@ impl Shape {
         super::ids::check_database_selector(self.db.name())?;
         if !identifier(&self.table)
             || self.table.len() > 63
-            || ["_tb_", "sqlite_", "turso_"]
-                .iter()
-                .any(|prefix| self.table.starts_with(prefix))
             || self
                 .filter
                 .as_ref()
