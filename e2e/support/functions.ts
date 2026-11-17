@@ -50,10 +50,12 @@ export async function functionTool<T extends keyof FunctionTools>(request: APIRe
     : JSON.parse(body);
   expect(message.error, `MCP ${name} protocol`).toBeUndefined();
   expect(message.result.isError === true, `MCP ${name} result`).toBe(isError);
-  if (['get_functions_reference', 'deploy_function', 'invoke_function'].includes(name)) {
+  if (['get_functions_reference', 'deploy_function', 'invoke_function', 'get_function_stats'].includes(name)) {
     const result = message.result.structuredContent;
-    const trimmed = name === 'get_functions_reference' ? { reference: result.reference.slice(0, 220) + ' [trimmed]' } : result;
-    console.log('Functions MCP transcript ' + JSON.stringify({ request: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }, response: { jsonrpc: '2.0', id: 1, result: { isError: message.result.isError === true, structuredContent: trimmed } } }));
+    const bucketCount = name === 'get_function_stats' && !isError ? result.buckets.length : undefined;
+    const trimmed = name === 'get_functions_reference' ? { reference: result.reference.slice(0, 220) + ' [trimmed]' }
+      : bucketCount !== undefined ? { ...result, buckets: result.buckets.slice(0, 1) } : result;
+    console.log('Functions MCP transcript ' + JSON.stringify({ request: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }, response: { jsonrpc: '2.0', id: 1, result: { isError: message.result.isError === true, structuredContent: trimmed } }, bucketCount }));
   }
   return message.result.structuredContent;
 }
