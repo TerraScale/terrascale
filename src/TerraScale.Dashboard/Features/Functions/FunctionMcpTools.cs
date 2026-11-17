@@ -83,6 +83,38 @@ namespace TerraScale.Dashboard.Features.Functions
             return await functions.InvokeForMcpAsync(context, DatabaseService.Database(context, databaseId), name, body?.GetRawText() ?? "null", Cancellation);
         }
 
+        [McpServerTool(Name = "list_function_secrets", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List a function's secret names and updated_at. Values are write-only and never returned. Requires SQL write access.")]
+        public async Task<McpFunctionSecrets> ListSecrets(string databaseId, string name, string? organizationId = null, string? projectId = null)
+        {
+            var context = Scope(organizationId, projectId);
+            return FunctionMcpOutput.Secrets(await functions.SecretsAsync(context, DatabaseService.Database(context, databaseId), name, Cancellation));
+        }
+
+        [McpServerTool(Name = "set_function_secret", ReadOnly = false, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Set or replace one function secret; the handler reads it as event.secrets[secret] from the next invocation, without redeploying. secret matches ^[A-Z_][A-Z0-9_]{0,63}$, value is at most 4 KiB, at most 50 secrets per function. Returns name and updated_at only, never the value. Requires SQL write access.")]
+        public async Task<CallToolResult> SetSecret(string databaseId, string name, string secret, string value, string? organizationId = null, string? projectId = null)
+        {
+            var context = Scope(organizationId, projectId);
+            try
+            {
+                return FunctionMcpOutput.SecretSaved(await functions.SetSecretAsync(context, DatabaseService.Database(context, databaseId), name, secret, value, Cancellation));
+            }
+            catch (TerraBaseException error) when (error is TerraBaseValidationException or TerraBaseConflictException)
+            {
+                return FunctionMcpOutput.Invalid(error.ErrorCode, error.Message);
+            }
+            catch (AccountAccessException error) when (error.StatusCode == 400)
+            {
+                return FunctionMcpOutput.Invalid("validation", error.Message);
+            }
+        }
+
+        [McpServerTool(Name = "delete_function_secret", Destructive = true, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Delete one function secret; the next invocation no longer sees it in event.secrets. Returns deleted false when the function or secret did not exist. Requires SQL write access.")]
+        public async Task<McpFunctionSecretDeleted> DeleteSecret(string databaseId, string name, string secret, string? organizationId = null, string? projectId = null)
+        {
+            var context = Scope(organizationId, projectId);
+            return new(secret, await functions.DeleteSecretAsync(context, DatabaseService.Database(context, databaseId), name, secret, Cancellation));
+        }
+
         [McpServerTool(Name = "delete_function", Destructive = true, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Return step_up_required with the resource and confirmationUrl. MCP leaves the resource intact; finish deletion in the signed-in dashboard, which applies its authorization and confirmation requirements.")]
         public McpStepUpRequired Delete(string databaseId, string name, string confirmName, string? organizationId = null, string? projectId = null)
         {
@@ -101,4 +133,7 @@ namespace TerraScale.Dashboard.Features.Functions
     public sealed record McpFunctionList(IReadOnlyList<FunctionRecord> Functions, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NextCursor, bool HasMore, int Limit);
     public sealed record McpFunctionDetail(FunctionRecord Function, string InvokeUrl);
     public sealed record McpFunctionLogs(IReadOnlyList<FunctionInvocation> Logs);
+    public sealed record McpFunctionSecret(string Name, [property: JsonPropertyName("updated_at")] DateTimeOffset UpdatedAt);
+    public sealed record McpFunctionSecrets(IReadOnlyList<McpFunctionSecret> Secrets);
+    public sealed record McpFunctionSecretDeleted(string Name, bool Deleted);
 }

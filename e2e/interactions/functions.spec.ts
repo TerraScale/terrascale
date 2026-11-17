@@ -454,3 +454,92 @@ test('function metrics include SQL calls and zero-filled latency buckets', async
   expect((await request.delete(url, { headers })).status()).toBe(204);
   expect((await request.get(`${url}/stats`, { headers })).status()).toBe(404);
 });
+
+test('function secrets are write-only, reach the next invocation and go away with delete', async ({ request, page, audit }) => {
+  const current = journey();
+  const headers = await functionAccess(request);
+  const name = unique('secrets');
+  const url = functionUrl(name);
+  const value = `secret-${current.runId}-${Date.now().toString(36)}`;
+  const panelValue = `panel-${current.runId}-${Date.now().toString(36)}`;
+  saveSecret('function-secret-value', value);
+  saveSecret('function-secret-panel-value', panelValue);
+  const checksum = (text: string) => [...text].reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) % 1000000007, 0);
+  const source = `async function handler(event) {
+    const token = event.secrets.API_TOKEN;
+    let checksum = 0;
+    for (const char of token ?? "") checksum = (checksum * 31 + char.charCodeAt(0)) % 1000000007;
+    let refused = false;
+    try { event.secrets.API_TOKEN = "changed"; } catch (error) { refused = true; }
+    return { present: token !== undefined, length: (token ?? "").length, checksum, frozen: Object.isFrozen(event.secrets), refused, keys: Object.keys(event), names: Object.keys(event.secrets) };
+  }`;
+  expect((await request.put(url, { headers, data: { source } })).status()).toBe(200);
+  const invoke = async () => {
+    const response = await request.post(`${url}/invoke`, { headers, data: {} });
+    expect(response.status()).toBe(200);
+    const text = await response.text();
+    expect(text).not.toContain(value);
+    return JSON.parse(text);
+  };
+  expect(await invoke()).toMatchObject({ present: false, length: 0, names: [] });
+
+  const set = await request.put(`${url}/secrets/API_TOKEN`, { headers, data: { value } });
+  expect(set.status(), 'set a function secret through TerraBase REST').toBe(200);
+  const setText = await set.text();
+  expect(setText).not.toContain(value);
+  expect(Object.keys(JSON.parse(setText)).sort()).toEqual(['name', 'updatedAt']);
+  expect(await invoke(), 'the next invocation sees the secret without a redeploy').toEqual({
+    present: true, length: value.length, checksum: checksum(value), frozen: true, refused: true, keys: ['trigger', 'body', 'query'], names: ['API_TOKEN'],
+  });
+
+  const listed = await request.get(`${url}/secrets`, { headers });
+  expect(listed.status()).toBe(200);
+  const listText = await listed.text();
+  expect(listText).not.toContain(value);
+  expect(JSON.parse(listText)).toEqual([{ name: 'API_TOKEN', updatedAt: expect.any(String) }]);
+  const badName = await request.put(`${url}/secrets/api_token`, { headers, data: { value } });
+  expect(badName.status()).toBe(400);
+  expect(await badName.text()).not.toContain(value);
+  const tooLong = await request.put(`${url}/secrets/API_TOKEN`, { headers, data: { value: 'x'.repeat(4097) } });
+  expect(tooLong.status()).toBe(400);
+  expect((await tooLong.json()).error.message).toBe('value is required and at most 4 KiB');
+  const logs = await request.get(`${url}/logs`, { headers });
+  expect(logs.status()).toBe(200);
+  expect(await logs.text()).not.toContain(value);
+
+  const scope = { databaseId: current.databaseId, organizationId: current.organizationId, projectId: current.projectId };
+  const mcpSet = await functionTool(page.request, current.apiKey, 'set_function_secret', { ...scope, name, secret: 'MCP_TOKEN', value: panelValue });
+  expect(mcpSet).toEqual({ name: 'MCP_TOKEN', updated_at: expect.any(String) });
+  const mcpList = await functionTool(page.request, current.apiKey, 'list_function_secrets', { ...scope, name });
+  expect(mcpList.secrets.map((secret) => secret.name)).toEqual(['API_TOKEN', 'MCP_TOKEN']);
+  expect(JSON.stringify(mcpList)).not.toContain(value);
+  expect(await functionTool(page.request, current.apiKey, 'delete_function_secret', { ...scope, name, secret: 'MCP_TOKEN' })).toEqual({ name: 'MCP_TOKEN', deleted: true });
+
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(`/databases/${current.databaseId}/functions?function=${name}`);
+  await expect(page.locator('#function-secret-list li')).toHaveCount(1);
+  await expect(page.locator('#function-secret-list')).toContainText('API_TOKEN');
+  expect(await page.content()).not.toContain(value);
+  await audit.check('function secrets panel lists names without values');
+  await page.locator('#function-secret-name').fill('PANEL_TOKEN');
+  await page.locator('#function-secret-value').fill(panelValue);
+  await page.getByRole('button', { name: 'Save secret', exact: true }).click();
+  await expect(page.locator('#function-notice')).toHaveText('Secret saved.');
+  await expect(page.locator('#function-secret-list li')).toHaveCount(2);
+  await expect(page.locator('#function-secret-value')).toHaveValue('');
+  expect(await page.content()).not.toContain(panelValue);
+  await page.getByRole('button', { name: 'Delete PANEL_TOKEN', exact: true }).click();
+  await expect(page.locator('#function-notice')).toHaveText('Secret deleted.');
+  await expect(page.locator('#function-secret-list li')).toHaveCount(1);
+  await audit.check('function secret saved and deleted from the panel');
+
+  expect((await request.delete(`${url}/secrets/API_TOKEN`, { headers })).status()).toBe(204);
+  expect((await request.delete(`${url}/secrets/API_TOKEN`, { headers })).status()).toBe(404);
+  expect(await invoke(), 'a deleted secret is undefined on the next invocation').toMatchObject({ present: false, length: 0, names: [] });
+  expect((await request.put(`${url}/secrets/API_TOKEN`, { headers, data: { value } })).status()).toBe(200);
+  expect((await request.delete(url, { headers })).status()).toBe(204);
+  expect((await request.put(url, { headers, data: { source } })).status()).toBe(200);
+  expect(await (await request.get(`${url}/secrets`, { headers })).json(), 'deleting the function deleted its secrets').toEqual([]);
+  expect((await request.delete(url, { headers })).status()).toBe(204);
+  console.log('Function secrets: REST set, invoke sees length and checksum only, list without values, MCP set/list/delete, panel save/delete, delete and function delete.');
+});

@@ -11,7 +11,9 @@ internal static class FunctionRoute
 {
     public const string List = ProjectApiRoute.Database + "/functions";
     public const string Item = List + "/{function}";
-    public const string Description = "Project-token database functions (docs/functions/design.md). Deploy, logs and delete require sql:read and "
+    public const string Secrets = Item + "/secrets";
+    public const string Secret = Secrets + "/{secret}";
+    public const string Description = "Project-token database functions (docs/functions/design.md). Deploy, logs, secrets and delete require sql:read and "
         + "sql:write; invoke requires sql:read. A function is JavaScript defining handler(event); it runs with the function's authority. "
         + ProjectApiRoute.IdentityDescription;
 
@@ -57,6 +59,8 @@ internal static class FunctionRoute
         FunctionBody function => TypedResults.Ok(function),
         FunctionBody[] functions => TypedResults.Ok(functions),
         FunctionLogBody[] logs => TypedResults.Ok(logs),
+        FunctionSecretBody secret => TypedResults.Ok(secret),
+        FunctionSecretBody[] secrets => TypedResults.Ok(secrets),
         TerraBaseFunctionStats stats => TypedResults.Ok(stats),
         FunctionResponse response => new Answer(response),
         Done => TypedResults.NoContent(),

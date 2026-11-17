@@ -32,6 +32,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
             "create_backup", "restore_backup", "get_restore_status",
             "get_functions_reference", "deploy_function", "invoke_function", "list_functions", "get_function", "list_function_logs", "get_function_stats",
             "get_database_rules", "deploy_database_rules", "test_database_rules", "list_database_rules_versions", "restore_database_rules_version",
+            "list_function_secrets", "set_function_secret", "delete_function_secret",
             "delete_project", "delete_saved_query", "delete_function", "delete_file_bucket", "delete_file"
         };
 
@@ -120,7 +121,8 @@ namespace TerraScale.Dashboard.Platform.Mcp
                     throw new AccountAccessException("Scoped key minting was refused. The parent key must be active, unscoped and grant the requested database and access.", (int)(error.StatusCode ?? HttpStatusCode.BadGateway));
                 }
             }
-            var functionTool = tool is "deploy_function" or "invoke_function" or "list_functions" or "get_function" or "list_function_logs" or "get_function_stats";
+            var functionTool = tool is "deploy_function" or "invoke_function" or "list_functions" or "get_function" or "list_function_logs" or "get_function_stats"
+                or "list_function_secrets" or "set_function_secret" or "delete_function_secret";
             var write = functionTool && tool != "invoke_function" || tool is "create_database" or "fork_database" or "set_database_ttl" or "create_backup" or "restore_backup" || RulesMcpTools.Writes.Contains(tool);
             var dataTool = functionTool || tool is "execute_sql" or "run_sql" or "check_sql" or "get_database_schema";
             var sql = Text("sql").Trim();
@@ -210,6 +212,29 @@ namespace TerraScale.Dashboard.Platform.Mcp
                                 FunctionBackend.Validate(stats);
                                 if (stats.Window != window) throw new JsonException("Functions returned the wrong stats window.");
                                 return FunctionMcpOutput.Reply(stats, FunctionMcpJson.Default.TerraBaseFunctionStats);
+                            case "list_function_secrets":
+                                var secrets = await AtHomeAsync(async client => await client.ListSecretsAsync(scope.ProjectId, databaseId, name), ct);
+                                FunctionBackend.ValidateSecrets(secrets);
+                                return FunctionMcpOutput.Reply(FunctionMcpOutput.Secrets(secrets), FunctionMcpJson.Default.McpFunctionSecrets);
+                            case "set_function_secret":
+                                try
+                                {
+                                    var secretName = Text("secret");
+                                    var secretValue = Text("value");
+                                    FunctionBackend.ValidateSecret(secretName, secretValue);
+                                    var saved = await AtHomeAsync(async client => await client.SetSecretAsync(scope.ProjectId, databaseId, name, secretName, new(secretValue)), ct);
+                                    FunctionBackend.ValidateSecrets([saved]);
+                                    return FunctionMcpOutput.SecretSaved(saved);
+                                }
+                                catch (TerraBaseException error) when (error is TerraBaseValidationException or TerraBaseConflictException) { return FunctionMcpOutput.Invalid(error.ErrorCode, error.Message); }
+                                catch (AccountAccessException error) when (error.StatusCode == 400) { return FunctionMcpOutput.Invalid("validation", error.Message); }
+                            case "delete_function_secret":
+                                var removed = Text("secret");
+                                FunctionBackend.ValidateSecretName(removed);
+                                bool deleted;
+                                try { deleted = await AtHomeAsync(async client => await client.DeleteSecretAsync(scope.ProjectId, databaseId, name, removed), ct); }
+                                catch (TerraBaseNotFoundException) { deleted = false; }
+                                return FunctionMcpOutput.Reply(new McpFunctionSecretDeleted(removed, deleted), FunctionMcpJson.Default.McpFunctionSecretDeleted);
                         }
 
                         string InvokeUrl(string functionName) => "https://api.terrascale.tech/v1/projects/" + Uri.EscapeDataString(scope.ProjectId)

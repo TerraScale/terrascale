@@ -99,7 +99,7 @@ Call `get_functions_reference` before writing a function: it returns the handler
 
 `get_function_stats` is read-only and returns aggregate metrics independently of retained logs. Pass `databaseId`, `name` and an optional `window`: `1h`, `24h` (default) or `7d`. Invalid windows return a structured validation error. The result contains `window`, `invocations`, `errors`, `p50Ms`, `p95Ms`, `p99Ms`, `maxMs`, `sqlCalls`, `rowsRead`, `rowsWritten` and oldest-first, zero-filled `buckets`. Each bucket contains `at`, `invocations`, `errors`, `p50Ms` and `p95Ms`.
 
-Project API keys can use the same function tools. Deploy, list, get, logs and stats require SQL read and write scopes; invoke requires SQL read. The reference tool requires no data scope. Database restrictions and project ownership remain enforced. `list_functions`, `get_function`, `list_function_logs` and `get_function_stats` support inspection; `delete_function` retains its dashboard confirmation handoff.
+Project API keys can use the same function tools. Deploy, list, get, logs and stats require SQL read and write scopes; invoke requires SQL read. The reference tool requires no data scope. Database restrictions and project ownership remain enforced. `list_functions`, `get_function`, `list_function_logs` and `get_function_stats` support inspection; `delete_function` retains its dashboard confirmation handoff. `set_function_secret`, `delete_function_secret` and `list_function_secrets` manage a function's write-only secrets with the same SQL read and write scopes; they return names and `updated_at`, never values.
 
 ## Delete resources
 

@@ -22,6 +22,12 @@ namespace TerraScale.Dashboard.Features.Functions
         internal static CallToolResult Deployed(string name, string? cron, DateTimeOffset updatedAt, string url) =>
             Reply(new McpFunctionDeployment(name, cron, updatedAt, url), FunctionMcpJson.Default.McpFunctionDeployment);
 
+        internal static CallToolResult SecretSaved(TerraBaseFunctionSecret secret) =>
+            Reply(new McpFunctionSecret(secret.Name, secret.UpdatedAt), FunctionMcpJson.Default.McpFunctionSecret);
+
+        internal static McpFunctionSecrets Secrets(IReadOnlyList<TerraBaseFunctionSecret> secrets) =>
+            new([.. secrets.Select(secret => new McpFunctionSecret(secret.Name, secret.UpdatedAt))]);
+
         internal static CallToolResult Invalid(string code, string message)
         {
             var position = Position().Match(message);
@@ -95,6 +101,9 @@ namespace TerraScale.Dashboard.Features.Functions
     [JsonSerializable(typeof(McpFunctionDetail))]
     [JsonSerializable(typeof(McpFunctionLogs))]
     [JsonSerializable(typeof(TerraBaseFunctionStats))]
+    [JsonSerializable(typeof(McpFunctionSecret))]
+    [JsonSerializable(typeof(McpFunctionSecrets))]
+    [JsonSerializable(typeof(McpFunctionSecretDeleted))]
     [JsonSerializable(typeof(string))]
     internal sealed partial class FunctionMcpJson : JsonSerializerContext;
 }

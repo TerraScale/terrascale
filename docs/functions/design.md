@@ -56,8 +56,8 @@ for moving execution onto dedicated function hosts; v1 shares the TerraBase proc
   needs `sql:read`. SQL runs with the function's authority (reads and writes), like a backend endpoint.
 - **Billing**: every invocation counts one `invoke` operation in the database's usage, next to reads and writes, and its SQL
   counts as normal SQL reads and writes. Pricing treats invocations as operations.
-- **Secrets**: v1 has none. Per-function secrets will be stored encrypted with the database key (`secrets` map, write-only)
-  and exposed as `event.secrets`; until then do not put credentials in function source.
+- **Secrets**: each function has a write-only `secrets` map exposed to its handler as `event.secrets` (see Secrets below).
+  Do not put credentials in function source.
 - **Logs**: `console.log` lines, status, duration and error of each invocation are kept per function and read through
   `GET .../functions/{name}/logs` (CLI `ts functions logs`, dashboard Functions page).
 
@@ -71,11 +71,34 @@ for moving execution onto dedicated function hosts; v1 shares the TerraBase proc
 | `POST /functions/{name}/invoke` | Run with `event = {trigger: "http", body, query}` |
 | `GET /functions/{name}/stats?window=24h` | Invocation totals and latency percentiles |
 | `GET /functions/{name}/logs` | Invocation logs |
+| `GET /functions/{name}/secrets` | Secret names and `updatedAt`, never values |
+| `PUT /functions/{name}/secrets/{secret}` `{value}` | Set or replace one secret |
+| `DELETE /functions/{name}/secrets/{secret}` | Delete one secret |
 
 Cron events are
 `{trigger: "cron", scheduledAt}`. Any returned object with an integer `status` from 200 to 599 is treated as the response wrapper: only `status` and `body` are used, and other properties are discarded. For example, `return {status: 200, items: rows}` produces an empty response. Preserve a data object's own `status` field by returning `{status: 200, body: {id: 1, status: 404}}`. Values without a top-level `status` property use HTTP 200; `undefined` becomes JSON null. Treat top-level `status` as reserved and wrap data containing that field inside `body`.
 
 Function names are lowercase, at most 63 characters. Deleting the database deletes its functions.
+
+## Secrets
+
+A function's secrets are a write-only map of name to string. Names match `^[A-Z_][A-Z0-9_]{0,63}$`, values are at most
+4 KiB of UTF-8 and a function holds at most 50; breaking a rule returns 400 `invalid_request` or 409 `function_secret_limit`.
+Set, list and delete need the same authority as deploy (`sql:read` and `sql:write`). Responses carry only `name` and
+`updatedAt`; no REST, RPC, dashboard or MCP response, log, stat or error contains a value.
+
+Each value is sealed before it reaches the system catalog with AES-256-GCM under a key derived (HKDF-SHA256, random
+salt) from the database's current data key, the per-database key in the backup key store that also seals its backups and
+home-push transactions. The sealed record names its data key id and binds the database, function and secret name as associated data,
+so it cannot be moved to another secret. Data-key rotation keeps old ids readable; deleting the database shreds its
+keys, which makes its secrets unreadable everywhere, and deletes their catalog records. Deleting a function deletes
+its secrets. A node without the database key store (local development without backups) refuses writes with 503.
+
+Every invocation (HTTP, cron, dashboard, RPC and MCP invoke all run through the same path) reads the function and its
+secrets in one catalog read and opens them, so a change applies from the next invocation without a redeploy. A
+regional writer whose catalog has not yet received a change uses the previous value until it does. The handler sees
+`event.secrets` as a frozen, non-enumerable object: `JSON.stringify(event)` and `console.log(event)` omit it, and a
+missing name is `undefined`. Anything the handler itself logs or returns is its own output.
 
 ## Invocation metrics
 
@@ -109,7 +132,7 @@ transaction and add no customer-database SQL query. Deleting a function or its d
 
 ## Dashboard MCP
 
-Call `get_functions_reference` first for the complete runtime contract and examples. Both signed-in and project API-key MCP connections expose `deploy_function`, `invoke_function`, `list_functions`, `get_function`, `list_function_logs` and `get_function_stats`. Deploy returns structured runner validation errors. Invoke requires only `sql:read` and returns status, content type and body; it includes the newest log only when the caller also has SQL write access. Otherwise `log: null` and `log_note` describe that requirement. Concurrent invocations or cron may make that newest log belong to another run. MCP and dashboard test runs send an empty `event.query`; use the direct HTTPS invoke URL for query parameters. `delete_function` returns a dashboard confirmation URL and leaves the function intact.
+Call `get_functions_reference` first for the complete runtime contract and examples. Both signed-in and project API-key MCP connections expose `deploy_function`, `invoke_function`, `list_functions`, `get_function`, `list_function_logs`, `get_function_stats`, `set_function_secret`, `delete_function_secret` and `list_function_secrets`. Deploy returns structured runner validation errors. Invoke requires only `sql:read` and returns status, content type and body; it includes the newest log only when the caller also has SQL write access. Otherwise `log: null` and `log_note` describe that requirement. Concurrent invocations or cron may make that newest log belong to another run. MCP and dashboard test runs send an empty `event.query`; use the direct HTTPS invoke URL for query parameters. `delete_function` returns a dashboard confirmation URL and leaves the function intact.
 
 A completed MCP invocation retains its status and body if the subsequent log read fails; `log` is null and `log_note` identifies the log retrieval failure. Read existing logs instead of invoking the function again.
 

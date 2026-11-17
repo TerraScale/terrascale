@@ -11,5 +11,8 @@ namespace TerraScale.TerraBase.Contracts.Functions
     [JsonSerializable(typeof(IReadOnlyList<TerraBaseFunctionInvocation>))]
     [JsonSerializable(typeof(TerraBaseFunctionStats))]
     [JsonSerializable(typeof(TerraBaseFunctionDeploy))]
+    [JsonSerializable(typeof(TerraBaseFunctionSecret))]
+    [JsonSerializable(typeof(IReadOnlyList<TerraBaseFunctionSecret>))]
+    [JsonSerializable(typeof(TerraBaseFunctionSecretValue))]
     public sealed partial class FunctionsJson : JsonSerializerContext;
 }

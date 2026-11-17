@@ -36,6 +36,9 @@ type FunctionTools = {
   list_function_logs: { logs: { lines: string[] }[] };
   get_function_stats: { window: string; invocations: number; errors: number; p50Ms: number; p95Ms: number; p99Ms: number; maxMs: number; sqlCalls: number; rowsRead: number; rowsWritten: number;
     buckets: { at: string; invocations: number; errors: number; p50Ms: number; p95Ms: number }[]; error?: { code: string; message: string } };
+  set_function_secret: { name: string; updated_at: string; error?: { code: string; message: string } };
+  list_function_secrets: { secrets: { name: string; updated_at: string }[] };
+  delete_function_secret: { name: string; deleted: boolean };
 };
 
 export async function functionTool<T extends keyof FunctionTools>(request: APIRequestContext, token: string, name: T, args: Record<string, unknown>, isError = false): Promise<FunctionTools[T]> {

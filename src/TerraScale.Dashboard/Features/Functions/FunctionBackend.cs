@@ -15,6 +15,8 @@ namespace TerraScale.Dashboard.Features.Functions
     {
         public const string NameInputPattern = "[a-z][a-z0-9_-]{0,62}";
 
+        public const string SecretInputPattern = "[A-Z_][A-Z0-9_]{0,63}";
+
         public const string StarterSource = "async function handler(event) {\n  const rows = await sql.query(\"SELECT 1 AS ok\");\n  return { rows };\n}\n";
 
         public static bool ValidName(string name)
@@ -109,6 +111,65 @@ namespace TerraScale.Dashboard.Features.Functions
             var result = Record(await target.Client.DeployAsync(target.ProjectId, target.Database, name, new TerraBaseFunctionDeploy(source, cron)));
             Validate(result);
             return result;
+        }
+
+        public async Task<IReadOnlyList<TerraBaseFunctionSecret>> SecretsAsync(AccountContext context, DatabaseRecord database, string name, CancellationToken ct)
+        {
+            CheckName(name);
+            var target = await ClientAsync(context, database, false, WriteScopes, ct);
+            var secrets = await target.Client.ListSecretsAsync(target.ProjectId, target.Database, name);
+            ValidateSecrets(secrets);
+            return secrets;
+        }
+
+        public async Task<TerraBaseFunctionSecret> SetSecretAsync(AccountContext context, DatabaseRecord database, string name, string secret, string value, CancellationToken ct)
+        {
+            CheckName(name);
+            ValidateSecret(secret, value);
+            var target = await ClientAsync(context, database, true, WriteScopes, ct);
+            var saved = await target.Client.SetSecretAsync(target.ProjectId, target.Database, name, secret, new TerraBaseFunctionSecretValue(value));
+            ValidateSecrets([saved]);
+            return saved;
+        }
+
+        public async Task<bool> DeleteSecretAsync(AccountContext context, DatabaseRecord database, string name, string secret, CancellationToken ct)
+        {
+            CheckName(name);
+            ValidateSecretName(secret);
+            var target = await ClientAsync(context, database, true, WriteScopes, ct);
+            try
+            {
+                return await target.Client.DeleteSecretAsync(target.ProjectId, target.Database, name, secret);
+            }
+            catch (TerraBaseNotFoundException)
+            {
+                return false;
+            }
+        }
+
+        internal static void ValidateSecretName(string secret)
+        {
+            if (!SecretNamePattern().IsMatch(secret))
+            {
+                throw new AccountAccessException("Secret names start with an uppercase letter or underscore and use at most 64 uppercase letters, digits or underscores.", 400);
+            }
+        }
+
+        internal static void ValidateSecret(string secret, string value)
+        {
+            ValidateSecretName(secret);
+            if (Encoding.UTF8.GetByteCount(value) is 0 or > 4 * 1024)
+            {
+                throw new AccountAccessException("value is required and at most 4 KiB", 400);
+            }
+        }
+
+        internal static void ValidateSecrets(IReadOnlyList<TerraBaseFunctionSecret> secrets)
+        {
+            if (secrets is not { Count: <= 50 } || !secrets.All(secret => secret is not null && SecretNamePattern().IsMatch(secret.Name)))
+            {
+                throw new JsonException("Functions returned an invalid response.");
+            }
         }
 
         public async Task<TerraBaseFunctionCall> InvokeAsync(AccountContext context, DatabaseRecord database, string name, string body, CancellationToken ct)
@@ -226,6 +287,9 @@ namespace TerraScale.Dashboard.Features.Functions
 
         [GeneratedRegex(@"\A[a-z][a-z0-9_-]{0,62}\z")]
         private static partial Regex DeployNamePattern();
+
+        [GeneratedRegex(@"\A[A-Z_][A-Z0-9_]{0,63}\z")]
+        private static partial Regex SecretNamePattern();
 
         [GeneratedRegex(@"\A(con|prn|aux|nul|com[0-9]|lpt[0-9])\z")]
         private static partial Regex ReservedName();

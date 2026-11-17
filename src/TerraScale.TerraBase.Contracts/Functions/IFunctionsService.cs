@@ -23,6 +23,15 @@ namespace TerraScale.TerraBase.Contracts.Functions
         /// <summary><c>PUT …/functions/{name}</c>.</summary>
         UnaryResult<TerraBaseFunctionInfo> DeployAsync(string projectId, string database, string name, TerraBaseFunctionDeploy request);
 
+        /// <summary><c>GET …/functions/{name}/secrets</c>; names and update times only.</summary>
+        UnaryResult<IReadOnlyList<TerraBaseFunctionSecret>> ListSecretsAsync(string projectId, string database, string name);
+
+        /// <summary><c>PUT …/functions/{name}/secrets/{secret}</c>.</summary>
+        UnaryResult<TerraBaseFunctionSecret> SetSecretAsync(string projectId, string database, string name, string secret, TerraBaseFunctionSecretValue request);
+
+        /// <summary><c>DELETE …/functions/{name}/secrets/{secret}</c>.</summary>
+        UnaryResult<bool> DeleteSecretAsync(string projectId, string database, string name, string secret);
+
         /// <summary><c>POST …/functions/{name}/invoke</c>.</summary>
         UnaryResult<TerraBaseFunctionCall> InvokeAsync(string projectId, string database, string name, string body);
     }

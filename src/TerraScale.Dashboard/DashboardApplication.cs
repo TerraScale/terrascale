@@ -242,6 +242,8 @@ namespace TerraScale.Dashboard
                 EndpointRegistration.Create<FunctionsPageEndpoint>(),
                 EndpointRegistration.Create<DeleteFunctionEndpoint>(),
                 EndpointRegistration.Create<DeployFunctionEndpoint>(),
+                EndpointRegistration.Create<SetFunctionSecretEndpoint>(),
+                EndpointRegistration.Create<DeleteFunctionSecretEndpoint>(),
                 EndpointRegistration.Create<InvokeFunctionEndpoint>(),
                 EndpointRegistration.Create<RulesPageEndpoint>(),
                 EndpointRegistration.Create<DeployRulesEndpoint>(),

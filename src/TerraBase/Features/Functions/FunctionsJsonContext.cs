@@ -15,4 +15,9 @@ namespace TerraBase.Features.Functions;
 [JsonSerializable(typeof(FunctionAggregate))]
 [JsonSerializable(typeof(FunctionRecord))]
 [JsonSerializable(typeof(FunctionSchedule))]
+[JsonSerializable(typeof(SetFunctionSecretRequest))]
+[JsonSerializable(typeof(FunctionSecretBody))]
+[JsonSerializable(typeof(FunctionSecretBody[]))]
+[JsonSerializable(typeof(FunctionSecretRecord))]
+[JsonSerializable(typeof(IReadOnlyDictionary<string, string>))]
 internal sealed partial class FunctionsJsonContext : JsonSerializerContext;
