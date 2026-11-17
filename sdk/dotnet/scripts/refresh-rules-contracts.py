@@ -5,6 +5,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+if len(sys.argv) not in (1, 3):
+    raise SystemExit("usage: refresh-rules-contracts.py [openapi.json producer-revision]")
+
 root = Path(__file__).resolve().parents[3]
 feature = root / "src/TerraBase/Features/Rules"
 base = "/v1/projects/{project}/databases/{database}/rules"
@@ -42,7 +45,7 @@ if len(sys.argv) > 1:
     openapi = json.loads(Path(sys.argv[1]).read_text())
     current = root / "sdk/dotnet/contracts/terrabase/current-public-routes.json"
     body = json.loads(current.read_text())
-    body["serverCommit"] = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    body["serverCommit"] = subprocess.check_output(["git", "rev-parse", sys.argv[2]], cwd=root, text=True).strip()
     body["operations"] = [{"method": method.upper(), "path": path, "operation": operation["operationId"]}
                           for path, methods in sorted(openapi["paths"].items()) for method, operation in sorted(methods.items())
                           if method in ("get", "put", "post", "delete", "patch", "head")]
