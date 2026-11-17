@@ -319,6 +319,8 @@ test('end users read only the rows and columns the rules allow, under handles bo
     expect(stale.headers()['tb-shape-handle']).toBe(refetch.error.handle);
     expect((await bootstrap(aliceToken)).rows).toEqual([{ id: 1, body: 'a1' }, { id: 2, body: 'a2' }]);
     expect(await answer(await row(aliceToken, '2'), 200)).toEqual({ row: { id: 2, body: 'a2' } });
+    await answer(await read(aliceToken, 'offset=-1&columns=id,owner'), 403, 'column_not_readable');
+    await answer(await request.get(rows + '1?columns=owner', { headers: { authorization: 'Bearer ' + aliceToken } }), 403, 'column_not_readable');
 
     await execute(`ALTER TABLE ${table} DROP COLUMN body`);
     await answer(await read(aliceToken, 'offset=-1'), 403, 'rules_invalid');

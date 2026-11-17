@@ -109,7 +109,7 @@ internal static class ShapeFilters
     internal static Forbidden ColumnNotReadable(string column) =>
         new($"{column} is not a readable column of this table", "column_not_readable", new Dictionary<string, string> { ["column"] = column });
 
-    internal static object Columns(string list, IReadOnlyList<string> tableColumns)
+    private static object Columns(string list, IReadOnlyList<string> tableColumns)
     {
         List<string> chosen = [];
         foreach (var part in list.Split(','))

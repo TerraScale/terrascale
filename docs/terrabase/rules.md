@@ -408,7 +408,7 @@ keeps refusing end-user SQL sockets.
   the last 100 versions are kept. To deny everything, deploy `{"tables":{}}`.
 - `restore` checks the old body against today's schema like any deploy.
 - The current rules and their versions are stored in the database's internal shape metadata
-  (`_tb_shape_chunk`, keys `~rules:current` and `~rules:v:<version>`, beside today's `~grant:<table>`), replicated with
+  (`_tb_shape_chunk`, keys `~rules:current` and `~rules:v:<version>`), replicated with
   its pages, captured in CDC so backup replay preserves them, copied by full snapshots, and deleted with the database.
 - Writes go to the home region; other regions answer `421 wrong_region`. Reads of the rules answer from any replica.
 - The dashboard reaches these routes through the shared MagicOnion contracts, like its other TerraBase calls.

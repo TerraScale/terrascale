@@ -18,25 +18,42 @@ internal sealed partial class TursoShapeReader : IRulesSchema
 
     internal StoredRules? Rules(string? version)
     {
-        if (version is null)
+        if (version is not null)
         {
-            var current = Command("SELECT body FROM _tb_shape_chunk WHERE handle = $key AND offset = 0;");
-            current.Parameters.AddWithValue("$key", RulesCurrent);
-            CountRead("shape");
-            using var pointer = current.ExecuteReader();
-            if (!pointer.Read())
-            {
-                return null;
-            }
-
-            version = Encoding.ASCII.GetString(TursoSession.Bytes(pointer, 0));
+            return StoredVersion(version);
         }
 
-        if (Parsed.TryGetValue(version, out var cached))
+        var command = Command("SELECT body FROM _tb_shape_chunk WHERE handle = $key AND offset = 0;");
+        command.Parameters.AddWithValue("$key", RulesCurrent);
+        CountRead("shape");
+        using var pointer = command.ExecuteReader();
+        if (!pointer.Read())
+        {
+            return null;
+        }
+
+        var current = Encoding.ASCII.GetString(TursoSession.Bytes(pointer, 0));
+        if (Parsed.TryGetValue(current, out var cached))
         {
             return cached;
         }
 
+        if (StoredVersion(current) is not { } stored)
+        {
+            return null;
+        }
+
+        if (Parsed.Count >= ParsedRules)
+        {
+            Parsed.Clear();
+        }
+
+        Parsed[current] = stored;
+        return stored;
+    }
+
+    private StoredRules? StoredVersion(string version)
+    {
         var read = Command("SELECT body, sealed_at FROM _tb_shape_chunk WHERE handle = $key AND offset = 0;");
         read.Parameters.AddWithValue("$key", RulesVersionPrefix + version);
         CountRead("shape");
@@ -51,14 +68,7 @@ internal sealed partial class TursoShapeReader : IRulesSchema
         var (digest, updatedBy) = RulesHeader(body.AsSpan(0, split));
         var rules = JsonSerializer.Deserialize(body.AsSpan(split + 1), RulesJsonContext.Default.RulesSet)
             ?? throw new InvalidDataException("a stored rules version is damaged");
-        var stored = new StoredRules(version, rules, new DateTimeOffset(reader.GetInt64(1), TimeSpan.Zero), updatedBy, digest);
-        if (Parsed.Count >= ParsedRules)
-        {
-            Parsed.Clear();
-        }
-
-        Parsed[version] = stored;
-        return stored;
+        return new StoredRules(version, rules, new DateTimeOffset(reader.GetInt64(1), TimeSpan.Zero), updatedBy, digest);
     }
 
     internal RulesVersionPage? RulesVersions(string? after, int limit)
