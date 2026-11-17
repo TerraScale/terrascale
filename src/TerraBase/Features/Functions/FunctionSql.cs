@@ -18,9 +18,12 @@ internal sealed class FunctionSql(ISqlSession session, string? requestId, TimePr
 
     public Task<string> CallAsync(string op, string json, CancellationToken cancellationToken)
     {
-        var call = ++_calls > MaxCalls
-            ? Task.FromResult(Failure(SqlErrors.TooBig($"an invocation makes at most {MaxCalls} sql calls")))
-            : AfterAsync(_tail, op, json, cancellationToken);
+        if (++_calls > MaxCalls)
+        {
+            return Task.FromResult(Failure(SqlErrors.TooBig($"an invocation makes at most {MaxCalls} sql calls")));
+        }
+
+        var call = AfterAsync(_tail, op, json, cancellationToken);
         _tail = call;
         return call;
     }
