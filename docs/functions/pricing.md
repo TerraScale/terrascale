@@ -1,10 +1,32 @@
 # Functions pricing study
 
+## Decision
+
+On 2026-11-17 the founder chose the shared operations bucket (option A below), superseding the option B recommendation:
+
+- Each function invocation is one operation unit in the organization's monthly operations bucket, the same bucket as write units.
+  The bucket is one combined count: write units + invocations.
+- There is no CPU or duration meter. Customers never calculate CPU milliseconds.
+- Free includes 50,000 operations a month, combined, and stops at 50,000. Paid plans keep their included operations,
+  overage rate and hard caps from the catalog; invocations count toward the same numbers.
+- SQL reads inside a handler stay under ordinary read fair use. Writes inside a handler are ordinary write units.
+  The invocation itself is the only extra unit.
+- Every invocation whose handler starts counts, from HTTP or cron, including handler errors, timeouts and cancellation.
+  Auth rejection, a missing function, a refused allowance and a refused memory or capacity admission count nothing.
+- The units per invocation are catalog data (`metering.functionInvocation.operationUnits` in `pricing.json`, today 1),
+  so the price changes with one edit.
+
+Implemented in TerraBase usage metering (`UsageMeter.RecordInvocation`, monthly `invocations` next to write units, peer
+aggregation, `OperationAllowance`) and the allowance contract `operation-units-writes-invocations-global-v3`, whose
+`operations` is the combined count and whose `writeUnits` and `invocations` show its parts. See
+[operation allowance](../terrabase/operation-allowance.md).
+
+The rest of this file is the study as written before the decision.
+
 Internal proposal. Read date: 2026-11-17. USD, excluding taxes and negotiated discounts.
-Nothing is published or approved. This PR changes no public pricing page, catalog, Stripe product or billing code.
 Code baseline: `410e56a302648e3705e472d4d1ed38ace510e6f9`.
 
-## Decision in brief
+## Recommendation before the decision
 
 Recommend a separate invocation allowance plus requests and active CPU overage (option B).
 Keep ordinary SQL write and storage charges. SQL reads remain subject to fair use.

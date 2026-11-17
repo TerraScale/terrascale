@@ -26,6 +26,7 @@ internal sealed class InvokeFunctionEndpoint(IManagementService management, IFun
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status413PayloadTooLarge);
+        Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
         Produces<ErrorBody>(StatusCodes.Status500InternalServerError);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.SqlRead);

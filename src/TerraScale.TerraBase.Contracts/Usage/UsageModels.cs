@@ -12,7 +12,8 @@ namespace TerraScale.TerraBase.Contracts.Usage
 
     /// <summary>The UsageMonth REST representation.</summary>
     [MessagePackObject(true)]
-    public sealed record TerraBaseUsageMonth(string Month, long ReadUnits, long WriteUnits, long Units, long? OrganizationUnits = null, long? OrganizationReadUnits = null);
+    public sealed record TerraBaseUsageMonth(string Month, long ReadUnits, long WriteUnits, long Units, long? OrganizationUnits = null, long? OrganizationReadUnits = null,
+        long Invocations = 0, long? OrganizationInvocations = null);
 
     /// <summary>The DatabaseUsage REST representation.</summary>
     [MessagePackObject(true)]

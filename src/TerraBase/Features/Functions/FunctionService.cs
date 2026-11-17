@@ -23,7 +23,7 @@ public static class FunctionsExtensions
             .AddSingleton<FunctionScheduler>().AddHostedService(provider => provider.GetRequiredService<FunctionScheduler>());
 }
 
-internal sealed partial class FunctionService(SystemCatalog catalog, ISqlService sql, IUsageMeter usage, IMemoryBudget memory,
+internal sealed partial class FunctionService(SystemCatalog catalog, ISqlService sql, IUsageMeter usage, IOperationAllowance allowance, IMemoryBudget memory,
     TerraBaseOptions options, TimeProvider time, RegionalIngress ingress, FunctionSecretSeal secrets, ILogger<FunctionService> logger) : BackgroundService, IFunctions, IHostedLifecycleService
 {
     public const string Schedules = "function_schedules";
@@ -183,6 +183,13 @@ internal sealed partial class FunctionService(SystemCatalog catalog, ISqlService
             {
                 return new NotFound();
             }
+            switch (await allowance.CheckAsync(tenant, MeteredOperation.Invocation, cancellationToken).ConfigureAwait(false))
+            {
+                case QuotaExceeded exceeded:
+                    return new QuotaExceeded(exceeded.Message);
+                case Unavailable refused:
+                    return refused;
+            }
             var secretsJson = await OpenSecretsAsync(tenant, name, code.Secrets, cancellationToken).ConfigureAwait(false);
             reserved = memory.TryReserve(FunctionRunner.MemoryBytes + 2 * (eventJson.Length + secretsJson.Length), tenant);
             if (reserved is null)
@@ -199,13 +206,13 @@ internal sealed partial class FunctionService(SystemCatalog catalog, ISqlService
             {
                 session.BeginRequest();
                 using var running = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _invocationsStopping.Token);
+                usage.RecordInvocation(tenant);
                 run = await Task.Run(() => FunctionRunner.RunAsync(code.Source, eventJson, secretsJson, calls, running.Token), CancellationToken.None)
                     .ConfigureAwait(false);
             }
 
             var error = run.Error;
 
-            usage.RecordOperation(tenant, "invoke", 1);
             var response = error is null ? Response(run.Result!) : new FunctionResponse(500, "application/json",
                 JsonSerializer.SerializeToUtf8Bytes(new ErrorBody(new ErrorDetail("function_error", error, RequestId: requestId,
                     DocsUrl: ErrorDocs.Url("function_error"))), TerraBaseJsonContext.Default.ErrorBody));

@@ -5,7 +5,11 @@ namespace TerraBase.Features.Qos;
 
 internal static class PlanPricing
 {
-    private static readonly JsonElement Plans = Read();
+    private static readonly JsonElement Catalog = Read();
+
+    private static JsonElement Plans => Catalog.GetProperty("plans");
+
+    public static long FunctionInvocationUnits { get; } = Catalog.GetProperty("metering").GetProperty("functionInvocation").GetProperty("operationUnits").GetInt64();
 
     public static long Ceiling(PlanTier plan, string limit)
     {
@@ -27,6 +31,6 @@ internal static class PlanPricing
         using var stream = typeof(PlanPricing).Assembly.GetManifestResourceStream("TerraBase.pricing.json")
             ?? throw new InvalidOperationException("the embedded plan catalog is missing");
         using var document = JsonDocument.Parse(stream);
-        return document.RootElement.GetProperty("plans").Clone();
+        return document.RootElement.Clone();
     }
 }

@@ -23,6 +23,7 @@ with tempfile.TemporaryDirectory(prefix="usage-journey-") as directory:
         '<Compile Remove="Program.cs" />'
         f'<Compile Include="{escape(str(temporary / "Program.cs"))}" />'
         f'<Compile Include="{escape(str(root / "e2e/usage/CompleteMonths.cs"))}" />'
+        f'<Compile Include="{escape(str(root / "e2e/usage/FunctionInvocations.cs"))}" />'
         '</ItemGroup></Target></Project>'
     )
     subprocess.run([

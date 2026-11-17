@@ -7,6 +7,7 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management;
+using TerraBase.Features.Management.Logs;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Stats;
 using TerraBase.Hosting;
@@ -23,6 +24,10 @@ internal sealed record UsageTotals(long Reads, long Writes)
 {
     internal bool Persisted { get; init; }
 
+    public long Invocations { get; init; }
+
+    internal long Operations => OperationTotal.Of(Writes, Invocations);
+
     public OpCounts Counts => new(Reads, Writes);
 
     public long StorageByteHours { get; init; }
@@ -30,20 +35,21 @@ internal sealed record UsageTotals(long Reads, long Writes)
     public long SampledHour { get; init; } = -1;
 }
 
-internal sealed record OpCounts(long Reads, long Writes, IReadOnlyDictionary<string, UsageReading>? Meters = null, long ReadUnits = 0, long WriteUnits = 0)
+internal sealed record OpCounts(long Reads, long Writes, IReadOnlyDictionary<string, UsageReading>? Meters = null, long ReadUnits = 0, long WriteUnits = 0,
+    long Invocations = 0)
 {
     public static OpCounts Zero { get; } = new(0, 0);
 
     public static OpCounts operator +(OpCounts left, OpCounts right)
     {
         return new(left.Reads + right.Reads, left.Writes + right.Writes, UsageReading.Combine(left.Meters, right.Meters, 1),
-            left.ReadUnits + right.ReadUnits, left.WriteUnits + right.WriteUnits);
+            left.ReadUnits + right.ReadUnits, left.WriteUnits + right.WriteUnits, left.Invocations + right.Invocations);
     }
 
     public static OpCounts operator -(OpCounts left, OpCounts right)
     {
         return new(left.Reads - right.Reads, left.Writes - right.Writes, UsageReading.Combine(left.Meters, right.Meters, -1),
-            left.ReadUnits - right.ReadUnits, left.WriteUnits - right.WriteUnits);
+            left.ReadUnits - right.ReadUnits, left.WriteUnits - right.WriteUnits, left.Invocations - right.Invocations);
     }
 }
 
@@ -106,17 +112,24 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
 
     public void RecordRead(TenantContext database, long units)
     {
-        Buffer(new(DatabaseOwner.Of(database), CurrentHour()), 1, 0, units, 0);
-        CountMonth(database, units, 0);
+        Buffer(new(DatabaseOwner.Of(database), CurrentHour()), 1, 0, units, 0, 0);
+        CountMonth(database, units, 0, 0);
         RecordOperation(database, "read", 1);
         stats.Read(database);
     }
 
     public void RecordWrites(TenantContext database, int writes, long units)
     {
-        Buffer(new(DatabaseOwner.Of(database), CurrentHour()), 0, writes, 0, units);
-        CountMonth(database, 0, units);
+        Buffer(new(DatabaseOwner.Of(database), CurrentHour()), 0, writes, 0, units, 0);
+        CountMonth(database, 0, units, 0);
         stats.Wrote(database, writes);
+    }
+
+    public void RecordInvocation(TenantContext database)
+    {
+        RequestLogOperations.Current.Value?.Add(database, 1);
+        Buffer(new(DatabaseOwner.Of(database), CurrentHour()), 0, 0, 0, 0, 1);
+        CountMonth(database, 0, 0, 1);
     }
 
     public void Add(UsageKey key, OpCounts counts)

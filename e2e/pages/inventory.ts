@@ -497,6 +497,9 @@ export const dashboardStates: readonly PageState[] = [
     heading: title('Usage'),
     data: async (page, journey) => {
       await expect(page.locator('#usage-allowance-title')).toHaveText('Free plan allowance');
+      const invocations = page.locator('#usage-allowance .ts-usage-meter').filter({ has: page.locator('dt', { hasText: /^Function invocations this month$/ }) });
+      await expect(invocations.locator('.ts-usage-meter-value')).toHaveAttribute('data-measured', 'true');
+      await expect(invocations.locator('.ts-usage-meter-limit')).toHaveText(/^of 50k operation units\/month$/);
       await expect(page.locator('main')).toContainText(journey.projectName);
     },
   },

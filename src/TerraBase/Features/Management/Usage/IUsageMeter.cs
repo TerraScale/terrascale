@@ -1,3 +1,4 @@
+using TerraBase.Features.Qos;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management.Usage;
@@ -7,6 +8,8 @@ public interface IUsageMeter
     void RecordRead(TenantContext database, long units);
 
     void RecordWrites(TenantContext database, int writes, long units);
+
+    void RecordInvocation(TenantContext database);
 
     void RecordOperation(TenantContext database, string kind, int count);
 
@@ -25,4 +28,9 @@ public static class OperationUnits
     public const int Bytes = 4096;
 
     public static long Of(long bytes) => (bytes + Bytes - 1) / Bytes;
+}
+
+internal static class OperationTotal
+{
+    public static long Of(long writeUnits, long invocations) => checked(writeUnits + (invocations * PlanPricing.FunctionInvocationUnits));
 }

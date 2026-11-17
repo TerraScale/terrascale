@@ -1,13 +1,14 @@
 # Monthly operation allowance, write cap and SQL read fair use
 
-Every plan includes monthly write units ([pricing.json](https://terrascale.tech/pricing.json),
-`metering.allowances`). Free (hobby) stops new writes at its allowance. Paid plans keep writing past
-it, ts-dashboard bills the units over it on the Stripe subscription invoice, and new writes stop at
-the plan's hard cap (`limits.operationUnitCapPerMonth`). SQL reads are never billed; they stop at
+Every plan includes monthly operation units ([pricing.json](https://terrascale.tech/pricing.json),
+`metering.allowances`). Operation units are write units plus function invocations, one combined count.
+Free (hobby) stops new writes and invocations at its allowance. Paid plans keep going past it,
+ts-dashboard bills the units over it on the Stripe subscription invoice, and new writes and invocations
+stop at the plan's hard cap (`limits.operationUnitCapPerMonth`). SQL reads are never billed; they stop at
 the plan's fair use (`limits.sqlReadUnitsPerMonth`). Shape reads are free and never counted.
 Enterprise has no monthly limit.
 
-| Plan | Write units included | Write cap | SQL read fair use |
+| Plan | Operation units included | Operation cap | SQL read fair use |
 |---|---|---|---|
 | hobby | 50,000 | 50,000 | 500,000 |
 | starter | 250,000 | 2,500,000 | 2,500,000 |
@@ -30,6 +31,10 @@ One unit is each started 4 KiB (4,096 bytes), `OperationUnits.Of`.
   at least one unit) toward fair use. Catalog and constant reads count nothing.
 - Shape reads (`…/shape`, CDN chunks) count nothing.
 - Replication bills nothing, so a write counts once, at the database's home.
+- A function invocation counts `metering.functionInvocation.operationUnits` (1) once its handler starts, on the node
+  that runs it, from HTTP or cron, including handler errors, timeouts and cancellation. Auth rejection, a missing
+  function, a refused allowance and a refused memory or capacity admission count nothing. Its SQL counts as above.
+  An invocation is attributed to the month its handler started. No CPU or duration is metered.
 
 ## One month, every region
 
@@ -56,17 +61,19 @@ A month reads every node's own record plus its unflushed units. Units of databas
 |---|---|
 | `month` | The UTC month, `yyyy-MM` |
 | `readUnits`, `writeUnits` | The project's SQL read and write units this month |
-| `units` | The project's billed write units |
-| `organizationUnits` | Billed write units of every project: what the allowance and cap count |
+| `units` | The project's billed operation units: write units plus invocations |
+| `organizationUnits` | Billed operation units of every project: what the allowance and cap count |
 | `organizationReadUnits` | SQL read units of every project: what fair use counts |
+| `invocations`, `organizationInvocations` | Function invocations of the project and of every project |
 
 ### Every organization, for the dashboard
 
 `GET /v1/usage/allowances[?after=<organization id>][&month=<complete yyyy-MM>]` on the internal
 listener (shared peer credential) pages every organization, 25 at a time in id order:
-`periodStart`, `observedAt`, `items[{organizationId, operations, logicalBytes, sqlReads, storageByteHours}]`,
-`next`, `operationsContract` (`write-units-4kib-global-v2`) and `storageContract`
-(`stored-byte-hours-global-v1`). `operations` is the billed write units; `sqlReads` the fair-use read
+`periodStart`, `observedAt`, `items[{organizationId, operations, logicalBytes, sqlReads, storageByteHours, writeUnits, invocations}]`,
+`next`, `operationsContract` (`operation-units-writes-invocations-global-v3`) and `storageContract`
+(`stored-byte-hours-global-v1`). `operations` is the billed operation units, `writeUnits` plus
+`invocations` times the catalog's units per invocation; `sqlReads` the fair-use read
 units; `storageByteHours` the stored bytes times hours this month. Once an hour each node measures the
 stored bytes of every organization's databases it holds and adds bytes × hours since its last sample
 (one hour for its first sample of the month) to its own month record, so a restart in the same hour
@@ -99,9 +106,11 @@ snapshot across requests; creation, deletion and delayed flushes can change what
 
 ## Behavior
 
-- A write statement is refused once the organization's write units this month reach the cap (the
+- A write statement is refused once the organization's operation units this month reach the cap (the
   allowance on hobby): HTTP `429 quota_exceeded` with SQLSTATE `53100` on REST, the WebSocket and
   the Postgres wire, and the upgrade path. Nothing in the statement runs.
+- A function invocation is refused the same way, `429 quota_exceeded` with the same message, before its
+  handler starts; the refusal counts nothing.
 - A SQL read of tables is refused the same way once fair use is reached. Shape reads keep working.
 - The month resets at 00:00 UTC on the first day of the next calendar month.
 - A node reads the organization's month on its first check of the month, then on every usage flush

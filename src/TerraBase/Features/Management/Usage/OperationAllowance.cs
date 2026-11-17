@@ -13,6 +13,8 @@ public enum MeteredOperation
     Write,
 
     SqlRead,
+
+    Invocation,
 }
 
 public interface IOperationAllowance
@@ -37,8 +39,9 @@ internal sealed class OperationAllowance : IOperationAllowance
 
     private static long Limit(string organization, PlanTier plan, MeteredOperation operation) => operation switch
     {
-        MeteredOperation.Write => QosPolicy.For(organization, plan).MonthlyWriteCap,
-        _ => QosPolicy.For(organization, plan).MonthlySqlReads,
+        MeteredOperation.Write or MeteredOperation.Invocation => QosPolicy.For(organization, plan).MonthlyWriteCap,
+        MeteredOperation.SqlRead => QosPolicy.For(organization, plan).MonthlySqlReads,
+        _ => throw new UnreachableException(),
     };
 
     public async ValueTask<OperationAllowanceCheck> CheckAsync(TenantContext database, MeteredOperation operation, CancellationToken cancellationToken)
@@ -70,19 +73,19 @@ internal sealed class OperationAllowance : IOperationAllowance
             };
         }
 
-        var used = operation == MeteredOperation.Write ? units.Writes : units.Reads;
+        var used = operation == MeteredOperation.SqlRead ? units.Reads : units.Operations;
         if (used < limit)
         {
             return new Done();
         }
 
         var name = plan.JsonName;
-        return operation == MeteredOperation.Write
+        return operation == MeteredOperation.SqlRead
             ? new QuotaExceeded(string.Create(CultureInfo.InvariantCulture,
-                $"the organization reached its {name} plan cap of {limit:N0} write units this month; upgrade the plan at https://dash.terrascale.tech/organization?tab=billing to continue writing. Reads remain available"),
-                "operation_allowance")
-            : new QuotaExceeded(string.Create(CultureInfo.InvariantCulture,
                 $"the organization used its {name} plan fair use of {limit:N0} SQL read units this month; shape reads remain available and free. Upgrade the plan at https://dash.terrascale.tech/organization?tab=billing for more"),
-                "read_fair_use");
+                "read_fair_use")
+            : new QuotaExceeded(string.Create(CultureInfo.InvariantCulture,
+                $"the organization reached its {name} plan cap of {limit:N0} operation units this month; upgrade the plan at https://dash.terrascale.tech/organization?tab=billing to continue writing and invoking functions. Reads remain available"),
+                "operation_allowance");
     }
 }

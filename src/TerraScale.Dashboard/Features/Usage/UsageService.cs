@@ -63,7 +63,7 @@ namespace TerraScale.Dashboard.Features.Usage
             }
 
             var month = new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero);
-            return string.Create(CultureInfo.InvariantCulture, $"Writes are paused: this organization used all {cap:N0} operation units of the {plan.Name} plan for {month:MMMM yyyy}. Reads keep working, and writes resume on {month.AddMonths(1):MMMM d} (UTC).");
+            return string.Create(CultureInfo.InvariantCulture, $"Writes and function invocations are paused: this organization used all {cap:N0} operation units of the {plan.Name} plan for {month:MMMM yyyy}. Reads keep working, and writes and invocations resume on {month.AddMonths(1):MMMM d} (UTC).");
         }
 
         public async Task<UsagePage> LoadAsync(ShellModel shell, UsageSelection selection, string tab, string saved, CancellationToken cancellationToken)
@@ -106,8 +106,10 @@ namespace TerraScale.Dashboard.Features.Usage
             long? organizationStorage = complete ? logical : null;
             var units = complete ? result.OperationUnits(controls.Projects.Select(project => project.Id), time.GetUtcNow()) : null;
             var sqlReads = complete ? result.SqlReadUnits(controls.Projects.Select(project => project.Id), time.GetUtcNow()) : null;
+            var invocations = complete ? result.FunctionInvocations(controls.Projects.Select(project => project.Id), time.GetUtcNow()) : null;
             var allowances = new[] {
                 Allowance("Operation units this month", plan?.OperationsAllowance ?? "Limit not published", limits.MonthlyOperations, units ?? 0, false, units is not null),
+                Allowance("Function invocations this month", plan?.OperationsAllowance ?? "Limit not published", limits.MonthlyOperations, invocations ?? 0, false, invocations is not null),
                 Allowance("SQL reads this month", "Not limited", limits.MonthlySqlReads is long.MaxValue ? 0 : limits.MonthlySqlReads, sqlReads ?? 0, false, sqlReads is not null, "read units/month"),
                 Allowance("Storage across regions", plan?.StorageAllowance ?? "Limit not published", limits.StorageBytes, organizationStorage ?? 0, true, organizationStorage is not null),
                 Allowance("Client egress this month", plan?.EgressAllowance ?? "Limit not published", limits.MonthlyEgressBytes, 0, true, false)
