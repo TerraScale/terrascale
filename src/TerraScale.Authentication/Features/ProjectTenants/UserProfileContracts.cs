@@ -13,7 +13,6 @@ public sealed record UserProfilePatch
     public JsonElement PublicMetadata { get; init; }
     public JsonElement PrivateMetadata { get; init; }
     public JsonElement UnsafeMetadata { get; init; }
-    public JsonElement CustomClaims { get; init; }
 }
 
 public sealed record CreateProjectUserRequest(string Email, string? Password = null, string? FirstName = null, string? LastName = null,

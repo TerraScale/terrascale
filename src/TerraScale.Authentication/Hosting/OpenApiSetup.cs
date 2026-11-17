@@ -356,7 +356,7 @@ public static partial class OpenApiSetup
         {
             Type = SecuritySchemeType.Http,
             Scheme = "bearer",
-            Description = "Whole project API key, with no database restriction and auth:tokens:mint. Backend use only; never expose this key to a browser. Organization keys and JWTs are refused.",
+            Description = "Whole project API key, with no database restriction and both sql:read and sql:write. Backend use only; never expose this key to a browser. Organization keys and JWTs are refused.",
         },
         [SecuritySchemes.UserKeyVerifier] = () => new() { Type = SecuritySchemeType.Http, Scheme = "bearer", Description = "Unrestricted project secret API key with auth:read; backend user-key verification only." },
         [SecuritySchemes.ProjectManagement] = () => new()

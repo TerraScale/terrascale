@@ -23,7 +23,6 @@ public sealed record UserRecord(string Id, string InstanceId, string Email, long
     public string PublicMetadata { get; init; } = "{}";
     public string PrivateMetadata { get; init; } = "{}";
     public string UnsafeMetadata { get; init; } = "{}";
-    public string? CustomClaims { get; init; }
     public bool EmailVerified { get; init; } = true;
     public string? Username { get; init; }
 

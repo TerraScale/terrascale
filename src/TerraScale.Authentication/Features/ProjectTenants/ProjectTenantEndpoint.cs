@@ -49,12 +49,10 @@ public sealed record MethodsPatch(bool? Passcode, bool? Password, string? SignUp
 public sealed record UpdateSettingsRequest(MethodsPatch? Methods, BrandingBody? Branding, ConfigurationBody? Configuration = null, AttackProtectionSettings? AttackProtection = null, RestrictionsBody? Restrictions = null, bool? OrganizationPicker = null);
 
 public sealed record ProjectUserBody(string Id, string Email, DateTimeOffset CreatedAt, bool Disabled, string? FirstName, string? LastName,
-    string? ImageUrl, string? ExternalId, bool EmailVerified, JsonElement PublicMetadata, JsonElement PrivateMetadata, JsonElement UnsafeMetadata,
-    JsonElement? CustomClaims)
+    string? ImageUrl, string? ExternalId, bool EmailVerified, JsonElement PublicMetadata, JsonElement PrivateMetadata, JsonElement UnsafeMetadata)
 {
     public static ProjectUserBody From(UserRecord user) => new(user.Id, user.Email, user.CreatedAt, user.Disabled, user.FirstName, user.LastName,
-        user.ImageUrl, user.ExternalId, user.EmailVerified, JsonElement.Parse(user.PublicMetadata), JsonElement.Parse(user.PrivateMetadata), JsonElement.Parse(user.UnsafeMetadata),
-        user.CustomClaims is { } claims ? JsonElement.Parse(claims) : null);
+        user.ImageUrl, user.ExternalId, user.EmailVerified, JsonElement.Parse(user.PublicMetadata), JsonElement.Parse(user.PrivateMetadata), JsonElement.Parse(user.UnsafeMetadata));
 }
 
 /// <summary>A page of end users.</summary>

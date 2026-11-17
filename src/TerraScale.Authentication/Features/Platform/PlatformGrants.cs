@@ -107,7 +107,7 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
             return OidcResults.Forbid(Errors.InvalidClient, InvalidApiKeyNotice);
         }
 
-        var allowed = key.Scopes.Where(scope => !TerraBaseScopes.IsAuth(scope)).ToArray();
+        var allowed = key.Scopes.Where(scope => scope is not (TerraBaseScopes.AuthRead or TerraBaseScopes.AuthWrite)).ToArray();
         var requested = request.GetScopes();
         if (requested.Except(allowed).Any())
         {
@@ -204,7 +204,7 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
             return OidcResults.Forbid(Errors.InvalidTarget, "The organization or project is not one this user reaches.");
         }
 
-        allowed = [.. allowed.Where(scope => !TerraBaseScopes.IsAuth(scope))];
+        allowed = [.. allowed.Where(scope => scope is not (TerraBaseScopes.AuthRead or TerraBaseScopes.AuthWrite))];
         var requested = request.GetScopes();
         if (requested.Except(allowed).Any())
         {

@@ -26,19 +26,6 @@ and the resulting object must fit the size limit; the merged object must fit the
 - `unsafe_metadata` can also be changed by its user. Treat it as untrusted input,
   never as an authorization policy.
 
-`custom_claims` holds trusted claims for [TerraBase Rules](../terrabase/rules.md).
-Only `PATCH /v1/{project}/users/{user}` sets it, with the same `auth:write` key or
-project administrator as the other fields; the user's own `/me/profile` refuses it,
-and creation and import do not take it. A sent object replaces the previous one
-whole and `null` clears it. It is a JSON object of at most 32 members and 1000
-bytes serialized; names match `[a-z][a-z0-9_]{0,62}`; values are strings of at
-most 256 characters, finite numbers, booleans, or arrays of at most 64 strings or
-64 numbers. Anything else answers `400 invalid_request`. User responses return it
-as `custom_claims` (`null` when unset). ts-auth copies it as `claims` into every
-access token it issues the user afterwards, so a change reaches TerraBase at the
-next refresh. The user can read the claims in their token: never put a secret in
-them. Impersonation tokens carry none.
-
 The hosted security page shows the user's name and avatar. A signed-in user
 can `PATCH /v1/{project}/me/profile` with their live project session cookie and
 an exact same-origin `Origin` header. Only first_name, last_name and unsafe_metadata

@@ -127,14 +127,14 @@ claims = jwt.decode(access_token, key.key, algorithms=["ES256"],
 
 Refresh tokens rotate on every use. The initial project refresh token expires at **original sign-in (`auth_time`) + configured project session lifetime** (5 minutes–30 days, default 14 days). Rotation never extends the observed expiry; a policy reduction can shorten it further. Store each successor securely and stop using its predecessor. Keep tokens and client secrets out of URLs, logs and browser persistent storage. On sign-out, clear your app session, use `/oauth/logout` for hosted sign-out and `/oauth/revoke` for token revocation; these are separate from clearing local state.
 
-A project issuer serves only the authorization code and refresh token grants. Project clients also support RFC 7009 token revocation at the discovered `revocation_endpoint`. Project sign-in access tokens also name your project's data audience, `https://api.terrascale.tech/v1/projects/{project}`, and carry the user's trusted claims as `claims`; they reach no row of a database until its rules allow it. Your users reach data stored in TerraScale through short-lived scoped tokens your backend mints for them; see [Data access for your users](#data-access-for-your-users).
+A project issuer serves only the authorization code and refresh token grants. Project clients also support RFC 7009 token revocation at the discovered `revocation_endpoint`. Project sign-in tokens are for your own application: TerraScale's APIs do not accept them. Your users reach data stored in TerraScale through short-lived scoped tokens your backend mints for them; see [Data access for your users](#data-access-for-your-users).
 
 ## Data access for your users
 
-When a signed-in user needs data held in a TerraScale database, your backend mints a scoped end-user access token and the browser uses only that:
+Project sign-in tokens never authorize calls to TerraScale APIs. When a signed-in user needs data held in a TerraScale database, your backend mints a scoped end-user access token and the browser uses only that:
 
 1. Your backend authenticates the user with your own sign-in (or the project sign-in above) and picks their user ID and roles. The asserted `user_id` is a canonical ULID and need not match a ts-auth account: your backend owns the mapping.
-2. Your backend mints the token with `POST /v1/terrascale/projects/{project}/end-user-tokens`, authenticating with a project API key that has `auth:tokens:mint` and no database restriction. Only a project admin can create such a key, and it can neither run SQL nor manage authentication. The request asserts the user ID, optionally the database and up to 32 table names, and optional roles.
+2. Your backend mints the token with `POST /v1/terrascale/projects/{project}/end-user-tokens`, authenticating with a project API key that has both `sql:read` and `sql:write` and no database restriction. The request asserts the user ID, optionally the database and up to 32 table names, and optional roles.
 3. Your backend sends only the returned short-lived JWT (at most 15 minutes) to the browser and keeps the project API key on the server.
 
 TerraBase honors these tokens for shape reads when each table has a read grant. The full mint contract, limits and error behavior are in [scoped end-user access tokens](https://github.com/TerraScale/terrascale/blob/main/docs/auth/scoped-end-user-tokens.md); table grants are described in [shape read grants](https://github.com/TerraScale/terrascale/blob/main/docs/terrabase/shape-read-grants.md).

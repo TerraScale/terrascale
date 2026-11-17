@@ -130,8 +130,7 @@ from [consumer integration](../auth/consumer-integration.md),
 Every such token also names the project's data audiences, one per TerraBase API origin `A` in ts-auth's
 `TS_AUTH_ACCESS_TOKEN_AUDIENCES`: `{A}/v1/projects/{project}`, for example
 `https://gru.api.terrascale.tech/v1/projects/{project}`. No client setting turns this on or off: a token reaches no
-row until the database's rules allow it, and a database without rules allows nothing. ID tokens never work, and
-impersonation tokens (an admin acting as a user) carry neither the data audiences nor `claims`.
+row until the database's rules allow it, and a database without rules allows nothing. ID tokens never work.
 
 The tenant's machine-client tokens (`token_use: machine`, `sub` = `client_id`, 5 to 60 minutes,
 `src/TerraScale.Authentication/Features/Oidc/MachineClients.cs`) are not end users. ts-auth refuses a data audience
@@ -149,10 +148,8 @@ TerraBase accepts a tenant token offline when:
    answers `404` and its keys are dropped.
 3. `typ` is `at+jwt`, `alg` `ES256`, `aud` contains `{A}/v1/projects/{P}` for one of TerraBase's own configured
    `AuthAudiences` `A` (exact match), `exp` is in the future (30-second skew, as today), and `sub` is a canonical ULID.
-4. `token_use` is `user` or `custom`; any other value, or none, answers `401`. Its `scope`, when present, holds only
-   the OpenID sign-in scopes `openid`, `email`, `profile` and `offline_access` (ts-auth's userinfo reads them); any
-   other scope answers `401`. It carries no `project_id`, `instance_id`, `token_kind`, `platform_role`, `key_id` or
-   IP-allowlist claim; any of them answers `401`.
+4. `token_use` is `user` or `custom`; any other value, or none, answers `401`. It carries no `scope`, `project_id`,
+   `instance_id`, `token_kind`, `platform_role`, `key_id` or IP-allowlist claim; any of them answers `401`.
 
 Guests (`is_anonymous: true`) are accepted, and rules see `auth.is_anonymous = 1`. A request with no token is never
 an end user; it answers `401`.
@@ -195,8 +192,7 @@ ts-auth gains a user field `custom_claims`, separate from the profile metadata o
 - A JSON object of at most 32 members and 1000 bytes serialized. Names match `[a-z][a-z0-9_]{0,62}`. Values are
   strings (at most 256 characters), integers, finite numbers, booleans (bound as 1 or 0), or arrays of at most 64
   strings or numbers. Anything else answers `400 invalid_request`.
-- ts-auth copies it into every access token it issues for the user as `claims`, except impersonation tokens; the
-  change reaches TerraBase at the
+- ts-auth copies it into every access token it issues for the user as `claims`; the change reaches TerraBase at the
   user's next refresh. Claims are visible to the user who holds the token; never put a secret in them.
 
 ### 3.4 What rules see

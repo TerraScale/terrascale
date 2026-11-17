@@ -1267,11 +1267,6 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("created_at");
 
-                    b.Property<string>("CustomClaims")
-                        .HasMaxLength(1000)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("custom_claims");
-
                     b.Property<bool>("Disabled")
                         .HasColumnType("INTEGER")
                         .HasColumnName("disabled");
