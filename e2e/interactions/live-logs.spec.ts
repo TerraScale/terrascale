@@ -18,7 +18,6 @@ test('request logs append live and a selected status filter stays still', async 
     await expect(page.locator('#request-log-results')).toContainText(requestId);
     await expect(page.locator('html')).toHaveAttribute('data-in-place', 'live-logs');
     await expect(page).toHaveURL(url);
-    audit.expectStreamCancellation(/\/logs\/live\?/);
     await page.locator('#request-status').selectOption('2xx');
     await expect(page.locator('#request-log-results[data-init]')).toHaveCount(0);
     const frozen = await page.locator('#request-log-results').innerHTML();

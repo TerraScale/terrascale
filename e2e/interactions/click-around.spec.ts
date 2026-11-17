@@ -449,7 +449,6 @@ test('native dropdowns preserve filters and context while browser popovers dismi
   await expect(accountPanel).not.toBeVisible();
   await expect(notifications.locator('.ts-notifications-summary')).toContainText(/unread.*total/);
   await audit.check('notifications from native account popover');
-  audit.expectStreamCancellation(/\/notifications\/live\?view=dialog&/);
   await page.keyboard.press('Escape');
   await expect(notifications).not.toBeVisible();
   await expect(account).toBeFocused();
@@ -494,7 +493,6 @@ test('native dropdowns preserve filters and context while browser popovers dismi
   await expect(accountPanel).not.toBeVisible();
   await expect(notifications.locator('.ts-notifications-summary')).toContainText(/unread.*total/);
   await audit.check('notifications from native account popover on phone');
-  audit.expectStreamCancellation(/\/notifications\/live\?view=dialog&/);
   await page.keyboard.press('Escape');
   await expect(notifications).not.toBeVisible();
   await expect(account).toBeFocused();

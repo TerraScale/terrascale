@@ -15,8 +15,6 @@ type Expected = { url: RegExp; status: number; seen: number; logged: number };
 export class Audit {
   private problems: string[] = [];
   private readonly expected: Expected[] = [];
-  private readonly streams = new Set<Request>();
-  private readonly expectedStreamCancellations: { url: RegExp; seen: number }[] = [];
   private readonly inflight = new Map<Request, number>();
   private readonly downloads = new Set<string>();
   private failed: { url: string; error: string }[] = [];
@@ -42,11 +40,6 @@ export class Audit {
     page.on('requestfailed', (request) => {
       if (this.isRegionPingProbe(request)) {
         this.probeFailures.set(request.url(), (this.probeFailures.get(request.url()) ?? 0) + 1);
-        return;
-      }
-      const cancellation = this.expectedStreamCancellations.find(item => item.seen === 0 && item.url.test(request.url()));
-      if (cancellation && this.streams.has(request) && request.failure()?.errorText === 'net::ERR_ABORTED') {
-        cancellation.seen += 1;
         return;
       }
       this.failed.push({ url: request.url(), error: `${request.method()} ${request.url()} ${request.failure()?.errorText ?? ''}` });
@@ -95,10 +88,6 @@ export class Audit {
     this.expected.push({ url, status, seen: 0, logged: 0 });
   }
 
-  expectStreamCancellation(url: RegExp): void {
-    this.expectedStreamCancellations.push({ url, seen: 0 });
-  }
-
   async check(name: string): Promise<void> {
     const page = this.page;
     await page.waitForLoadState('load');
@@ -136,9 +125,6 @@ export class Audit {
       expect(expected.seen, `HTTP ${expected.status} for ${expected.url}`).toBe(1);
       expect(expected.logged, `console lines for the expected HTTP ${expected.status} of ${expected.url}`).toBeLessThanOrEqual(expected.seen);
     }
-    for (const expected of this.expectedStreamCancellations) {
-      expect(expected.seen, `one successful SSE request cancelled for ${expected.url}`).toBe(1);
-    }
   }
 
   private failures(): string[] {
@@ -172,7 +158,6 @@ export class Audit {
   private response(response: Response): void {
     if (response.headers()['content-type']?.startsWith('text/event-stream')) {
       this.inflight.delete(response.request());
-      if (response.status() === 200) this.streams.add(response.request());
     }
     if (response.status() < 400) return;
     const expected = this.expected.find((candidate) => candidate.status === response.status() && candidate.url.test(response.url()));
