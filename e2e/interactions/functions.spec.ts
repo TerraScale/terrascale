@@ -24,13 +24,15 @@ test('functions list, detail, invocation logs and deletion work through the page
   const row = page.locator('#functions li').filter({ hasText: name });
   await expect(row).toHaveCount(1);
   await row.getByRole('link', { name: 'Open', exact: true }).click();
+  await page.waitForURL((url) => url.searchParams.get('function') === name);
   await expect(page.locator('#function-source')).toHaveValue(functionSource);
   await expect(page.locator('#function-invoke')).toContainText(functionUrl(name));
   await expect(page.locator('#function-logs li')).toHaveCount(2);
   await expect(page.locator('#function-stats .ts-stat').filter({ hasText: 'Invocations' }).locator('dd')).toHaveText('2');
   await expect(page.locator('#function-stats .ts-stat').filter({ hasText: 'p50 latency' }).locator('dd')).toHaveText(/^\d+ ms$/);
-  for (const window of ['Last hour', 'Last 7 days', 'Last 24 hours']) {
-    await page.getByRole('link', { name: window, exact: true }).click();
+  for (const [window, label] of [['1h', 'Last hour'], ['7d', 'Last 7 days'], ['24h', 'Last 24 hours']]) {
+    await page.getByRole('link', { name: label, exact: true }).click();
+    await page.waitForURL((url) => url.searchParams.get('window') === window);
     await expect(page.locator('#function-stats .ts-stat').filter({ hasText: 'Invocations' }).locator('dd')).toHaveText('2');
   }
   const failedFilter = page.waitForURL(url => url.searchParams.get('function') === name && url.searchParams.get('status') === 'error');
