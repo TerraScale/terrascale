@@ -51,3 +51,16 @@ release tag and expand the package using their own registry host, namespace
 and environment repository prefix. They verify provenance and selection offline
 using the existing Sigstore trusted root and workflow identity policy.
 Build-only publication does not create a selection or move a release tag.
+
+Before this producer merges, the parent producer change must be on main and
+the login action must be pinned to C41's main merge commit. C42 must also
+publish a qualified `ci-` orchestrator release whose `release wait` accepts
+the package-only reference. Record that exact release in the producer PR and
+confirm the shared release downloader selects it before enabling auto-merge.
+Older clients reject the new reference after release pointers have moved.
+
+An OCIR authentication, copy or attachment failure stops publication before
+the GHCR release pointer moves. Until corrected, that failure blocks app
+releases; there is no automatic GHCR-only bypass. Roll back through a PR that
+reverts this producer change and coordinate the receiver's registry contract
+with C42. Already-published OCI release pointers are not deleted by a revert.
