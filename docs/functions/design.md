@@ -96,7 +96,8 @@ Errors count execution failures; a handler returning an HTTP error status still 
 Buckets use UTC, oldest first, including zero-filled empty intervals and the current incomplete interval.
 The `1h` window contains 60 minute buckets; `24h` and `7d` contain 24 and 168 hour buckets.
 
-Metrics survive the last-100 log limit. Each function has at most 228 aggregate records: a 60-slot minute ring
+Metrics survive the last-100 log limit. Like invocation logs, they cover the answering regional writer;
+this endpoint does not combine metrics from different regions. Each function has at most 228 aggregate records: a 60-slot minute ring
 and a 168-slot hour ring, each record holding fixed counters and a 64-bin power-of-two millisecond histogram.
 That bounds histogram storage to 14,592 counters per function, plus 228 fixed counter sets and record metadata.
 Percentiles are nearest-rank histogram upper bounds, capped at the observed maximum; they are estimates rather than
