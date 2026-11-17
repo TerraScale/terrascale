@@ -68,7 +68,7 @@ const cases: { name: string; sql: string; args?: string[]; pgSql?: string; expec
   { name: 'single quotes', sql: source + `data->>'name' FROM input`, expected: 'Ada' },
   { name: 'identifier', sql: source + 'data->>key FROM input', expected: 'Ada' },
   { name: 'quoted identifiers', sql: source + '"data"->>"key" FROM input', expected: 'Ada' },
-  { name: 'numbered parameter', sql: source + 'data->>$1 FROM input', args: ['name'], expected: 'Ada' },
+  { name: 'numbered parameter', sql: source + 'data->>?1 FROM input', pgSql: source + 'data->>$1 FROM input', args: ['name'], expected: 'Ada' },
   { name: 'question parameter', sql: source + 'data->>? FROM input', pgSql: source + 'data->>$1 FROM input', args: ['name'], expected: 'Ada' },
   { name: 'nested path', sql: source + `data->'b'->>'c' FROM input`, expected: 'nested' },
   { name: 'array index', sql: source + `data->'items'->>1 FROM input`, expected: 'one' },
