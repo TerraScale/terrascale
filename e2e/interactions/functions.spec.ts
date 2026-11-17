@@ -130,7 +130,7 @@ test('functions list, detail, invocation logs and deletion work through the page
   const detail = await functionTool(page.request, token, 'get_function', { ...scope, name: mcpName });
   expect(detail.function.source).toBe(functionSource);
   expect(detail.invokeUrl).toBe(`${functionUrl(mcpName)}/invoke`);
-  expect((await page.request.post(`${functionUrl(mcpName)}/invoke`, { headers, data: {} })).status()).toBe(200);
+  expect((await page.request.post(`${functionUrl(mcpName)}/invoke`, { headers: await functionAccess(page.request), data: {} })).status()).toBe(200);
   const logs = await functionTool(page.request, token, 'list_function_logs', { ...scope, name: mcpName });
   expect(logs.logs).toHaveLength(2);
   expect(logs.logs[0].lines).toContain('functions journey');
