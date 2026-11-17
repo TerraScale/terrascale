@@ -108,7 +108,7 @@ public static class DeviceFlow
             }, StatusCodes.Status403Forbidden);
         }
 
-        return OidcResults.SignIn(user, session.CreatedAt, device.GetScopes(), OidcIssuer.SignInAudiences(options));
+        return OidcResults.SignIn(options, user, session.CreatedAt, device.GetScopes(), OidcIssuer.SignInAudiences(options));
     }
 
     /// <summary>The confirm page with the client's display name and readable scope labels.</summary>

@@ -19,16 +19,11 @@ public sealed class EndUserAccessTokens(ApiKeys apiKeys, PlatformDirectory proje
     /// <summary>Maximum compact JWT size in ASCII bytes, including signature.</summary>
     public const int MaxTokenBytes = 8192;
 
-    /// <summary>
-    /// Authenticates a live project key with no database restriction and both record scopes.
-    /// An organization key, platform JWT or narrowed key cannot assert project-wide end-user authority.
-    /// </summary>
     internal async Task<ApiKeyRecord?> AuthorizeAsync(string project, string? secret, CancellationToken cancellationToken)
     {
         if (!TerraScaleIds.IsValid(project) || await apiKeys.AuthenticateAsync(secret, cancellationToken).ConfigureAwait(false) is not { } key
             || key.ProjectId != project || key.Database is not null
-            || !key.Scopes.Contains(TerraBaseScopes.SqlRead, StringComparer.Ordinal)
-            || !key.Scopes.Contains(TerraBaseScopes.SqlWrite, StringComparer.Ordinal)
+            || !key.Scopes.Contains(TerraBaseScopes.AuthTokensMint, StringComparer.Ordinal)
             || await projects.ProjectAsync(project, cancellationToken).ConfigureAwait(false) is not { } linked
             || linked.Value.OrganizationId != key.OrganizationId
             || await projects.OrganizationAsync(key.OrganizationId, cancellationToken).ConfigureAwait(false) is null)

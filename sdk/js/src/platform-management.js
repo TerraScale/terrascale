@@ -418,8 +418,8 @@ export function createTerraScaleAccountDeletionClient(config) {
 }
 
 /**
- * Backend-only assertion using a live unrestricted project API key with both
- * data scopes. This credential is never a browser or sign-in credential.
+ * Backend-only assertion using a live unrestricted project API key with
+ * auth:tokens:mint. This credential is never a browser or sign-in credential.
  * Issued tokens expire within 900 seconds; revocation stops future minting.
  * @param {TerraScaleProjectIdentityClientConfig} config
  */

@@ -201,7 +201,7 @@ public abstract class AuthorizeEndpoint(Impersonations impersonations, Sessions 
                     admin is { } liveAdmin ? Sessions.Live(liveAdmin.Session, liveAdmin.Version, clock.GetUtcNow()) : null, cancellationToken);
                 this.HttpContext.Response.Cookies.Append(Impersonations.Cookie(tenant), redeemed.Cookie, ImpersonationBrowser.CookieOptions(redeemed.Live.Record.ExpiresAt));
                 this.HttpContext.Response.Headers["Referrer-Policy"] = "no-referrer";
-                return OidcResults.SignIn(redeemed.Live.User, redeemed.Live.Record.RedeemedAt!.Value, request.GetScopes(),
+                return OidcResults.SignIn(options, redeemed.Live.User, redeemed.Live.Record.RedeemedAt!.Value, request.GetScopes(),
                     OidcResults.Audiences(tenant, options, request.ClientId), impersonation: redeemed.Live.Record);
             }
             catch (ApiException error) when (error.Status == 400)
@@ -214,7 +214,7 @@ public abstract class AuthorizeEndpoint(Impersonations impersonations, Sessions 
         {
             var acting = await impersonations.ResolveAsync(tenant, actingCookie, cancellationToken);
             return acting is not null && acting.Record.ClientId == request.ClientId
-                ? OidcResults.SignIn(acting.User, acting.Record.RedeemedAt!.Value, request.GetScopes(),
+                ? OidcResults.SignIn(options, acting.User, acting.Record.RedeemedAt!.Value, request.GetScopes(),
                     OidcResults.Audiences(tenant, options, request.ClientId), impersonation: acting.Record)
                 : OidcResults.Forbid(Errors.LoginRequired, "End the impersonation before signing in to another client.");
         }
@@ -309,7 +309,7 @@ public abstract class AuthorizeEndpoint(Impersonations impersonations, Sessions 
             }
         }
 
-        return OidcResults.SignIn(signedIn.User, authenticatedAt!.Value, request.GetScopes(), OidcResults.Audiences(tenant, options, request.ClientId), organization: organization,
+        return OidcResults.SignIn(options, signedIn.User, authenticatedAt!.Value, request.GetScopes(), OidcResults.Audiences(tenant, options, request.ClientId), organization: organization,
             organizationPicker: await OidcResults.OrganizationPickerAsync(settings, tenant, request.ClientId, cancellationToken));
     }
 }
@@ -458,7 +458,7 @@ public sealed class TokenEndpoint(Impersonations impersonations, TotpCredentials
             }
         }
 
-        return OidcResults.SignIn(user with { AuthenticationBindings = CredentialLineage.Read(principal) }, authenticationTime, principal.GetScopes(),
+        return OidcResults.SignIn(options, user with { AuthenticationBindings = CredentialLineage.Read(principal) }, authenticationTime, principal.GetScopes(),
             OidcResults.Audiences(tenant, options, request.ClientId ?? principal.GetPresenters().FirstOrDefault()), refreshExpiresAt, acting?.Record, organization,
             organizationPicker: await OidcResults.OrganizationPickerAsync(settings, tenant, request.ClientId, cancellationToken));
     }
@@ -739,10 +739,6 @@ internal static class OidcResults
     public static IResult Forbid(string error, string description) =>
         Results.Forbid(Error(error, description), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
 
-    /// <summary>
-    /// The audiences of a sign-in access token: the platform's (<see cref="OidcIssuer.SignInAudiences"/>), or for a
-    /// project tenant only the client it was issued to, so no TerraScale API accepts it (project-tenant-management.md).
-    /// </summary>
     public static IReadOnlyList<string> Audiences(string tenant, AuthOptions options, string? clientId) =>
         !Tenancy.IsProject(tenant) ? OidcIssuer.SignInAudiences(options)
         : clientId is { Length: > 0 } ? [clientId]
@@ -763,7 +759,7 @@ internal static class OidcResults
     /// access token also carries <see cref="PlatformRoleClaim"/>, read from the stored user at every sign-in and refresh; the
     /// platform owner (<see cref="PlatformBootstrap.OwnerEmail"/>) always carries it.
     /// </summary>
-    public static IResult SignIn(UserRecord user, DateTimeOffset authenticatedAt, IEnumerable<string> scopes, IReadOnlyList<string> audiences,
+    public static IResult SignIn(AuthOptions options, UserRecord user, DateTimeOffset authenticatedAt, IEnumerable<string> scopes, IReadOnlyList<string> audiences,
         DateTimeOffset? refreshExpiresAt = null, ImpersonationRecord? impersonation = null, OrganizationClaims? organization = null, bool organizationPicker = false)
     {
         // TerraBase and platform scopes come only from the role-checked token exchange (TS-598), never with a sign-in,
@@ -773,6 +769,7 @@ internal static class OidcResults
             return Forbid(Errors.InvalidScope, "A sign-in grants only openid, email, profile and offline_access.");
         }
 
+        var dataAccess = impersonation is null && Tenancy.IsProject(user.InstanceId);
         var identity = new ClaimsIdentity(TokenValidationParameters.DefaultAuthenticationType, Claims.Name, Claims.Role)
             .SetClaim(Claims.Subject, user.Id)
             .SetClaim("token_use", "user")
@@ -790,7 +787,12 @@ internal static class OidcResults
             .SetClaim(FixedRefreshTokens.Claim, refreshExpiresAt?.ToUnixTimeSeconds())
             .SetClaim(OidcIssuer.OrganizationPickerClaim, organizationPicker ? "true" : null)
             .SetScopes(scopes)
-            .SetResources(audiences);
+            .SetResources(dataAccess ? [.. audiences, .. options.ProjectDataAudiences(user.InstanceId)] : audiences);
+        if (dataAccess && user.CustomClaims is { } trusted)
+        {
+            identity.SetClaim(TrustedClaims.Claim, JsonElement.Parse(trusted));
+        }
+
         // Only the platform's own tenant has platform admins; TerraBase's explore API reads the claim (platform-databases.md).
         // The platform owner is always one, in code, so a wiped and re-bootstrapped store needs no operator write; every
         // sign-in proves control of the mailbox first.
@@ -818,7 +820,7 @@ internal static class OidcResults
             Claims.GivenName or Claims.FamilyName or Claims.Picture or "public_metadata" => profile ? [Destinations.IdentityToken] : [],
             Claims.Email or Claims.EmailVerified => email ? [Destinations.AccessToken, Destinations.IdentityToken] : [Destinations.AccessToken],
             Claims.AuthenticationTime or "org_id" or "org_slug" or "org_role" => [Destinations.AccessToken, Destinations.IdentityToken],
-            "ts_auth_session" or "token_use" or OidcIssuer.EpochClaim or OidcIssuer.StateClaim or OidcIssuer.MfaClaim or PlatformRoleClaim => [Destinations.AccessToken],
+            "ts_auth_session" or "token_use" or TrustedClaims.Claim or OidcIssuer.EpochClaim or OidcIssuer.StateClaim or OidcIssuer.MfaClaim or PlatformRoleClaim => [Destinations.AccessToken],
             OidcIssuer.OrganizationPickerClaim => [Destinations.IdentityToken],
             _ => [],
         });

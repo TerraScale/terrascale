@@ -41,9 +41,11 @@ set whose final encoded token exceeds this cap returns `400 invalid_request`;
 reduce the roles. The cap applies after JSON/Unicode encoding and signing.
 
 The key must belong to the exact route project, have no database restriction,
-and include both `sql:read` and `sql:write`. Read-only, write-only,
-database-narrowed and organization keys are refused, as are platform JWTs and
-cookies. ts-auth reads the current stored key and constant-time digest, expiry,
+and include `auth:tokens:mint`; it needs no other scope. Only a project admin can
+give a key `auth:tokens:mint`. A mint-only key can neither run SQL nor manage
+ts-auth, yet it can act as any end user of the project, so keep it on the backend.
+Keys without the scope, database-narrowed and organization keys are refused, as
+are platform JWTs and cookies. ts-auth reads the current stored key and constant-time digest, expiry,
 project and organization linkage before minting, rechecking immediately before
 signing. Deleted projects/organizations and revoked, expired or tampered keys
 cannot mint. Existing API-key rotation grace applies.

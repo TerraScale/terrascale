@@ -99,6 +99,10 @@ public sealed partial record AuthOptions
     /// </summary>
     public IReadOnlyList<string> AccessTokenAudiences { get; init; } = [TerraBaseAudience];
 
+    public const string ProjectDataPath = "/v1/projects/";
+
+    public IEnumerable<string> ProjectDataAudiences(string project) => this.AccessTokenAudiences.Select(origin => origin + ProjectDataPath + project);
+
     /// <summary>Confidential service clients allowed the client-credentials grant, registered at startup.</summary>
     public IReadOnlyList<ServiceClientOptions> ServiceClients { get; init; } = [];
 

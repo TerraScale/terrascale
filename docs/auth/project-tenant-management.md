@@ -20,10 +20,18 @@ A project tenant serves, while its project exists:
   `tsauth_session_{project}` for a project. Signing in to a project never
   touches the TerraScale session, and one tenant's cookie never resolves in
   another.
-- A project tenant has no device flow, token exchange, API keys, organizations
-  or platform claims. Its tokens carry `sub`, `email` (with the `email` scope),
-  `iss` = the project issuer and `aud` = the client id; TerraBase does not
-  accept them.
+- A project tenant has no device flow, token exchange, API keys or platform
+  claims. Its access tokens carry `sub`, `email` (with the `email` scope),
+  `iss` = the project issuer and `aud` = the client id and the project's data
+  audiences, `{A}/v1/projects/{project}` for each TerraBase origin `A` in
+  `TS_AUTH_ACCESS_TOKEN_AUDIENCES` (`https://api.terrascale.tech/v1/projects/{project}`
+  in production), with the user's
+  trusted `custom_claims` as `claims` when set
+  ([user profiles](user-profiles.md)). TerraBase validates them against the
+  project's own JWKS and serves rows only as the database's rules allow
+  ([TerraBase Rules](../terrabase/rules.md) section 3). Impersonation and machine
+  client tokens do not carry a data audience, and a machine client's
+  `allowed_audiences` cannot name one (`400 invalid_request`). ID tokens never do.
 - A disabled end user cannot sign in, and its sessions and tokens stop working.
 
 ## 2. Management API
@@ -43,7 +51,9 @@ Step-up operations answer 403 `person_required` to keys. Provider PUT is also
 person-only because it replaces external sign-in credentials and can redirect
 identity trust to a different OAuth application.
 Only project admins can issue, rotate or change allowlists on keys with
-`auth:write`; members can issue `auth:read` keys. Viewers cannot issue auth keys.
+`auth:write` or `auth:tokens:mint`; members can issue `auth:read` keys. A key
+with `auth:tokens:mint` only mints end-user tokens
+([scoped end-user tokens](scoped-end-user-tokens.md)); it manages nothing here. Viewers cannot issue auth keys.
 Authentication scopes are never included in TerraBase token-exchange grants.
 
 The five SDKs use their existing credential pattern:

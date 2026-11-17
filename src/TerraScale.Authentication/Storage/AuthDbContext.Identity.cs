@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Storage;
@@ -51,6 +52,7 @@ public sealed partial class AuthDbContext
             user.Property(row => row.PublicMetadata).HasDefaultValue("{}");
             user.Property(row => row.PrivateMetadata).HasDefaultValue("{}");
             user.Property(row => row.UnsafeMetadata).HasDefaultValue("{}");
+            user.Property(row => row.CustomClaims).HasMaxLength(TrustedClaims.MaxBytes);
             user.HasIndex(row => new { row.InstanceId, row.ExternalId }).IsUnique();
             user.Property(row => row.AuthStamp).IsRequired().HasMaxLength(26);
             user.Property(row => row.Version).IsRequired().HasMaxLength(26).IsConcurrencyToken();
