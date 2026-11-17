@@ -14,7 +14,8 @@ if (process.env.GITHUB_EVENT_NAME === 'pull_request' && quarantine().length) {
     else if (!/^--grep(?:-invert)?=/.test(args[index])) discovery.push(args[index]);
   }
   const reporter = fileURLToPath(new URL('./quarantine-discovery.mjs', import.meta.url));
-  const inventory = JSON.parse(execFileSync(process.execPath, [cli, 'test', ...discovery, '--list', '--reporter=' + reporter], { env, encoding: 'utf8', maxBuffer: 10_000_000 }));
+  const list = (selection, environment) => JSON.parse(execFileSync(process.execPath, [cli, 'test', ...selection, '--list', '--reporter=' + reporter], { env: environment, encoding: 'utf8', maxBuffer: 10_000_000 }));
+  const inventory = list(discovery, env);
   const entries = quarantine();
   const filters = new Set();
   const summary = [];
@@ -38,6 +39,11 @@ if (process.env.GITHUB_EVENT_NAME === 'pull_request' && quarantine().length) {
   }
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n### Quarantine exclusions\n${summary.join('\n') || 'No unambiguous matching tests.'}\n`);
   env.JOURNEY_QUARANTINE_GREP = JSON.stringify([...filters]);
+  if (filters.size && !list([...args, '--pass-with-no-tests'], env).length
+    && list(args, { ...env, JOURNEY_QUARANTINE_GREP: '[]' }).length) {
+    process.stdout.write('All selected tests were excluded by quarantine.\n');
+    process.exit(0);
+  }
 }
 const child = spawn(process.execPath, [cli, 'test', ...args], { env, stdio: 'inherit' });
 const result = await new Promise(resolve => child.once('exit', (code, signal) => resolve({ code, signal })));

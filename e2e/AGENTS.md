@@ -33,7 +33,9 @@ tests before execution using Playwright discovery, exact structural resolution a
 excluded tests; ambiguous or tagged identities stay runnable. Main pushes, dispatches and the production journey still run them; their failures
 appear in the summary and the reporting workflow comments on their issues with the run link, without
 failing the gate. Other test failures, global setup/teardown errors, interruption and timeouts still fail.
-Local runs without the CI issue snapshot run every test normally.
+When quarantine excludes every selected test, discovery confirms the original selection was nonempty and the
+invocation reports that no tests remain. Invalid selections and discovery errors still fail. Local runs without
+the CI issue snapshot run every test normally.
 
 Fix the root cause, prove the fix with the journey, and close the issue to leave quarantine. Closing it
 removes the entry on the next invocation; no list file or follow-up PR is needed. Each quarantined test
