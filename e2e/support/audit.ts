@@ -16,6 +16,7 @@ export class Audit {
   private problems: string[] = [];
   private readonly expected: Expected[] = [];
   private readonly inflight = new Map<Request, number>();
+  private readonly streams = new Set<Request>();
   private readonly downloads = new Set<string>();
   private failed: { url: string; error: string }[] = [];
   private readonly probeConsole: { url: string; problem: string }[] = [];
@@ -42,6 +43,7 @@ export class Audit {
         this.probeFailures.set(request.url(), (this.probeFailures.get(request.url()) ?? 0) + 1);
         return;
       }
+      if (this.streams.has(request) && request.failure()?.errorText === 'net::ERR_ABORTED') return;
       this.failed.push({ url: request.url(), error: `${request.method()} ${request.url()} ${request.failure()?.errorText ?? ''}` });
     });
     page.on('download', (download) => this.downloads.add(download.url()));
@@ -80,6 +82,7 @@ export class Audit {
 
   private ended(request: Request): void {
     if (this.isRegionPingProbe(request)) return;
+    this.streams.delete(request);
     this.inflight.delete(request);
     this.lastActivity = Date.now();
   }
@@ -158,6 +161,7 @@ export class Audit {
   private response(response: Response): void {
     if (response.headers()['content-type']?.startsWith('text/event-stream')) {
       this.inflight.delete(response.request());
+      this.streams.add(response.request());
     }
     if (response.status() < 400) return;
     const expected = this.expected.find((candidate) => candidate.status === response.status() && candidate.url.test(response.url()));
