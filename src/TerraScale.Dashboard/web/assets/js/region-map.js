@@ -330,16 +330,29 @@ const mount = root => {
       for (const side of new Set([preferred[entry.code] ?? 'right', 'right', 'left', 'bottom', 'top'])) {
         const wantX = side === 'right' ? entry.x + 16 : side === 'left' ? entry.x - 16 - cw : entry.x - cw / 2;
         const wantY = side === 'top' ? entry.y - 16 - ch : side === 'bottom' ? entry.y + 16 : entry.y - ch / 2;
-        const box = { x: clamp(wantX, frameLeft + 10, frameLeft + frameWidth - 10 - cw), y: clamp(wantY, top + 6, top + tall - 6 - ch), w: cw, h: ch };
+        const x = clamp(wantX, frameLeft + 10, frameLeft + frameWidth - 10 - cw);
         const upright = side === 'top' || side === 'bottom';
-        let cost = Math.abs(box.x - wantX) * (upright ? 0.1 : 4) + Math.abs(box.y - wantY) * (upright ? 4 : 0.1);
-        for (const other of taken) cost += overlap(box, other);
-        for (const other of placed) cost += overlap(box, { x: other.x - 9, y: other.y - 9, w: 18, h: 18 }) * 4;
-        if (!best || cost < best.cost) best = { cost, box };
-        if (cost <= 12) break;
+        for (const y of [wantY, ...taken.flatMap(other => [other.y + other.h + 6, other.y - 6 - ch])]) {
+          const box = { x, y: clamp(y, top + 6, top + tall - 6 - ch), w: cw, h: ch };
+          let cost = Math.abs(box.x - wantX) * (upright ? 0.1 : 4) + Math.abs(box.y - wantY) * (upright ? 4 : 0.1);
+          for (const other of taken) cost += overlap(box, other);
+          for (const other of placed) cost += overlap(box, { x: other.x - 9, y: other.y - 9, w: 18, h: 18 }) * 4;
+          if (!best || cost < best.cost) best = { cost, box };
+        }
+        if (best.cost <= 12) break;
       }
       taken.push(best.box);
-      entry.callout.style.transform = `translate(${Math.round(best.box.x)}px, ${Math.round(best.box.y)}px)`;
+    }
+    if (taken.some((box, index) => taken.slice(index + 1).some(other => overlap(box, other) > 0))) {
+      const column = [...taken].sort((a, b) => a.y - b.y);
+      for (const [index, box] of column.entries()) {
+        for (const above of column.slice(0, index)) if (above.x < box.x + box.w && box.x < above.x + above.w) box.y = Math.max(box.y, above.y + above.h + 6);
+      }
+      const shift = Math.min(Math.max(...column.map(box => box.y + box.h)) - (top + tall - 6), Math.min(...column.map(box => box.y)) - (top + 6));
+      if (shift > 0) for (const box of column) box.y -= shift;
+    }
+    for (const [index, entry] of placed.entries()) {
+      entry.callout.style.transform = `translate(${Math.round(taken[index].x)}px, ${Math.round(taken[index].y)}px)`;
       entry.callout.dataset.placed = '';
     }
     root.dataset.ready = '';

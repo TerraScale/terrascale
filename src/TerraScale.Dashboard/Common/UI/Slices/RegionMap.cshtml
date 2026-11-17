@@ -17,27 +17,19 @@
         @foreach (var region in regions)
         {
             var selected = Model.IsSelected(region);
-            <li class="ts-region-callout" data-region="@region.Key" data-selected="@(selected ? "true" : "false")" data-ping-url="@(pings ? region.PingUrl : "")">
+            var ping = pings && region.PingUrl.Length > 0;
+            <li class="ts-region-callout" data-region="@region.Key" data-selected="@(selected ? "true" : "false")" data-ping-url="@(ping ? region.PingUrl : "")">
                 @if (Model.Selects)
                 {
                     <label class="ts-region-callout-body">
-                        <span class="ts-region-mark"><input type="@(Model.Exclusive ? "radio" : "checkbox")" name="@Model.Field" value="@region.Code" checked="@selected" required="@Model.Exclusive" /><i class="ts-region-busy" aria-hidden="true"></i></span>
-                        @if (region.Flag.Length > 0) { <img class="ts-region-flag" src="@Assets.Url($"flags/{region.Flag}.svg")" alt="" width="20" height="15" /> } else { <span class="ts-region-flag ts-region-flag-none">@Icons.Render("Globe", 14)</span> }
-                        <span class="ts-region-name">@region.Title</span>
-                        @if (region.Title != region.Key) { <span class="ts-region-code ts-mono">@region.Key</span> }
-                        @if (pings && region.PingUrl.Length > 0) { <span class="ts-region-ping" data-region-ping data-state="pending" title="Round trip from your browser to @region.Title">Measuring…</span>@if (Model.Selects) { <span class="ts-region-ping-best">Lowest ping</span> } }
-                        @if (region.Detail.Length > 0) { <span class="ts-region-detail">@region.Detail</span> }
+                        <input class="ts-region-toggle" type="@(Model.Exclusive ? "radio" : "checkbox")" name="@Model.Field" value="@region.Code" checked="@selected" required="@Model.Exclusive" />
+                        <span class="ts-region-tick" aria-hidden="true"><i class="ts-region-busy"></i></span>
+                        @{ RegionRows(region, ping); }
                     </label>
                 }
                 else
                 {
-                    <span class="ts-region-callout-body">
-                        @if (region.Flag.Length > 0) { <img class="ts-region-flag" src="@Assets.Url($"flags/{region.Flag}.svg")" alt="" width="20" height="15" /> } else { <span class="ts-region-flag ts-region-flag-none">@Icons.Render("Globe", 14)</span> }
-                        <span class="ts-region-name">@region.Title</span>
-                        @if (region.Title != region.Key) { <span class="ts-region-code ts-mono">@region.Key</span> }
-                        @if (pings && region.PingUrl.Length > 0) { <span class="ts-region-ping" data-region-ping data-state="pending" title="Round trip from your browser to @region.Title">Measuring…</span><span class="ts-region-ping-best">Lowest ping</span> }
-                        @if (region.Detail.Length > 0) { <span class="ts-region-detail">@region.Detail</span> }
-                    </span>
+                    <span class="ts-region-callout-body">@{ RegionRows(region, ping); }</span>
                 }
             </li>
         }
@@ -46,3 +38,20 @@
     @if (Model.Selects && !Model.Exclusive && Model.Minimum.Length > 0) { <p class="ts-region-map-status" role="status" data-region-status data-message="@Model.Minimum"></p> }
 </div>
 <script type="module" src="@Assets.Url("js/region-map.js")"></script>
+@functions {
+    private void RegionRows(RegionMapRegion region, bool ping)
+    {
+        <span class="ts-region-title">
+            @if (region.Flag.Length > 0) { <img class="ts-region-flag" src="@Assets.Url($"flags/{region.Flag}.svg")" alt="" width="20" height="15" /> } else { <span class="ts-region-flag ts-region-flag-none">@Icons.Render("Globe", 14)</span> }
+            <span class="ts-region-name">@region.Title</span>
+        </span>
+        @if (region.Title != region.Key || ping || region.Detail.Length > 0)
+        {
+            <span class="ts-region-meta">
+                @if (region.Title != region.Key) { <span class="ts-region-chip ts-region-code">@region.Key</span> }
+                @if (ping) { <span class="ts-region-chip ts-region-ping" data-region-ping data-state="pending" title="Round trip from your browser to @region.Title">Measuring…</span> }
+                @if (region.Detail.Length > 0) { <span class="ts-region-detail">@region.Detail</span> }
+            </span>
+        }
+    }
+}
