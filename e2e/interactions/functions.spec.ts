@@ -387,9 +387,10 @@ test('function metrics include SQL calls and zero-filled latency buckets', async
     await expect(page.locator('#function-logs summary')).toContainText('Failed');
     await audit.check(`${action} retains invocation filters when switching windows`);
   }
-  const invalid = await request.get(`${url}/stats?window=2h`, { headers });
+  const validationHeaders = await functionAccess(request);
+  const invalid = await request.get(`${url}/stats?window=2h`, { headers: validationHeaders });
   expect(invalid.status()).toBe(400);
   expect((await invalid.json()).error.code).toBe('invalid_request');
-  expect((await request.delete(url, { headers })).status()).toBe(204);
-  expect((await request.get(`${url}/stats`, { headers })).status()).toBe(404);
+  expect((await request.delete(url, { headers: validationHeaders })).status()).toBe(204);
+  expect((await request.get(`${url}/stats`, { headers: validationHeaders })).status()).toBe(404);
 });
