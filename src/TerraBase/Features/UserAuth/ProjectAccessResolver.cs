@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Collections.Frozen;
 using System.Security.Claims;
 using TerraBase.Errors;
 using TerraBase.Features.Management;
@@ -43,7 +42,6 @@ internal static class ProjectAccessResolver
 
         return new ProjectAccess(actor, project, organization, restricted, restrictedId)
         {
-            Roles = jwt.FindAll("roles").Select(claim => claim.Value).ToFrozenSet(StringComparer.Ordinal),
             Auth = context.Features.Get<RulesAuth>(),
         };
     }

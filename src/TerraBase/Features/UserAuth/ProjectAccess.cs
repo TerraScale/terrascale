@@ -7,7 +7,7 @@ public sealed record ProjectAccess(string Actor, string ProjectId, string Organi
 {
     public bool IsEndUser => Auth is not null;
 
-    public IReadOnlySet<string> Roles { get; init; } = FrozenSet<string>.Empty;
+    public IReadOnlySet<string> Roles => Auth?.Roles ?? FrozenSet<string>.Empty;
 
     internal RulesAuth? Auth { get; init; }
 
