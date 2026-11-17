@@ -285,73 +285,64 @@ const operations = {
           wrong.push(`#${index} ${JSON.stringify(raw.slice(0, 60))} ${column}: expected ${expected ?? 'refused'}, got ${got ?? 'refused'}`);
     check(wrong.length === 0, `origin rule: ${wrong.length} of ${2 * cases.length} checks differ: ${wrong.join('; ')}`);
   },
-  async 'custom_tokens.mint'() {
-    const apiKey = process.env.TERRASCALE_API_KEY;
-    const keyId = apiKey.replace(/^sk_/, '').slice(0, 26);
-    const exchange = await fetch('https://auth.terrascale.tech/terrascale/oauth/token', {
-      method: 'POST',
-      headers: { Authorization: 'Basic ' + Buffer.from(keyId + ':' + apiKey).toString('base64') },
-      body: new URLSearchParams({ grant_type: 'client_credentials', project, scope: 'databases:read databases:write' }),
-    });
-    same(exchange.status, 200, 'Rules owner token');
-    const ownerToken = (await exchange.json()).access_token;
-    writeFileSync(join(process.env.E2E_SECRETS, 'custom-token-js-owner'), ownerToken, { mode: 0o600 });
-    const owner = { Authorization: 'Bearer ' + ownerToken };
+  async 'rules.manage'() {
+    const rules = state.db.rules;
     const database = process.env.E2E_DATABASE_ID;
-    const root = 'https://api.terrascale.tech/v1/projects/' + project + '/databases/' + database;
-    const prior = await fetch(root + '/rules', { headers: owner });
-    let before = null;
-    if (prior.status === 404) same((await prior.json()).error.code, 'no_rules', 'missing Rules');
-    else {
-      same(prior.status, 200, 'Rules read');
-      before = await prior.json();
-    }
-    const rules = { tables: { [table]: {
-      read: "row.id = auth.uid AND auth.claims.plan = 'pro'",
-      create: "auth.claims.plan = 'pro'",
-      columns: ['id', 'label'], writable: ['label'], set: { create: { id: 'auth.uid' } },
-    } } };
-    const deployed = await fetch(root + '/rules', {
-      method: 'PUT',
-      headers: { ...owner, 'Content-Type': 'application/json', ...(before ? { 'If-Match': '"' + before.version + '"' } : { 'If-None-Match': '*' }) },
-      body: JSON.stringify(rules),
+    const prior = await rules.get().catch((error) => {
+      same(error.code, 'no_rules', 'missing Rules');
+      return null;
     });
-    same(deployed.status, 200, 'Rules deploy');
-    const version = (await deployed.json()).version;
+    const read = "row.id = auth.uid AND auth.claims.plan = 'pro'";
+    const set = { tables: { [table]: {
+      read, create: "auth.claims.plan = 'pro'", columns: ['id', 'label'], writable: ['label'], set: { create: { id: 'auth.uid' } },
+    } } };
+    const deployed = await rules.deploy(set, prior?.version ?? null);
+    const got = await rules.get();
+    same([got.version, got.tables[table].read], [deployed.version, read], 'Rules read');
+    const user = process.env.E2E_AUTH_USER;
+    const identity = createTerraScaleProjectIdentityClient({
+      apiBaseUrl: 'https://auth.terrascale.tech', project, projectApiKey: process.env.E2E_AUTH_MINT_KEY,
+    });
+    const minted = await identity.mintEndUserToken({ user_id: user, database, claims: { plan: 'pro', roles: ['editor'] } });
+    check(minted.ok, `custom token mint: ${minted.ok ? '' : `${minted.status} ${minted.error.code} ${minted.error.message}`}`);
+    const token = minted.value;
+    writeFileSync(join(process.env.E2E_SECRETS, 'custom-token-js'), token.access_token, { mode: 0o600 });
+    same([token.token_type, token.expires_in], ['Bearer', 300], 'custom token lifetime');
+    await state.db.execute('INSERT INTO ' + table + "(rowid,id,label) VALUES (700002,'other','hidden')");
     try {
-      const user = process.env.E2E_AUTH_USER;
-      const identity = createTerraScaleProjectIdentityClient({
-        apiBaseUrl: 'https://auth.terrascale.tech', project, projectApiKey: process.env.E2E_AUTH_MINT_KEY,
-      });
-      const minted = await identity.mintEndUserToken({ user_id: user, database, claims: { plan: 'pro', roles: ['editor'] } });
-      check(minted.ok, `custom token mint: ${minted.ok ? '' : `${minted.status} ${minted.error.code} ${minted.error.message}`}`);
-      const token = minted.value;
-      writeFileSync(join(process.env.E2E_SECRETS, 'custom-token-js'), token.access_token, { mode: 0o600 });
-      same([token.token_type, token.expires_in], ['Bearer', 300], 'custom token lifetime');
-      await state.db.execute('INSERT INTO ' + table + "(rowid,id,label) VALUES (700002,'other','hidden')");
-      const bearer = { Authorization: 'Bearer ' + token.access_token };
-      const rows = root + '/tables/' + table + '/rows';
-      const created = await fetch(rows, {
-        method: 'POST', headers: { ...bearer, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ row: { label: 'custom-token' } }),
-      });
-      same(created.status, 201, 'custom token Rules write');
-      const written = await created.json();
-      same(written.row, { id: user, label: 'custom-token' }, 'custom token written row');
-      const row = await fetch(rows + '/' + written.key, { headers: bearer });
-      same(row.status, 200, 'custom token Rules read');
-      same((await row.json()).row, written.row, 'custom token readable row');
-      const hidden = await fetch(rows + '/700002', { headers: bearer });
-      same([hidden.status, (await hidden.json()).error.code], [404, 'row_not_found'], 'custom token hidden row');
+      const rows = createTerraBaseClient({ project, token: token.access_token }).database(database).rows(table);
+      const created = await rows.create({ label: 'custom-token' });
+      check(created.ok, `custom token Rules write: ${created.ok ? '' : `${created.status} ${created.error.code}`}`);
+      same([created.status, created.value.row], [201, { id: user, label: 'custom-token' }], 'custom token written row');
+      const row = await rows.get(created.value.key);
+      check(row.ok, `custom token Rules read: ${row.ok ? '' : `${row.status} ${row.error.code}`}`);
+      same(row.value.row, created.value.row, 'custom token readable row');
+      const hidden = await rows.get('700002');
+      same([hidden.ok, hidden.status, hidden.ok || hidden.error.code], [false, 404, 'row_not_found'], 'custom token hidden row');
+      const update = await rows.update(created.value.key, { label: 'changed' });
+      same([update.ok, update.status, update.ok || update.error.code], [false, 403, 'rule_denied'], 'custom token denied update');
     } finally {
       await state.db.execute('DELETE FROM ' + table + " WHERE rowid = 700002 OR label = 'custom-token'");
-      const restored = await fetch(root + '/rules' + (before ? '/versions/' + before.version + '/restore' : ''), {
-        method: before ? 'POST' : 'PUT',
-        headers: { ...owner, 'Content-Type': 'application/json', 'If-Match': '"' + version + '"' },
-        body: JSON.stringify(before ? {} : { tables: {} }),
-      });
-      same(restored.status, 200, 'Rules restore');
     }
+    const allowed = await rules.test({ operation: 'read', table, auth: { uid: 'owner', claims: { plan: 'pro' } }, row: { id: 'owner' } });
+    same([allowed.allowed, allowed.columns, allowed.problems], [true, ['id', 'label'], []], 'Rules simulator owner');
+    const denied = await rules.test({ operation: 'read', table, auth: { uid: 'other', claims: { plan: 'pro' } }, row: { id: 'owner' } });
+    same([denied.allowed, denied.decidedBy], [false, 'read'], 'Rules simulator other user');
+    const invalid = await refused(() => rules.deploy({ tables: { [table]: { read, columns: ['missing_column'] } } }, deployed.version));
+    same([invalid.status, invalid.code, invalid.details?.details?.problems?.length > 0], [400, 'invalid_rules', true], 'invalid Rules');
+    const stale = await refused(() => rules.deploy(set, null));
+    same([stale.status, stale.code], [412, 'version_mismatch'], 'stale Rules');
+    const updated = await rules.deploy({ tables: {} }, deployed.version);
+    const page = await rules.versions({ limit: 1 });
+    same([page.items.length, page.items[0].version, page.next !== null], [1, updated.version, true], 'Rules first page');
+    const next = await rules.versions({ limit: 1, after: page.next });
+    same([next.items.length, next.items[0].version], [1, deployed.version], 'Rules second page');
+    const version = await rules.version(deployed.version);
+    same([version.version, version.tables[table].read], [deployed.version, read], 'Rules version');
+    const restored = await rules.restore(deployed.version, updated.version);
+    same([restored.version !== deployed.version, restored.tables[table].read], [true, read], 'Rules restore');
+    if (prior) await rules.restore(prior.version, restored.version);
+    else await rules.deploy({ tables: {} }, restored.version);
   },
   async 'functions.stats'() {
     const name = `stats-${run}`;

@@ -148,13 +148,13 @@ export async function runOperations(sdk: Sdk, group: Group, management?: { user:
   else await test.info().attach(`${sdk} group ${group}`, { body: `${result.stdout}\n${result.stderr}`, contentType: 'text/plain' });
   if (twoRegions) process.stdout.write(result.stdout.split('\n').filter(line => line.includes('placement:')).join('\n') + '\n');
   const lines = result.stdout.split('\n').filter((line) => line.startsWith('{')).map((line) => JSON.parse(line) as Line);
-  if (lines.some((line) => ['rules.manage', 'custom_tokens.mint'].includes(line.id) && line.ok)) {
-    process.stdout.write(`${sdk} custom token mint, Rules write and read: PASS\n`);
-  }
   if (lines.some((line) => line.id === 'rules.manage' && line.ok)) {
-    for (const operation of ['get', 'deploy', 'test', 'versions', 'version', 'restore']) {
+    for (const operation of ['get', 'deploy', 'test', 'versions', 'version', 'restore', 'custom token mint', 'allowed write', 'allowed read', 'hidden read', 'denied update']) {
       process.stdout.write(`${sdk} Rules ${operation}: PASS\n`);
     }
+  }
+  if (lines.some((line) => line.id === 'rules.cli' && line.ok)) {
+    for (const command of ['pull', 'deploy', 'test allowed', 'test denied']) process.stdout.write(`ts rules ${command} matches the Go SDK: PASS\n`);
   }
   for (const line of lines) test.info().annotations.push({ type: line.ok ? 'passed' : 'failed', description: `${line.id} ${line.ms} ms${line.error ? `: ${line.error}` : ''}` });
   if (used) {

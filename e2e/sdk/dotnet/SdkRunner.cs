@@ -398,6 +398,13 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
         using var hiddenBody = JsonDocument.Parse(await hidden.Content.ReadAsStreamAsync(cancellationToken));
         if (hidden.StatusCode != HttpStatusCode.NotFound || hiddenBody.RootElement.GetProperty("error").GetProperty("code").GetString() != "row_not_found")
             throw new InvalidOperationException("Custom token revealed another user's row.");
+        using var change = new HttpRequestMessage(HttpMethod.Patch, path + written.RootElement.GetProperty("key").GetString());
+        change.Headers.Authorization = new("Bearer", custom.AccessToken);
+        change.Content = new StringContent("""{"row":{"label":"changed"}}""", Encoding.UTF8, "application/json");
+        using var update = await http.SendAsync(change, cancellationToken);
+        using var updateBody = JsonDocument.Parse(await update.Content.ReadAsStreamAsync(cancellationToken));
+        if (update.StatusCode != HttpStatusCode.Forbidden || updateBody.RootElement.GetProperty("error").GetProperty("code").GetString() != "rule_denied")
+            throw new InvalidOperationException("Custom token update was not denied.");
         await Db.ExecuteAsync($"DELETE FROM {table} WHERE rowid = 700002 OR label = 'custom-token'", cancellationToken: cancellationToken);
         var input = new TerraBaseRulesTestRequest("read", table, new("owner", new Dictionary<string, JsonElement> { ["plan"] = JsonElement.Parse("\"pro\"") }), Row: new Dictionary<string, JsonElement> { ["id"] = JsonSerializer.SerializeToElement("owner", RunnerJson.Default.String) });
         var allowed = await db.TestRulesAsync(input, cancellationToken);
