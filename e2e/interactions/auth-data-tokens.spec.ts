@@ -143,12 +143,10 @@ test('tenant tokens name the project data audience, carry trusted claims, and cu
     expect(exchanged.status()).toBe(200);
     owner.Authorization = 'Bearer ' + (await exchanged.json()).access_token;
     saveSecret('data-token-project-token', owner.Authorization.slice(7));
-    for (const name of ['custom-token-home', 'custom-token-other']) {
-      const created = await request.post(api + '/databases', { headers: owner, data: { name: name + '-' + randomBytes(4).toString('hex') } });
-      expect(created.status(), await created.text()).toBe(201);
-      databases.push((await created.json()).id as string);
-    }
-    const [home, other] = databases.map(id => api + '/databases/' + id);
+    const homeDatabase = await request.post(api + '/databases', { headers: owner, data: { name: 'custom-token-' + randomBytes(4).toString('hex') } });
+    expect(homeDatabase.status(), await homeDatabase.text()).toBe(201);
+    databases.push((await homeDatabase.json()).id as string);
+    const home = api + '/databases/' + databases[0];
     const schema = await request.post(home + '/sql/execute', {
       headers: owner, data: { statements: [{ sql: 'CREATE TABLE notes (id INTEGER PRIMARY KEY, owner_id TEXT NOT NULL, title TEXT NOT NULL)' }] },
     });
@@ -189,8 +187,11 @@ test('tenant tokens name the project data audience, carry trusted claims, and cu
     expect(written.row).toMatchObject({ owner_id: user, title: 'from the backend' });
     const fetched = await logged('GET', '…/tables/notes/rows/{key}', await request.get(home + '/tables/notes/rows/' + written.key, { headers: bearer }), 200);
     expect(fetched.row).toMatchObject({ owner_id: user, title: 'from the backend' });
-    expect((await logged('GET', '{other database}/tables/notes/rows/{key}', await request.get(other + '/tables/notes/rows/' + written.key, { headers: bearer }), 404)).error.code).toBe('unknown_database');
-    expect((await logged('POST', '{other database}/tables/notes/rows', await request.post(other + '/tables/notes/rows', { headers: bearer, data: { row: { title: 'x' } } }), 404)).error.code).toBe('unknown_database');
+    const elsewhere = await mint(mintKey, { ...minting, database: '01ARZ3NDEKTSV4RRFFQ69G5FAV' }, 200) as { access_token: string };
+    saveSecret('data-token-custom-elsewhere', elsewhere.access_token);
+    const restricted = { Authorization: 'Bearer ' + elsewhere.access_token };
+    expect((await logged('GET', '…/tables/notes/rows/{key} restricted to another database', await request.get(home + '/tables/notes/rows/' + written.key, { headers: restricted }), 404)).error.code).toBe('unknown_database');
+    expect((await logged('POST', '…/tables/notes/rows restricted to another database', await request.post(home + '/tables/notes/rows', { headers: restricted, data: { row: { title: 'x' } } }), 404)).error.code).toBe('unknown_database');
     await logged('GET', '/{project}/oauth/userinfo', await request.get(auth + '/' + project + '/oauth/userinfo', { headers: bearer }), 401);
 
     const manage = await ownerPage.request.get(auth + '/v1/' + project + '/users', { headers: { Authorization: 'Bearer ' + mintKey } });
