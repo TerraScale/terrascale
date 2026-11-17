@@ -86,7 +86,12 @@ internal sealed partial class UsageMeter
                         }
 
                         var saved = JsonSerializer.Deserialize(record.Json.Span, ManagementJsonContext.Default.UsageTotals)!;
-                        units = new(units.Reads + saved.Reads, units.Writes + saved.Writes) { StorageByteHours = checked(units.StorageByteHours + saved.StorageByteHours), Persisted = true };
+                        units = new(units.Reads + saved.Reads, units.Writes + saved.Writes)
+                        {
+                            Invocations = checked(units.Invocations + saved.Invocations),
+                            StorageByteHours = checked(units.StorageByteHours + saved.StorageByteHours),
+                            Persisted = true,
+                        };
                     }
 
                     if (!page.HasMore)
@@ -111,7 +116,7 @@ internal sealed partial class UsageMeter
                 if (key.Database.OrganizationId == organizationId && (projectId is null || key.Database.ProjectId == projectId)
                     && key.Scope != UsageScope.Lifetime && MonthId(key.Hour) == month)
                 {
-                    total = total with { Reads = total.Reads + counts.ReadUnits, Writes = total.Writes + counts.WriteUnits };
+                    total = total with { Reads = total.Reads + counts.ReadUnits, Writes = total.Writes + counts.WriteUnits, Invocations = total.Invocations + counts.Invocations };
                 }
             }
 

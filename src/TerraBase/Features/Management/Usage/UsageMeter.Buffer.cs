@@ -18,13 +18,13 @@ internal sealed partial class UsageMeter
 
     private sealed class Sums
     {
-        public long Reads, Writes, ReadUnits, WriteUnits, Count, Value;
+        public long Reads, Writes, ReadUnits, WriteUnits, Invocations, Count, Value;
         public long[]? Latency;
 
         public static long Plus(long left, long right) => left > long.MaxValue - right ? long.MaxValue : left + right;
     }
 
-    private void Buffer(UsageKey key, long reads, long writes, long readUnits, long writeUnits)
+    private void Buffer(UsageKey key, long reads, long writes, long readUnits, long writeUnits, long invocations)
     {
         var stripe = Current();
         lock (stripe.Gate)
@@ -32,6 +32,7 @@ internal sealed partial class UsageMeter
             var sums = Entry(stripe, (key, null));
             (sums.Reads, sums.Writes) = (Sums.Plus(sums.Reads, reads), Sums.Plus(sums.Writes, writes));
             (sums.ReadUnits, sums.WriteUnits) = (Sums.Plus(sums.ReadUnits, readUnits), Sums.Plus(sums.WriteUnits, writeUnits));
+            sums.Invocations = Sums.Plus(sums.Invocations, invocations);
         }
 
         PublishIfFull(stripe);
@@ -145,7 +146,7 @@ internal sealed partial class UsageMeter
         foreach (var ((key, dimension), sums) in entries)
         {
             Add(key, dimension is null
-                ? new OpCounts(sums.Reads, sums.Writes, ReadUnits: sums.ReadUnits, WriteUnits: sums.WriteUnits)
+                ? new OpCounts(sums.Reads, sums.Writes, ReadUnits: sums.ReadUnits, WriteUnits: sums.WriteUnits, Invocations: sums.Invocations)
                 : new OpCounts(0, 0, new Dictionary<string, UsageReading>(StringComparer.Ordinal)
                 {
                     [dimension.Key] = new(dimension, sums.Count, sums.Value, sums.Latency),

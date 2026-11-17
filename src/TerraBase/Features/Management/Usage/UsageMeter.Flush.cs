@@ -164,10 +164,13 @@ internal sealed partial class UsageMeter
         {
             pruned.Clear();
 
-            foreach (var month in batch.Where(entry => entry.Key.Scope != UsageScope.Lifetime && entry.Value.ReadUnits + entry.Value.WriteUnits != 0)
+            foreach (var month in batch.Where(entry => entry.Key.Scope != UsageScope.Lifetime && entry.Value.ReadUnits + entry.Value.WriteUnits + entry.Value.Invocations != 0)
                 .GroupBy(entry => (entry.Key.Database.OrganizationId, entry.Key.Database.ProjectId, Month: MonthId(entry.Key.Hour))))
             {
-                var units = new UsageTotals(month.Sum(entry => entry.Value.ReadUnits), month.Sum(entry => entry.Value.WriteUnits));
+                var units = new UsageTotals(month.Sum(entry => entry.Value.ReadUnits), month.Sum(entry => entry.Value.WriteUnits))
+                {
+                    Invocations = month.Sum(entry => entry.Value.Invocations),
+                };
                 await AddUnitsAsync(transaction, ProjectMonths(month.Key.ProjectId), Own(month.Key.Month), units, cancellationToken).ConfigureAwait(false);
                 await AddUnitsAsync(transaction, OrganizationMonths(month.Key.OrganizationId), Own(month.Key.Month), units, cancellationToken).ConfigureAwait(false);
             }
@@ -236,7 +239,12 @@ internal sealed partial class UsageMeter
     private static async ValueTask AddUnitsAsync(IStorageTransaction transaction, string kind, string id, UsageTotals units, CancellationToken cancellationToken)
     {
         var saved = await SystemCatalog.GetAsync(transaction, kind, id, ManagementJsonContext.Default.UsageTotals, cancellationToken).ConfigureAwait(false);
-        await PutAsync(transaction, kind, id, (saved ?? new UsageTotals(0, 0)) with { Reads = (saved?.Reads ?? 0) + units.Reads, Writes = (saved?.Writes ?? 0) + units.Writes },
+        await PutAsync(transaction, kind, id, (saved ?? new UsageTotals(0, 0)) with
+        {
+            Reads = (saved?.Reads ?? 0) + units.Reads,
+            Writes = (saved?.Writes ?? 0) + units.Writes,
+            Invocations = (saved?.Invocations ?? 0) + units.Invocations,
+        },
             ManagementJsonContext.Default.UsageTotals, cancellationToken).ConfigureAwait(false);
     }
 

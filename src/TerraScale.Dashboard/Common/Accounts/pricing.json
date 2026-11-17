@@ -9,7 +9,7 @@
     "operationUnit": {
       "name": "Operation unit",
       "bytes": 4096,
-      "definition": "One operation unit is each started 4 KiB (4,096 bytes) of data successfully written; every changed row counts at least one unit. Only writes are billed.",
+      "definition": "One operation unit is each started 4 KiB (4,096 bytes) of data successfully written; every changed row counts at least one unit. Writes and function invocations share one monthly operations allowance.",
       "rules": [
         "Statements, transactions, and batches count each changed row independently.",
         "Each database lives in one home region; writes count there.",
@@ -17,13 +17,18 @@
         "Failed, denied, invalid, throttled, and refused statements are not billed."
       ]
     },
+    "functionInvocation": {
+      "name": "Function invocation",
+      "operationUnits": 1,
+      "definition": "Every function invocation counts in the shared monthly operations allowance, from HTTP or cron, including handler errors and timeouts. Refused invocations are not counted. There is no CPU or duration charge; SQL inside a handler counts like any other SQL."
+    },
     "storage": {
       "name": "Storage",
       "definition": "Stored bytes in the database's home region, sampled hourly. Replica storage is not billed separately. One GB-month is 1 GB (10^9 bytes) stored for a whole month."
     },
     "allowances": {
       "paidOverages": true,
-      "definition": "Free includes small allowances without a card; new writes stop at its operation allowance and there are no overage charges. Paid plans include monthly allowances; operation units over the allowance are added to the next subscription invoice at the overage rate, up to the plan's hard cap (operationUnitCapPerMonth), where new writes stop until the next UTC month or an upgrade. SQL reads stop at the plan's fair use (sqlReadUnitsPerMonth); shape reads stay available. Storage over the allowance is added to the next invoice at the storage overage rate per GB-month of average stored bytes above it. Client egress over the allowance is not billed yet."
+      "definition": "Free includes small allowances without a card; new writes and function invocations stop at its operation allowance and there are no overage charges. Paid plans include monthly allowances; operation units over the allowance are added to the next subscription invoice at the overage rate, up to the plan's hard cap (operationUnitCapPerMonth), where new writes and function invocations stop until the next UTC month or an upgrade. SQL reads stop at the plan's fair use (sqlReadUnitsPerMonth); shape reads stay available. Storage over the allowance is added to the next invoice at the storage overage rate per GB-month of average stored bytes above it. Client egress over the allowance is not billed yet."
     },
     "entitlements": {
       "name": "Plan entitlements",

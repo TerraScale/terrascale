@@ -10,7 +10,8 @@ public sealed record UsagePoint(DateTimeOffset Start, long Reads, long Writes);
 public sealed record DatabaseUsage(
     string DatabaseId, long StorageBytes, long LogicalBytes, long Reads, long Writes, UsagePeriod Period, IReadOnlyList<UsagePoint> Series);
 
-public sealed record UsageMonth(string Month, long ReadUnits, long WriteUnits, long Units, long OrganizationUnits, long OrganizationReadUnits);
+public sealed record UsageMonth(string Month, long ReadUnits, long WriteUnits, long Units, long OrganizationUnits, long OrganizationReadUnits, long Invocations,
+    long OrganizationInvocations);
 
 public sealed record ProjectUsage(
     string ProjectId, long Databases, long StorageBytes, long LogicalBytes, long Reads, long Writes, UsagePeriod Period,
@@ -23,7 +24,8 @@ public readonly union DatabaseUsageResult(DatabaseUsage, NotFound, Validation, U
 
 public readonly union ProjectUsageResult(ProjectUsage, NotFound, Validation, Unavailable);
 
-public sealed record AllowanceUsage(string OrganizationId, long? Operations, long? LogicalBytes, long? SqlReads = null, long? StorageByteHours = null);
+public sealed record AllowanceUsage(string OrganizationId, long? Operations, long? LogicalBytes, long? SqlReads = null, long? StorageByteHours = null,
+    long? WriteUnits = null, long? Invocations = null);
 
 public sealed record AllowanceUsagePage(
     DateTimeOffset PeriodStart, DateTimeOffset ObservedAt, IReadOnlyList<AllowanceUsage> Items, string? Next, string OperationsContract, string StorageContract);

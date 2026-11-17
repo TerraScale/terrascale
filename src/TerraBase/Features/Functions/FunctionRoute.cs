@@ -67,6 +67,7 @@ internal static class FunctionRoute
         Validation error => ErrorResponse.From(error),
         NotFound error => ErrorResponse.From(error),
         Conflict error => ErrorResponse.From(error),
+        QuotaExceeded error => ErrorResponse.From(error),
         Unavailable error => ErrorResponse.From(error),
     };
 

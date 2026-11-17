@@ -43,7 +43,7 @@ internal sealed class ListNodeUsageMonthsEndpoint(UsageMeter meter) : EndpointWi
                 return ErrorResponse.From(new Unavailable("usage accounting is unavailable; retry"));
             }
 
-            items.Add(new NodeUsageMonth(organization!, units.Reads, units.Writes, units.StorageByteHours));
+            items.Add(new NodeUsageMonth(organization!, units.Reads, units.Writes, units.StorageByteHours, units.Invocations));
         }
 
         HttpContext.Response.Headers.CacheControl = "no-store";

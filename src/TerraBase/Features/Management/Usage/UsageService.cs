@@ -9,7 +9,7 @@ namespace TerraBase.Features.Management.Usage;
 internal sealed class UsageService(IStorageEngine engine, IManagementService management, UsageMeter meter, TimeProvider time, SystemCatalog catalog, Features.FileStorage.IFileStorageUsage files)
     : IUsageService
 {
-    internal const string OperationsContract = "write-units-4kib-global-v2";
+    internal const string OperationsContract = "operation-units-writes-invocations-global-v3";
 
     internal const string StorageContract = "stored-byte-hours-global-v1";
 
@@ -188,7 +188,8 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
         return new ProjectUsage(
             projectId, items.Count, checked(items.Sum(item => item.StorageBytes) + fileBytes), checked(items.Sum(item => item.LogicalBytes) + fileBytes),
             items.Sum(item => item.Reads), items.Sum(item => item.Writes), Period(window, series), series, [.. items.Select(item => item with { Series = [] })],
-            new UsageMonth(month, project.Reads, project.Writes, project.Writes, organization.Writes, organization.Reads))
+            new UsageMonth(month, project.Reads, project.Writes, project.Operations, organization.Operations, organization.Reads, project.Invocations,
+                organization.Invocations))
         { FileBytes = fileBytes };
     }
 
@@ -223,9 +224,9 @@ internal sealed class UsageService(IStorageEngine engine, IManagementService man
                     return new Unavailable("usage accounting is unavailable; retry");
                 }
 
-                items.Add(requestedMonth is not null && units is { Persisted: false, Reads: 0, Writes: 0, StorageByteHours: 0 }
+                items.Add(requestedMonth is not null && units is { Persisted: false, Reads: 0, Writes: 0, Invocations: 0, StorageByteHours: 0 }
                     ? new AllowanceUsage(organizationId, null, null)
-                    : new AllowanceUsage(organizationId, units.Writes, null, units.Reads, units.StorageByteHours));
+                    : new AllowanceUsage(organizationId, units.Operations, null, units.Reads, units.StorageByteHours, units.Writes, units.Invocations));
             }
 
             var ended = time.GetUtcNow();

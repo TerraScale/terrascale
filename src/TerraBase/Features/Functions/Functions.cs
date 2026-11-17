@@ -17,7 +17,7 @@ public sealed record SetFunctionSecretRequest(string? Value);
 
 public sealed record FunctionSecretBody(string Name, DateTimeOffset UpdatedAt);
 
-public readonly union FunctionResult(FunctionBody, FunctionBody[], FunctionLogBody[], FunctionSecretBody, FunctionSecretBody[], TerraBaseFunctionStats, FunctionResponse, Done, Validation, NotFound, Conflict, Unavailable);
+public readonly union FunctionResult(FunctionBody, FunctionBody[], FunctionLogBody[], FunctionSecretBody, FunctionSecretBody[], TerraBaseFunctionStats, FunctionResponse, Done, Validation, NotFound, Conflict, QuotaExceeded, Unavailable);
 
 public interface IFunctions
 {

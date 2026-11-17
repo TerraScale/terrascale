@@ -10,7 +10,7 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management.Usage;
 
-public sealed record NodeUsageMonth(string OrganizationId, long Reads, long Writes, long StorageByteHours);
+public sealed record NodeUsageMonth(string OrganizationId, long Reads, long Writes, long StorageByteHours, long Invocations);
 
 public sealed record NodeUsageMonths(IReadOnlyList<NodeUsageMonth> Items);
 
@@ -139,6 +139,8 @@ internal sealed class PeerUsage(IRegionPeers peers, IHttpClientFactory http, Int
                     Operations = sum.Operations is null && item.Operations is null ? null : checked((sum.Operations ?? 0) + (item.Operations ?? 0)),
                     SqlReads = sum.SqlReads is null && item.SqlReads is null ? null : checked((sum.SqlReads ?? 0) + (item.SqlReads ?? 0)),
                     StorageByteHours = sum.StorageByteHours is null && item.StorageByteHours is null ? null : checked((sum.StorageByteHours ?? 0) + (item.StorageByteHours ?? 0)),
+                    WriteUnits = sum.WriteUnits is null && item.WriteUnits is null ? null : checked((sum.WriteUnits ?? 0) + (item.WriteUnits ?? 0)),
+                    Invocations = sum.Invocations is null && item.Invocations is null ? null : checked((sum.Invocations ?? 0) + (item.Invocations ?? 0)),
                 }
                 : item;
         }
@@ -170,8 +172,10 @@ internal sealed class PeerUsage(IRegionPeers peers, IHttpClientFactory http, Int
             ReadUnits = all.Sum(usage => usage.Month.ReadUnits),
             WriteUnits = all.Sum(usage => usage.Month.WriteUnits),
             Units = all.Sum(usage => usage.Month.Units),
-            OrganizationUnits = local.Month.OrganizationUnits + organization.Writes,
+            OrganizationUnits = local.Month.OrganizationUnits + organization.Operations,
             OrganizationReadUnits = local.Month.OrganizationReadUnits + organization.Reads,
+            Invocations = all.Sum(usage => usage.Month.Invocations),
+            OrganizationInvocations = local.Month.OrganizationInvocations + organization.Invocations,
         };
         return local with
         {
@@ -188,7 +192,11 @@ internal sealed class PeerUsage(IRegionPeers peers, IHttpClientFactory http, Int
     }
 
     private static UsageTotals Add(UsageTotals sum, NodeUsageMonth item) =>
-        new(checked(sum.Reads + item.Reads), checked(sum.Writes + item.Writes)) { StorageByteHours = checked(sum.StorageByteHours + item.StorageByteHours) };
+        new(checked(sum.Reads + item.Reads), checked(sum.Writes + item.Writes))
+        {
+            Invocations = checked(sum.Invocations + item.Invocations),
+            StorageByteHours = checked(sum.StorageByteHours + item.StorageByteHours),
+        };
 
     private static HttpRequestMessage Request(RegionPeer peer, string path) => new(HttpMethod.Get, new Uri(peer.Address, path))
     {

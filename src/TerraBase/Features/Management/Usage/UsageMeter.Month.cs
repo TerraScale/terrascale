@@ -6,7 +6,10 @@ using ZLogger;
 
 namespace TerraBase.Features.Management.Usage;
 
-internal sealed record MonthUnits(long Reads, long Writes);
+internal sealed record MonthUnits(long Reads, long Writes, long Invocations)
+{
+    internal long Operations => OperationTotal.Of(Writes, Invocations);
+}
 
 internal readonly union MonthUnitsCheck(MonthUnits, Unavailable);
 
@@ -52,9 +55,9 @@ internal sealed partial class UsageMeter
             };
         }
 
-        var remote = _others.GetValueOrDefault(organizationId) ?? new MonthUnits(0, 0);
+        var remote = _others.GetValueOrDefault(organizationId) ?? new MonthUnits(0, 0, 0);
         var counter = _month.GetOrAdd(organizationId, _ => new MonthCounter());
-        counter.Set(units.Reads + remote.Reads, units.Writes + remote.Writes);
+        counter.Set(units.Reads + remote.Reads, units.Writes + remote.Writes, units.Invocations + remote.Invocations);
         return counter.Read();
     }
 
@@ -74,7 +77,7 @@ internal sealed partial class UsageMeter
 
         foreach (var (organizationId, units) in answered)
         {
-            _others[organizationId] = new MonthUnits(units.Reads, units.Writes);
+            _others[organizationId] = new MonthUnits(units.Reads, units.Writes, units.Invocations);
         }
     }
 
@@ -88,11 +91,11 @@ internal sealed partial class UsageMeter
         }
     }
 
-    private void CountMonth(TenantContext database, long reads, long writes)
+    private void CountMonth(TenantContext database, long reads, long writes, long invocations)
     {
         if (_month.TryGetValue(database.OrganizationId, out var count))
         {
-            count.Add(reads, writes);
+            count.Add(reads, writes, invocations);
         }
     }
 
@@ -100,19 +103,22 @@ internal sealed partial class UsageMeter
     {
         private long _reads;
         private long _writes;
+        private long _invocations;
 
-        public MonthUnits Read() => new(Interlocked.Read(ref _reads), Interlocked.Read(ref _writes));
+        public MonthUnits Read() => new(Interlocked.Read(ref _reads), Interlocked.Read(ref _writes), Interlocked.Read(ref _invocations));
 
-        public void Set(long reads, long writes)
+        public void Set(long reads, long writes, long invocations)
         {
             Interlocked.Exchange(ref _reads, reads);
             Interlocked.Exchange(ref _writes, writes);
+            Interlocked.Exchange(ref _invocations, invocations);
         }
 
-        public void Add(long reads, long writes)
+        public void Add(long reads, long writes, long invocations)
         {
             Interlocked.Add(ref _reads, reads);
             Interlocked.Add(ref _writes, writes);
+            Interlocked.Add(ref _invocations, invocations);
         }
     }
 }
