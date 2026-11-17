@@ -1,5 +1,5 @@
 {
- "source": "TerraBase 3c83b7e9a42ecd1f2852952f905615bcebfac233 /openapi/v1.json (local source inventory)",
+ "source": "TerraBase a6adb4239b6e8e7309baba54b03326c3be36313d /openapi/v1.json (local source inventory)",
  "fetched": "2026-11-17",
  "contract": "sdk/SQL-API.md#databases-for-agents",
  "contract_routes": [

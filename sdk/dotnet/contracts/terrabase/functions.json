@@ -1,6 +1,6 @@
 {
   "producer": "TerraScale/terrascale",
-  "revision": "3c83b7e9a42ecd1f2852952f905615bcebfac233",
+  "revision": "a6adb4239b6e8e7309baba54b03326c3be36313d",
   "inputs": {
     "src/TerraBase/Features/Functions/ListFunctionsEndpoint.cs": "54a3bc70dbe3d22f1147d22d6af8ac99a2314c9e3df983ea842dab4a521ef385",
     "src/TerraBase/Features/Functions/DeployFunctionEndpoint.cs": "a85b596c088346db57037f8d51959083ac3ac6366e6ee0387f5864e8358bfaf6",
