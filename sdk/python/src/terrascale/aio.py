@@ -59,6 +59,7 @@ from .client import _error, _settings
 from .errors import CommitUncertainError, InvalidResponseError, SqlError, SqlErrorCodes
 from .ids import is_valid_id
 from .session import AsyncSqlSession
+from .shapes import AsyncShape
 from .sql import Args, Row, Statement, StatementResult
 
 __all__ = ["AsyncTerraScale", "AsyncDatabase"]
@@ -656,3 +657,7 @@ class AsyncDatabase:
     def connect(self) -> AsyncSqlSession:
         """A SQL WebSocket session: ``await db.connect()`` or ``async with db.connect() as session``."""
         return AsyncSqlSession(self)
+
+    def shape(self, table: str, *, where: str | None = None, columns: Sequence[str] | None = None) -> AsyncShape:
+        """Follow a table with optional SQL filtering and column projection."""
+        return AsyncShape(self._c, self.name, table, where=where, columns=columns)

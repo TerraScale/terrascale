@@ -87,6 +87,38 @@ A refused statement raises `SqlError` with `code` (a `SqlErrorCodes` constant),
 back. `is_transient` is true for `serialization_conflict` and `tenant_busy`. A
 `409 serialization_conflict` is resent at most twice; nothing else is.
 
+## Live data
+
+On the next SDK release, `shape()` follows an ordinary SQL table, with an
+optional `where` condition and `columns` projection:
+
+```python
+from contextlib import aclosing, closing
+
+async with aclosing(adb.shape("todos", where="done = 0", columns=["id", "title"]).watch()) as views:
+    async for view in views:
+        print(view.status, [dict(row) for row in view.rows.values()])
+
+with closing(db.shape("todos").watch()) as views:
+    for view in views:
+        print(view.status, view.rows)
+```
+
+Use an `AsyncDatabase` for `adb` and a synchronous `Database` for `db`.
+Each view is an immutable snapshot: `rows` maps string keys to the same
+`Row` type returned by `query()`, and `offset` is the applied boundary.
+Confirmed keys are decimal row ids; pending local inserts use
+`~<transaction-id>.<rowid>` until settlement.
+Status is `loading` while snapshot pages arrive, `live` at the head, or
+`reconnecting` during transient failures. Changes apply in commit order;
+reconnections resume at the applied offset, and `must_refetch` starts a fresh
+snapshot. `provisional` contains the string keys affected by unconfirmed local
+writes; confirmation or revert removes the settled provisional layer.
+WebSocket hints use bearer headers and HTTP long polling takes over when the
+socket is unavailable. Authentication and permission failures end iteration
+with the SDK exception. Close the iterator when leaving a loop early to release
+its connection.
+
 ### Sessions
 
 `db.connect()` opens a SQL WebSocket session (`terrascale.sql.v1`) for

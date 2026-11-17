@@ -59,6 +59,7 @@ from .auth import (
 from .errors import APIError, CommitUncertainError, InvalidResponseError, SqlError, SqlErrorCodes, error_for
 from .ids import is_valid_id, validate_id
 from .session import SqlSession
+from .shapes import Shape
 from .sql import Args, Row, Statement, StatementResult
 
 __all__ = ["TerraScale", "Database"]
@@ -675,3 +676,7 @@ class Database:
     def connect(self) -> SqlSession:
         """Open a SQL WebSocket session for interactive transactions; close it or use ``with``."""
         return SqlSession(self)
+
+    def shape(self, table: str, *, where: str | None = None, columns: Sequence[str] | None = None) -> Shape:
+        """Follow a table with optional SQL filtering and column projection."""
+        return Shape(self._c, self.name, table, where=where, columns=columns)
