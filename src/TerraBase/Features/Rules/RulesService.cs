@@ -46,40 +46,40 @@ internal sealed class RulesService(IStorageEngine engine, IShapeStorage storage,
             var rules = Rules(writer);
             var current = await rules.ReadRulesAsync(null, cancellationToken).ConfigureAwait(false);
             if (precondition switch
-                {
-                    RulesIfMatch match => current?.Version != match.Version,
-                    RulesIfNone => current is not null,
-                    _ => true,
-                })
+            {
+                RulesIfMatch match => current?.Version != match.Version,
+                RulesIfNone => current is not null,
+                _ => true,
+            })
             {
                 return new StaleRules(current?.Version);
             }
 
-            RulesDocument document;
+            RulesSet set;
             switch (change)
             {
                 case RulesDeploy deploy:
-                    document = deploy.Rules;
+                    set = deploy.Rules;
                     break;
                 case RulesRestore restore when await rules.ReadRulesAsync(restore.Version, cancellationToken).ConfigureAwait(false) is { } stored:
-                    document = stored.Rules;
+                    set = stored.Rules;
                     break;
                 default:
                     return UnknownVersion;
             }
 
-            document = new RulesDocument(new SortedDictionary<string, RulesTable>(document.Tables.ToDictionary(StringComparer.Ordinal), StringComparer.Ordinal));
-            var problems = await rules.CheckRulesAsync(document, cancellationToken).ConfigureAwait(false);
+            set = new RulesSet(new SortedDictionary<string, RulesTable>(set.Tables.ToDictionary(StringComparer.Ordinal), StringComparer.Ordinal));
+            var problems = await rules.CheckRulesAsync(set, cancellationToken).ConfigureAwait(false);
             if (problems.Count > 0)
             {
                 return new InvalidRules(problems);
             }
 
-            var digest = Convert.ToHexStringLower(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(document, RulesJsonContext.Default.RulesDocument)));
-            var saved = new StoredRules(EntityIds.New().ToString(), document, time.GetUtcNow(), actor, digest);
+            var digest = Convert.ToHexStringLower(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(set, RulesJsonContext.Default.RulesSet)));
+            var saved = new StoredRules(EntityIds.New().ToString(), set, time.GetUtcNow(), actor, digest);
             await rules.WriteRulesAsync(saved, cancellationToken).ConfigureAwait(false);
             _ = await writer.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return new DeployedRules(saved, RulesChecks.Warnings(document));
+            return new DeployedRules(saved, RulesChecks.Warnings(set));
         }
         catch (Exception error) when (error is ObjectDisposedException or StorageBusyException or QosMemoryException)
         {

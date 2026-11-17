@@ -41,7 +41,7 @@ internal sealed partial class TursoShapeReader : IRulesSchema
         var body = TursoSession.Bytes(reader, 0);
         var split = Array.IndexOf(body, (byte)'\n');
         var (digest, updatedBy) = RulesHeader(body.AsSpan(0, split));
-        var rules = JsonSerializer.Deserialize(body.AsSpan(split + 1), RulesJsonContext.Default.RulesDocument)
+        var rules = JsonSerializer.Deserialize(body.AsSpan(split + 1), RulesJsonContext.Default.RulesSet)
             ?? throw new InvalidDataException("a stored rules version is damaged");
         return new StoredRules(version, rules, new DateTimeOffset(reader.GetInt64(1), TimeSpan.Zero), updatedBy, digest);
     }
@@ -89,7 +89,7 @@ internal sealed partial class TursoShapeReader : IRulesSchema
             throw new ArgumentException("a rules author is one short word", nameof(rules));
         }
 
-        return [.. Encoding.UTF8.GetBytes(header), .. JsonSerializer.SerializeToUtf8Bytes(rules.Rules, RulesJsonContext.Default.RulesDocument)];
+        return [.. Encoding.UTF8.GetBytes(header), .. JsonSerializer.SerializeToUtf8Bytes(rules.Rules, RulesJsonContext.Default.RulesSet)];
     }
 
     private static (string Digest, string UpdatedBy) RulesHeader(ReadOnlySpan<byte> header) =>

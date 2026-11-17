@@ -93,7 +93,7 @@ test('end-user shape reads see only granted columns and their own rows, under ha
 
     const bootstrap = async (credential: string) => {
       const redirect = await read(credential, 'offset=-1', 0);
-      expect(redirect.status()).toBe(307);
+      expect(redirect.status(), await redirect.text()).toBe(307);
       const handle = redirect.headers()['tb-shape-handle'];
       const page = await request.get(api + redirect.headers()['location'], { headers: { authorization: 'Bearer ' + credential } });
       expect(page.status()).toBe(200);

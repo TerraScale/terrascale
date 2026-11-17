@@ -9,7 +9,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Rules;
 
-internal sealed class PutRulesEndpoint(IManagementService management, IRules rules, TerraBaseOptions options) : Endpoint<RulesDocument, IResult>
+internal sealed class PutRulesEndpoint(IManagementService management, IRules rules, TerraBaseOptions options) : Endpoint<RulesSet, IResult>
 {
     public override void Configure()
     {
@@ -31,7 +31,7 @@ internal sealed class PutRulesEndpoint(IManagementService management, IRules rul
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware());
     }
 
-    public override async ValueTask<IResult> HandleAsync(RulesDocument request, CancellationToken cancellationToken)
+    public override async ValueTask<IResult> HandleAsync(RulesSet request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (request.Tables is null || request.Tables.Values.Any(table => table is null))

@@ -5,7 +5,7 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Rules;
 
-internal sealed record RulesDocument(IReadOnlyDictionary<string, RulesTable> Tables);
+internal sealed record RulesSet(IReadOnlyDictionary<string, RulesTable> Tables);
 
 internal sealed record RulesTable(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Read = null,
@@ -23,7 +23,7 @@ internal sealed record RulesValues(
 
 internal sealed record RulesProblem(string Table, string Field, string Code, string Message);
 
-internal sealed record StoredRules(string Version, RulesDocument Rules, DateTimeOffset UpdatedAt, string UpdatedBy, string Digest);
+internal sealed record StoredRules(string Version, RulesSet Rules, DateTimeOffset UpdatedAt, string UpdatedBy, string Digest);
 
 internal sealed record RulesVersionItem(string Version, DateTimeOffset UpdatedAt, string UpdatedBy, string Digest);
 
@@ -63,7 +63,7 @@ internal sealed record RulesIfNone : RulesPrecondition;
 
 internal abstract record RulesChange;
 
-internal sealed record RulesDeploy(RulesDocument Rules) : RulesChange;
+internal sealed record RulesDeploy(RulesSet Rules) : RulesChange;
 
 internal sealed record RulesRestore(string Version) : RulesChange;
 
@@ -81,7 +81,7 @@ internal interface IRulesStorage
 
     ValueTask<RulesVersionPage?> ListRulesVersionsAsync(string? after, int limit, CancellationToken cancellationToken);
 
-    ValueTask<IReadOnlyList<RulesProblem>> CheckRulesAsync(RulesDocument rules, CancellationToken cancellationToken);
+    ValueTask<IReadOnlyList<RulesProblem>> CheckRulesAsync(RulesSet rules, CancellationToken cancellationToken);
 }
 
 internal interface IRulesWriter : IRulesStorage

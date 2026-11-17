@@ -53,7 +53,7 @@ internal sealed class TursoReplicaShapeReader : IReplicaShapeReader
     public ValueTask<RulesVersionPage?> ListRulesVersionsAsync(string? after, int limit, CancellationToken cancellationToken) =>
         new(Task.Run(() => _reader.RulesVersions(after, limit), cancellationToken));
 
-    public ValueTask<IReadOnlyList<RulesProblem>> CheckRulesAsync(RulesDocument rules, CancellationToken cancellationToken) =>
+    public ValueTask<IReadOnlyList<RulesProblem>> CheckRulesAsync(RulesSet rules, CancellationToken cancellationToken) =>
         new(Task.Run(() => RulesChecks.Problems(rules, _reader), cancellationToken));
 
     public ValueTask<ShapeGrant?> ReadGrantAsync(string table, CancellationToken cancellationToken) =>

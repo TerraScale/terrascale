@@ -22,10 +22,10 @@ internal static class RulesChecks
             var refused => refused,
         };
 
-    internal static IReadOnlyList<RulesProblem> Problems(RulesDocument rules, IRulesSchema schema)
+    internal static IReadOnlyList<RulesProblem> Problems(RulesSet rules, IRulesSchema schema)
     {
         List<RulesProblem> problems = [];
-        if (rules.Tables.Count > MaxTables || Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(rules, RulesJsonContext.Default.RulesDocument)) > MaxBytes)
+        if (rules.Tables.Count > MaxTables || Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(rules, RulesJsonContext.Default.RulesSet)) > MaxBytes)
         {
             problems.Add(new RulesProblem("", "tables", "invalid_value", $"a rules set holds at most {MaxTables} tables and {MaxBytes / 1024} KiB"));
             return problems;
@@ -134,7 +134,7 @@ internal static class RulesChecks
         return problems;
     }
 
-    internal static IReadOnlyList<RulesProblem> Warnings(RulesDocument rules)
+    internal static IReadOnlyList<RulesProblem> Warnings(RulesSet rules)
     {
         List<RulesProblem> warnings = [];
         foreach (var (name, rule) in rules.Tables)

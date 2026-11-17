@@ -13,7 +13,7 @@ internal sealed partial class TursoStorageTransaction : IRulesWriter
     public ValueTask<RulesVersionPage?> ListRulesVersionsAsync(string? after, int limit, CancellationToken cancellationToken) =>
         RunAsync(() => ShapeReader.RulesVersions(after, limit), cancellationToken);
 
-    public ValueTask<IReadOnlyList<RulesProblem>> CheckRulesAsync(RulesDocument rules, CancellationToken cancellationToken) =>
+    public ValueTask<IReadOnlyList<RulesProblem>> CheckRulesAsync(RulesSet rules, CancellationToken cancellationToken) =>
         RunAsync(() => RulesChecks.Problems(rules, ShapeReader), cancellationToken);
 
     public async ValueTask WriteRulesAsync(StoredRules rules, CancellationToken cancellationToken)
