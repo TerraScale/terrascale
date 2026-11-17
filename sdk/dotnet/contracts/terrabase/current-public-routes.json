@@ -229,11 +229,6 @@
     },
     {
       "method": "GET",
-      "path": "/v1/projects/{project}/databases/{database}/read-grants",
-      "operation": "listReadGrants"
-    },
-    {
-      "method": "GET",
       "path": "/v1/projects/{project}/databases/{database}/regions",
       "operation": "getDatabaseRegions"
     },
@@ -288,19 +283,9 @@
       "operation": "connectSql"
     },
     {
-      "method": "DELETE",
-      "path": "/v1/projects/{project}/databases/{database}/tables/{table}/read-grant",
-      "operation": "deleteReadGrant"
-    },
-    {
       "method": "GET",
-      "path": "/v1/projects/{project}/databases/{database}/tables/{table}/read-grant",
-      "operation": "getReadGrant"
-    },
-    {
-      "method": "PUT",
-      "path": "/v1/projects/{project}/databases/{database}/tables/{table}/read-grant",
-      "operation": "putReadGrant"
+      "path": "/v1/projects/{project}/databases/{database}/tables/{table}/rows/{key}",
+      "operation": "getRow"
     },
     {
       "method": "POST",

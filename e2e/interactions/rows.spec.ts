@@ -137,6 +137,9 @@ test('end users write rows only as the database rules allow, checked in the home
 
     const updated = await answered<Answer>('PATCH', await request.patch(`${rows}/${first.key}`, { headers: as(alice), data: { row: { done: true } } }), 200);
     expect(updated.row).toMatchObject({ title: 'milk', done: 1 });
+    const read = await answered<Answer>('GET', await request.get(`${rows}/${first.key}`, { headers: as(alice) }), 200);
+    expect(read.row).toEqual(updated.row);
+    await answered('GET', await request.get(`${rows}/${first.key}`, { headers: as(bob) }), 404, 'row_not_found');
 
     const batch = (user: { token: string }, operations: unknown[]) => request.post(database + '/rows:batch', { headers: as(user), data: { operations } });
     const rolledBack = await answered<Refusal>('POST', await batch(alice, [

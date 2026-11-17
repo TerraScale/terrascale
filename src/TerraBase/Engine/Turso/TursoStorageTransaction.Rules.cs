@@ -28,6 +28,7 @@ internal sealed partial class TursoStorageTransaction : IRulesWriter
         var body = TursoShapeReader.RulesBody(rules);
         await RunAsync(() =>
         {
+            _ = Offset();
             var next = Command("SELECT coalesce(max(end_offset), 0) + 1 FROM _tb_shape_chunk WHERE handle >= '~rules:v:' AND handle < '~rules:v;' AND offset = 0;");
             var sequence = (long)next.ExecuteScalar()!;
             var version = Command("INSERT INTO _tb_shape_chunk (handle, offset, end_offset, body, sealed_at) VALUES ($key, 0, $sequence, $body, $updated);");
@@ -51,6 +52,7 @@ internal sealed partial class TursoStorageTransaction : IRulesWriter
             prune.Parameters.AddWithValue("$oldest", sequence - KeptRulesVersions);
             prune.ExecuteNonQuery();
             prune.Parameters.Clear();
+            _ = Command("DELETE FROM _tb_shape_chunk WHERE handle >= '~grant:' AND handle < '~grant;' AND offset = 0;").ExecuteNonQuery();
             return true;
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }

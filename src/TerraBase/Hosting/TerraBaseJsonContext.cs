@@ -9,6 +9,7 @@ namespace TerraBase.Hosting;
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, MaxDepth = RequestJson.StoredMaxDepth + 8)]
 [JsonSerializable(typeof(Ulid))]
 [JsonSerializable(typeof(ErrorBody))]
+[JsonSerializable(typeof(DetailedErrorBody))]
 [JsonSerializable(typeof(IReadOnlyList<JsonElement>))]
 [JsonSerializable(typeof(JsonElement))]
 [JsonSerializable(typeof(JsonArray))]

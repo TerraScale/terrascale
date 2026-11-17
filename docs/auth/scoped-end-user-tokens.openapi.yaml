@@ -113,7 +113,7 @@ components:
         tables:
           type: [array, 'null']
           maxItems: 32
-          description: Tables the token may read as shapes, each under its read grant.
+          description: Table names TerraBase ignores; the database's rules decide what end users read.
           items:
             type: string
             pattern: '^[A-Za-z_][A-Za-z0-9_]{0,62}$'

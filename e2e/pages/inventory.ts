@@ -94,7 +94,6 @@ async function mcpConsent(page: Page): Promise<string> {
 
 const databaseTabs: [string, string, Identity][] = [
   ['tables', 'Tables', currentTab('Database sections', 'Tables')],
-  ['grants', 'Grants', title('Grants', 2)],
   ['sql', 'SQL editor', currentTab('Database sections', 'SQL editor')],
   ['functions', 'Functions', currentTab('Database sections', 'Functions')],
   ['replication', 'Replication', title('Region sync', 2)],

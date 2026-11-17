@@ -17,8 +17,6 @@ internal static class ShapeRoute
     internal static readonly Validation BadFilter = new(
         $"where and columns are each at most once, non-empty, where at most {ShapeFilters.MaxWhere} and columns at most {ShapeFilters.MaxColumns} characters");
 
-    internal static readonly Forbidden NotGranted = new("this token has no read grant for the table", "not_granted");
-
     internal static readonly string[] FilterParameters = ["where", "columns"];
 
     internal static ShapeQuery? Query(HttpContext context)
@@ -75,28 +73,9 @@ internal static class ShapeRoute
                     return BadFilter;
                 }
 
-                if (context.Features.Get<ProjectAccess>() is { IsEndUser: true } access)
+                if (context.Features.Get<ProjectAccess>()?.Auth is { } auth)
                 {
-                    if (!access.Tables.Contains(table!))
-                    {
-                        return NotGranted;
-                    }
-
-                    switch (await context.RequestServices.GetRequiredService<IShapeGrants>().GetGrantAsync(database, table!, cancellationToken))
-                    {
-                        case ShapeGrant grant:
-                            query = query with
-                            {
-                                Grant = new ShapeGrantRule(grant.Where, grant.Columns is { } columns ? string.Join(',', columns) : null,
-                                    string.Join('\0', grant.UpdatedAt.UtcTicks.ToString(CultureInfo.InvariantCulture), access.Actor), access.Actor,
-                                    ShapeFilters.GrantInvalid),
-                            };
-                            break;
-                        case NotFound:
-                            return NotGranted;
-                        case Unavailable error:
-                            return error;
-                    }
+                    query = query with { Viewer = new ShapeViewer(auth) };
                 }
 
                 return await lineages.ResolveAsync(database, table!, query, cancellationToken) switch

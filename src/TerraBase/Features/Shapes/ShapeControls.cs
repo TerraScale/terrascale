@@ -38,8 +38,7 @@ internal sealed class ShapeControls(IMemoryBudget memory, IHostApplicationLifeti
                     oldest.Value.Memory.Dispose();
                 }
 
-                var bytes = 4096L + 2L * (table.Length + (query.Where?.Length ?? 0) + (query.Columns?.Length ?? 0)
-                    + (query.Grant?.Where?.Length ?? 0) + (query.Grant?.Columns?.Length ?? 0) + (query.Grant?.Binding.Length ?? 0));
+                var bytes = 4096L + 2L * (table.Length + (query.Where?.Length ?? 0) + (query.Columns?.Length ?? 0) + (query.Viewer?.Key.Length ?? 0));
                 if (memory.TryReserve(bytes, database) is not { } reservation)
                 {
                     return new QuotaExceeded("shape control reads are at capacity; retry later", "shape_busy");

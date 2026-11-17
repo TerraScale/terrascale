@@ -5,21 +5,23 @@ using TerraBase.Errors;
 
 namespace TerraBase.Features.Shapes;
 
-public sealed record ShapeFilter(string? Where, IReadOnlyList<string> Columns, string? Binding = null)
+public sealed record ShapeFilter(string? Where, IReadOnlyList<string> Columns)
 {
     public IReadOnlyDictionary<string, object?> Parameters { get; init; } = FrozenDictionary<string, object?>.Empty;
 
-    public string Key => (Where ?? "") + "\0" + string.Join('\u001f', Columns) + (Binding is { } binding ? "\0" + binding : "");
+    public string RulesVersion { get; init; } = "";
+
+    public string Binding { get; init; } = "";
+
+    public string Key => (Where ?? "") + "\0" + string.Join('\u001f', Columns) + "\0" + RulesVersion + "\0" + Binding;
 }
 
-internal sealed record ShapeQuery(string? Where, string? Columns, ShapeGrantRule? Grant = null)
+internal sealed record ShapeQuery(string? Where, string? Columns, ShapeViewer? Viewer = null)
 {
     internal static readonly ShapeQuery None = new(null, null);
 
-    internal bool IsEmpty => Where is null && Columns is null && Grant is null;
+    internal bool IsEmpty => Where is null && Columns is null && Viewer is null;
 }
-
-internal sealed record ShapeGrantRule(string? Where, string? Columns, string Binding, string Subject, Forbidden? Invalid);
 
 internal enum RulesOperation
 {
@@ -32,7 +34,6 @@ internal enum RulesOperation
 
 internal enum ConditionSource
 {
-    Subject,
     Uid,
     OrgId,
     OrgRole,
@@ -49,9 +50,7 @@ internal sealed record CompiledCondition(string Sql, IReadOnlyList<ConditionPara
 
 internal abstract record ConditionScope(IReadOnlyList<string> Columns);
 
-internal sealed record RequestScope(IReadOnlyList<string> Columns, Forbidden? Hidden) : ConditionScope(Columns);
-
-internal sealed record GrantScope(IReadOnlyList<string> Columns) : ConditionScope(Columns);
+internal sealed record RequestScope(IReadOnlyList<string> Columns, bool Readable) : ConditionScope(Columns);
 
 internal sealed record RuleScope(IReadOnlyList<string> Columns, RulesOperation Operation) : ConditionScope(Columns);
 
@@ -76,10 +75,6 @@ internal static class ShapeFilters
         "substr", "substring", "instr", "replace", "round", "typeof", "hex", "like", "glob",
     ];
 
-    private static readonly Forbidden ColumnNotGranted = new("where names a column the read grant does not allow", "column_not_granted");
-
-    internal static readonly Forbidden GrantInvalid = new("the table's read grant no longer applies to its columns", "grant_invalid");
-
     internal static Validation Refused(string message) => new(message, "unsafe_where");
 
     internal static object Parse(ShapeQuery query, IReadOnlyList<string> tableColumns)
@@ -96,21 +91,10 @@ internal static class ShapeFilters
             columns = names;
         }
 
-        IReadOnlyList<string>? granted = null;
-        if (query.Grant?.Columns is { } grantedList)
-        {
-            granted = [.. grantedList.Split(',').Select(name => Column(tableColumns, name.Trim())).OfType<string>().Distinct(StringComparer.Ordinal)];
-            columns = [.. columns.Where(granted.Contains)];
-            if (columns.Count == 0)
-            {
-                return new Forbidden("the read grant allows none of the requested columns", "column_not_granted");
-            }
-        }
-
         string? condition = null;
         if (query.Where is { } where)
         {
-            var checkedWhere = Where(where, new RequestScope(granted ?? tableColumns, granted is null ? null : ColumnNotGranted));
+            var checkedWhere = Where(where, new RequestScope(tableColumns, false));
             if (checkedWhere is not CompiledCondition text)
             {
                 return checkedWhere;
@@ -119,24 +103,11 @@ internal static class ShapeFilters
             condition = text.Sql;
         }
 
-        Dictionary<string, object?> parameters = new(StringComparer.Ordinal);
-        if (query.Grant is { Where: { } rule } grant)
-        {
-            var compiledRule = Where(rule, new GrantScope(tableColumns));
-            if (compiledRule is not CompiledCondition checkedRule)
-            {
-                return grant.Invalid ?? compiledRule;
-            }
-
-            condition = condition is null ? checkedRule.Sql : $"({checkedRule.Sql}) AND ({condition})";
-            foreach (var parameter in checkedRule.Parameters)
-            {
-                parameters[parameter.Name] = grant.Subject;
-            }
-        }
-
-        return new ShapeFilter(condition, columns, query.Grant?.Binding) { Parameters = parameters.ToFrozenDictionary(StringComparer.Ordinal) };
+        return new ShapeFilter(condition, columns);
     }
+
+    internal static Forbidden ColumnNotReadable(string column) =>
+        new($"{column} is not a readable column of this table", "column_not_readable", new Dictionary<string, string> { ["column"] = column });
 
     private static object Columns(string list, IReadOnlyList<string> tableColumns)
     {
@@ -160,8 +131,6 @@ internal static class ShapeFilters
         return chosen;
     }
 
-    internal const string Subject = ":sub";
-
     internal static bool IsClaimName(string name) => name is { Length: >= 1 and <= 63 } && name[0] is >= 'a' and <= 'z'
         && name.All(character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '_');
 
@@ -175,7 +144,7 @@ internal static class ShapeFilters
         var text = new StringBuilder();
         List<ConditionParameter> parameters = [];
         List<bool> lists = [];
-        var hiddenColumn = scope is RequestScope request ? request.Hidden : null;
+        var readable = scope is RequestScope { Readable: true };
         var bareColumns = scope is not RuleScope;
         for (var index = 0; index < tokens.Count; index++)
         {
@@ -205,7 +174,6 @@ internal static class ShapeFilters
                     SqlTokenKind.Open => "(",
                     SqlTokenKind.Close => ")",
                     SqlTokenKind.Symbol when token.Value[0] is '=' or '<' or '>' or '!' or '+' or '-' or '*' or '/' or '%' or '|' or '&' or '~' => token.Value,
-                    SqlTokenKind.Parameter when scope is GrantScope && token.Value == Subject => Bound(parameters, new ConditionParameter("$sub", ConditionSource.Subject)),
                     SqlTokenKind.Word when previous.Is("AS") => Types.Contains(token.Value) ? token.Value.ToUpperInvariant() : null,
                     SqlTokenKind.Word when previous.Is("COLLATE") => Collations.Contains(token.Value) ? token.Value.ToUpperInvariant() : null,
                     SqlTokenKind.Word when opens && Functions.Contains(token.Value) => token.Value.ToLowerInvariant(),
@@ -215,10 +183,10 @@ internal static class ShapeFilters
                 };
             }
 
-            if (part is null && hiddenColumn is not null && token.Kind is SqlTokenKind.Word or SqlTokenKind.Quoted && !opens && !previous.Is("AS")
+            if (part is null && readable && token.Kind is SqlTokenKind.Word or SqlTokenKind.Quoted && !opens && !previous.Is("AS")
                 && !previous.Is("COLLATE") && !Operators.Contains(token.Value))
             {
-                return hiddenColumn;
+                return ColumnNotReadable(token.Value);
             }
 
             if (part is null)

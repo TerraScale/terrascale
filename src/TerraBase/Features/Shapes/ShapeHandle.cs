@@ -20,8 +20,8 @@ internal readonly record struct ShapeHandle(string Handle, string ShapeId)
         ArgumentException.ThrowIfNullOrEmpty(tenant.OrganizationId);
         ArgumentException.ThrowIfNullOrEmpty(tenant.ProjectId);
         ArgumentException.ThrowIfNullOrEmpty(tenant.DatabaseId);
-        var fields = string.Join('\0', tenant.OrganizationId, tenant.ProjectId, tenant.DatabaseId, incarnation.ToString(), table, generation, "2", filter?.Key ?? "");
-        return new ShapeHandle("h1-" + Digest("TB-SHAPE-HANDLE-V2", fields, 8), Digest("TB-SHAPE-V2", fields, 16));
+        var fields = string.Join('\0', tenant.OrganizationId, tenant.ProjectId, tenant.DatabaseId, incarnation.ToString(), table, generation, "3", filter?.Key ?? "");
+        return new ShapeHandle("h1-" + Digest("TB-SHAPE-HANDLE-V3", fields, 8), Digest("TB-SHAPE-V3", fields, 16));
     }
 
     public static ShapeSealDefinition Definition(IDatabaseStore store, ShapeScope scope)

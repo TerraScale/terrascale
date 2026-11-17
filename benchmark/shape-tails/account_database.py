@@ -19,9 +19,9 @@ def refresh_bearer():
  with urllib.request.urlopen(urllib.request.Request('https://auth.terrascale.tech/terrascale/oauth/token',form,headers),timeout=20) as response: bearer=json.load(response)['access_token']
  target=root/(tag+'.token');target.touch(mode=0o600,exist_ok=True);target.chmod(0o600);target.write_text(bearer)
 refresh_bearer()
-def call(region,path,method='GET',body=None):
+def call(region,path,method='GET',body=None,headers=None):
  data=None if body is None else json.dumps(body).encode()
- h={'Authorization':'Bearer '+bearer,'Content-Type':'application/json'}
+ h={'Authorization':'Bearer '+bearer,'Content-Type':'application/json',**(headers or {})}
  req=urllib.request.Request('https://'+region+'.api.terrascale.tech'+path,data,h,method=method)
  started=time.perf_counter()
  try:

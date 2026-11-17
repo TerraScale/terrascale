@@ -442,9 +442,9 @@ fn transient(error: &Error) -> bool {
                             | "key_revoked"
                             | "key_expired"
                             | "forbidden_scope"
-                            | "not_granted"
-                            | "column_not_granted"
-                            | "grant_invalid"
+                            | "rule_denied"
+                            | "column_not_readable"
+                            | "rules_invalid"
                     )
                 )
         }

@@ -324,7 +324,7 @@ func shapeRetryable(err error) bool {
 		return errors.As(err, &transport) || errors.As(err, &network) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, context.DeadlineExceeded)
 	}
 	switch api.Code {
-	case "invalid_request", "unsupported_table", "unknown_database", "unknown_table", "invalid_key", "key_revoked", "key_expired", "forbidden_scope", "not_granted", "column_not_granted", "grant_invalid":
+	case "invalid_request", "unsupported_table", "unknown_database", "unknown_table", "invalid_key", "key_revoked", "key_expired", "forbidden_scope", "rule_denied", "column_not_readable", "rules_invalid":
 		return false
 	}
 	switch api.Status {

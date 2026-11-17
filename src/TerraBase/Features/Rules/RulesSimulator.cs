@@ -45,7 +45,7 @@ internal static class RulesSimulator
             "delete" => RulesOperation.Delete,
             _ => throw new UnreachableException(),
         };
-        rules.Tables.TryGetValue(request.Table, out var rule);
+        var rule = rules.Table(request.Table);
         var checkedRules = request.Rules is not null ? rules : new RulesSet(rule is null
             ? new Dictionary<string, RulesTable>()
             : new Dictionary<string, RulesTable> { [request.Table] = Required(rule, operation) });
@@ -139,7 +139,6 @@ internal static class RulesSimulator
                 ConditionSource.Row => row.GetValueOrDefault(parameter.Key!),
                 ConditionSource.Claim => Claim(parameter.Key!, list: false),
                 ConditionSource.ClaimList => Claim(parameter.Key!, list: true),
-                ConditionSource.Subject => throw new UnreachableException(),
                 _ => throw new UnreachableException(),
             });
             return engine.Evaluate(schema, condition, projection, parameters);

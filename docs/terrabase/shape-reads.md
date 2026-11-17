@@ -4,7 +4,7 @@ A shape is the rows of one SQL table that match an optional `where`, with an opt
 sealed change chunks, then a live tail, Electric style (PIVOT D8). Every response is addressed by `(handle, offset)`,
 so identical URLs return identical bytes and any cache can serve many readers for the cost of one.
 
-End users read shapes from the browser under table read grants: [shape read grants](shape-read-grants.md). A region's
+End users read shapes from the browser under the database's [rules](rules.md) (section 4). A region's
 writes show on its live tails as `provisional`, then `confirmed` or `revert` ([shape overlay](shape-overlay.md), F7/F8).
 Other replica regions receive provisional changes directly over NATS; a missing direct delivery falls back to the home’s confirmed page path.
 
@@ -23,7 +23,8 @@ Other replica regions receive provisional changes directly over NATS; a missing 
 
 `GET /v1/projects/{project}/databases/{database}/tables/{table}/shape?handle=&offset=&live=&cursor=&where=&columns=`
 
-Client listener, TLS, `sql:read`, OpenAPI tag `Live`. End-user tokens read only granted tables: [shape read grants](shape-read-grants.md).
+Client listener, TLS, `sql:read`, OpenAPI tag `Live`. End-user tokens read only what the table's `read` rule and `columns` allow:
+[rules](rules.md) section 4. Without a rules set or a `read` rule for the table they get `403 rule_denied`.
 
 | Parameter | Value |
 | --- | --- |
@@ -151,11 +152,13 @@ every table of the database file; commits that do not touch the table still adva
   no row, issues a new generation. A different schema version rechecks the captured `sqlite_schema` changes after
   `since`: one that names the table (`DROP TABLE` followed by an identical `CREATE TABLE`, `CREATE INDEX` on it)
   issues a new generation; otherwise the row only records the new schema version.
-- `fields = organization ‖ 0x00 ‖ project ‖ 0x00 ‖ database ‖ 0x00 ‖ incarnation ‖ 0x00 ‖ table ‖ 0x00 ‖ generation ‖ 0x00 ‖ "2" ‖ 0x00 ‖ filter`,
-  where `filter` is the rebuilt `where` (empty when absent) ‖ 0x00 ‖ the column names joined by 0x1F (empty without
-  `where` or `columns`);
-  `handle = "h1-" ‖ hex(SHA-256("TB-SHAPE-HANDLE-V2" ‖ 0x00 ‖ fields))[0..16]`,
-  `shape_id = hex(SHA-256("TB-SHAPE-V2" ‖ 0x00 ‖ fields))[0..32]`.
+- `fields = organization ‖ 0x00 ‖ project ‖ 0x00 ‖ database ‖ 0x00 ‖ incarnation ‖ 0x00 ‖ table ‖ 0x00 ‖ generation ‖ 0x00 ‖ "3" ‖ 0x00 ‖ filter`,
+  where `filter` is the rebuilt `where` (empty when absent) ‖ 0x00 ‖ the column names joined by 0x1F ‖ 0x00 ‖
+  `rules_version` ‖ 0x00 ‖ `binding` (empty without `where`, `columns` or an end-user token). For an end user the
+  rebuilt `where` is the table's `read` rule joined with the request's, `rules_version` is the deployed rules version
+  and `binding` the canonical JSON of the `auth.*` values the rule binds ([rules](rules.md) section 4.3);
+  `handle = "h1-" ‖ hex(SHA-256("TB-SHAPE-HANDLE-V3" ‖ 0x00 ‖ fields))[0..16]`,
+  `shape_id = hex(SHA-256("TB-SHAPE-V3" ‖ 0x00 ‖ fields))[0..32]`.
 - Any DDL that names the table ends the lineage, so rows captured under one definition are never decoded under
   another: every request resolves the current generation first, and a chunk being sealed stops before a captured
   `sqlite_schema` change for the table.

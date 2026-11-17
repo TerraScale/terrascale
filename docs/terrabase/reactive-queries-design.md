@@ -58,8 +58,8 @@ parameters), pushed again whenever a commit could have changed it, at one commit
 ### 1.4 Access checks per read
 
 - Every request resolves the shape again: scope `sql:read`, tenancy, the current generation, and for an end-user
-  token the table's read grant, whose `:sub` is bound into the effective filter (`ShapeRoute.cs:55`,
-  `ShapeRoute.cs:85-94`, `ShapeFilter.cs:115`).
+  token the table's `read` rule and `columns`, read with the rows and bound as statement parameters
+  (`ShapeRoute.cs`, `RulesReads.cs`).
 - The hints socket re-authenticates and re-resolves the shape before every frame it sends and closes with
   `must_refetch` when the lineage changed (`GetShapeHintEndpoint.cs:177-181`, `:245-275`).
 - [Rules](rules.md) replace grants with per-table `read` conditions and bind `auth.*` values into the handle

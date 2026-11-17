@@ -91,7 +91,7 @@ internal static class ProjectCheck
 
         if (UserAuthExtensions.Identity(context.User)?.HasClaim("token_kind", "end_user") == true
             && context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName is not
-                ("getShape" or "getShapeKey" or "getShapeManifest" or "connectShapeHints" or "createRow" or "updateRow" or "deleteRow" or "batchRows"
+                ("getShape" or "getShapeKey" or "getShapeManifest" or "connectShapeHints" or "getRow" or "createRow" or "updateRow" or "deleteRow" or "batchRows"
                 or "createFileUpload" or "completeFileUpload" or "listBucketFiles" or "createFileDownload" or "deleteBucketFile"))
         {
             context.Response.StatusCode = StatusCodes.Status403Forbidden;

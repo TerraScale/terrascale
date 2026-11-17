@@ -309,8 +309,8 @@ In a region that holds the database, writes made there show at once; `provisiona
 database's writer has not confirmed yet (such inserts have keys starting with `~`). A write the writer rejects disappears
 from `rows`.
 A schema change of the table restarts the shape from a new snapshot; transient refusals and lost connections retry
-with backoff; authentication, scope and unknown-table errors reject `done`. It needs the data read scope, or an end-user token with a read grant for the selected table.
-Table grants authorize access; shape filters do not replace authorization.
+with backoff; authentication, scope and unknown-table errors reject `done`. It needs the data read scope, or an end-user token the database rules let read the selected table.
+Database rules authorize access; shape filters do not replace authorization.
 Snapshots and sealed catch-up chunks use the manifest’s CDN URLs. The client checks the object size, SHA-256, TBS1 header, AES-GCM frames and handle/offset binding before applying data. Epoch keys stay in the subscription and CDN requests carry no credentials. The live tail uses the authenticated origin. An unavailable or invalid cached object falls back to that offset at the origin. Browsers that hide the bootstrap redirect must fetch the first snapshot page from the origin.
 
 

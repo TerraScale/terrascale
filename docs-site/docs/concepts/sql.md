@@ -94,7 +94,7 @@ Errors use TerraScale codes and PostgreSQL SQLSTATEs across REST, WebSocket and 
 
 Reads need the `sql:read` scope; writes and schema changes also need `sql:write`. A **Read and write** key from the dashboard has both.
 
-## Live shapes and table grants
+## Live shapes and rules
 
 Live shapes send a table snapshot followed by committed changes. Use React's `useQuery` or Svelte's `createQuery`
 to read data that changes. These framework examples require the next JavaScript SDK release.
@@ -140,8 +140,8 @@ a quick remount reuses it. No application refresh callback is needed.
 For code outside a framework, use `db.shape("todos", { where: "done = 0" }).subscribe(({ rows }) => render(rows))`
 and call the returned subscription's `close()` when the view closes.
 
-End-user tokens can read live shapes for tables with a table read grant. A filter limits the shape result; authorization comes from
-the grant, not the filter. Keep privileged API keys on your server. See the
+End-user tokens read live shapes and rows as the database's rules allow: a table's `read` rule picks the rows and its
+`columns` the columns. A filter limits the shape result; authorization comes from the rules, not the filter. Keep privileged API keys on your server. See the
 [JavaScript SDK](https://github.com/TerraScale/terrascale/tree/main/sdk/js#live-sql-table-shapes).
 
 ## Agent databases

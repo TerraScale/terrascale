@@ -27,9 +27,9 @@ its caller and choosing their ID and roles; it must never relay browser-submitte
 identity or role fields without authorization. Send only the resulting short-lived
 JWT to the browser. Keep the project API key on the backend.
 
-`database` (canonical ULID) and `tables` (at most 32 table names) are optional. They scope
-the token to the shapes it may read; TerraBase still requires a read grant on each table
-([shape read grants](../terrabase/shape-read-grants.md)). `claims` and `claims.roles` are optional. Roles are case-sensitive ordinal strings:
+`database` (canonical ULID) and `tables` (at most 32 table names) are optional. `database`
+narrows the token to that database. TerraBase does not read `tables`: the database's
+[rules](../terrabase/rules.md) decide which rows and columns an end user reads. `claims` and `claims.roles` are optional. Roles are case-sensitive ordinal strings:
 at most 64 entries, each 1–128 characters, not all whitespace and without control
 characters. Duplicates are removed ordinally. **Only roles are supported.** Unknown
 members at either level are rejected, including JWT, project, organization,
@@ -80,7 +80,7 @@ lifetime, ULID subject and equality of `instance_id`/`project_id`. It rejects
 unknown token kinds, malformed roles, anonymous identities and end-user tokens
 carrying administrator or scope claims. A `database` claim narrows the token to that database.
 
-Authenticated end users may read SQL shapes only when a table read grant authorizes them. SQL execution and management require project credentials. A token's database and table claims narrow its reach; they never replace the table grant. The identity used for grant evaluation is `ProjectAccess { IsEndUser=true, Actor=sub, Roles=trusted ordinal set }`.
+Authenticated end users read shapes and rows only as the database's rules allow. SQL execution and management require project credentials. A token's database claim narrows its reach; it never replaces the rules. Rules see `auth.uid` as the token's `sub`, no claims, no organization and `auth.is_anonymous = 0`.
 Anonymous requests remain unauthenticated. Existing project grant tokens keep
 their current validation and scope behavior. TerraBase stores no copy of end-user
 accounts or role membership.

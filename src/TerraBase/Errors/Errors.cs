@@ -15,7 +15,7 @@ public sealed record PreconditionFailed(string Message, string Code = "precondit
 
 public sealed record Unauthorized(string? Message = null, string Code = "unauthorized");
 
-public sealed record Forbidden(string Message, string Code = "forbidden");
+public sealed record Forbidden(string Message, string Code = "forbidden", IReadOnlyDictionary<string, string>? Details = null);
 
 public sealed record QuotaExceeded(string Message, string Code = "quota_exceeded");
 

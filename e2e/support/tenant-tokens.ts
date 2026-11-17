@@ -29,9 +29,11 @@ export async function checkTenantTokens(context: APIRequestContext, project: str
         { sql: 'INSERT INTO notes (owner_id, body) VALUES (?, ?), (?, ?)', args: [subject, 'mine', '01ARZ3NDEKTSV4RRFFQ69G5FAV', 'theirs'] },
       ] },
     });
-    expect(setup.status(), 'create the granted table').toBe(200);
-    const grant = await context.put(database + '/tables/notes/read-grant', { headers: owner, data: { where: 'owner_id = :sub' } });
-    expect(grant.status(), 'grant end users their own notes').toBe(200);
+    expect(setup.status(), 'create the notes table').toBe(200);
+    const rules = await context.put(database + '/rules', {
+      headers: { ...owner, 'If-None-Match': '*' }, data: { tables: { notes: { read: 'row.owner_id = auth.uid' } } },
+    });
+    expect(rules.status(), 'rules let end users read their own notes').toBe(200);
     const shape = '/tables/notes/shape?offset=-1';
     const ownerRead = await context.get(database + shape, { headers: owner, maxRedirects: 0 });
     expect(ownerRead.status(), 'the project token reads the shape').toBe(307);

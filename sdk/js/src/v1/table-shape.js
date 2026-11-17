@@ -36,7 +36,7 @@ let nextTransportKey = 0;
 
 const tablePattern = /^(?!_tb_|turso_|sqlite_)[A-Za-z_][A-Za-z0-9_]{0,62}$/u;
 const retryable = new Set([408, 429, 500, 502, 503, 504]);
-const terminal = new Set(["invalid_request", "unsupported_table", "unknown_database", "unknown_table", "invalid_key", "key_revoked", "key_expired", "forbidden_scope", "not_granted", "column_not_granted", "grant_invalid"]);
+const terminal = new Set(["invalid_request", "unsupported_table", "unknown_database", "unknown_table", "invalid_key", "key_revoked", "key_expired", "forbidden_scope", "rule_denied", "column_not_readable", "rules_invalid"]);
 
 /** @param {number} attempt @param {number | undefined} retryAfter */
 function delay(attempt, retryAfter) {

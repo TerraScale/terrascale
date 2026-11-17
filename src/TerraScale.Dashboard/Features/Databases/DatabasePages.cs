@@ -157,9 +157,6 @@ namespace TerraScale.Dashboard.Features.Databases
         public string Table { get; init; } = "";
         public DatabaseSqlResult? Preview { get; init; }
         public long? StorageBytes { get; init; }
-        public IReadOnlyList<DatabaseReadGrant>? Grants { get; init; }
-        public DatabaseGrantForm? GrantForm { get; init; }
-        public bool OpenGrant => Tab == "grants" && GrantForm is not null && Error.Length > 0 && Context.CanManage;
         public CreateTableDraft? TableDraft { get; init; }
         public bool OpenCreateTable => Tab == "tables" && Context.CanWriteProjectData && (TableDraft is not null || ShowCreateTable);
         public bool ShowCreateTable { get; init; }
