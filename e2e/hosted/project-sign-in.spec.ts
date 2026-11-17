@@ -24,8 +24,10 @@ test.describe('project usernames and browser-bound magic links', () => {
   let other: BrowserContext;
   let page: Page;
   let admin: Page;
+  let passwordPage: Page;
   let audit: Audit;
   let adminAudit: Audit;
+  let passwordAudit: Audit;
   let email: string;
   let ownerEmail: string;
   let projectId: string;
@@ -44,6 +46,7 @@ test.describe('project usernames and browser-bound magic links', () => {
   test.beforeEach(({}, info) => {
     audit = new Audit(page, info);
     adminAudit = new Audit(admin, info);
+    if (passwordPage) passwordAudit = new Audit(passwordPage, info);
   });
 
   test.afterAll(async () => {
@@ -163,8 +166,8 @@ test.describe('project usernames and browser-bound magic links', () => {
     }
     await duplicate.close();
 
-    const passwordPage = await other.newPage();
-    const passwordAudit = new Audit(passwordPage, info);
+    passwordPage = await other.newPage();
+    passwordAudit = new Audit(passwordPage, info);
     await passwordPage.goto(`${base}/sign-in`);
     for (const [key, label] of providers) {
       await expect(passwordPage.getByRole('link', { name: `Continue with ${label}`, exact: true })).toHaveAttribute('href', `/ui/${projectId}/social/${key}`);
@@ -179,9 +182,7 @@ test.describe('project usernames and browser-bound magic links', () => {
     await passwordAudit.finish();
   });
 
-  test('redeems a magic link only in its browser and rejects link and code replay', async ({}, info) => {
-    const passwordPage = await other.newPage();
-    const passwordAudit = new Audit(passwordPage, info);
+  test('redeems a magic link only in its browser and rejects link and code replay', async () => {
     await admin.goto('/auth/sign-in');
     await admin.locator('#auth-method-passcode').uncheck();
     await admin.locator('#auth-method-password').uncheck();

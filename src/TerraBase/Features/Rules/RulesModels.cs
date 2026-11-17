@@ -81,8 +81,6 @@ internal interface IRulesStorage
 
     ValueTask<RulesVersionPage?> ListRulesVersionsAsync(string? after, int limit, CancellationToken cancellationToken);
 
-    ValueTask<RulesTestBody> TestRulesAsync(RulesTestRequest request, RulesSet rules, CancellationToken cancellationToken);
-
     ValueTask<IReadOnlyList<RulesProblem>> CheckRulesAsync(RulesSet rules, CancellationToken cancellationToken);
 }
 
@@ -98,12 +96,8 @@ internal interface IRulesSchema
     bool Runs(RulesTableSchema table, CompiledCondition condition);
 }
 
-internal readonly union RulesTestResult(RulesTestBody, NotFound, Unavailable);
-
 internal interface IRules
 {
-    ValueTask<RulesTestResult> TestAsync(TenantContext database, RulesTestRequest request, CancellationToken cancellationToken);
-
     ValueTask<RulesCurrentResult> GetAsync(TenantContext database, CancellationToken cancellationToken);
 
     ValueTask<RulesVersionsResult> VersionsAsync(TenantContext database, string? after, int limit, CancellationToken cancellationToken);

@@ -1,5 +1,5 @@
 {
- "source": "TerraBase a8fc2729137590fe24b4b2e98d804d3f3b0842e4 /openapi/v1.json (local source inventory)",
+ "source": "TerraBase 56d68c7f3fb626c7a7bcde6127977bb1c333a35f /openapi/v1.json (local source inventory)",
  "fetched": "2026-11-17",
  "contract": "sdk/SQL-API.md#databases-for-agents",
  "contract_routes": [
@@ -68,7 +68,6 @@
   "POST /v1/projects/{project}/databases/{database}/point-in-time/restore",
   "POST /v1/projects/{project}/databases/{database}/point-in-time/rewind",
   "POST /v1/projects/{project}/databases/{database}/rules/versions/{version}/restore",
-  "POST /v1/projects/{project}/databases/{database}/rules:test",
   "POST /v1/projects/{project}/databases/{database}/sql/execute",
   "POST /v1/terrascale/api-keys/self/scoped-keys",
   "PUT /v1/projects/{project}/backup-destination",
