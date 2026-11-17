@@ -71,7 +71,7 @@ browserTest('a browser app on an allowed origin signs in guests and users with n
   const ownerToken = (await exchanged.json()).access_token as string;
   saveSecret('browser-owner-token', ownerToken);
   const owner = { authorization: 'Bearer ' + ownerToken };
-  const created = await request.post(`${api}/v1/projects/${project}/databases`, { headers: owner, data: { name: 'browser-' + randomBytes(4).toString('hex'), regions: ['gru'] } });
+  const created = await request.post(`${api}/v1/projects/${project}/databases`, { headers: owner, data: { name: 'browser-' + randomBytes(4).toString('hex'), ...(process.env.E2E_REGIONS === '2' ? { regions: ['gru'] } : {}) } });
   expect(created.status(), await created.text()).toBe(201);
   const database = `${api}/v1/projects/${project}/databases/${(await created.json()).id}`;
   const rows = `${database}/tables/notes/rows`;
