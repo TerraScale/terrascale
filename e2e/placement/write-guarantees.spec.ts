@@ -5,12 +5,9 @@ import { frame, rawSqlSocket } from '../support/sql-socket';
 import { localPort, production } from '../support/stack';
 import { journey, saveSecret } from '../support/state';
 import { test, home, replica, project, database, name, json, sql, removeDatabase, type Cells } from './support';
-import { databaseFunctions } from '../support/db-functions/journey';
 
 test.skip(production || process.env.E2E_REGIONS !== '2' || process.env.E2E_NODES_PER_REGION !== '1',
   'one node in each of two regions');
-
-databaseFunctions();
 
 const insert = "INSERT INTO notes (value) VALUES ('a')";
 const fraClient = localPort('terrabase_fra', 8180);

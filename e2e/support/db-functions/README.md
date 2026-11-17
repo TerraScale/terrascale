@@ -12,7 +12,7 @@ bash e2e/env/local.sh prepare
 bash e2e/env/local.sh start
 bash e2e/env/local.sh exec bash e2e/env/up.sh
 cd e2e
-bash env/local.sh exec npx playwright test placement/write-guarantees.spec.ts --project placement --grep 'SQL functions through'
+bash env/local.sh exec npx playwright test placement/database-functions.spec.ts --project placement --grep 'SQL functions through'
 bash env/local.sh stop
 ```
 
@@ -54,7 +54,7 @@ Production Postgres connects to each regional API host's IPv4 address on port 54
 | Shapes and table grants | `D/tables/{table}/shape` and grants | Shape hint stream, distinct from SQL ws | Not applicable | `Features/Shapes`, `concepts/sql.md` | Raw snapshot bootstrap, SDK snapshot/live data and table grant create/read/delete, including after rewind |
 | Request/work budgets and sandbox | execute refusal | Error frame/transaction state | ErrorResponse/transaction state | `SqlLimits.cs`, `SqlSandbox.cs`, `guides/errors.md` | Denied attach/detach/extensions/files/internal/temporary/virtual/pragma/maintenance operations; work-budget 57014 |
 
-SQL corpus cases are in `cases.mjs` and `advanced.mjs`; management, recovery, shapes and replication are in `management.mjs`; raw transport implementations are in `transports.mjs`; `run.mjs` emits one JSON receipt per assertion followed by a Markdown count table. `placement/write-guarantees.spec.ts` runs one scratch database per regional transport through the existing two-region journey. SDK-only paths use this checkout's JavaScript SDK; this does not qualify a published package version.
+SQL corpus cases are in `cases.mjs` and `advanced.mjs`; management, recovery, shapes and replication are in `management.mjs`; raw transport implementations are in `transports.mjs`; `run.mjs` emits one JSON receipt per assertion followed by a Markdown count table. `placement/database-functions.spec.ts` runs one scratch database per regional transport in its own scratch organization and project through the existing two-region journey. The matrix publishes Pro only for its own organization and deletes that owner after the suite; it never changes another spec’s plan or databases. SDK-only paths use this checkout's JavaScript SDK; this does not qualify a published package version.
 
 ## Evidence still required
 

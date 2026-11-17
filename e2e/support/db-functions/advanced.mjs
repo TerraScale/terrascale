@@ -180,7 +180,13 @@ export async function advanced(client, surface, prefix, check) {
       });
     }
   }
-  await check('work-budget', () => refused(execute('WITH RECURSIVE r(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM r WHERE x<1000000000) SELECT SUM(x) FROM r'), '57014'));
+  await check('work-budget', async () => {
+    const started = performance.now();
+    await refused(execute('WITH RECURSIVE r(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM r WHERE x<1000000000) SELECT SUM(x) FROM r').catch(error => {
+      process.stdout.write(JSON.stringify({ surface, stage: 'work-budget-refusal', code: error.code ?? error.sqlstate, sqlstate: error.sqlstate, message: error.message, milliseconds: performance.now() - started }) + '\n');
+      throw error;
+    }), '57014');
+  });
   await check('work-budget-recovery', async () => { assert.deepEqual(rows(await execute('SELECT 1')), [['1']]); });
 }
 

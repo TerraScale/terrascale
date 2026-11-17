@@ -101,7 +101,7 @@ export async function runManagement(state, target, executable) {
         const result = spawnSync(executable, ['-project', state.projectId, ...args], {
           encoding: 'utf8', env: { ...process.env, TERRASCALE_API_KEY: state.apiKey }, timeout: 30000,
         });
-        assert.equal(result.status, 0, 'operator ' + args.at(-3) + ' failed: ' + (result.stderr ?? '').slice(0, 300));
+        assert.equal(result.status, 0, 'operator ' + args[args.indexOf('db') + 1] + ' failed: ' + [result.error?.code, result.signal, result.stderr].filter(Boolean).join(' ').slice(0, 300));
       };
       try {
         cli(['-o', file, 'db', 'export', source]);
