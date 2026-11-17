@@ -20,7 +20,7 @@ The list is the open issues in `TerraScale/terrascale` labeled `journey-quaranti
 `Flaky journey test: <spec path> › <test title>` quarantines one test, with nested describe titles separated
 by ` › `. Use one issue per test, shared across projects. Automatic entries also store a JSON identity line
 with the spec and title segments in the issue body. Long names use the file-only title with that exact identity;
-this never quarantines sibling tests.
+this quarantines sibling tests only when they belong to the same serial group. PR discovery excludes the whole outermost serial group to preserve setup dependencies, together with transitive dependent projects and teardowns. The group and project exclusions are collision checked together; the summary lists every excluded test and its reason.
 
 The Journey quarantine workflow compares per-attempt journey result artifacts after a successful CI rerun
 of the same commit. It opens an issue for each failed-then-passed test whose spec the PR did not change,
@@ -33,7 +33,9 @@ tests before execution using Playwright discovery, exact structural resolution a
 excluded tests; ambiguous or tagged identities stay runnable. Main pushes, dispatches and the production journey still run them; their failures
 appear in the summary and the reporting workflow comments on their issues with the run link, without
 failing the gate. Other test failures, global setup/teardown errors, interruption and timeouts still fail.
-Local runs without the CI issue snapshot run every test normally.
+When quarantine excludes every selected test, discovery confirms the original selection was nonempty and the
+invocation reports that no tests remain. Invalid selections and discovery errors still fail. Local runs without
+the CI issue snapshot run every test normally.
 
 Fix the root cause, prove the fix with the journey, and close the issue to leave quarantine. Closing it
 removes the entry on the next invocation; no list file or follow-up PR is needed. Each quarantined test
@@ -94,7 +96,7 @@ email unverified. Project-tenant sign-ups have their own tenant-scoped budgets; 
 | `hosted/attack-protection.spec.ts` | 1 | 20/hour |
 | `hosted/imported-password-race.spec.ts` | 1 | 20/hour |
 | `hosted/project-mfa.spec.ts` | 2 | 20/hour |
-| `hosted/project-sign-in.spec.ts` | 2 | 20/hour |
+| `hosted/project-sign-in.spec.ts` | 4 | 20/hour |
 | `hosted/user-profiles.spec.ts` | 1 | 20/hour |
 | `interactions/auth-organizations.spec.ts` | 1 | 20/hour |
 | `interactions/auth-data-tokens.spec.ts` | 1 | 20/hour |
