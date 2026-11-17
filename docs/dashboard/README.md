@@ -13,6 +13,7 @@ Production runs on OCI gru under ts-orch; see the
 
 [Agent databases](agent-databases.md) describes TTL, forks and the database MCP lifecycle.
 [Database placement](database-placement.md) describes home moves and replica controls.
+[Live views](live-views.md) describes server-pushed replication, restore status and restore points.
 [Sign-in flow](auth/sign-in-flow.md) describes the OIDC flow, its lifetime and the callback failure pages.
 [Personal access tokens](auth/access-tokens.md) describes what a token's expiry means and what ends it earlier.
 

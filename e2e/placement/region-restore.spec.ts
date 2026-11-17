@@ -2,21 +2,21 @@ import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { connect } from 'node:http2';
 import { join } from 'node:path';
-import { expect } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 import { extendPeers, startRegion, type RegionProcess } from './fleet';
 import { localPort, production, stateDir } from '../support/stack';
-import { journey } from '../support/state';
+import { journey, ownerSession } from '../support/state';
 import { test, home, replica, project, database, name, json, sql, removeDatabase, type Cells } from './support';
 
 test.skip(production || process.env.E2E_REGIONS !== '2' || process.env.E2E_NODES_PER_REGION !== '1',
   'one node in each of two regions, with port 8380 free for sjc');
 
-test('snapshot and point-in-time restore run in fra', async ({ cells }) => {
+test('snapshot and point-in-time restore run in fra', async ({ cells, page }) => {
   await publish('pro');
-  await restorePair(cells, replica, 'fra');
+  await restorePair(cells, replica, 'fra', page);
 });
 
-test('snapshot and point-in-time restore run in sjc', async ({ cells }) => {
+test('snapshot and point-in-time restore run in sjc', async ({ cells, page }) => {
   const restorePeers = extendPeers(['sjc']);
   let node: RegionProcess | undefined;
   try {
@@ -28,14 +28,14 @@ test('snapshot and point-in-time restore run in sjc', async ({ cells }) => {
       return (await response.text()).split('\n').find(line => line.startsWith('terrabase_clock_local_writes_allowed{'));
     }, { message: 'sjc trusts its clock before the source database accepts writes' }).toMatch(/ 1$/);
     await publish('pro');
-    await restorePair(cells, node.endpoint, 'sjc', node.endpoint);
+    await restorePair(cells, node.endpoint, 'sjc', page, node.endpoint);
   } finally {
     if (node) await node.stop();
     restorePeers();
   }
 });
 
-async function restorePair(cells: Cells, endpoint: string, region: string, removeEndpoint = '') {
+async function restorePair(cells: Cells, endpoint: string, region: string, page: Page, removeEndpoint = '') {
   const source = await json<{ id: string }>(await cells.post(`${endpoint}${project()}/databases`, {
     data: { name: name('backup-' + region), regions: [region, 'gru'] },
   }), 201);
@@ -44,8 +44,16 @@ async function restorePair(cells: Cells, endpoint: string, region: string, remov
     await sql(cells, endpoint, source.id, 'CREATE TABLE rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
     await sql(cells, endpoint, source.id, "INSERT INTO rows (id, value) VALUES (1, 'snapshot')");
     await served(cells, source.id, [[1, 'snapshot']]);
+    const current = journey();
+    await page.context().addCookies(JSON.parse(readFileSync(ownerSession(), 'utf8')).cookies);
+    await page.goto(`/databases/${source.id}/backups?organizationId=${current.organizationId}&projectId=${current.projectId}`);
+    const viewUrl = page.url();
+    await page.locator('html').evaluate(el => el.setAttribute('data-in-place', 'live-backups'));
     const backup = await json<{ id: string; status: string }>(await cells.post(`${endpoint}${database(source.id)}/backups`), 201);
     expect(backup.status).toBe('ready');
+    await expect(page.locator(`#restore-points-list button[command="show-modal"][commandfor="restore-${backup.id}"]`)).toBeVisible();
+    await expect(page).toHaveURL(viewUrl);
+    await expect(page.locator('html')).toHaveAttribute('data-in-place', 'live-backups');
     const elsewhere = await cells.post(`${home}${database(source.id)}/backups/${backup.id}/restore`, {
       data: { name: name('snapshot-' + region) },
     });

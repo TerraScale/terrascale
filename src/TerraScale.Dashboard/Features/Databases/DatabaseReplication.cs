@@ -7,9 +7,9 @@ namespace TerraScale.Dashboard.Features.Databases;
 
 public sealed record DatabaseReplication(TerraBaseDatabaseRegions? Status, string Error = "")
 {
-    public static async Task<DatabaseReplication> LoadAsync(HttpContext http, AccountContext context, DatabaseRecord database, DatabaseService databases)
+    public static async Task<DatabaseReplication> LoadAsync(HttpContext http, AccountContext context, DatabaseRecord database, DatabaseService databases, CancellationToken cancellationToken)
     {
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(http.RequestAborted);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(5));
         try
         {
@@ -29,8 +29,9 @@ public sealed record DatabaseReplication(TerraBaseDatabaseRegions? Status, strin
 
             return new(status);
         }
-        catch (Exception error) when (error is TerraBaseException or HttpRequestException or IOException or InvalidOperationException
-            || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
+        catch (Exception error) when (DatabaseResults.Status(error) is not (401 or 403 or 404) &&
+            (error is TerraBaseException or HttpRequestException or IOException or InvalidOperationException
+                || error is OperationCanceledException && !cancellationToken.IsCancellationRequested))
         {
             return new(null, "Replication observations are unavailable.");
         }

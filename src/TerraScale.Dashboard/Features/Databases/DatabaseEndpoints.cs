@@ -282,7 +282,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 return tab != "tables" || shown is null ? (tables, "", null) : (tables, shown.Name, await DatabaseTables.PreviewAsync(backend, scope, home, database.Id, shown.Name, http.RequestAborted));
             }
 
-            var replicationRead = tab == "replication" ? DatabaseReplication.LoadAsync(http, context, database, databases) : null;
+            var replicationRead = tab == "replication" ? DatabaseReplication.LoadAsync(http, context, database, databases, http.RequestAborted) : null;
             async Task<DatabaseConflictsPage> ConflictsAsync()
             {
                 var table = http.Request.Query["table"].ToString();
