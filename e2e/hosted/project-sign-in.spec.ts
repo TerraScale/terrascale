@@ -9,79 +9,130 @@ import { confirmWithPassword, hostedReady, signUp, verify, onboard } from '../su
 import { newAddress, nextMail } from '../support/inbox';
 import { saveCookies, saveSecret } from '../support/state';
 import { enterSecret } from '../support/secret';
+import { createTsAuthClient } from '../../sdk/js/src/ts-auth.js';
+import { signInToken } from '../support/auth-management';
 
-test.describe('project usernames and browser-bound magic links', () => {
-  test.describe.configure({ mode: 'serial' });
-  const current = { runId: randomBytes(4).toString('hex') };
-  const username = 'user_' + current.runId;
-  const password = randomBytes(24).toString('base64url');
-  const providers = [
-    ['microsoft', 'Microsoft'], ['gitlab', 'GitLab'], ['linkedin', 'LinkedIn'], ['slack', 'Slack'],
-    ['discord', 'Discord'], ['facebook', 'Facebook'], ['x', 'X'], ['oauth2', 'Custom OAuth2'],
-  ] as const;
-  let owner: BrowserContext;
-  let customer: BrowserContext;
-  let other: BrowserContext;
-  let page: Page;
-  let admin: Page;
-  let audit: Audit;
-  let adminAudit: Audit;
-  let email: string;
-  let ownerEmail: string;
-  let projectId: string;
-  let base: string;
+type ProjectSignIn = {
+  runId: string;
+  username: string;
+  password: string;
+  customer: BrowserContext;
+  other: BrowserContext;
+  page: Page;
+  admin: Page;
+  passwordPage: Page;
+  audit: Audit;
+  adminAudit: Audit;
+  passwordAudit: Audit;
+  email: string;
+  projectId: string;
+  base: string;
+};
 
-  test.beforeAll(async ({ browser }) => {
-    owner = await auditedContext(browser, { viewport: desktop });
-    customer = await auditedContext(browser, { viewport: desktop });
-    other = await auditedContext(browser, { viewport: desktop });
-    page = await customer.newPage();
-    admin = await owner.newPage();
-    email = await newAddress('magic-' + current.runId + '-' + Date.now().toString(36));
+const providers = [
+  ['microsoft', 'Microsoft'], ['gitlab', 'GitLab'], ['linkedin', 'LinkedIn'], ['slack', 'Slack'],
+  ['discord', 'Discord'], ['facebook', 'Facebook'], ['x', 'X'], ['oauth2', 'Custom OAuth2'],
+] as const;
+
+const signInTest = test.extend<{ signIn: ProjectSignIn }>({
+  signIn: async ({ browser }, use, info) => {
+    const runId = randomBytes(8).toString('hex');
+    const username = 'user_' + runId;
+    const password = randomBytes(24).toString('base64url');
     saveSecret('project-sign-in-password', password);
-  });
+    const owner = await auditedContext(browser, { viewport: desktop });
+    const customer = await auditedContext(browser, { viewport: desktop });
+    const other = await auditedContext(browser, { viewport: desktop });
+    const page = await customer.newPage();
+    const admin = await owner.newPage();
+    const passwordPage = await other.newPage();
+    const audit = new Audit(page, info);
+    const adminAudit = new Audit(admin, info);
+    const passwordAudit = new Audit(passwordPage, info);
+    const email = await newAddress('magic-' + runId);
+    try {
+      const ownerEmail = await newAddress(`magic-owner-${runId}-${Date.now().toString(36)}`);
+      await signUp(admin, adminAudit, ownerEmail, password, 'project sign-in owner');
+      await verify(admin, ownerEmail);
+      await onboard(admin, adminAudit, 'Sign-in owner', `Sign-in ${runId}`, 'project sign-in owner');
+      const projectId = new URL(admin.url()).searchParams.get('projectId') ?? '';
+      expect(projectId).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+      const base = `${auth}/ui/${projectId}`;
+      await admin.goto('/auth/sign-in');
+      await admin.locator('#auth-method-magic_link').check();
+      await admin.locator('#auth-method-username').check();
+      await admin.getByRole('button', { name: 'Save sign-in methods', exact: true }).click();
+      await expect(admin.locator('#auth-method-magic_link')).toBeChecked();
+      await expect(admin.locator('#auth-method-username')).toBeChecked();
+      await adminAudit.check('project magic links and usernames configured');
+      await use({ runId, username, password, customer, other, page, admin, passwordPage, audit, adminAudit, passwordAudit, email, projectId, base });
+      await admin.goto('/profile?tab=danger');
+      await admin.locator('main').getByRole('button', { name: 'Delete account', exact: true }).click();
+      const deletion = admin.locator('#delete-account');
+      await deletion.locator('#delete-account-email').fill(ownerEmail);
+      await deletion.getByRole('button', { name: 'Delete account', exact: true }).click();
+      await confirmWithPassword(admin, adminAudit, password, 'project sign-in owner deletion');
+      await admin.waitForURL(url => url.origin === dash && url.pathname === '/account-deleted');
+      await expect(admin.locator('main')).toContainText('Account deleted');
+      await adminAudit.check('project sign-in owner and project removed');
+      await audit.finish();
+      await adminAudit.finish();
+      await passwordAudit.finish();
+    } finally {
+      for (const context of [customer, other, owner]) {
+        await saveCookies(context);
+        await context.close();
+      }
+    }
+  },
+});
 
-  test.beforeEach(({}, info) => {
-    audit = new Audit(page, info);
-    adminAudit = new Audit(admin, info);
-  });
+async function createUsernameAccount({ page, audit, base, email, username, password }: ProjectSignIn): Promise<void> {
+  await page.goto(`${base}/sign-up`);
+  await page.locator('#sign-up-email').fill(email);
+  await page.locator('#sign-up-username').fill(username);
+  await enterSecret(page.locator('#sign-up-password'), password);
+  await audit.check('project sign-up requests a username');
+  await page.locator('form:has(#sign-up-email) button[type=submit]').click();
+  const signupMail = await nextMail(email, 0);
+  const signupCode = /^\s*(\d{6})\s*$/m.exec(signupMail.text)?.[1] ?? '';
+  await enterSecret(page.locator('#sign-up-code-digit'), signupCode);
+  await page.getByRole('button', { name: 'Verify email', exact: true }).click();
+  await expect(page.locator('[data-state=success]')).toContainText('signed in');
+  await audit.check('project username account verified');
+}
 
-  test.afterAll(async () => {
-    await saveCookies(customer);
-    await saveCookies(other);
-    await saveCookies(owner);
-    await customer.close();
-    await other.close();
-    await owner.close();
-  });
+async function configureProviders({ admin, adminAudit, password }: ProjectSignIn): Promise<void> {
+  await admin.goto('/auth/social');
+  for (const [key, label] of providers) {
+    const id = `auth-provider-${key}`;
+    await admin.locator(`#${id} button[command=show-modal]`).click();
+    const dialog = admin.locator(`#${id}-dialog`);
+    await dialog.locator('[name=client_id]').fill('journey-client');
+    await enterSecret(dialog.locator('[name=client_secret]'), password);
+    if (key === 'microsoft') await dialog.locator('[name=tenant]').selectOption('organizations');
+    if (key === 'oauth2') {
+      for (const field of ['authorize_url', 'token_url', 'userinfo_url']) {
+        await dialog.locator(`[name=${field}]`).fill(`https://identity.journey.terrascale.tech/${field}`);
+      }
+      await dialog.locator('[name=scopes]').fill('profile email');
+    }
+    await dialog.getByRole('button', { name: `Save ${label}`, exact: true }).click();
+    await expect(admin.locator(`#${id} .ts-badge`)).toHaveText('Configured');
+    if (key === 'oauth2') {
+      await admin.locator(`#${id} button[command=show-modal]`).click();
+      await expect(admin.locator(`#${id}-dialog [name=userinfo_url]`)).toHaveValue('https://identity.journey.terrascale.tech/userinfo_url');
+      await admin.locator(`#${id}-dialog`).getByRole('button', { name: 'Cancel', exact: true }).click();
+    }
+    expect((await admin.content()).includes(password), 'provider secrets stay write-only').toBe(false);
+  }
+  await adminAudit.check('all eight providers configured with write-only secrets');
+}
 
-  test('configures providers and verifies a username account with mail cooldown', async () => {
-    ownerEmail = await newAddress(`magic-owner-${current.runId}-${Date.now().toString(36)}`);
-    await signUp(admin, adminAudit, ownerEmail, password, 'project sign-in owner');
-    await verify(admin, ownerEmail);
-    await onboard(admin, adminAudit, 'Sign-in owner', `Sign-in ${current.runId}`, 'project sign-in owner');
-    projectId = new URL(admin.url()).searchParams.get('projectId') ?? '';
-    expect(projectId).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
-    base = `${auth}/ui/${projectId}`;
-    await admin.goto('/auth/sign-in');
-    await admin.locator('#auth-method-magic_link').check();
-    await admin.locator('#auth-method-username').check();
-    await admin.getByRole('button', { name: 'Save sign-in methods', exact: true }).click();
-    await expect(admin.locator('#auth-method-magic_link')).toBeChecked();
-    await expect(admin.locator('#auth-method-username')).toBeChecked();
-    await adminAudit.check('project magic links and usernames configured');
-    await page.goto(`${base}/sign-up`);
-    await page.locator('#sign-up-email').fill(email);
-    await page.locator('#sign-up-username').fill(username);
-    await enterSecret(page.locator('#sign-up-password'), password);
-    await audit.check('project sign-up requests a username');
-    await page.locator('form:has(#sign-up-email) button[type=submit]').click();
-    const signupMail = await nextMail(email, 0);
-    const signupCode = /^\s*(\d{6})\s*$/m.exec(signupMail.text)?.[1] ?? '';
-    await enterSecret(page.locator('#sign-up-code-digit'), signupCode);
-    await page.getByRole('button', { name: 'Verify email', exact: true }).click();
-    await expect(page.locator('[data-state=success]')).toContainText('signed in');
-    await audit.check('project username account verified');
+signInTest.describe('project usernames and browser-bound magic links', () => {
+  signInTest('configures providers and verifies a username account with mail cooldown', async ({ signIn }) => {
+    const { customer, page, audit, base, email } = signIn;
+    await createUsernameAccount(signIn);
     await customer.clearCookies();
     await page.goto(`${base}/sign-in`);
     await page.locator('#sign-in-email').fill(email);
@@ -90,38 +141,14 @@ test.describe('project usernames and browser-bound magic links', () => {
     await expect(page.locator('button[data-wait-seconds]')).toBeDisabled();
     await expect(page.locator('#sign-in-error')).toContainText('No link was sent');
     await audit.check('magic-link mail cooldown disables resend without claiming delivery');
-
-    await admin.goto('/auth/social');
-    for (const [key, label] of providers) {
-      const id = `auth-provider-${key}`;
-      await admin.locator(`#${id} button[command=show-modal]`).click();
-      const dialog = admin.locator(`#${id}-dialog`);
-      await dialog.locator('[name=client_id]').fill('journey-client');
-      await enterSecret(dialog.locator('[name=client_secret]'), password);
-      if (key === 'microsoft') await dialog.locator('[name=tenant]').selectOption('organizations');
-      if (key === 'oauth2') {
-        for (const field of ['authorize_url', 'token_url', 'userinfo_url']) {
-          await dialog.locator(`[name=${field}]`).fill(`https://identity.journey.terrascale.tech/${field}`);
-        }
-        await dialog.locator('[name=scopes]').fill('profile email');
-      }
-      await dialog.getByRole('button', { name: `Save ${label}`, exact: true }).click();
-      await expect(admin.locator(`#${id} .ts-badge`)).toHaveText('Configured');
-      if (key === 'oauth2') {
-        await admin.locator(`#${id} button[command=show-modal]`).click();
-        await expect(admin.locator(`#${id}-dialog [name=userinfo_url]`)).toHaveValue('https://identity.journey.terrascale.tech/userinfo_url');
-        await admin.locator(`#${id}-dialog`).getByRole('button', { name: 'Cancel', exact: true }).click();
-      }
-      expect((await admin.content()).includes(password), 'provider secrets stay write-only').toBe(false);
-    }
-    await adminAudit.check('all eight providers configured with write-only secrets');
-
-    await audit.finish();
-    await adminAudit.finish();
+    await configureProviders(signIn);
   });
 
-  test('enforces username uniqueness and signs in case-insensitively', async ({}, info) => {
-    const duplicateEmail = await newAddress(`duplicate-${current.runId}-${Date.now().toString(36)}`);
+  signInTest('enforces username uniqueness and signs in case-insensitively', async ({ signIn }) => {
+    const { runId, username, password, other, base, projectId, passwordPage, passwordAudit } = signIn;
+    await createUsernameAccount(signIn);
+    await configureProviders(signIn);
+    const duplicateEmail = await newAddress(`duplicate-${runId}-${Date.now().toString(36)}`);
     const duplicate = await other.newPage();
     await duplicate.goto(`${base}/sign-up`);
     await duplicate.locator('#sign-up-email').fill(duplicateEmail);
@@ -137,9 +164,9 @@ test.describe('project usernames and browser-bound magic links', () => {
     });
     expect(reserved.status()).toBe(400);
     expect(await reserved.text()).toContain('Use a username');
-    const raceName = 'race_' + current.runId;
-    const raceEmail = await newAddress('race-first-' + current.runId);
-    const lostEmail = await newAddress('race-second-' + current.runId);
+    const raceName = 'race_' + runId;
+    const raceEmail = await newAddress('race-first-' + runId);
+    const lostEmail = await newAddress('race-second-' + runId);
     const starts = [];
     for (const address of [raceEmail, lostEmail]) {
       const response = await other.request.post(base + '/sign-up', {
@@ -163,26 +190,29 @@ test.describe('project usernames and browser-bound magic links', () => {
     }
     await duplicate.close();
 
-    const passwordPage = await other.newPage();
-    const passwordAudit = new Audit(passwordPage, info);
     await passwordPage.goto(`${base}/sign-in`);
     for (const [key, label] of providers) {
       await expect(passwordPage.getByRole('link', { name: `Continue with ${label}`, exact: true })).toHaveAttribute('href', `/ui/${projectId}/social/${key}`);
     }
     await passwordPage.locator('#sign-in-email').fill(username.toUpperCase());
     await passwordPage.getByRole('button', { name: 'Use a password instead' }).click();
+    await passwordPage.waitForURL(`${base}/sign-in/password`);
+    await hostedReady(passwordPage);
     await enterSecret(passwordPage.locator('#sign-in-password'), password);
     await passwordPage.getByRole('button', { name: 'Sign in', exact: true }).click();
     await expect(passwordPage.locator('[data-state=success]')).toContainText('signed in');
     await passwordAudit.check('username signs in case-insensitively');
-
-    await passwordAudit.finish();
-    await passwordPage.close();
   });
 
-  test('redeems a magic link only in its browser and rejects link and code replay', async ({}, info) => {
-    const passwordPage = await other.newPage();
-    const passwordAudit = new Audit(passwordPage, info);
+  signInTest('redeems a magic link only in its browser and rejects link and code replay', async ({ signIn }) => {
+    const { admin, adminAudit, page, audit, other, customer, passwordPage, passwordAudit, email, projectId, base } = signIn;
+    const token = await signInToken(admin.request, 'magic-link-owner');
+    const imported = await createTsAuthClient({ apiBaseUrl: auth, instanceSlug: 'terrascale' }).projects.importUsers(token, projectId, {
+      users: [{ email, email_verified: true }],
+    });
+    if (!imported.ok) throw new Error(JSON.stringify(imported.error));
+    expect(imported.value.errors).toEqual([]);
+
     await admin.goto('/auth/sign-in');
     await admin.locator('#auth-method-passcode').uncheck();
     await admin.locator('#auth-method-password').uncheck();
@@ -193,9 +223,11 @@ test.describe('project usernames and browser-bound magic links', () => {
     await adminAudit.check('magic links can be the only first-factor method');
 
     await other.clearCookies();
-    await page.locator('button[data-wait-seconds], button[data-label]').click();
+    await page.goto(`${base}/sign-in`);
+    await page.locator('#sign-in-email').fill(email);
+    await page.getByRole('button', { name: 'Email a sign-in link', exact: true }).click();
     await hostedReady(page);
-    const magicMail = await nextMail(email, 1);
+    const magicMail = await nextMail(email, 0);
     const link = magicMail.text.match(/https:\/\/auth\.terrascale\.tech\/ui\/[^\s<>]+\/sign-in\/magic\?token=[^\s<>]+/)?.[0] ?? '';
     expect(link).not.toBe('');
     saveSecret('project-magic-link', link);
@@ -225,19 +257,6 @@ test.describe('project usernames and browser-bound magic links', () => {
       headers: { Origin: auth }, form: { email, code, challenge },
     });
     expect(reusedCode.status()).toBe(401);
-    await admin.goto('/profile?tab=danger');
-    await admin.locator('main').getByRole('button', { name: 'Delete account', exact: true }).click();
-    const deletion = admin.locator('#delete-account');
-    await deletion.locator('#delete-account-email').fill(ownerEmail);
-    await deletion.getByRole('button', { name: 'Delete account', exact: true }).click();
-    await confirmWithPassword(admin, adminAudit, password, 'project sign-in owner deletion');
-    await admin.waitForURL(url => url.origin === dash && url.pathname === '/account-deleted');
-    await expect(admin.locator('main')).toContainText('Account deleted');
-    await adminAudit.check('project sign-in owner and project removed');
-    await audit.finish();
-    await adminAudit.finish();
-    await passwordAudit.finish();
-    await passwordPage.close();
   });
 });
 

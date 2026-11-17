@@ -20,7 +20,7 @@ The list is the open issues in `TerraScale/terrascale` labeled `journey-quaranti
 `Flaky journey test: <spec path> › <test title>` quarantines one test, with nested describe titles separated
 by ` › `. Use one issue per test, shared across projects. Automatic entries also store a JSON identity line
 with the spec and title segments in the issue body. Long names use the file-only title with that exact identity;
-this never quarantines sibling tests.
+this quarantines sibling tests only when they belong to the same serial group. PR discovery excludes the whole outermost serial group to preserve setup dependencies and lists every excluded test in the summary.
 
 The Journey quarantine workflow compares per-attempt journey result artifacts after a successful CI rerun
 of the same commit. It opens an issue for each failed-then-passed test whose spec the PR did not change,
@@ -94,7 +94,7 @@ email unverified. Project-tenant sign-ups have their own tenant-scoped budgets; 
 | `hosted/attack-protection.spec.ts` | 1 | 20/hour |
 | `hosted/imported-password-race.spec.ts` | 1 | 20/hour |
 | `hosted/project-mfa.spec.ts` | 2 | 20/hour |
-| `hosted/project-sign-in.spec.ts` | 2 | 20/hour |
+| `hosted/project-sign-in.spec.ts` | 4 | 20/hour |
 | `hosted/user-profiles.spec.ts` | 1 | 20/hour |
 | `interactions/auth-organizations.spec.ts` | 1 | 20/hour |
 | `interactions/auth-data-tokens.spec.ts` | 1 | 20/hour |
