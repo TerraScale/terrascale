@@ -23,14 +23,25 @@ public static partial class DatabaseTablesHints
         yield return time.GetUtcNow();
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2), time);
-        using var socket = await OpenAsync(http, logger, stop.Token);
+        Task<ClientWebSocket?>? opening = OpenAsync(http, logger, stop.Token);
+        ClientWebSocket? socket = null;
+        Task<bool>? hint = null;
         var tick = timer.WaitForNextTickAsync(stop.Token).AsTask();
-        var hint = socket is null ? null : ReadAsync(socket, logger, stop.Token);
         try
         {
             while (true)
             {
-                if (hint is not null && await Task.WhenAny(tick, hint) == hint)
+                var source = (Task?)hint ?? (Task?)opening ?? tick;
+                var next = await Task.WhenAny(tick, source);
+                if (opening is not null && next == opening)
+                {
+                    socket = await opening;
+                    opening = null;
+                    hint = socket is null ? null : ReadAsync(socket, logger, stop.Token);
+                    continue;
+                }
+
+                if (hint is not null && next == hint)
                 {
                     var changed = await hint;
                     hint = changed ? ReadAsync(socket!, logger, stop.Token) : null;
@@ -56,10 +67,28 @@ public static partial class DatabaseTablesHints
         finally
         {
             await stop.CancelAsync();
+            if (opening is not null)
+            {
+                await DisposeOpeningAsync(opening, stop.Token);
+            }
+
+            socket?.Dispose();
             if (hint is not null)
             {
                 await hint;
             }
+        }
+    }
+
+    private static async Task DisposeOpeningAsync(Task<ClientWebSocket?> opening, CancellationToken cancellationToken)
+    {
+        try
+        {
+            (await opening)?.Dispose();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return;
         }
     }
 
@@ -126,7 +155,7 @@ public static partial class DatabaseTablesHints
             throw;
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested &&
-            (DatabaseResults.KnownFailure(error) || error is HttpRequestException or IOException or WebSocketException or JsonException))
+            (DatabaseResults.KnownFailure(error) || error is HttpRequestException or IOException or WebSocketException or JsonException or OperationCanceledException))
         {
             socket?.Dispose();
             HintsUnavailable(logger, error);

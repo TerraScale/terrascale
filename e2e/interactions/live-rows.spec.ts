@@ -21,10 +21,10 @@ test('table browser follows API writes without reloading or losing a table draft
     });
     expect(response.status(), sql).toBe(200);
   };
-  const path = `/databases/${current.databaseId}/tables?table=${table}&organizationId=${current.organizationId}&projectId=${current.projectId}`;
+  const path = `/databases/${current.databaseId}/tables?organizationId=${current.organizationId}&projectId=${current.projectId}`;
   await execute(`CREATE TABLE ${table} (id INTEGER PRIMARY KEY, value TEXT NOT NULL)`);
   try {
-    await page.goto(path);
+    await page.goto(path + `&table=${table}`);
     const viewUrl = page.url();
     await page.locator('html').evaluate(el => el.setAttribute('data-in-place', 'live-rows'));
     await execute(`CREATE TABLE ${table}_catalog (id INTEGER PRIMARY KEY)`);
@@ -52,4 +52,26 @@ test('table browser follows API writes without reloading or losing a table draft
   }
   await expect(page.locator(`[data-table="${table}"]`)).toHaveCount(0);
   await expect(page.locator(`[data-table="${table}_catalog"]`)).toHaveCount(0);
+
+  const displayed = '1_' + table;
+  const earlier = '0_' + table;
+  await execute(`CREATE TABLE "${displayed}" (id INTEGER PRIMARY KEY, value TEXT NOT NULL)`);
+  try {
+    await page.goto(path);
+    const defaultUrl = page.url();
+    await page.locator('html').evaluate(el => el.setAttribute('data-in-place', 'default-table'));
+    await expect(page.locator('#table-columns-title')).toHaveText(displayed);
+    await execute(`CREATE TABLE "${earlier}" (id INTEGER PRIMARY KEY)`);
+    await expect(page.locator(`[data-table="${earlier}"]`)).toBeVisible();
+    await expect(page.locator('#table-columns-title')).toHaveText(displayed);
+    await expect(page.locator('#table-select')).toHaveValue(displayed);
+    await execute(`INSERT INTO "${displayed}" VALUES (1, 'default-selection-retained')`);
+    await expect(page.locator('#table-rows tbody')).toContainText('default-selection-retained');
+    await expect(page).toHaveURL(defaultUrl);
+    await expect(page.locator('html')).toHaveAttribute('data-in-place', 'default-table');
+    await audit.check('default table selection survives an earlier table being created');
+  } finally {
+    await execute(`DROP TABLE "${displayed}"`);
+    await execute(`DROP TABLE "${earlier}"`);
+  }
 });

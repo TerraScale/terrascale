@@ -4,7 +4,7 @@
 @using TerraScale.Dashboard.Features.Databases
 @using TerraScale.Dashboard.Common.Charts
 @using TerraScale.Dashboard.Common.Live
-<div id="tables-browser" @LiveView.Initializer(Model.Context, DatabaseService.Path(Model.Database.Id, "tables/live") + "?table=" + Uri.EscapeDataString(HttpContext!.Request.Query["table"].ToString()))>
+<div id="tables-browser" @LiveView.Initializer(Model.Context, DatabaseService.Path(Model.Database.Id, "tables/live") + "?table=" + Uri.EscapeDataString(Model.Table.Length > 0 ? Model.Table : HttpContext!.Request.Query["table"].ToString()))>
 @if(Model.Tables is { } listing){
 @if(listing.Tables.Count == 0){<section class="ts-card" id="tables"><div class="ts-card-body"><div class="ts-empty" role="status"><span class="ts-icon-tile" aria-hidden="true">@Icons.Render("Table", 16)</span><p class="ts-empty-title">No tables yet.</p>@if(Model.Context.CanWriteProjectData){<button class="ts-btn ts-btn-primary ts-btn-sm" type="button" command="show-modal" commandfor="create-table">@Icons.Render("Plus",16)<span>New table</span></button>}<a class="ts-btn ts-btn-secondary ts-btn-sm" href="@DatabaseService.Path(Model.Database.Id, "sql")">@Icons.Render("Play",16)<span>Open SQL editor</span></a></div></div></section>}
 else{

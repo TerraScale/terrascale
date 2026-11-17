@@ -53,10 +53,13 @@ uses a small reader instead of materializing a second copy of the table.
 The two-second server timer remains alongside hints because table creation and
 deletion have no catalog shape subscription. It also covers tables without shape
 support and unavailable or closed hint streams. The next SSE connection attempts
-hints again. There is no browser polling or refresh button.
+hints again. The timer continues while the bootstrap or WebSocket upgrade is
+pending; transport timeouts disable hints while request cancellation still ends
+the stream. There is no browser polling or refresh button.
 
 Only `tables-browser` is patched. The create-table dialog and its draft stay
-outside it, and the selected table remains bound to the request query. The current
-browser shows the first 100 rows and has no sort, filter or pagination controls;
+outside it. The initializer pins the resolved table, including when the initial
+page has no table query, and the stream retains that selection across catalog
+changes. The browser shows the first 100 rows and has no sort, filter or pagination controls;
 every live read keeps that same query. Catalog changes, counts, columns and row
 inserts, updates and deletes therefore use the same rendering as the initial page.
