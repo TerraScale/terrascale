@@ -10,7 +10,7 @@ namespace TerraScale.Dashboard.Features.Functions
             JavaScript runs in strict mode: declare variables with const, let or var; assigning an undeclared variable throws.
             SQL uses the SQLite dialect: use ? or named parameters, not PostgreSQL syntax.
             Each invocation has a fresh Jint engine. Only SQL on this function's database and console are available.
-            Call deploy_function(databaseId, name, source, cron?) to create or replace, then invoke_function(databaseId, name, body?).
+            Call deploy_function(databaseId, name, source, cron?) to create or replace, then invoke_function(databaseId, name, body?, query?).
             Deploy requires SQL write access (TerraBase requires sql:read and sql:write); invoke requires sql:read, even when the handler writes SQL.
             Use databaseId from list_databases or get_context; pass organizationId and projectId explicitly when selecting a scope.
             Deployment returns name, cron, updated_at and the HTTPS invoke_url. Syntax failures return error.code, error.message and line/column when present in the runner message.
@@ -21,7 +21,9 @@ namespace TerraScale.Dashboard.Features.Functions
 
             Events:
             HTTP: {trigger: "http", body: <JSON value or raw text; null for an empty request>, query: {key: "value"}}
-            MCP invoke_function body is a JSON value, default null. event.query is empty through MCP and the dashboard test run.
+            MCP invoke_function body is a JSON value, default null. Its optional query object maps strings to strings in event.query.
+            The dashboard test run accepts a URL query string. Repeated query keys join their values with commas, as on HTTPS.
+            Omit query for an empty event.query object. Example: invoke_function(databaseId, name, null, {search: "hello world"}).
             Direct POST to invoke_url fills event.query from URL query parameters. Direct HTTPS requires a project bearer token with sql:read.
             Cron: {trigger: "cron", scheduledAt: "<UTC timestamp>"}. Cron events have no body or query.
             cron is a five-field UTC Cronos expression (minute hour day-of-month month day-of-week), at most once per minute.

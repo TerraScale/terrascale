@@ -76,11 +76,11 @@ namespace TerraScale.Dashboard.Features.Functions
             }
         }
 
-        [McpServerTool(Name = "invoke_function", ReadOnly = false, Destructive = false, OpenWorld = false, Idempotent = false, UseStructuredContent = true), Description("Call get_functions_reference first. Run a deployed function once with body as a JSON value (default null). Returns status, content_type, parsed JSON or text body, and the newest invocation log if you have SQL write access; otherwise log is null with log_note. Concurrent calls or cron may produce a newer log. Requires SQL read only; the function itself may write SQL. event.query is empty through MCP and the dashboard test run; use the HTTPS invoke URL for query parameters.")]
-        public async Task<McpFunctionRun> Invoke(string databaseId, string name, JsonElement? body = null, string? organizationId = null, string? projectId = null)
+        [McpServerTool(Name = "invoke_function", ReadOnly = false, Destructive = false, OpenWorld = false, Idempotent = false, UseStructuredContent = true), Description("Call get_functions_reference first. Run a deployed function once with body as a JSON value (default null). Returns status, content_type, parsed JSON or text body, and the newest invocation log if you have SQL write access; otherwise log is null with log_note. Concurrent calls or cron may produce a newer log. Requires SQL read only; the function itself may write SQL. The optional query object maps strings to strings in event.query, matching HTTPS query parameters.")]
+        public async Task<McpFunctionRun> Invoke(string databaseId, string name, JsonElement? body = null, IReadOnlyDictionary<string, string>? query = null, string? organizationId = null, string? projectId = null)
         {
             var context = Scope(organizationId, projectId);
-            return await functions.InvokeForMcpAsync(context, DatabaseService.Database(context, databaseId), name, body?.GetRawText() ?? "null", Cancellation);
+            return await functions.InvokeForMcpAsync(context, DatabaseService.Database(context, databaseId), name, body?.GetRawText() ?? "null", query, Cancellation);
         }
 
         [McpServerTool(Name = "list_function_secrets", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List a function's secret names and updated_at. Values are write-only and never returned. Requires SQL write access.")]

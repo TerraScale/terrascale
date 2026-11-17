@@ -76,9 +76,10 @@ namespace TerraScale.TerraBase.Rpc.Functions
         }
 
         /// <inheritdoc />
-        public async UnaryResult<TerraBaseFunctionCall> InvokeAsync(string projectId, string database, string name, string body)
+        public async UnaryResult<TerraBaseFunctionCall> InvokeAsync(string projectId, string database, string name, string body, IReadOnlyDictionary<string, string>? query = null)
         {
-            var answer = await api.SendAsync(Context, "POST", Item(projectId, database, name) + "/invoke", Encoding.UTF8.GetBytes(body), "application/json");
+            var answer = await api.SendAsync(Context, "POST", Item(projectId, database, name) + "/invoke"
+                + RestPaths.Query(query is null ? [] : [.. query.Select(pair => (pair.Key, (string?)pair.Value))]), Encoding.UTF8.GetBytes(body), "application/json");
             if (!IsFunctionAnswer(answer))
             {
                 RestApi.Ensure(answer);

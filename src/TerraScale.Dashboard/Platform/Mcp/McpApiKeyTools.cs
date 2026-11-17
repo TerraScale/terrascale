@@ -73,6 +73,18 @@ namespace TerraScale.Dashboard.Platform.Mcp
                         ? integer : throw new McpProtocolException(name + " must be an integer.", McpErrorCode.InvalidParams);
                 return value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var whole) ? whole : throw new McpProtocolException(name + " must be an integer.", McpErrorCode.InvalidParams);
             }
+            IReadOnlyDictionary<string, string>? Query()
+            {
+                if (arguments?.TryGetValue("query", out var value) != true || value.ValueKind == JsonValueKind.Null) return null;
+                if (value.ValueKind != JsonValueKind.Object) throw new McpProtocolException("query must be an object with string values.", McpErrorCode.InvalidParams);
+                Dictionary<string, string> query = [];
+                foreach (var property in value.EnumerateObject())
+                {
+                    if (property.Value.ValueKind != JsonValueKind.String || !query.TryAdd(property.Name, property.Value.GetString()!))
+                        throw new McpProtocolException("query must be an object with unique keys and string values.", McpErrorCode.InvalidParams);
+                }
+                return query;
+            }
             decimal? Hours()
             {
                 if (arguments?.TryGetValue("ttlHours", out var value) != true || value.ValueKind == JsonValueKind.Null) return null;
@@ -185,7 +197,8 @@ namespace TerraScale.Dashboard.Platform.Mcp
                                 catch (AccountAccessException error) when (error.StatusCode == 400) { return FunctionMcpOutput.Invalid("validation", error.Message); }
                             case "invoke_function":
                                 var body = arguments?.TryGetValue("body", out var input) == true ? input.GetRawText() : "null";
-                                var call = await AtHomeAsync(async client => await client.InvokeAsync(scope.ProjectId, databaseId, name, body), ct);
+                                var query = Query();
+                                var call = await AtHomeAsync(async client => await client.InvokeAsync(scope.ProjectId, databaseId, name, body, query), ct);
                                 var canReadLogs = credential.Scopes.Contains("sql:write", StringComparer.Ordinal);
                                 async Task<IReadOnlyList<FunctionInvocation>> ReadNewestAsync(CancellationToken cancellationToken) =>
                                     [.. (await AtHomeAsync(async client => await client.LogsAsync(scope.ProjectId, databaseId, name, 1), cancellationToken)).Select(FunctionBackend.Invocation)];

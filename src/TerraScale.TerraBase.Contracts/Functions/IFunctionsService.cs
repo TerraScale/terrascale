@@ -32,7 +32,7 @@ namespace TerraScale.TerraBase.Contracts.Functions
         /// <summary><c>DELETE …/functions/{name}/secrets/{secret}</c>.</summary>
         UnaryResult<bool> DeleteSecretAsync(string projectId, string database, string name, string secret);
 
-        /// <summary><c>POST …/functions/{name}/invoke</c>.</summary>
-        UnaryResult<TerraBaseFunctionCall> InvokeAsync(string projectId, string database, string name, string body);
+        /// <summary><c>POST …/functions/{name}/invoke</c>; query maps keys to values in event.query.</summary>
+        UnaryResult<TerraBaseFunctionCall> InvokeAsync(string projectId, string database, string name, string body, IReadOnlyDictionary<string, string>? query = null);
     }
 }
