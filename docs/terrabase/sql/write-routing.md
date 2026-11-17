@@ -70,6 +70,9 @@ the home could have done with it:
 
 - `421 wrong_region` when nothing was written there: the request is a `GET` or `HEAD`, which never writes, or the connection
   failed before the request was sent (name resolution, connect or TLS refused). Resend it to the named region.
+- A forwarded `POST .../sql/execute` with no write statement cannot have written: when the request's 5 s budget runs out
+  first it answers `400 query_canceled` (SQLSTATE `57014`, "the request exceeded its 5 s time limit"), and a broken
+  connection answers `503 unavailable`.
 - `503 write_outcome_unknown` with `error.region` naming the home for any other request: it was sent, or may have been
   (a connect timeout cannot be told from a lost answer), and the connection broke or timed out before the answer. The
   write may have committed. No SDK resends it; read what it would have written before running it again.

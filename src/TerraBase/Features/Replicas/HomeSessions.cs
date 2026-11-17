@@ -26,7 +26,8 @@ internal sealed record HomeSessionCall(
 internal sealed record HomeSessionResult(IReadOnlyList<SqlColumn> Columns, IReadOnlyList<IReadOnlyList<SqlValue>> Rows, long RowsAffected, long? LastInsertRowid);
 
 internal sealed record HomeSessionAnswer(
-    bool Autocommit, SqlError? Error = null, HomeSessionResult? Result = null, SqlDescription? Description = null, IReadOnlyList<HomeSessionResult>? Batch = null, int Statement = 0);
+    bool Autocommit, SqlError? Error = null, HomeSessionResult? Result = null, SqlDescription? Description = null, IReadOnlyList<HomeSessionResult>? Batch = null, int Statement = 0,
+    bool Ended = false);
 
 internal static class HomeSessionFrames
 {
@@ -364,6 +365,11 @@ internal sealed class HomeSqlSession(
             {
                 TransactionClock.End();
             }
+
+            if (answer.Ended)
+            {
+                Break();
+            }
         }
 
         return answer;
@@ -442,10 +448,9 @@ internal sealed class HomeSqlSession(
         return sentWrite ? new HomeSessionAnswer(true, _unknown) : null;
     }
 
-    private HomeSessionAnswer? Break()
+    private void Break()
     {
         (_broken, _autocommit) = (true, true);
         TransactionClock.End();
-        return null;
     }
 }

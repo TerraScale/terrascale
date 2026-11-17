@@ -345,7 +345,7 @@ internal sealed class SqlExecuteEndpoint(
                 {
                     overlay.Forwarded(writing, string.Concat(committed));
                 }
-            }, publishId);
+            }, publishId, writes: writing is not null);
         return Results.Empty;
     }
 

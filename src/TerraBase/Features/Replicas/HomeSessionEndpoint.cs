@@ -142,7 +142,7 @@ internal sealed class HomeSessionEndpoint(
                     catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                     {
                         using var drain = new CancellationTokenSource(Shutdown.DrainBudget);
-                        await HomeSessionFrames.WriteAsync(output, new HomeSessionAnswer(true, transaction is not null && !deadline.IsPartial ? SqlErrors.TransactionExpired : Idle), ReplicasJsonContext.Default.HomeSessionAnswer, sending: null, drain.Token).ConfigureAwait(false);
+                        await HomeSessionFrames.WriteAsync(output, new HomeSessionAnswer(true, transaction is not null && !deadline.IsPartial ? SqlErrors.TransactionExpired : Idle, Ended: true), ReplicasJsonContext.Default.HomeSessionAnswer, sending: null, drain.Token).ConfigureAwait(false);
                         return;
                     }
                 }

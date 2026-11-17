@@ -103,10 +103,18 @@ internal static class HomeForwarding
     internal static bool Unanswered(HttpContext context, Exception error) =>
         error is HttpRequestException || (error is OperationCanceledException && !context.RequestAborted.IsCancellationRequested);
 
-    internal static Task UnansweredAsync(HttpContext context, string region, Exception error, bool sent = true)
+    internal static Task UnansweredAsync(HttpContext context, string region, Exception error, bool sent = true, bool writes = true)
     {
+        if (!writes && error is OperationCanceledException)
+        {
+            context.Response.StatusCode = SqlErrors.Status(SqlErrors.Deadline.Code);
+            context.Response.Headers.CacheControl = "no-store";
+            return context.Response.WriteAsJsonAsync(SqlBatch.Body(new SqlBatchFailure(SqlErrors.Deadline, 0), context.TraceIdentifier),
+                SqlJsonContext.Default.SqlErrorBody, cancellationToken: context.RequestAborted);
+        }
+
         if (HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method)
-            || !sent)
+            || !sent || !writes)
         {
             return UnavailableAsync(context, region);
         }
@@ -258,7 +266,7 @@ internal static class HomeForwarding
     }
 
     internal static async Task ForwardAsync(HttpContext context, HomeNode home, byte[]? body = null, string? pushThrough = null,
-        Action<HttpResponseMessage>? answered = null, string? publishId = null)
+        Action<HttpResponseMessage>? answered = null, string? publishId = null, bool writes = true)
     {
         if (Listeners.IsForwarded(context))
         {
@@ -374,7 +382,7 @@ internal static class HomeForwarding
                 else
                 {
                     context.Response.Clear();
-                    await UnansweredAsync(context, home.Region, error, sent: !IsPlacementMiss(response)).ConfigureAwait(false);
+                    await UnansweredAsync(context, home.Region, error, sent: !IsPlacementMiss(response), writes).ConfigureAwait(false);
                 }
             }
         }
@@ -424,7 +432,7 @@ internal static class HomeForwarding
             {
                 context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("TerraBase.Features.Regions.HomeForwarding")
                     .ZLogWarning(error, $"The proxy leg to {target.Region:@Region} did not answer");
-                await UnansweredAsync(context, target.Region, error, body is not { Length: > 0 } || content?.Sent == true).ConfigureAwait(false);
+                await UnansweredAsync(context, target.Region, error, body is not { Length: > 0 } || content?.Sent == true, writes).ConfigureAwait(false);
                 return null;
             }
         }

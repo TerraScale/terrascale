@@ -39,8 +39,11 @@ whether the session may write, then `execute` and `describe` calls, each answere
 and whether the home session is outside a transaction. The home serves only a database it homes whose placement names
 the calling region. The replica region checks the client's credential, scope and IP allowlist before every statement,
 as it does for its own reads, so revocation cuts both legs. Ending the request body ends the home session and rolls back
-its open transaction. When the home cannot be reached, a write answers `unavailable` (SQLSTATE `57P03`) naming
-the home; reads keep working from the replica.
+its open transaction. A transaction that outlives its 5 s limit, or a session idle past its timeout, ends the home
+session: the home's last frame carries that error and marks the session ended, and the replica region opens a new home
+session for its next request. A statement refused for its work budget answers `query_canceled` (SQLSTATE `57014`); when
+it used up its transaction's time, the session ends that way and the next request runs on a new one. When the home cannot be reached, a write answers `unavailable` (SQLSTATE `57P03`)
+naming the home; reads keep working from the replica.
 
 ## Read-your-writes
 
