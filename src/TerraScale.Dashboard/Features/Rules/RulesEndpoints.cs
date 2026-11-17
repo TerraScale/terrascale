@@ -71,7 +71,7 @@ namespace TerraScale.Dashboard.Features.Rules
             {
                 var deployed = await rules.DeployAsync(context!, database!, loaded.Length == 0 ? null : loaded, source, http.RequestAborted);
                 return deployed.Rules is { } saved
-                    ? await RenderAsync(http, rules, context!, database!, null, playground, state: page => page with { Notice = "Rules deployed.", Warnings = saved.Warnings ?? [] })
+                    ? await RenderAsync(http, rules, context!, database!, (source, saved.Version), playground, state: page => page with { Notice = "Rules deployed.", Warnings = saved.Warnings ?? [] })
                     : await RenderAsync(http, rules, context!, database!, (source, loaded), playground,
                         state: page => page with { Error = "The rules were not deployed.", Problems = deployed.Problems });
             }
