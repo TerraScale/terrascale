@@ -94,6 +94,7 @@ namespace TerraScale.Dashboard.Features.Functions
     [JsonSerializable(typeof(McpFunctionList))]
     [JsonSerializable(typeof(McpFunctionDetail))]
     [JsonSerializable(typeof(McpFunctionLogs))]
+    [JsonSerializable(typeof(TerraBaseFunctionStats))]
     [JsonSerializable(typeof(string))]
     internal sealed partial class FunctionMcpJson : JsonSerializerContext;
 }

@@ -31,14 +31,29 @@ namespace TerraScale.Dashboard.Features.Functions
             return new(function, FunctionBackend.InvokeUrl(context, database, name));
         }
 
-        [McpServerTool(Name = "list_function_logs", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read a function's latest 25 invocation records, newest first, with console output and errors. invoke_function returns the newest log alongside its response when SQL write access is available. Requires SQL read and write access.")]
+        [McpServerTool(Name = "list_function_logs", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read a function's latest 25 invocation records, newest first, with console output and errors. Use get_function_stats for aggregate volume, errors, latency and SQL metrics. invoke_function returns the newest log alongside its response when SQL write access is available. Requires SQL read and write access.")]
         public async Task<McpFunctionLogs> Logs(string databaseId, string name, string? organizationId = null, string? projectId = null)
         {
             var context = Scope(organizationId, projectId);
             return new(await functions.LogsAsync(context, DatabaseService.Database(context, databaseId), name, Cancellation));
         }
 
-        [McpServerTool(Name = "get_functions_reference", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read the complete JavaScript Functions runtime contract, limits and working examples before deploying or invoking. Requires no data permission.")]
+        [McpServerTool(Name = "get_function_stats", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read a function's aggregate invocations, errors, p50/p95/p99/max latency in ms, SQL calls, rows read/written and zero-filled UTC buckets. window accepts 1h, 24h (default) or 7d. Requires SQL read and write access, like list_function_logs.")]
+        public async Task<CallToolResult> StatsAsync(string databaseId, string name, string window = "24h", string? organizationId = null, string? projectId = null)
+        {
+            var context = Scope(organizationId, projectId);
+            try
+            {
+                var stats = await functions.StatsAsync(context, DatabaseService.Database(context, databaseId), name, window, Cancellation);
+                return FunctionMcpOutput.Reply(stats, FunctionMcpJson.Default.TerraBaseFunctionStats);
+            }
+            catch (AccountAccessException error) when (error.StatusCode == 400)
+            {
+                return FunctionMcpOutput.Invalid("validation", error.Message);
+            }
+        }
+
+        [McpServerTool(Name = "get_functions_reference", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read the complete JavaScript Functions runtime contract, limits and working examples before deploying or invoking. Includes get_function_stats for aggregate metrics and list_function_logs for invocation details. Requires no data permission.")]
         public McpFunctionReference Reference() => new(FunctionReference.Text);
 
         [McpServerTool(Name = "deploy_function", ReadOnly = false, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Call get_functions_reference first. Create or replace a JavaScript handler(event) in this database, with an optional five-field UTC cron. Omit cron to remove the schedule. Returns name, cron, updated_at and invoke_url, or a structured validation error retaining the runner message and available line/column. Requires SQL write access.")]

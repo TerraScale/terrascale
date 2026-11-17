@@ -58,6 +58,7 @@ test('functions list, detail, invocation logs and deletion work through the page
   for (const [index, credential] of [current.apiKey, token].entries()) {
     const reference = await functionTool(page.request, credential, 'get_functions_reference', {});
     expect(reference.reference).toContain('sql.transaction');
+    expect(reference.reference).toContain('get_function_stats');
     expect(reference.reference).toContain('event.query is empty');
     expect(reference.reference).toContain('strict mode');
     expect(reference.reference).toContain('SQLite dialect');
@@ -75,6 +76,23 @@ test('functions list, detail, invocation logs and deletion work through the page
     expect(invoked.log?.status).toBe('ok');
     expect(invoked.log?.duration_ms).toBeGreaterThanOrEqual(0);
     expect(invoked.log?.lines).toContain('MCP debug {"hello":"agent"}');
+    const stats = await functionTool(page.request, credential, 'get_function_stats', { ...scope, name: args.name });
+    expect(stats.window).toBe('24h');
+    expect(stats.invocations).toBeGreaterThanOrEqual(1);
+    expect(stats.errors).toBe(0);
+    for (const metric of ['p50Ms', 'p95Ms', 'p99Ms', 'maxMs', 'sqlCalls', 'rowsRead', 'rowsWritten'] as const) {
+      expect(stats[metric], metric).toBeGreaterThanOrEqual(0);
+    }
+    expect(stats.buckets).toHaveLength(24);
+    expect(stats.buckets.reduce((sum, bucket) => sum + bucket.invocations, 0)).toBe(stats.invocations);
+    for (const [window, count] of [['1h', 60], ['7d', 168]] as const) {
+      const selected = await functionTool(page.request, credential, 'get_function_stats', { ...scope, name: args.name, window });
+      expect(selected.window).toBe(window);
+      expect(selected.invocations).toBeGreaterThanOrEqual(1);
+      expect(selected.buckets).toHaveLength(count);
+    }
+    const invalidWindow = await functionTool(page.request, credential, 'get_function_stats', { ...scope, name: args.name, window: '30d' }, true);
+    expect(invalidWindow.error).toMatchObject({ code: 'validation', message: 'window must be 1h, 24h or 7d' });
     const inventory = await functionTool(page.request, credential, 'list_functions', scope);
     expect(inventory.functions.map((item) => item.name)).toContain(args.name);
     const saved = await functionTool(page.request, credential, 'get_function', { ...scope, name: args.name });
@@ -118,6 +136,7 @@ test('functions list, detail, invocation logs and deletion work through the page
   saveSecret('functions-read-key', read.key);
   await mcpTool(page.request, read.key, 'deploy_function', { ...scope, name: mcpName, source: functionSource }, 'The API key does not grant sql:write.');
   await mcpTool(page.request, read.key, 'list_function_logs', { ...scope, name: mcpName }, 'The API key does not grant sql:write.');
+  await mcpTool(page.request, read.key, 'get_function_stats', { ...scope, name: mcpName }, 'The API key does not grant sql:write.');
   await mcpTool(page.request, read.key, 'invoke_function', { ...scope, databaseId: current.projectId, name: mcpName }, 'Database was not found in this project.');
   await mcpTool(page.request, read.key, 'invoke_function', { ...scope, projectId: current.organizationId, name: mcpName }, 'Project is unavailable.');
   const noLog = await functionTool(page.request, read.key, 'invoke_function', { ...scope, name: mcpName });

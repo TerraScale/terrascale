@@ -34,6 +34,8 @@ type FunctionTools = {
   list_functions: { functions: { name: string }[] };
   get_function: { function: { source: string }; invokeUrl: string };
   list_function_logs: { logs: { lines: string[] }[] };
+  get_function_stats: { window: string; invocations: number; errors: number; p50Ms: number; p95Ms: number; p99Ms: number; maxMs: number; sqlCalls: number; rowsRead: number; rowsWritten: number;
+    buckets: { at: string; invocations: number; errors: number; p50Ms: number; p95Ms: number }[]; error?: { code: string; message: string } };
 };
 
 export async function functionTool<T extends keyof FunctionTools>(request: APIRequestContext, token: string, name: T, args: Record<string, unknown>, isError = false): Promise<FunctionTools[T]> {

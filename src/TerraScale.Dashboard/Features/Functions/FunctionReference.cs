@@ -68,6 +68,11 @@ namespace TerraScale.Dashboard.Features.Functions
             SQL: at most 256 binding calls per invocation; SQL request deadline 5 s; normal SQL statement, row and transaction limits apply.
             Logs: at most 50 lines, each truncated to 1024 characters; latest 100 invocation records retained per function.
             list_function_logs returns the latest 25. No function secrets binding exists; do not embed credentials in source.
+            get_function_stats(databaseId, name, window) reads aggregate metrics independently of retained logs.
+            window accepts 1h, 24h (default) or 7d; invalid windows return a structured validation error.
+            Returns window, invocations, errors, p50Ms, p95Ms, p99Ms, maxMs, sqlCalls, rowsRead, rowsWritten and buckets.
+            Buckets are oldest first, include empty intervals, and contain at, invocations, errors, p50Ms and p95Ms.
+            Like list_function_logs, stats require SQL read and write access on signed-in and project API-key connections.
 
             Example 1: HTTP JSON API over a table (deploy as notes-api)
             async function handler(event) {
