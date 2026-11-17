@@ -1,6 +1,6 @@
 {
   "producer": "TerraScale/terrascale",
-  "revision": "43886fc7a8427cfe54f31c8e6d78a942b4333058",
+  "revision": "3c83b7e9a42ecd1f2852952f905615bcebfac233",
   "inputs": {
     "src/TerraBase/Features/Functions/ListFunctionsEndpoint.cs": "54a3bc70dbe3d22f1147d22d6af8ac99a2314c9e3df983ea842dab4a521ef385",
     "src/TerraBase/Features/Functions/DeployFunctionEndpoint.cs": "a85b596c088346db57037f8d51959083ac3ac6366e6ee0387f5864e8358bfaf6",
@@ -13,7 +13,9 @@
     "src/TerraBase/Features/Functions/FunctionService.cs": "eaa2205b087427aa4e86a5c6080d0af7c6844678a44887301c952245b2a5713f",
     "src/TerraBase/Features/Functions/FunctionMetrics.cs": "b5dea2a7f2a260921e55e44740b641b71ab85f155d91a86efc64ca7863f9e6d1",
     "src/TerraBase/Features/Functions/FunctionService.Stats.cs": "1f89ef4ac68cbe2c14fb61695dab2c38d0d3ae929ec47296384618b211d47bf8",
-    "src/TerraBase/Features/Functions/GetFunctionStatsEndpoint.cs": "1195486b47b586acf949ba36a8308ee58aaa308e4ffc2a694297d65abbb95b36"
+    "src/TerraBase/Features/Functions/GetFunctionStatsEndpoint.cs": "1195486b47b586acf949ba36a8308ee58aaa308e4ffc2a694297d65abbb95b36",
+    "src/TerraBase/Features/Functions/FunctionSql.cs": "96d916f620f8dccf5e2eadf7f937d1c514156b04962e921fa8f09f05dd0b0cc5",
+    "src/TerraBase/Features/Functions/FunctionsJsonContext.cs": "f498b896f3f8a79aa71602eca9539b573608ea421ac6ab9b417c1775f4a8c65d"
   },
   "security": "Bearer project credential; both listed scopes required; anonymous/end-user refused",
   "mediaType": "application/json",
