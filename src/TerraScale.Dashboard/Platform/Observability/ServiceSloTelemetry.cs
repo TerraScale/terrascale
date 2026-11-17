@@ -77,8 +77,7 @@ namespace TerraScale.Dashboard.Platform.Observability
 
         private static bool MarkCallerAbandoned(Exception error, Outcome? outcome)
         {
-            if (outcome is null || error is not OperationCanceledException cancellation ||
-                !outcome.Caller.IsCancellationRequested || cancellation.CancellationToken != outcome.Caller)
+            if (outcome is null || error is not OperationCanceledException || !outcome.Caller.IsCancellationRequested)
             {
                 return false;
             }

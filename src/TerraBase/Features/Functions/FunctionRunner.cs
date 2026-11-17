@@ -111,6 +111,10 @@ internal static class FunctionRunner
                 ? new FunctionRun(null, "the result exceeds 1 MiB", lines)
                 : new FunctionRun(result, null, lines);
         }
+        catch (Exception error) when (cancellationToken.IsCancellationRequested && error is ExecutionCanceledException or OperationCanceledException)
+        {
+            throw new OperationCanceledException("The function invocation was cancelled.", error, cancellationToken);
+        }
         catch (JavaScriptException error)
         {
             return new FunctionRun(null, error.Message, lines);
@@ -123,8 +127,7 @@ internal static class FunctionRunner
                 MemoryLimitExceededException => "the function exceeded 32 MiB",
                 StatementsCountOverflowException => "the function exceeded 10,000,000 statements",
                 RecursionDepthOverflowException => "the function exceeded recursion depth 256",
-                ExecutionCanceledException or OperationCanceledException => cancellationToken.IsCancellationRequested
-                    ? "the invocation was cancelled" : "the function exceeded 10 s",
+                ExecutionCanceledException or OperationCanceledException => "the function exceeded 10 s",
                 _ => error.Message,
             }, lines);
         }

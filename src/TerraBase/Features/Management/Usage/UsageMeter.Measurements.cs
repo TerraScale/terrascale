@@ -45,9 +45,10 @@ internal sealed partial class UsageMeter
             "OPTIONS" => "options",
             _ => "other",
         };
-        BufferRequest(database, RequestDimension("requests", kind), status >= 400 ? 1 : 0, LatencyIndex(elapsed),
+        var failed = status >= 400 && status != StatusCodes.Status499ClientClosedRequest;
+        BufferRequest(database, RequestDimension("requests", kind), failed ? 1 : 0, LatencyIndex(elapsed),
             RequestDimension("client_bytes", "received"), received, RequestDimension("client_bytes", "sent"), sent);
-        stats.Request(database, elapsed, status >= 400);
+        stats.Request(database, elapsed, failed);
 
         UsageDimension? RequestDimension(string meter, string name) =>
             region is null ? Dimension(meter, name) : ValidRegion(region) ? new UsageDimension(meter, region, name) : null;
