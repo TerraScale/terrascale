@@ -28,12 +28,15 @@ export async function deployFunction(request: APIRequestContext, headers: Record
 }
 
 type FunctionTools = {
+  get_functions_reference: { reference: string };
+  deploy_function: { name: string; cron: string | null; updated_at: string; invoke_url: string; error?: { code: string; message: string; line?: number; column?: number } };
+  invoke_function: { status: number; content_type: string; body: unknown; log: { status: string; duration_ms: number; lines: string[]; error: string | null } | null; log_note: string };
   list_functions: { functions: { name: string }[] };
   get_function: { function: { source: string }; invokeUrl: string };
   list_function_logs: { logs: { lines: string[] }[] };
 };
 
-export async function functionTool<T extends keyof FunctionTools>(request: APIRequestContext, token: string, name: T, args: Record<string, string>): Promise<FunctionTools[T]> {
+export async function functionTool<T extends keyof FunctionTools>(request: APIRequestContext, token: string, name: T, args: Record<string, unknown>, isError = false): Promise<FunctionTools[T]> {
   const response = await request.post('https://mcp.terrascale.tech/', {
     headers: { Authorization: `Bearer ${token}`, Accept: 'application/json, text/event-stream' },
     data: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } },
@@ -44,6 +47,11 @@ export async function functionTool<T extends keyof FunctionTools>(request: APIRe
     ? JSON.parse(body.split('\n').find((line) => line.startsWith('data: '))!.slice(6))
     : JSON.parse(body);
   expect(message.error, `MCP ${name} protocol`).toBeUndefined();
-  expect(message.result.isError, `MCP ${name} result`).not.toBe(true);
+  expect(message.result.isError === true, `MCP ${name} result`).toBe(isError);
+  if (['get_functions_reference', 'deploy_function', 'invoke_function'].includes(name)) {
+    const result = message.result.structuredContent;
+    const trimmed = name === 'get_functions_reference' ? { reference: result.reference.slice(0, 220) + ' [trimmed]' } : result;
+    console.log('Functions MCP transcript ' + JSON.stringify({ request: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }, response: { jsonrpc: '2.0', id: 1, result: { isError: message.result.isError === true, structuredContent: trimmed } } }));
+  }
   return message.result.structuredContent;
 }

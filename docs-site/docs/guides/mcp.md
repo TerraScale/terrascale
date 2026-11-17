@@ -93,6 +93,12 @@ accept `ttlHours`. With `pointInTime`, `fork_database` returns a running restore
 
 Creating or rotating an API key needs the dashboard: an unattended assistant call returns `step_up_required`, and you finish the action from the dashboard's **API keys** page, where rotating also asks for a fresh confirmation. Listing, restricting and revoking keys work from the assistant.
 
+## Functions
+
+Call `get_functions_reference` before writing a function: it returns the handler and event contracts, SQL and transaction signatures, limits, cron rules and three complete examples. `deploy_function` creates or replaces source and an optional five-field UTC cron, returning the HTTPS invoke URL or the runner's structured validation error. `invoke_function` runs a JSON body once and returns its HTTP status, content type and parsed body. It needs only SQL read access, even if the function writes SQL. With SQL write access it also returns the newest invocation log; concurrent calls or cron may produce a newer record. Without write access, `log` is null and `log_note` explains how to read logs. Both MCP and the dashboard test run send an empty `event.query`; direct HTTPS calls populate it from URL query parameters.
+
+Project API keys can use the same function tools. Deploy, list, get and logs require SQL read and write scopes; invoke requires SQL read. The reference tool requires no data scope. Database restrictions and project ownership remain enforced. `list_functions`, `get_function` and `list_function_logs` support inspection; `delete_function` retains its dashboard confirmation handoff.
+
 ## Delete resources
 
 The `delete_database`, `delete_project`, `delete_saved_query`, `delete_function`,

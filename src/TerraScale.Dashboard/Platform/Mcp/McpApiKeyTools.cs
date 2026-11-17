@@ -9,6 +9,9 @@ using ModelContextProtocol.Protocol;
 using TerraScale.Dashboard.Features.Backups;
 using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.Databases;
+using TerraScale.Dashboard.Features.Functions;
+using TerraScale.TerraBase.Contracts;
+using TerraScale.TerraBase.Contracts.Functions;
 using TerraScale.Dashboard.Platform.Rpc;
 using TerraScale.Dashboard.Platform.TsAuth;
 using TerraScale.TerraBase.Contracts.Backups;
@@ -26,6 +29,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
             "get_context", "list_databases", "get_database", "create_database", "fork_database", "set_database_ttl", "delete_database",
             "execute_sql", "run_sql", "check_sql", "get_database_schema", "create_scoped_key",
             "create_backup", "restore_backup", "get_restore_status",
+            "get_functions_reference", "deploy_function", "invoke_function", "list_functions", "get_function", "list_function_logs",
             "delete_project", "delete_saved_query", "delete_function", "delete_file_bucket", "delete_file"
         };
 
@@ -96,6 +100,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 return Reply(McpDeletion.Required(tool, resource, scope, databaseId, Text("bucketId")),
                     McpDeletionJson.Default.McpStepUpRequired);
             }
+            if (tool == "get_functions_reference") return FunctionMcpOutput.Reply(new McpFunctionReference(FunctionReference.Text), FunctionMcpJson.Default.McpFunctionReference);
             if (tool == "get_context") return Reply(new McpKeyContext(scope.OrganizationId, scope.ProjectId, credential.DatabaseId, credential.Scopes), McpAgentJson.Default.McpKeyContext);
             if (tool == "create_scoped_key")
             {
@@ -113,8 +118,9 @@ namespace TerraScale.Dashboard.Platform.Mcp
                     throw new AccountAccessException("Scoped key minting was refused. The parent key must be active, unscoped and grant the requested database and access.", (int)(error.StatusCode ?? HttpStatusCode.BadGateway));
                 }
             }
-            var write = tool is "create_database" or "fork_database" or "set_database_ttl" or "create_backup" or "restore_backup";
-            var dataTool = tool is "execute_sql" or "run_sql" or "check_sql" or "get_database_schema";
+            var functionTool = tool is "deploy_function" or "invoke_function" or "list_functions" or "get_function" or "list_function_logs";
+            var write = functionTool && tool != "invoke_function" || tool is "create_database" or "fork_database" or "set_database_ttl" or "create_backup" or "restore_backup";
+            var dataTool = functionTool || tool is "execute_sql" or "run_sql" or "check_sql" or "get_database_schema";
             var sql = Text("sql").Trim();
             if (tool is "execute_sql" or "run_sql" or "check_sql")
             {
@@ -148,6 +154,58 @@ namespace TerraScale.Dashboard.Platform.Mcp
             {
                 async Task<CallToolResult> ExecuteAsync(DatabaseRegion home)
                 {
+                    if (functionTool)
+                    {
+                        async Task<T> AtHomeAsync<T>(Func<IFunctionsService, Task<T>> operation)
+                        {
+                            var client = rpc.User<IFunctionsService>(scope.AccessToken, home.Id).WithCancellationToken(ct);
+                            try { return await operation(client); }
+                            catch (TerraBaseWrongRegionException wrong) when (DatabaseRegion.Resolve(regions, wrong.HomeRegion) is { } owner && owner.Id != home.Id)
+                            {
+                                return await operation(rpc.User<IFunctionsService>(scope.AccessToken, owner.Id).WithCancellationToken(ct));
+                            }
+                        }
+                        var name = Text("name");
+                        switch (tool)
+                        {
+                            case "deploy_function":
+                                try
+                                {
+                                    var source = Text("source");
+                                    FunctionBackend.ValidateDeploy(name, source);
+                                    var deployed = await AtHomeAsync(async client => await client.DeployAsync(scope.ProjectId, databaseId, name, new(source, arguments?.TryGetValue("cron", out var cron) == true && cron.ValueKind != JsonValueKind.Null ? cron.GetString() : null)));
+                                    FunctionBackend.Validate(FunctionBackend.Record(deployed));
+                                    return FunctionMcpOutput.Deployed(deployed.Name, deployed.Cron, deployed.UpdatedAt, InvokeUrl(name));
+                                }
+                                catch (TerraBaseValidationException error) { return FunctionMcpOutput.Invalid(error.ErrorCode, error.Message); }
+                                catch (AccountAccessException error) when (error.StatusCode == 400) { return FunctionMcpOutput.Invalid("validation", error.Message); }
+                            case "invoke_function":
+                                var body = arguments?.TryGetValue("body", out var input) == true ? input.GetRawText() : "null";
+                                var call = await AtHomeAsync(client => FunctionMcpOutput.CallAsync(client, scope.ProjectId, databaseId, name, body, ct));
+                                var canReadLogs = credential.Scopes.Contains("sql:write", StringComparer.Ordinal);
+                                var newest = canReadLogs ? (await AtHomeAsync(async client => await client.LogsAsync(scope.ProjectId, databaseId, name, 1))).Select(FunctionBackend.Invocation).ToArray() : [];
+                                FunctionBackend.Validate(newest);
+                                return FunctionMcpOutput.Reply(FunctionMcpOutput.Run(call, newest.Length > 0 ? newest[0] : null, canReadLogs), FunctionMcpJson.Default.McpFunctionRun);
+                            case "list_functions":
+                                var limit = Number("limit") ?? 100;
+                                if (limit is < 1 or > 100) throw new AccountAccessException("limit must be between 1 and 100.", 422);
+                                var items = (await AtHomeAsync(async client => await client.ListAsync(scope.ProjectId, databaseId))).Select(FunctionBackend.Record).ToArray();
+                                FunctionBackend.Validate(items);
+                                var page = CursorPaging.Page(items, item => item.Name, scope.OrganizationId + ":" + scope.ProjectId + ":" + databaseId + ":functions", (int)limit, Text("after"));
+                                return FunctionMcpOutput.Reply(new McpFunctionList(page.Items, page.NextCursor, page.HasMore, page.Limit), FunctionMcpJson.Default.McpFunctionList);
+                            case "get_function":
+                                var function = FunctionBackend.Record(await AtHomeAsync(async client => await client.GetAsync(scope.ProjectId, databaseId, name)));
+                                FunctionBackend.Validate(function);
+                                return FunctionMcpOutput.Reply(new McpFunctionDetail(function, InvokeUrl(name)), FunctionMcpJson.Default.McpFunctionDetail);
+                            case "list_function_logs":
+                                var logs = (await AtHomeAsync(async client => await client.LogsAsync(scope.ProjectId, databaseId, name, 25))).Select(FunctionBackend.Invocation).ToArray();
+                                FunctionBackend.Validate(logs);
+                                return FunctionMcpOutput.Reply(new McpFunctionLogs(logs), FunctionMcpJson.Default.McpFunctionLogs);
+                        }
+
+                        string InvokeUrl(string functionName) => "https://api.terrascale.tech/v1/projects/" + Uri.EscapeDataString(scope.ProjectId)
+                            + "/databases/" + Uri.EscapeDataString(databaseId) + "/functions/" + Uri.EscapeDataString(functionName) + "/invoke";
+                    }
                     if (tool == "get_database_schema")
                     {
                         var catalog = await databases.SqlTablesAsync(scope, home, databaseId, ct);

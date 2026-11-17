@@ -1,6 +1,6 @@
 import { expect, type APIRequestContext } from '@playwright/test';
 
-export async function mcpTool(request: APIRequestContext, token: string, name: string, args: Record<string, string>) {
+export async function mcpTool(request: APIRequestContext, token: string, name: string, args: Record<string, unknown>, error?: string) {
   const response = await request.post('https://mcp.terrascale.tech/', {
     headers: { Authorization: `Bearer ${token}`, Accept: 'application/json, text/event-stream' },
     data: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } },
@@ -11,6 +11,11 @@ export async function mcpTool(request: APIRequestContext, token: string, name: s
     ? JSON.parse(body.split('\n').find((line) => line.startsWith('data: '))!.slice(6))
     : JSON.parse(body);
   expect(message.error, `MCP ${name} protocol`).toBeUndefined();
+  if (error !== undefined) {
+    expect(message.result.isError, `MCP ${name} refusal`).toBe(true);
+    expect(message.result.content[0].text).toContain(error);
+    return;
+  }
   expect(message.result.isError, `MCP ${name} result`).not.toBe(true);
   return message.result.structuredContent;
 }

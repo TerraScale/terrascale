@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Platform.Datastar;
@@ -226,7 +227,8 @@ namespace TerraScale.Dashboard.Features.Functions
                 TerraBaseException? fault = null;
                 try
                 {
-                    result = await functions.InvokeAsync(context, database, name, body, http.RequestAborted);
+                    var call = await functions.InvokeAsync(context, database, name, body, http.RequestAborted);
+                    result = string.Concat(call.Status.ToString(CultureInfo.InvariantCulture), "\n", call.ContentType, "\n", call.Body);
                 }
                 catch (TerraBaseException error)
                 {

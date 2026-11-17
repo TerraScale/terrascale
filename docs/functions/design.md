@@ -106,3 +106,7 @@ exact samples. Minute data expires outside the current 60-minute bucket window a
 168-hour bucket window. Expired slots are excluded by their timestamp and overwritten on reuse, so idle functions
 retain bounded expired records without exposing them in stats. Log and aggregate updates share one catalog
 transaction and add no customer-database SQL query. Deleting a function or its database deletes its aggregates.
+
+## Dashboard MCP
+
+Call `get_functions_reference` first for the complete runtime contract and examples. Both signed-in and project API-key MCP connections expose `deploy_function`, `invoke_function`, `list_functions`, `get_function` and `list_function_logs`. Deploy returns structured runner validation errors. Invoke requires only `sql:read` and returns status, content type and body; it includes the newest log only when the caller also has SQL write access. Otherwise `log: null` and `log_note` describe that requirement. Concurrent invocations or cron may make that newest log belong to another run. MCP and dashboard test runs send an empty `event.query`; use the direct HTTPS invoke URL for query parameters. `delete_function` returns a dashboard confirmation URL and leaves the function intact.
