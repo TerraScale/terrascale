@@ -54,7 +54,7 @@ public sealed class TerraBaseDatabaseClient
     public TerraBaseDatabaseClient(HttpClient httpClient, TerraBaseDatabaseClientOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        connection = new TerraBaseConnection(httpClient, options.BaseAddress, options.EndpointResolver, options.ApiKey, nameof(options.ApiKey), TerraBaseConnection.RequestDeadline, TerraBaseConnection.DefaultMaxResponseBytes,
+        connection = new TerraBaseConnection(httpClient, TerraBaseRegion.OriginOrPublic(options.BaseAddress, options.EndpointResolver), options.EndpointResolver, options.ApiKey, nameof(options.ApiKey), TerraBaseConnection.RequestDeadline, TerraBaseConnection.DefaultMaxResponseBytes,
             options.AccessTokenProvider, anonymousAllowed: true, region: options.Region);
     }
 
