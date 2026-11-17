@@ -38,8 +38,10 @@ This transport proof makes no signing or identity-verification claim.
 Releases keep the existing keyless cosign selection mechanism. The workflow
 signs a separate selection with predicate type
 `https://terrascale.tech/attestations/release-selection/v1` and the service and
-revision fields. It retrieves that new bundle from GHCR and attaches the same
-bytes in all four OCIR destinations. All selection attachments must verify
+revision fields. `cosign attest-blob` signs the exact raw child manifest into
+a bundle file after its SHA-256 is checked against the image digest. ORAS
+attaches those same bundle bytes in all four OCIR destinations and GHCR.
+All selection attachments must verify
 before any regional `:release` pointer moves. GHCR publication and its release
 pointer continue during migration.
 
