@@ -492,7 +492,7 @@ export class V1Transport {
   }
 
   /**
-   * Calls only a named producer route. Redirects and mutations are never replayed.
+   * Calls a named producer route. Rows follow one validated wrong_region refusal; uncertain writes are never replayed.
    * A replay-safe read has one 60-second deadline over resolution, credentials, retries and its body.
    * @param {V1Operation} operation
    * @param {Readonly<Record<string, string>>} params
@@ -610,6 +610,7 @@ export class V1Transport {
       throw new TypeError(`TerraBase request bodies are limited to ${maximumRequestBytes} bytes.`);
     let url = await this.url(operation, params, signal);
     if (options.query !== undefined && options.query.size > 0) url += `?${options.query}`;
+    let routed = false;
     // Shape reads publish stale state and resume through their own recovery; they are not resent here.
     const replaySafe = isReplaySafe(operation) && !selfRecovering.has(operation);
     for (let attempt = 0; ; attempt++) {
@@ -645,6 +646,10 @@ export class V1Transport {
       if (response.type === "opaqueredirect") throw new OpaqueRedirectError();
       if (!route.successStatuses.includes(response.status)) {
         const error = await this.error(response, signal);
+        if (!routed && this.#regionPin === "" && rowOperations.has(operation) && error.status === 421 && error.code === "wrong_region") {
+          const next = rowHomeUrl(error, url);
+          if (next !== undefined) { url = next; routed = true; continue; }
+        }
         if (response.status === 401 && this.#apiKeyBasic !== undefined) {
           if (["key_revoked", "key_expired", "invalid_key"].includes(error.code)) this.#keyRefusal = error;
           if (headers.get("authorization") === `Bearer ${this.#cachedKeyToken?.token}`) this.#cachedKeyToken = undefined;
@@ -660,6 +665,19 @@ export class V1Transport {
       return response;
     }
   }
+}
+
+const rowOperations = new Set(["getRow", "createRow", "updateRow", "deleteRow", "batchRows"]);
+/** @param {TerraBaseV1Error} error @param {string} previous */
+function rowHomeUrl(error, previous) {
+  const raw = error.details?.url;
+  if (typeof raw !== "string" || !URL.canParse(raw)) return undefined;
+  const next = new URL(raw);
+  const original = new URL(previous);
+  if (next.protocol !== "https:" || !/^[a-z][a-z0-9-]*\.api\.terrascale\.tech$/u.test(next.hostname) ||
+      next.port || next.username || next.password || next.hash || next.pathname !== original.pathname || next.search !== original.search || next.href === original.href)
+    return undefined;
+  return next.href;
 }
 
 /** One fixed bound for a replay-safe read, retries included; a caller's signal can only shorten it. */

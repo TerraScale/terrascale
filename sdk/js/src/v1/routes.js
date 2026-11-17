@@ -1,8 +1,8 @@
+import { rowRoutes } from "./rows.js";
 import { agentRoutes } from "./agent-routes.js";
 import { fileStorageRoutes } from "./file-storage-routes.js";
 import { managementV1Routes } from "./management-routes.js";
-// Current TerraBase database catalog routes.
-/** @typedef {import("./agent-routes.js").AgentOperation | import("./file-storage-routes.js").FileStorageOperation | import("./management-routes.js").ManagementOperation | "createDatabase" | "listDatabases" | "getDatabase" | "updateDatabase" | "deleteDatabase" | "deleteDatabaseIfId" | "branchDatabase" | "branchDatabaseIfId"} V1Operation */
+/** @typedef {import("./rows.js").RowOperation | import("./agent-routes.js").AgentOperation | import("./file-storage-routes.js").FileStorageOperation | import("./management-routes.js").ManagementOperation | "createDatabase" | "listDatabases" | "getDatabase" | "updateDatabase" | "deleteDatabase" | "deleteDatabaseIfId" | "branchDatabase" | "branchDatabaseIfId"} V1Operation */
 /**
  * @typedef {object} V1Route
  * @property {V1Operation} operation
@@ -39,7 +39,7 @@ export const v1Routes = Object.freeze(/** @type {V1Route[]} */ ([
 })));
 /** @param {V1Operation} operation @returns {V1Route} */
 export function v1Route(operation) {
-  const route = [...v1Routes, ...managementV1Routes, ...fileStorageRoutes, ...agentRoutes].find(candidate => candidate.operation === operation);
+  const route = [...rowRoutes, ...v1Routes, ...managementV1Routes, ...fileStorageRoutes, ...agentRoutes].find(candidate => candidate.operation === operation);
   if (route === undefined) throw new TypeError(`Unknown v1 operation ${operation}.`);
   return route;
 }

@@ -52,6 +52,11 @@ export class TerraBaseV1Error extends Error {
 
 /** Current producer codes outside SQL statement errors. */
 export const V1ErrorCode = Object.freeze({
+  ruleDenied: "rule_denied", columnNotReadable: "column_not_readable", columnNotWritable: "column_not_writable",
+  rulesInvalid: "rules_invalid", forbidden: "forbidden", validationFailed: "validation_failed",
+  invalidRules: "invalid_rules", unknownColumn: "unknown_column", constraintFailed: "constraint_failed",
+  rowNotFound: "row_not_found", rowExists: "row_exists", noRules: "no_rules", unknownVersion: "unknown_version",
+  versionMismatch: "version_mismatch", preconditionRequired: "precondition_required", writeOutcomeUnknown: "write_outcome_unknown",
   invalidRequest: "invalid_request", invalidCursor: "invalid_cursor",
   keyRevoked: "key_revoked", keyExpired: "key_expired", authUnavailable: "auth_unavailable",
   invalidKey: "invalid_key", forbiddenScope: "forbidden_scope", notFound: "not_found",

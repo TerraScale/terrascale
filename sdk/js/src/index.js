@@ -1,3 +1,11 @@
+export { BrowserAuth } from "./browser-auth.js";
+/** @typedef {import("./browser-auth.js").BrowserAuthConfig} BrowserAuthConfig */
+/** @typedef {import("./browser-auth.js").BrowserAuthStorage} BrowserAuthStorage */
+/** @typedef {import("./browser-auth.js").BrowserUser} BrowserUser */
+/** @template TValue @typedef {import("./result.js").TerraScaleResult<TValue>} TerraScaleResult */
+/** @typedef {import("./result.js").TerraScaleError} TerraScaleError */
+/** @typedef {import("./v1/rows.js").RowAnswer} RowAnswer */
+/** @typedef {import("./v1/rows.js").RowMutation} RowMutation */
 export { createTerraBaseV1Client as createTerraBaseClient, createTerraBaseV1ClientFromEnvironment as createTerraBaseClientFromEnvironment, TerraBaseV1Client as TerraBaseClient } from "./v1/terrabase-v1.js";
 export { terraScaleReleaseBlockers, TerraScaleCapabilityUnavailableError } from "./management-contracts.js";
 // Project-scoped TerraBase API: SQL over REST and WebSocket, SQL table shapes and the database catalog.
