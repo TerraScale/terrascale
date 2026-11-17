@@ -250,7 +250,7 @@ public abstract class ApiKeyEndpoint(ApiKeys keys, PlatformAuthentication authen
         var name = PlatformDirectory.Name(body.Name) ?? throw Invalid("name must be 1 to 128 characters with a letter or digit.");
         if (body.Scopes is not { Count: > 0 } scopes || scopes.Distinct(StringComparer.Ordinal).Count() != scopes.Count || scopes.Except(TerraBaseScopes.All).Any())
         {
-            throw Invalid("scopes must be a non-empty set of databases:read, databases:write, sql:read and sql:write.");
+            throw Invalid("scopes must be a non-empty set of databases:read, databases:write, sql:read, sql:write, auth:read, auth:write and auth:tokens:mint.");
         }
 
         if (body.Database is not null && (!project || !ApiKeys.IsDatabaseId(body.Database)))

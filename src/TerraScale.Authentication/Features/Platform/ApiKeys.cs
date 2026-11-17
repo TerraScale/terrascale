@@ -27,7 +27,11 @@ public static class TerraBaseScopes
 
     public const string AuthWrite = "auth:write";
 
-    public static IReadOnlyList<string> All { get; } = [DatabasesRead, DatabasesWrite, SqlRead, SqlWrite, AuthRead, AuthWrite];
+    public const string AuthTokensMint = "auth:tokens:mint";
+
+    public static IReadOnlyList<string> All { get; } = [DatabasesRead, DatabasesWrite, SqlRead, SqlWrite, AuthRead, AuthWrite, AuthTokensMint];
+
+    public static bool IsAuth(string scope) => scope is AuthRead or AuthWrite or AuthTokensMint;
 
     public static IReadOnlyList<string> For(string? projectRole) => projectRole switch
     {

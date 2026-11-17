@@ -64,6 +64,7 @@ public sealed class UserProfiles(AuthData data, Users users, PasswordHasher pass
             PublicMetadata = Metadata(current.PublicMetadata, patch.PublicMetadata),
             PrivateMetadata = Metadata(current.PrivateMetadata, patch.PrivateMetadata),
             UnsafeMetadata = Metadata(current.UnsafeMetadata, patch.UnsafeMetadata),
+            CustomClaims = TrustedClaims.Replace(current.CustomClaims, patch.CustomClaims),
         };
         if (updated == current)
         {

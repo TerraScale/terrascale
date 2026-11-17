@@ -93,6 +93,8 @@ public sealed partial record AuthOptions
     /// </summary>
     public const string TerraBaseAudience = "https://api.terrascale.tech";
 
+    public static string ProjectDataAudience(string project) => TerraBaseAudience + "/v1/projects/" + project;
+
     /// <summary>
     /// Exact <c>aud</c> values every access token carries: <see cref="TerraBaseAudience"/> first, then any
     /// <c>TS_AUTH_ACCESS_TOKEN_AUDIENCES</c> (tests and previews name their own TerraBase).

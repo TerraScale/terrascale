@@ -739,10 +739,6 @@ internal static class OidcResults
     public static IResult Forbid(string error, string description) =>
         Results.Forbid(Error(error, description), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
 
-    /// <summary>
-    /// The audiences of a sign-in access token: the platform's (<see cref="OidcIssuer.SignInAudiences"/>), or for a
-    /// project tenant only the client it was issued to, so no TerraScale API accepts it (project-tenant-management.md).
-    /// </summary>
     public static IReadOnlyList<string> Audiences(string tenant, AuthOptions options, string? clientId) =>
         !Tenancy.IsProject(tenant) ? OidcIssuer.SignInAudiences(options)
         : clientId is { Length: > 0 } ? [clientId]
@@ -773,6 +769,7 @@ internal static class OidcResults
             return Forbid(Errors.InvalidScope, "A sign-in grants only openid, email, profile and offline_access.");
         }
 
+        var dataAccess = impersonation is null && Tenancy.IsProject(user.InstanceId);
         var identity = new ClaimsIdentity(TokenValidationParameters.DefaultAuthenticationType, Claims.Name, Claims.Role)
             .SetClaim(Claims.Subject, user.Id)
             .SetClaim("token_use", "user")
@@ -790,7 +787,12 @@ internal static class OidcResults
             .SetClaim(FixedRefreshTokens.Claim, refreshExpiresAt?.ToUnixTimeSeconds())
             .SetClaim(OidcIssuer.OrganizationPickerClaim, organizationPicker ? "true" : null)
             .SetScopes(scopes)
-            .SetResources(audiences);
+            .SetResources(dataAccess ? [.. audiences, AuthOptions.ProjectDataAudience(user.InstanceId)] : audiences);
+        if (dataAccess && user.CustomClaims is { } trusted)
+        {
+            identity.SetClaim(TrustedClaims.Claim, JsonElement.Parse(trusted));
+        }
+
         // Only the platform's own tenant has platform admins; TerraBase's explore API reads the claim (platform-databases.md).
         // The platform owner is always one, in code, so a wiped and re-bootstrapped store needs no operator write; every
         // sign-in proves control of the mailbox first.
@@ -818,7 +820,7 @@ internal static class OidcResults
             Claims.GivenName or Claims.FamilyName or Claims.Picture or "public_metadata" => profile ? [Destinations.IdentityToken] : [],
             Claims.Email or Claims.EmailVerified => email ? [Destinations.AccessToken, Destinations.IdentityToken] : [Destinations.AccessToken],
             Claims.AuthenticationTime or "org_id" or "org_slug" or "org_role" => [Destinations.AccessToken, Destinations.IdentityToken],
-            "ts_auth_session" or "token_use" or OidcIssuer.EpochClaim or OidcIssuer.StateClaim or OidcIssuer.MfaClaim or PlatformRoleClaim => [Destinations.AccessToken],
+            "ts_auth_session" or "token_use" or TrustedClaims.Claim or OidcIssuer.EpochClaim or OidcIssuer.StateClaim or OidcIssuer.MfaClaim or PlatformRoleClaim => [Destinations.AccessToken],
             OidcIssuer.OrganizationPickerClaim => [Destinations.IdentityToken],
             _ => [],
         });
