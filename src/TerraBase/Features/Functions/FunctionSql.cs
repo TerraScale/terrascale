@@ -16,6 +16,10 @@ internal sealed class FunctionSql(ISqlSession session, string? requestId, TimePr
 
     public long SqlMs => (long)Math.Ceiling(_elapsed.TotalMilliseconds);
 
+    public long RowsRead { get; private set; }
+
+    public long RowsWritten { get; private set; }
+
     public Task<string> CallAsync(string op, string json, CancellationToken cancellationToken)
     {
         if (++_calls > MaxCalls)
@@ -83,10 +87,17 @@ internal sealed class FunctionSql(ISqlSession session, string? requestId, TimePr
             SqlBatchFailure invalid => Failure(invalid),
             List<SqlPlannedCommand> commands => await SqlBatch.RunAsync(session, commands, cancellationToken).ConfigureAwait(false) switch
             {
-                SqlExecuteBody body => JsonSerializer.Serialize(body, SqlJsonContext.Default.SqlExecuteBody),
+                SqlExecuteBody body => Complete(body),
                 SqlBatchFailure failure => Failure(failure),
             },
         };
+    }
+
+    private string Complete(SqlExecuteBody body)
+    {
+        RowsRead += body.Results.Sum(result => (long)result.Rows.Count);
+        RowsWritten += body.Results.Sum(result => result.RowsAffected);
+        return JsonSerializer.Serialize(body, SqlJsonContext.Default.SqlExecuteBody);
     }
 
     private async Task<string> ControlAsync(string sql, CancellationToken cancellationToken) =>

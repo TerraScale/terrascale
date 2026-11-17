@@ -160,7 +160,15 @@ test('function metrics include SQL calls and zero-filled latency buckets', async
   const headers = await functionAccess(request);
   const name = unique('metrics');
   const url = functionUrl(name);
-  const source = 'async function handler() { await sql.query("SELECT 1 AS ok"); return { status: 201, body: { ok: true } }; }';
+  const table = name.replaceAll('-', '_');
+  const source = `async function handler() {
+    await sql.execute('CREATE TABLE "${table}" (value INTEGER NOT NULL)');
+    await sql.execute('INSERT INTO "${table}" VALUES (1)');
+    await sql.execute('UPDATE "${table}" SET value = 2');
+    const rows = await sql.query('SELECT value FROM "${table}"');
+    await sql.execute('DROP TABLE "${table}"');
+    return { status: 201, body: { ok: rows[0].value === 2 } };
+  }`;
   expect((await request.put(url, { headers, data: { source } })).status()).toBe(200);
   const empty = await request.get(`${url}/stats`, { headers });
   expect(empty.status()).toBe(200);
@@ -179,7 +187,9 @@ test('function metrics include SQL calls and zero-filled latency buckets', async
     expect(stats.p50Ms).toBeGreaterThan(0);
     expect(stats.p95Ms).toBeGreaterThanOrEqual(stats.p50Ms);
     expect(stats.p99Ms).toBeGreaterThanOrEqual(stats.p95Ms);
-    expect(stats.sqlCalls).toBe(2);
+    expect(stats.sqlCalls).toBe(10);
+    expect(stats.rowsRead).toBe(2);
+    expect(stats.rowsWritten).toBeGreaterThanOrEqual(4);
     expect(stats.buckets).toHaveLength(count);
     expect(stats.buckets.reduce((sum: number, bucket: { invocations: number }) => sum + bucket.invocations, 0)).toBe(stats.invocations);
     expect(stats.buckets.map((bucket: { at: string }) => bucket.at)).toEqual(stats.buckets.map((bucket: { at: string }) => bucket.at).sort());
@@ -189,8 +199,9 @@ test('function metrics include SQL calls and zero-filled latency buckets', async
   expect(logsResponse.status()).toBe(200);
   const logs = await logsResponse.json();
   expect(logs).toHaveLength(2);
-  expect(logs[0]).toMatchObject({ sqlCalls: 1, rowsRead: 0, rowsWritten: 0, responseBytes: 11, httpStatus: 201 });
-  expect(logs[0].sqlMs).toBeGreaterThanOrEqual(0);
+  expect(logs[0]).toMatchObject({ sqlCalls: 5, rowsRead: 1, responseBytes: 11, httpStatus: 201 });
+  expect(logs[0].rowsWritten).toBeGreaterThanOrEqual(2);
+  expect(logs[0].sqlMs).toBeGreaterThan(0);
   expect(logs[0].sqlMs).toBeLessThanOrEqual(logs[0].durationMs);
   const failedSource = 'async function handler() { await sql.query("SELECT 1 AS ok"); throw new Error("metrics failure"); }';
   expect((await request.put(url, { headers, data: { source: failedSource } })).status()).toBe(200);
@@ -199,10 +210,10 @@ test('function metrics include SQL calls and zero-filled latency buckets', async
   expect((await failed.json()).error.code).toBe('function_error');
   const failedLogs = await request.get(`${url}/logs?limit=1`, { headers });
   expect(failedLogs.status()).toBe(200);
-  expect((await failedLogs.json())[0]).toMatchObject({ status: 'error', sqlCalls: 1, httpStatus: null });
+  expect((await failedLogs.json())[0]).toMatchObject({ status: 'error', sqlCalls: 1, rowsRead: 1, rowsWritten: 0, httpStatus: null });
   const failedStats = await request.get(`${url}/stats`, { headers });
   expect(failedStats.status()).toBe(200);
-  expect(await failedStats.json()).toMatchObject({ invocations: 3, errors: 1, sqlCalls: 3 });
+  expect(await failedStats.json()).toMatchObject({ invocations: 3, errors: 1, sqlCalls: 11, rowsRead: 3 });
   const invalid = await request.get(`${url}/stats?window=2h`, { headers });
   expect(invalid.status()).toBe(400);
   expect((await invalid.json()).error.code).toBe('invalid_request');

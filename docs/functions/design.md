@@ -83,8 +83,9 @@ Every HTTP and cron invocation records wall-clock `durationMs`, `sqlCalls`, `sql
 `responseBytes` and `httpStatus` alongside its status, console lines and error in `GET .../functions/{name}/logs`.
 REST fields use camelCase, as the other functions responses do. SQL calls count binding calls, including transaction
 controls and refused calls. SQL time excludes waiting behind another binding call. Durations round up to milliseconds.
-Row metrics currently remain zero: the SQL session exposes result rows and affected rows, but no engine rows-read
-counter. Response bytes count the UTF-8 HTTP body; HTTP status is null for cron runs and execution errors.
+Rows read count the rows returned by successful SQL binding results, including RETURNING rows; rows written sum
+their affected-row counts. These are result counts, not engine scan counts or committed-row counts: rolling back
+an explicit transaction does not subtract earlier successful results. Response bytes count the UTF-8 HTTP body; HTTP status is null for cron runs and execution errors.
 
 `GET .../functions/{name}/stats?window=1h|24h|7d` defaults to `24h`; invalid windows return HTTP 400 in the standard
 error envelope. It requires the same project authority and `sql:read` plus `sql:write` scopes as logs. The RPC

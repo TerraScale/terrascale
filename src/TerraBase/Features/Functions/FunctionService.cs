@@ -161,7 +161,7 @@ internal sealed partial class FunctionService(SystemCatalog catalog, ISqlService
                 DocsUrl: ErrorDocs.Url("function_error"))), TerraBaseJsonContext.Default.ErrorBody));
         var log = new FunctionLogBody(EntityIds.New().ToString(), started, trigger, error is null ? "ok" : "error",
             (long)Math.Ceiling(time.GetElapsedTime(clock).TotalMilliseconds), [.. run.Lines], error,
-            calls.SqlCalls, calls.SqlMs, ResponseBytes: response.Body.LongLength, HttpStatus: trigger == "http" && error is null ? response.Status : null);
+            calls.SqlCalls, calls.SqlMs, calls.RowsRead, calls.RowsWritten, ResponseBytes: response.Body.LongLength, HttpStatus: trigger == "http" && error is null ? response.Status : null);
         return await RecordAsync(tenant, name, log, CancellationToken.None).ConfigureAwait(false) ? response : Busy;
     }
 
