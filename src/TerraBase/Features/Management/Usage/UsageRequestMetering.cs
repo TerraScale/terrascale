@@ -52,21 +52,26 @@ public static class UsageRequestMetering
 
             context.Features.Set<IHttpResponseBodyFeature>(new CountingResponseBody(output, transfer.Sent));
             var started = Stopwatch.GetTimestamp();
-            var failed = false;
+            int? failureStatus = null;
             try
             {
                 await next(context).ConfigureAwait(false);
             }
+            catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+            {
+                failureStatus = StatusCodes.Status499ClientClosedRequest;
+                throw;
+            }
             catch
             {
-                failed = true;
+                failureStatus = StatusCodes.Status500InternalServerError;
                 throw;
             }
             finally
             {
                 context.Request.Body = input;
                 context.Features.Set(output);
-                try { transfer.Complete(failed ? 500 : context.Response.StatusCode, Stopwatch.GetElapsedTime(started), operations); }
+                try { transfer.Complete(failureStatus ?? context.Response.StatusCode, Stopwatch.GetElapsedTime(started), operations); }
                 finally { RequestLogOperations.Current.Value = previousOperations; }
             }
         });

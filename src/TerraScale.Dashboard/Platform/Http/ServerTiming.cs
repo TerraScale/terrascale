@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using Microsoft.AspNetCore.Routing;
 
 namespace TerraScale.Dashboard.Platform.Http
 {
@@ -168,13 +169,19 @@ namespace TerraScale.Dashboard.Platform.Http
                 context.Response.Headers["Server-Timing"] = timing.Header();
                 return Task.CompletedTask;
             });
+            int? failureStatus = null;
             try { await next(); }
+            catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+            {
+                failureStatus = StatusCodes.Status499ClientClosedRequest;
+                throw;
+            }
             finally
             {
                 if (!timing.probe && logger.IsEnabled(LogLevel.Information))
                 {
                     logger.PageTiming(SafeHttpLogging.Method(context.Request.Method),
-                        (context.GetEndpoint() as Microsoft.AspNetCore.Routing.RouteEndpoint)?.RoutePattern.RawText ?? "[unmatched]", context.Response.StatusCode, timing.Header());
+                        (context.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText ?? "[unmatched]", failureStatus ?? context.Response.StatusCode, timing.Header());
                 }
             }
         }
