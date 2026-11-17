@@ -14,6 +14,7 @@ import { OpaqueRedirectError } from "./transport.js";
 /**
  * @template {V1TableRow} [T=V1TableRow]
  * @typedef {object} V1TableShapeState
+ * @property {"loading" | "live" | "reconnecting"} status The current delivery status.
  * @property {ReadonlyMap<string, T>} rows Every row of the table, keyed by row id as a decimal string; a live view that later changes update.
  * @property {boolean} upToDate True once the shape reached the table's head.
  * @property {string} offset The commit boundary the rows are at.
@@ -28,6 +29,10 @@ import { OpaqueRedirectError } from "./transport.js";
  * @typedef {object} V1TableShapeSubscribeOptions
  * @property {AbortSignal | undefined} [signal] Closes the subscription when aborted.
  */
+
+/** @type {WeakMap<V1Transport, number>} */
+const transportKeys = new WeakMap();
+let nextTransportKey = 0;
 
 const tablePattern = /^(?!_tb_|turso_|sqlite_)[A-Za-z_][A-Za-z0-9_]{0,62}$/u;
 const retryable = new Set([408, 429, 500, 502, 503, 504]);
@@ -55,6 +60,8 @@ export class V1TableShape {
   #params;
   /** @type {Readonly<Record<string, string>>} */
   #filter;
+  /** @type {string} */
+  #key;
 
   /** @param {V1Transport} transport @param {string} database @param {string} table @param {V1TableShapeRequest} [request] */
   constructor(transport, database, table, request = {}) {
@@ -76,7 +83,12 @@ export class V1TableShape {
     this.#transport = transport;
     this.#params = Object.freeze({ database, table });
     this.#filter = Object.freeze(filter);
+    if (!transportKeys.has(transport)) transportKeys.set(transport, ++nextTransportKey);
+    this.#key = JSON.stringify([transportKeys.get(transport), this.#params, this.#filter]);
   }
+
+  /** A stable identity for this client, table and filter. @returns {string} */
+  get key() { return this.#key; }
 
   /**
    * Calls `listener` with the whole table after the snapshot and after every change, until closed.
@@ -111,6 +123,14 @@ export class V1TableShape {
     let hintedOffset = "";
     /** @type {import("./shape-hints.js").ShapeHints | undefined} */
     let hints;
+    /** @type {V1TableShapeState} */
+    let latest = Object.freeze({ rows: new Map(), provisional: new Set(), upToDate: false, offset, status: "loading" });
+    /** @param {"loading" | "reconnecting"} status */
+    const notifyStatus = status => {
+      latest = Object.freeze({ ...latest, upToDate: false, status });
+      listener(latest);
+    };
+    notifyStatus("loading");
     try {
     for (let attempt = 0; !signal.aborted;) {
       if (upToDate && !skipHint && hintProtocol === "terrascale.shape.v1" && Date.now() >= hintRetryAt) {
@@ -130,11 +150,13 @@ export class V1TableShape {
           hints = undefined;
           if (signal.aborted) return;
           if (isTerraBaseV1Error(error) && error.code === "must_refetch") {
+            notifyStatus("loading");
             rows = new Map(); pending = []; local = "0"; handle = ""; offset = "-1"; upToDate = false; cursor = undefined;
             cdn = new ShapeCdn(this.#transport, this.#params, this.#filter);
             continue;
           }
           if (isTerraBaseV1Error(error) && terminal.has(error.code)) throw error;
+          notifyStatus("reconnecting");
           const pause = delay(attempt++, isTerraBaseV1Error(error) ? error.retryAfter : undefined);
           hintRetryAt = Date.now() + Math.max(1000, pause);
           await sleep(pause, signal);
@@ -173,6 +195,7 @@ export class V1TableShape {
       } catch (error) {
         if (signal.aborted) return;
         if (isTerraBaseV1Error(error, "must_refetch")) {
+          notifyStatus("loading");
           rows = new Map();
           pending = [];
           local = "0";
@@ -184,6 +207,7 @@ export class V1TableShape {
           continue;
         }
         if (isTerraBaseV1Error(error) && (terminal.has(error.code) || !retryable.has(error.status))) throw error;
+        notifyStatus("reconnecting");
         await sleep(delay(attempt++, isTerraBaseV1Error(error) ? error.retryAfter : undefined), signal);
         continue;
       }
@@ -215,7 +239,10 @@ export class V1TableShape {
       offset = string(page.next_offset, "shape next_offset");
       upToDate = boolean(page.up_to_date, "shape up_to_date") || offset === hintedOffset;
       cursor = response.headers.get("tb-shape-cursor") ?? cursor;
-      if (!offset.startsWith("snap.")) listener(Object.freeze({ ...view(rows, pending), upToDate, offset }));
+      if (!offset.startsWith("snap.")) {
+        latest = Object.freeze({ ...view(rows, pending), upToDate, offset, status: upToDate ? "live" : "reconnecting" });
+        listener(latest);
+      }
       if (query.has("live") && offset === previousOffset && local === previousLocal) await sleep(1000 + Math.random() * 250, signal);
     }
     } finally { hints?.close(); }
