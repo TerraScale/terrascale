@@ -105,12 +105,15 @@ with closing(db.shape("todos").watch()) as views:
 ```
 
 Use an `AsyncDatabase` for `adb` and a synchronous `Database` for `db`.
-Each view is an immutable snapshot: `rows` maps decimal row ids to the same
+Each view is an immutable snapshot: `rows` maps string keys to the same
 `Row` type returned by `query()`, and `offset` is the applied boundary.
+Confirmed keys are decimal row ids; pending local inserts use
+`~<transaction-id>.<rowid>` until settlement.
 Status is `loading` while snapshot pages arrive, `live` at the head, or
 `reconnecting` during transient failures. Changes apply in commit order;
 reconnections resume at the applied offset, and `must_refetch` starts a fresh
-snapshot. `provisional` contains row ids affected by unconfirmed local writes.
+snapshot. `provisional` contains the string keys affected by unconfirmed local
+writes; confirmation or revert removes the settled provisional layer.
 WebSocket hints use bearer headers and HTTP long polling takes over when the
 socket is unavailable. Authentication and permission failures end iteration
 with the SDK exception. Close the iterator when leaving a loop early to release

@@ -29,7 +29,7 @@ _PROTOCOL = "terrascale.shape.v1"
 
 @dataclass(frozen=True)
 class ShapeView:
-    """Immutable rows keyed by decimal row id at an applied commit offset."""
+    """Immutable rows keyed by row id or provisional string key at an applied offset."""
 
     rows: Mapping[str, Row]
     status: Literal["loading", "live", "reconnecting"]
@@ -51,7 +51,7 @@ def _apply(rows: dict[str, Row], ops: Any, touched: set[str] | None = None) -> N
     if not isinstance(ops, list):
         raise _invalid()
     for op in ops:
-        key = _text(op["key"], r"-?\d+")
+        key = _text(op["key"])
         if op["op"] == "delete":
             rows.pop(key, None)
             if touched is not None:
