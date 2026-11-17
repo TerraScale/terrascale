@@ -39,3 +39,24 @@ the affected region with `LiveErrorView` and closes its stream.
 These three sources expose no consumable change signal to the dashboard. They
 use the existing server-side `TimeProvider` timer and HTML hash comparison;
 there is no browser polling or refresh button.
+
+The tables browser (`/databases/{databaseId}/tables/live`) also listens to the
+selected table's `terrascale.shape.v1` WebSocket hints. A hints-only reader uses
+the current user's `sql:read` project token and the database's serving region.
+It bootstraps with `offset=-1`, takes the handle and snapshot boundary from the
+redirect, and opens `/tables/{table}/shape/ws` at that boundary. It downloads no
+shape snapshots or chunks. `new_data` and `provisional` frames trigger the same
+authorized SQL reads as the page; the HTML hash still decides whether to patch.
+The .NET SDK's public `LiveShape` maintains a complete row snapshot, so this view
+uses a small reader instead of materializing a second copy of the table.
+
+The two-second server timer remains alongside hints because table creation and
+deletion have no catalog shape subscription. It also covers tables without shape
+support and unavailable or closed hint streams. The next SSE connection attempts
+hints again. There is no browser polling or refresh button.
+
+Only `tables-browser` is patched. The create-table dialog and its draft stay
+outside it, and the selected table remains bound to the request query. The current
+browser shows the first 100 rows and has no sort, filter or pagination controls;
+every live read keeps that same query. Catalog changes, counts, columns and row
+inserts, updates and deletes therefore use the same rendering as the initial page.
