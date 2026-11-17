@@ -1685,3 +1685,71 @@ test('another region outside admitted peers cannot interrupt local writer renewa
     });
   }
 });
+
+test('a regional writer role moves over a stale home lease of its own region: the new writer takes it with the activation proof and serves writes', async ({ cells }) => {
+  const kv = await Kv.open();
+  const gru = node('journey-1');
+  const partner = node('journey-3');
+  const drain = async (source: Node, target: Node) => {
+    const primed = await nodeRequest(target, `/v1/rollout/prime?source=${source.name}`, 'POST');
+    expect(primed.status, primed.body).toBe(204);
+    const drained = await nodeRequest(source, `/v1/rollout/drain?target=${target.name}`, 'POST');
+    expect(drained.status, drained.body).toBe(204);
+    await writerIs('gru', target.name);
+  };
+  await writerIs('gru', gru.name);
+  const [ledger] = await createLedgers(cells, 1, 'stale-own-region');
+  try {
+    const stored = await homeLease(kv, ledger.id);
+    expect(stored.value).toMatchObject({ home: 'gru', node: gru.name });
+    await kv.put(homes, `home.${ledger.id}`, { ...stored.value, node: partner.name, epoch: stored.value.epoch - 1 }, stored.seq);
+    await drain(gru, partner);
+    await expect.poll(async () => (await homeLease(kv, ledger.id)).value, { message: 'journey-3 takes its own region\'s stale lease at the placement version' })
+      .toMatchObject({ home: 'gru', node: partner.name, epoch: stored.value.epoch });
+    await ledger.write(cells, 'gru', [[901, 'after-stale-takeover']]);
+    await ledger.compare(cells);
+    await restartAfterKill(gru, false)();
+    await drain(partner, gru);
+    await ledger.write(cells, 'gru', [[902, 'after-drain-back']]);
+    await ledger.compare(cells);
+  } finally {
+    kv.close();
+  }
+  await removeDatabase(cells, ledger.id);
+});
+
+test('a home lease of another region below the placement version cannot serve: the database is unserved and refuses writes until the repair re-stamps it', async ({ cells, request }) => {
+  const token = await writerToken(request);
+  const kv = await Kv.open();
+  const gru = node('journey-1');
+  await writerIs('gru', gru.name);
+  await writerIs('fra', 'journey-2');
+  const [ledger] = await createLedgers(cells, 1, 'stale-other-region');
+  try {
+    const stored = await homeLease(kv, ledger.id);
+    await kv.put(homes, `home.${ledger.id}`, { ...stored.value, home: 'fra', node: 'journey-2', epoch: stored.value.epoch - 1 }, stored.seq);
+    await expect.poll(async () => ((await nodeStatus(gru)).unserved ?? []).find(entry => entry.databaseId === ledger.id),
+      { message: 'journey-1 lists the database as unserved by a stale lease of fra', timeout: 45_000 })
+      .toMatchObject({ region: 'fra', node: 'journey-2', cause: 'stale_lease' });
+    expect(await counted(gru, 'terrabase_home_unserved', { region: 'fra' }), 'the unserved gauge counts it under the lease\'s region').toBeGreaterThanOrEqual(1);
+    expect(logged(gru, 'is unserved', ledger.id, 'stale_lease'), 'journey-1 logs the stale lease once').toBeGreaterThanOrEqual(1);
+    let row = 910;
+    await expect.poll(async () => ledger.refusal(gru, token, [[row++, 'while-stale']]), { message: 'journey-1 refuses writes while the lease names fra', timeout: 45_000 })
+      .toEqual({ status: 409, code: 'serialization_conflict' });
+    const repaired = await nodeRequest(gru, `/admin/organizations/${stored.value.organizationId}/projects/${stored.value.projectId}/databases/${ledger.id}/home-lease`, 'POST');
+    expect(repaired.status, repaired.body).toBe(200);
+    expect(JSON.parse(repaired.body)).toMatchObject({
+      outcome: 'restamped', node: gru.name, epoch: stored.value.epoch, previousNode: 'journey-2', previousEpoch: stored.value.epoch - 1,
+    });
+    expect((await homeLease(kv, ledger.id)).value).toMatchObject({ home: 'gru', node: gru.name, epoch: stored.value.epoch });
+    await ledger.write(cells, 'gru', [[930, 'after-repair']]);
+    await ledger.compare(cells);
+    const again = await nodeRequest(gru, `/admin/organizations/${stored.value.organizationId}/projects/${stored.value.projectId}/databases/${ledger.id}/home-lease`, 'POST');
+    expect(JSON.parse(again.body), 'a second repair finds the lease held and changes nothing').toMatchObject({ outcome: 'unchanged', node: gru.name });
+    await expect.poll(async () => ((await nodeStatus(gru)).unserved ?? []).some(entry => entry.databaseId === ledger.id),
+      { message: 'the database is served again', timeout: 45_000 }).toBe(false);
+  } finally {
+    kv.close();
+  }
+  await removeDatabase(cells, ledger.id);
+});

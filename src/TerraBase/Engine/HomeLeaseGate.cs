@@ -78,7 +78,11 @@ internal sealed class HomeLeaseGate(TimeProvider time)
     {
         var held = Holds(database);
         ThrowIfFenced(database);
-        if (!held || !(RegionalServing?.Invoke(database) ?? true))
+        if (!held)
+        {
+            throw new StorageBusyException();
+        }
+        if (!(RegionalServing?.Invoke(database) ?? true))
         {
             throw new StorageBusyException();
         }

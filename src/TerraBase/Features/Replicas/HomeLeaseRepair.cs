@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -44,9 +45,9 @@ internal sealed class HomeLeaseRepair(
 
     private async Task<HomeLeaseRepairOutcome> DecideAsync(TenantContext database, CancellationToken cancellationToken)
     {
-        if (!owners.Writer)
+        if (await leases.RepairBlockerAsync(database.DatabaseId!, cancellationToken).ConfigureAwait(false) is { } blocker)
         {
-            return new LeaseRepairRefused("not_writer", "this node is not its region's writer");
+            return new LeaseRepairRefused(blocker, Blocked(blocker));
         }
 
         if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var placement }
@@ -116,8 +117,17 @@ internal sealed class HomeLeaseRepair(
 
         return await leases.RestampAsync(database, placement, read, cancellationToken).ConfigureAwait(false) is { } lease
             ? new LeaseRestamped(read.Lease, lease)
-            : new LeaseRepairRefused("lease_changed", "the lease changed while the repair checked it; run it again");
+            : new LeaseRepairRefused("lease_changed", "the lease, the writer role, a fence or a home move changed while the repair checked; run it again");
     }
+
+    private static string Blocked(string blocker) => blocker switch
+    {
+        "not_writer" => "this node is not its region's writer",
+        "handing_off" => "this region's writer role is being handed off",
+        "fenced" => "the database is fenced on this node",
+        "moving" => "a home move of the database is in progress",
+        _ => throw new UnreachableException(),
+    };
 
     private async Task<PeerAnswer> PlacementAsync(ServingNode node, TenantContext database, CancellationToken cancellationToken)
     {

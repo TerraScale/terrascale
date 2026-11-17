@@ -77,8 +77,7 @@ public static class BadRequests
             }
             catch (StorageBusyException error) when (!context.Response.HasStarted)
             {
-                context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(BadRequests))
-                    .ZLogWarning($"{context.Request.Method:@Method} {context.GetEndpoint()?.DisplayName:@Endpoint} answered storage_busy for database {context.Request.RouteValues["database"]:@Database}: storage refused at {error.At:@At}");
+                context.RequestServices.GetRequiredService<StorageRefusals>().Answered(context.Request.RouteValues["database"] as string, "storage_busy", error);
                 Replace(context.Response);
                 context.Response.Headers.RetryAfter = "1";
                 await WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "storage_busy", error.Message, op: null).ConfigureAwait(false);

@@ -915,6 +915,7 @@ internal sealed partial class HomeLeases(
 
     private async Task TrackUnservedAsync(CancellationToken cancellationToken)
     {
+        var moving = await MovingAsync(cancellationToken).ConfigureAwait(false);
         foreach (var (id, (lease, _)) in _homes)
         {
             var database = new TenantContext(lease.OrganizationId, PlanTier.Hobby, lease.ProjectId, id);
@@ -923,7 +924,7 @@ internal sealed partial class HomeLeases(
             var cause = placement is null ? null
                 : !_nodes.ContainsKey(lease.Node) ? "lapsed"
                 : owners.Find(lease.Home) is { } owner && owner.Node != lease.Node ? "not_writer"
-                : lease.Home != placement.Home && lease.Epoch < placement.Version ? "stale_lease"
+                : lease.Home != placement.Home && lease.Epoch < placement.Version && !moving.Contains(id) ? "stale_lease"
                 : null;
             if (cause is null || placement is null)
             {
