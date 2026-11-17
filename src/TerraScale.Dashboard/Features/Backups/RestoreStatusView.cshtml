@@ -4,7 +4,7 @@
 @using TerraScale.Dashboard.Features.Backups
 @using TerraScale.Dashboard.Features.Databases
 @{ var restore = Model.Restore!; }
-<section class="ts-card" id="restore-status" aria-labelledby="restore-status-title" @(restore.Status == "running" ? LiveView.Initializer(DatabaseService.Path(Model.Database.Id, "backups/restore/live") + "?restore=" + restore.OperationId) : HtmlString.Empty)><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="restore-status-title">Restore</h2></div></header><div class="ts-card-body">
+<section class="ts-card" id="restore-status" aria-labelledby="restore-status-title" @(restore.Status == "running" ? LiveView.Initializer(Model.Shell.Context, DatabaseService.Path(Model.Database.Id, "backups/restore/live") + "?restore=" + restore.OperationId) : HtmlString.Empty)><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="restore-status-title">Restore</h2></div></header><div class="ts-card-body">
 @if(restore.Status == "running"){<p class="ts-meta">Restoring…</p>}
 else if(restore.Status == "completed" && restore.TargetDatabaseId is { } target){<p><a class="ts-link" href="@DatabaseService.Path(target)">@restore.TargetName</a></p>}
 else if(restore.Status == "completed"){<p class="ts-meta">Restore completed: @(restore.TargetName ?? "")</p>}

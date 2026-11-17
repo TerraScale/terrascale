@@ -12,9 +12,9 @@ public sealed record LiveFragment(RazorSlice Slice, bool Complete = false);
 
 public sealed class LiveView(TimeProvider time)
 {
-    public static HtmlString Initializer(string path)
+    public static HtmlString Initializer(AccountContext context, string path)
     {
-        var expression = "@get('" + JavaScriptEncoder.Default.Encode(path) + "', {retry: 'always'})";
+        var expression = "@get('" + JavaScriptEncoder.Default.Encode(WorkspaceUrl.For(context, path)) + "', {retry: 'always', requestCancellation: 'cleanup'})";
         return new("data-init=\"" + HtmlEncoder.Default.Encode(expression) + "\"");
     }
 
