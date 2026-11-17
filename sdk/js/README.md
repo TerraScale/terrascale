@@ -179,7 +179,7 @@ release qualification remain open gates.
 | Live table shapes | `db.shape(table)` |
 | Databases | `client.databases.create/list/get/rename/delete/branch`, plus `deleteIfId`/`branchIfId` guarded by the database's immutable ID |
 | Backups, usage and regions | `db.backups`, `db.metrics`, `db.regions`, `client.metrics`, `client.backupDestination` |
-| Functions | `db.functions.deploy/list/get/invoke/logs/delete` |
+| Functions | `db.functions.deploy/list/get/invoke/logs/stats/delete` |
 | Request logs | `db.listDatabaseLogs(status?)` |
 | Project metrics | `client.metrics.metrics()` |
 | File buckets | `client.storage` |

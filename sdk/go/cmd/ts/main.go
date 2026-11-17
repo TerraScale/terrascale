@@ -111,6 +111,8 @@ Options go before or after the command and its operands; -- ends options.
                                           -data <json> sends a body, - stdin
   functions logs <db> <name>              print recent invocations as JSON
                                           lines, newest first; -limit 1..100
+  functions stats <db> <name>             print invocation metrics;
+                                          -window 1h|24h|7d, default 24h
   functions delete <db> <name>            delete a function and its logs
   sql <db> <statement>                    run one SQL statement in its own
                                           transaction; rows print as JSON lines
@@ -235,6 +237,7 @@ var commands = map[string][]int{
 	"functions list":     {1},
 	"functions invoke":   {2},
 	"functions logs":     {2},
+	"functions stats":    {2},
 	"functions delete":   {2},
 	"schema pull":        {1},
 	"schema diff":        {2},

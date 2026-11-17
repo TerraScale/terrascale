@@ -46,10 +46,52 @@ class FunctionLog:
     duration_ms: int
     lines: list[str]
     error: str | None
+    sql_calls: int = 0
+    sql_ms: int = 0
+    rows_read: int = 0
+    rows_written: int = 0
+    response_bytes: int = 0
+    http_status: int | None = None
 
     @classmethod
     def from_json(cls, b: dict[str, Any]) -> FunctionLog:
-        return cls(b["id"], b["at"], b["trigger"], b["status"], int(b["durationMs"]), b["lines"], b["error"])
+        return cls(b["id"], b["at"], b["trigger"], b["status"], int(b["durationMs"]), b["lines"], b["error"],
+                   int(b["sqlCalls"]), int(b["sqlMs"]), int(b["rowsRead"]), int(b["rowsWritten"]),
+                   int(b["responseBytes"]), None if b["httpStatus"] is None else int(b["httpStatus"]))
+
+
+@dataclass(frozen=True)
+class FunctionStatsBucket:
+    at: str
+    invocations: int
+    errors: int
+    p50_ms: int
+    p95_ms: int
+
+    @classmethod
+    def from_json(cls, b: dict[str, Any]) -> FunctionStatsBucket:
+        return cls(b["at"], int(b["invocations"]), int(b["errors"]), int(b["p50Ms"]), int(b["p95Ms"]))
+
+
+@dataclass(frozen=True)
+class FunctionStats:
+    window: str
+    invocations: int
+    errors: int
+    p50_ms: int
+    p95_ms: int
+    p99_ms: int
+    max_ms: int
+    sql_calls: int
+    rows_read: int
+    rows_written: int
+    buckets: list[FunctionStatsBucket]
+
+    @classmethod
+    def from_json(cls, b: dict[str, Any]) -> FunctionStats:
+        return cls(b["window"], int(b["invocations"]), int(b["errors"]), int(b["p50Ms"]), int(b["p95Ms"]),
+                   int(b["p99Ms"]), int(b["maxMs"]), int(b["sqlCalls"]), int(b["rowsRead"]), int(b["rowsWritten"]),
+                   [FunctionStatsBucket.from_json(x) for x in b["buckets"]])
 
 
 class _FunctionCall(Call):
@@ -108,6 +150,12 @@ class _Requests:
         return self._call("GET", function, lambda b: [FunctionLog.from_json(x) for x in b], suffix="logs",
                           params={} if limit is None else {"limit": str(limit)})
 
+    def _stats(self, function: str, window: str | None) -> Call:
+        if window is not None and window not in ("1h", "24h", "7d"):
+            raise ValueError("stats window must be 1h, 24h or 7d")
+        return self._call("GET", function, FunctionStats.from_json, suffix="stats",
+                          params={} if window is None else {"window": window})
+
 
 class DatabaseFunctions(_Requests):
     def __init__(self, database: Database):
@@ -132,6 +180,9 @@ class DatabaseFunctions(_Requests):
     def list_function_logs(self, function: str, *, limit: int | None = None) -> list[FunctionLog]:
         return self._client._send(self._logs(function, limit))
 
+    def get_function_stats(self, function: str, *, window: str | None = None) -> FunctionStats:
+        return self._client._send(self._stats(function, window))
+
 
 class AsyncDatabaseFunctions(_Requests):
     def __init__(self, database: AsyncDatabase):
@@ -155,3 +206,6 @@ class AsyncDatabaseFunctions(_Requests):
 
     async def list_function_logs(self, function: str, *, limit: int | None = None) -> list[FunctionLog]:
         return await self._client._send(self._logs(function, limit))
+
+    async def get_function_stats(self, function: str, *, window: str | None = None) -> FunctionStats:
+        return await self._client._send(self._stats(function, window))

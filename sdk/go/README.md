@@ -669,7 +669,7 @@ ts auth logout
 Project commands act in the user's only project; `-project <name or id>`
 picks one when the user reaches several. `ts help` lists every command.
 Functions (`Database.DeployFunction`, `Functions`, `InvokeFunction`,
-`FunctionLogs`, `DeleteFunction`) follow TerraBase's functions contract:
+`FunctionLogs`, `FunctionStats`, `DeleteFunction`) follow TerraBase's functions contract:
 JavaScript `handler(event)` deployed per database, run on `invoke` or a UTC cron
 schedule.
 `InvokeFunction` preserves successful status, content type and response bytes;

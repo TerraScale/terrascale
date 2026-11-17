@@ -24,6 +24,7 @@ import (
 type functionFlags struct {
 	name, cron, data string
 	limit            int
+	window           string
 	limitSet         bool
 }
 
@@ -39,6 +40,8 @@ func (f *functionFlags) parse(cmd string, args []string) ([]string, error) {
 		fs.StringVar(&f.data, "data", "", "")
 	case "functions logs":
 		fs.IntVar(&f.limit, "limit", 0, "")
+	case "functions stats":
+		fs.StringVar(&f.window, "window", "", "")
 	}
 	var operands []string
 	for {
@@ -53,6 +56,9 @@ func (f *functionFlags) parse(cmd string, args []string) ([]string, error) {
 	fs.Visit(func(fl *flag.Flag) { f.limitSet = f.limitSet || fl.Name == "limit" })
 	if f.limitSet && (f.limit < 1 || f.limit > 100) {
 		return nil, &cliError{code: "invalid_arguments", message: "-limit must be from 1 to 100", err: errUsage}
+	}
+	if cmd == "functions stats" && f.window != "" && f.window != "1h" && f.window != "24h" && f.window != "7d" {
+		return nil, &cliError{code: "invalid_arguments", message: "-window must be 1h, 24h or 7d", err: errUsage}
 	}
 	return operands, nil
 }
@@ -159,6 +165,17 @@ func functions(ctx context.Context, db *v1.Database, cmd string, f functionFlags
 			}
 		}
 		return nil
+	case "functions stats":
+		stats, err := db.FunctionStats(ctx, args[0], f.window)
+		if err != nil {
+			return err
+		}
+		if jsonMode(out) {
+			return emitJSON(out, stats)
+		}
+		_, err = fmt.Fprintf(out, "invocations %d  errors %d  p50 %dms  p95 %dms  p99 %dms  sql calls %d\n",
+			stats.Invocations, stats.Errors, stats.P50Ms, stats.P95Ms, stats.P99Ms, stats.SqlCalls)
+		return err
 	case "functions delete":
 		if err := db.DeleteFunction(ctx, args[0]); err != nil {
 			return err
