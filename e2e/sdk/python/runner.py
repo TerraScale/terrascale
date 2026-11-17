@@ -295,6 +295,21 @@ def ids(op):
     same([is_valid_id(new_id()), is_valid_id(op["invalid"])], [True, False], "validation")
 
 
+def functions_stats(op):
+    from terrascale.functions import DatabaseFunctions, FunctionDeployment
+
+    functions = DatabaseFunctions(state["db"])
+    name = f"stats-{run}"
+    functions.deploy_function(name, FunctionDeployment(source="async function handler() { return { ok: true }; }"))
+    functions.invoke_function(name, {})
+    stats = functions.get_function_stats(name, window="1h")
+    same([stats.window, stats.invocations >= 1, len(stats.buckets)], ["1h", True, 60], "stats")
+    logs = functions.list_function_logs(name, limit=1)
+    if len(logs) != 1 or logs[0].http_status != 200 or logs[0].response_bytes < 0:
+        raise AssertionError(f"log metrics differ: {logs[:1]}")
+    functions.delete_function(name)
+
+
 TOKEN = "eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln"
 KEY = "01JA0000000000000000000000_0123456789abcdefghjkmnpqrstvwxyz0123456789abcdefghjk"
 
@@ -489,6 +504,7 @@ operations = {
     "conflicts.query": conflicts,
     "ids.new_validate": ids,
     "origin.rule": origin_rule,
+    "functions.stats": functions_stats,
     "agent.create_ttl": create_ttl,
     "agent.set_ttl": set_ttl,
     "agent.clear_ttl": clear_ttl,

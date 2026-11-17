@@ -28,13 +28,43 @@ type FunctionRequest struct {
 // FunctionLog is one retained invocation, newest first. Trigger is http or
 // cron; Status is ok or error.
 type FunctionLog struct {
-	ID         string    `json:"id" ulid:"required"`
-	At         time.Time `json:"at"`
-	Trigger    string    `json:"trigger"`
-	Status     string    `json:"status"`
-	DurationMs int64     `json:"durationMs"`
-	Lines      []string  `json:"lines"`
-	Error      *string   `json:"error"`
+	ID            string    `json:"id" ulid:"required"`
+	At            time.Time `json:"at"`
+	Trigger       string    `json:"trigger"`
+	Status        string    `json:"status"`
+	DurationMs    int64     `json:"durationMs"`
+	Lines         []string  `json:"lines"`
+	Error         *string   `json:"error"`
+	SqlCalls      int64     `json:"sqlCalls"`
+	SqlMs         int64     `json:"sqlMs"`
+	RowsRead      int64     `json:"rowsRead"`
+	RowsWritten   int64     `json:"rowsWritten"`
+	ResponseBytes int64     `json:"responseBytes"`
+	HTTPStatus    *int      `json:"httpStatus"`
+}
+
+// FunctionStatsBucket is one UTC stats interval, including empty intervals.
+type FunctionStatsBucket struct {
+	At          time.Time `json:"at"`
+	Invocations int64     `json:"invocations"`
+	Errors      int64     `json:"errors"`
+	P50Ms       int64     `json:"p50Ms"`
+	P95Ms       int64     `json:"p95Ms"`
+}
+
+// FunctionStats aggregates a function's invocations over a window.
+type FunctionStats struct {
+	Window      string                `json:"window"`
+	Invocations int64                 `json:"invocations"`
+	Errors      int64                 `json:"errors"`
+	P50Ms       int64                 `json:"p50Ms"`
+	P95Ms       int64                 `json:"p95Ms"`
+	P99Ms       int64                 `json:"p99Ms"`
+	MaxMs       int64                 `json:"maxMs"`
+	SqlCalls    int64                 `json:"sqlCalls"`
+	RowsRead    int64                 `json:"rowsRead"`
+	RowsWritten int64                 `json:"rowsWritten"`
+	Buckets     []FunctionStatsBucket `json:"buckets"`
 }
 
 // DeployFunction creates or replaces the named function.
@@ -143,6 +173,26 @@ func (d *Database) FunctionLogs(ctx context.Context, name string, limit int) ([]
 	out, err := databaseCall[[]FunctionLog](ctx, d, http.MethodGet, q, nil, "functions", name, "logs")
 	if err != nil {
 		return nil, err
+	}
+	return *out, nil
+}
+
+// FunctionStats reads a function's aggregated invocation metrics. Window is
+// 1h, 24h or 7d; empty uses the server default 24h. Needs read and write access.
+func (d *Database) FunctionStats(ctx context.Context, name string, window string) (FunctionStats, error) {
+	if err := checkName("function", name); err != nil {
+		return FunctionStats{}, err
+	}
+	if window != "" && window != "1h" && window != "24h" && window != "7d" {
+		return FunctionStats{}, errors.New("terrabase: function stats window must be 1h, 24h or 7d or empty for the default")
+	}
+	q := url.Values{}
+	if window != "" {
+		q.Set("window", window)
+	}
+	out, err := databaseCall[FunctionStats](ctx, d, http.MethodGet, q, nil, "functions", name, "stats")
+	if err != nil {
+		return FunctionStats{}, err
 	}
 	return *out, nil
 }

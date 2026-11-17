@@ -182,7 +182,7 @@ func selectCLIContext(ctx context.Context, u *tsauth.User, token string, operand
 		return err
 	}
 	if len(operands) == 3 {
-		s, err := open(ctx, u, token, c.OrganizationID, c.ProjectID)
+		s, err := open(ctx, u, token, c.OrganizationID, c.ProjectID, "")
 		if err != nil {
 			return err
 		}

@@ -10,6 +10,8 @@ export const numeric = value => typeof value === "number" && Number.isFinite(val
 export const nullable = decode => value => value === null ? null : decode(value);
 /** @template T @param {Decoder<T>} decode @returns {Decoder<T | undefined>} */
 export const optional = decode => value => value === undefined ? undefined : decode(value);
+/** @template T @param {T} fallback @param {Decoder<T>} decode @returns {Decoder<T>} */
+export const defaulted = (fallback, decode) => value => value === undefined ? fallback : decode(value);
 /** @template T @param {Decoder<T>} decode @returns {Decoder<readonly T[]>} */
 export const list = decode => value => Object.freeze(array(value, "array").map(decode));
 /** @template T @param {{ [K in keyof T]: Decoder<T[K]> }} fields @returns {Decoder<Readonly<T>>} */

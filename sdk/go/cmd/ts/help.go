@@ -38,6 +38,7 @@ var commandSyntax = map[string]string{
 	"backup destination": "backup destination get|set|delete",
 	"functions deploy":   "functions deploy <database> <file.js|directory>", "functions list": "functions list <database>",
 	"functions invoke": "functions invoke <database> <name>", "functions logs": "functions logs <database> <name>",
+	"functions stats":  "functions stats [<database>] <name>",
 	"functions delete": "functions delete <database> <name>", "sql": "sql <database> <statement|->",
 	"schema pull":  "schema pull <database>",
 	"schema diff":  "schema diff <database> <schema.sql>",
@@ -252,6 +253,9 @@ func helpOptions(name string) map[string]string {
 		options["-data <json|->"] = "invocation body; - reads stdin"
 	case name == "functions logs":
 		options["-limit <1..100>"] = "maximum recent invocations"
+	case name == "functions stats":
+		options["-window <1h|24h|7d>"] = "metrics window, default 24h"
+		options["[<database>]"] = "optional with a saved context database (ts context set); otherwise required before <name>"
 	}
 	return options
 }

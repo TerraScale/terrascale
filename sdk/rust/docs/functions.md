@@ -11,6 +11,8 @@ result into your chosen type. Use `invoke_function_response` to retain a custom
 successful status, headers and raw text or empty body. The SDK does not replay an
 uncertain invocation.
 
-Use `list_function_logs` for HTTP and cron invocation output. `delete_function`
-stops the function and its schedule. Server-side validation, quotas and project
-permissions apply to every method.
+Use `list_function_logs` for HTTP and cron invocation output. `get_function_stats`
+reads aggregated invocation metrics for a `1h`, `24h` or `7d` window (`None` uses the
+server default `24h`): totals, latency percentiles, SQL counters and zero-filled UTC
+buckets. `delete_function` stops the function and its schedule. Server-side validation,
+quotas and project permissions apply to every method.

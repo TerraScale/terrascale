@@ -1,22 +1,30 @@
 import { requireId } from "../ids.js";
 import { requireDatabaseSelector, requireName } from "./ids.js";
-import { list, nullable, numeric, optional, record, text } from "./management-decode.js";
+import { list, nullable, numeric, optional, record, text, defaulted } from "./management-decode.js";
 import { members, mutationOptions } from "./management-validation.js";
 import { stringifyExactJson } from "./json.js";
 /** @import { V1Transport } from "./transport.js" */
 /** @import { V1RequestOptions } from "./terrabase-v1.js" */
 
 const functionBody = record({ name: text, source: optional(nullable(text)), cron: nullable(text), createdAt: text, updatedAt: text });
-const logBody = record({ id: requireId, at: text, trigger: text, status: text, durationMs: numeric, lines: list(text), error: nullable(text) });
+const logBody = record({ id: requireId, at: text, trigger: text, status: text, durationMs: numeric,
+  lines: list(text), error: nullable(text), sqlCalls: defaulted(0, numeric), sqlMs: defaulted(0, numeric),
+  rowsRead: defaulted(0, numeric), rowsWritten: defaulted(0, numeric), responseBytes: defaulted(0, numeric),
+  httpStatus: defaulted(null, nullable(numeric)) });
+const statsBucketBody = record({ at: text, invocations: numeric, errors: numeric, p50Ms: numeric, p95Ms: numeric });
+const statsBody = record({ window: text, invocations: numeric, errors: numeric, p50Ms: numeric, p95Ms: numeric,
+  p99Ms: numeric, maxMs: numeric, sqlCalls: numeric, rowsRead: numeric, rowsWritten: numeric, buckets: list(statsBucketBody) });
 /** @typedef {ReturnType<typeof functionBody>} V1Function */
 /** @typedef {ReturnType<typeof logBody>} V1FunctionLog */
+/** @typedef {ReturnType<typeof statsBucketBody>} V1FunctionStatsBucket */
+/** @typedef {ReturnType<typeof statsBody>} V1FunctionStats */
 /** @typedef {{ readonly source: string; readonly cron?: string | undefined }} V1FunctionDeployRequest */
 /** @typedef {{ readonly body?: string | Uint8Array | undefined; readonly query?: Readonly<Record<string, string>> | undefined }} V1FunctionInvokeRequest */
 /** @typedef {{ readonly status: number; readonly contentType: string; readonly body: Uint8Array }} V1FunctionResponse */
 
 const maximumInvokeBytes = 1_048_576;
 
-/** A deployed function's lifecycle: deploy, list, get, invoke, logs and delete for one database. */
+/** A deployed function's lifecycle: deploy, list, get, invoke, logs, stats and delete for one database. */
 export class V1Functions {
   /** @type {V1Transport} */
   #transport;
@@ -68,6 +76,15 @@ export class V1Functions {
     const query = new URLSearchParams();
     if (limit !== undefined) query.set("limit", String(limit));
     return list(logBody)((await this.#transport.call("listFunctionLogs", { ...this.#params, function: requireName("function", name) },
+      { query, signal: options.signal })).value);
+  }
+  /** @param {string} name @param {string} [window] @param {V1RequestOptions} [options] @returns {Promise<V1FunctionStats>} */
+  async stats(name, window, options = {}) {
+    if (window !== undefined && window !== "1h" && window !== "24h" && window !== "7d")
+      throw new TypeError("window must be 1h, 24h or 7d.");
+    const query = new URLSearchParams();
+    if (window !== undefined) query.set("window", window);
+    return statsBody((await this.#transport.call("getFunctionStats", { ...this.#params, function: requireName("function", name) },
       { query, signal: options.signal })).value);
   }
   /** @param {string} name @param {V1RequestOptions} [options] @returns {Promise<void>} */

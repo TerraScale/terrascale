@@ -24,7 +24,7 @@
   "request": "Deploy: source required string; optional cron:string. Replacement clears an omitted cron.",
   "response": "Function: name:string, source:string|null (omitted in list), cron:string|null, createdAt:date-time, updatedAt:date-time. Delete: empty 204.",
   "errors": "400 validation, 401/403 credential/scope, 404 database/function, 409 function_limit (deploy), 503 unavailable",
-  "remaining": "Invoke returns handler status/body or JSON 200; 500 function_error; input <=1MiB. Logs direct array newest-first limit 1..100 default 50; last 100. Missed cron runs are skipped. Stats: window 1h|24h|7d, default 24h; zero-filled UTC minute/hour buckets; histogram percentiles, 7-day hourly retention. Logs add sqlCalls, sqlMs, rowsRead, rowsWritten, responseBytes, httpStatus; rowsRead sums returned rows and rowsWritten sums affected rows from successful SQL binding results. Stats SDK operation follows in C7.",
+  "remaining": "Invoke returns handler status/body or JSON 200; 500 function_error; input <=1MiB. Logs direct array newest-first limit 1..100 default 50; last 100. Missed cron runs are skipped. Stats: window 1h|24h|7d, default 24h; zero-filled UTC minute/hour buckets; histogram percentiles, 7-day hourly retention. Logs add sqlCalls, sqlMs, rowsRead, rowsWritten, responseBytes, httpStatus; rowsRead sums returned rows and rowsWritten sums affected rows from successful SQL binding results.",
   "operations": [
     {"operation":"listFunctions","method":"GET","path":"/v1/projects/{project}/databases/{database}/functions","scopes":["sql:read","sql:write"],"success":200,"implemented":true},
     {"operation":"deployFunction","method":"PUT","path":"/v1/projects/{project}/databases/{database}/functions/{function}","scopes":["sql:read","sql:write"],"success":200,"implemented":true},
@@ -32,6 +32,6 @@
     {"operation":"deleteFunction","method":"DELETE","path":"/v1/projects/{project}/databases/{database}/functions/{function}","scopes":["sql:read","sql:write"],"success":204,"implemented":true},
     {"operation":"invokeFunction","method":"POST","path":"/v1/projects/{project}/databases/{database}/functions/{function}/invoke","scopes":["sql:read"],"success":200,"implemented":true},
     {"operation":"listFunctionLogs","method":"GET","path":"/v1/projects/{project}/databases/{database}/functions/{function}/logs","scopes":["sql:read","sql:write"],"success":200,"implemented":true},
-    {"operation":"getFunctionStats","method":"GET","path":"/v1/projects/{project}/databases/{database}/functions/{function}/stats","scopes":["sql:read","sql:write"],"success":200,"implemented":false}
+    {"operation":"getFunctionStats","method":"GET","path":"/v1/projects/{project}/databases/{database}/functions/{function}/stats","scopes":["sql:read","sql:write"],"success":200,"implemented":true}
   ]
 }

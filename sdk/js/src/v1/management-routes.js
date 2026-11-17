@@ -1,4 +1,4 @@
-/** @typedef {"executeSql" | "exportDatabase" | "readTableShape" | "getShapeManifest" | "getShapeKey" | "connectSql" | "connectShapeHints" | "healthz" | "readyz" | "backupz" | "listPlatformDatabases" | "createBackup" | "listBackups" | "restoreBackup" | "getRestoreOperation" | "getBackupPolicy" | "setBackupPolicy" | "getRestoreWindow" | "planPointInTime" | "restorePointInTime" | "rewindPointInTime" | "getBackupDestination" | "setBackupDestination" | "deleteBackupDestination" | "getProjectUsage" | "getProjectAnalytics" | "getDatabaseUsage" | "getDatabaseAnalytics" | "listDatabaseLogs" | "getProjectMetrics" | "getDatabaseRegions" | "listRegions" | "listFunctions" | "deployFunction" | "getFunction" | "deleteFunction" | "invokeFunction" | "listFunctionLogs"} ManagementOperation */
+/** @typedef {"executeSql" | "exportDatabase" | "readTableShape" | "getShapeManifest" | "getShapeKey" | "connectSql" | "connectShapeHints" | "healthz" | "readyz" | "backupz" | "listPlatformDatabases" | "createBackup" | "listBackups" | "restoreBackup" | "getRestoreOperation" | "getBackupPolicy" | "setBackupPolicy" | "getRestoreWindow" | "planPointInTime" | "restorePointInTime" | "rewindPointInTime" | "getBackupDestination" | "setBackupDestination" | "deleteBackupDestination" | "getProjectUsage" | "getProjectAnalytics" | "getDatabaseUsage" | "getDatabaseAnalytics" | "listDatabaseLogs" | "getProjectMetrics" | "getDatabaseRegions" | "listRegions" | "listFunctions" | "deployFunction" | "getFunction" | "deleteFunction" | "invokeFunction" | "listFunctionLogs" | "getFunctionStats"} ManagementOperation */
 /** @type {readonly import("./routes.js").V1Route[]} */
 export const managementV1Routes = Object.freeze([
   route("executeSql", "POST", "/v1/projects/{project}/databases/{database}/sql/execute"),
@@ -45,6 +45,8 @@ export const managementV1Routes = Object.freeze([
     { permission: "sql:read", requestMediaTypes: ["application/json"], responseMediaType: "",
       successStatuses: [200, 201, 202, 203, 204, 205, 206, 207, 208, 226] }),
   route("listFunctionLogs", "GET", "/v1/projects/{project}/databases/{database}/functions/{function}/logs", 200,
+    { permission: "sql:read", additionalPermissions: ["sql:write"] }),
+  route("getFunctionStats", "GET", "/v1/projects/{project}/databases/{database}/functions/{function}/stats", 200,
     { permission: "sql:read", additionalPermissions: ["sql:write"] }),
 ]);
 
