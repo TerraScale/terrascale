@@ -54,7 +54,7 @@ internal sealed partial class TursoShapeReader(
                 var matcher = ShapeMatcher(current.Columns, filter.Where);
                 try
                 {
-                    _ = ShapeMatches(matcher, new object?[current.Columns.Length]);
+                    _ = ShapeMatches(matcher, new object?[current.Columns.Length], filter.Parameters);
                 }
                 catch (SqliteException)
                 {
@@ -73,12 +73,17 @@ internal sealed partial class TursoShapeReader(
         return TableCommand($"SELECT 1 FROM (SELECT {projection}) WHERE ({where});");
     }
 
-    private bool ShapeMatches(SqliteCommand matcher, object?[] values)
+    private bool ShapeMatches(SqliteCommand matcher, object?[] values, IReadOnlyDictionary<string, object?> parameters)
     {
         matcher.Parameters.Clear();
         for (var index = 0; index < values.Length; index++)
         {
             matcher.Parameters.AddWithValue($"$c{index}", values[index] ?? DBNull.Value);
+        }
+
+        foreach (var (name, value) in parameters)
+        {
+            matcher.Parameters.AddWithValue(name, value ?? DBNull.Value);
         }
 
         CountRead("shape");
@@ -709,8 +714,8 @@ internal sealed partial class TursoShapeReader(
                 }
             }
 
-            bool? was = before is null ? null : output.Matcher is null || ShapeMatches(output.Matcher, before);
-            var now = after is not null && (output.Matcher is null || ShapeMatches(output.Matcher, after));
+            bool? was = before is null ? null : output.Matcher is null || ShapeMatches(output.Matcher, before, output.Filter.Parameters);
+            var now = after is not null && (output.Matcher is null || ShapeMatches(output.Matcher, after, output.Filter.Parameters));
             switch (type, was, now)
             {
                 case (1, _, false) or (0, false, false) or (-1, false, _):

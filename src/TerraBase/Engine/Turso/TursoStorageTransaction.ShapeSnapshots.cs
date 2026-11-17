@@ -1,5 +1,6 @@
 using static TerraBase.Engine.Turso.TursoShapeReader;
 using System.Buffers;
+using System.Collections.Frozen;
 using System.Text.Json;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Shapes;
@@ -97,6 +98,11 @@ internal sealed partial class TursoStorageTransaction : IShapeSnapshotStorage
                     : select + "rowid > $after ORDER BY rowid LIMIT $limit;", transaction);
                 rows.Parameters.Clear();
                 rows.Parameters.AddWithValue("$limit", 128);
+                foreach (var (name, value) in shape.Filter?.Parameters ?? FrozenDictionary<string, object?>.Empty)
+                {
+                    rows.Parameters.AddWithValue(name, value ?? DBNull.Value);
+                }
+
                 if (last is { } after)
                 {
                     rows.Parameters.AddWithValue("$after", after);

@@ -27,14 +27,6 @@ internal static class ShapeGrantRoute
         + "it takes the same expressions as the shape where parameter plus :sub, the end user's id from the token. columns optionally limits the columns end users receive. "
         + "API keys and project tokens are not limited by grants. " + ProjectApiRoute.IdentityDescription;
 
-    internal static async ValueTask<object> DatabaseAsync(HttpContext context, IManagementService management, CancellationToken cancellationToken) =>
-        await ManagementRoute.DatabaseAsync(context, management, cancellationToken).ConfigureAwait(false) switch
-        {
-            TenantContext tenant => tenant,
-            NotFound error => ManagementRoute.DatabaseNotFound(error),
-            Unavailable error => ErrorResponse.From(error),
-        };
-
     internal static object Check(string? table, ShapeGrantRequest request, DateTimeOffset now)
     {
         if (!ShapeTables.IsValidName(table))
@@ -42,7 +34,7 @@ internal static class ShapeGrantRoute
             return ShapeRoute.BadTable;
         }
 
-        if (request.Where is { } where && (where.Length is 0 or > ShapeFilters.MaxWhere || ShapeFilters.Bind(where, Probe) is null))
+        if (request.Where is { Length: 0 or > ShapeFilters.MaxWhere })
         {
             return ShapeFilters.Refused($"where must be a condition of at most {ShapeFilters.MaxWhere} characters whose only parameter is :sub");
         }

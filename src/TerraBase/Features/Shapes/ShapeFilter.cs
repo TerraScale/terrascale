@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Text;
 using TerraBase.Engine;
 using TerraBase.Errors;
@@ -6,6 +7,8 @@ namespace TerraBase.Features.Shapes;
 
 public sealed record ShapeFilter(string? Where, IReadOnlyList<string> Columns, string? Binding = null)
 {
+    public IReadOnlyDictionary<string, object?> Parameters { get; init; } = FrozenDictionary<string, object?>.Empty;
+
     public string Key => (Where ?? "") + "\0" + string.Join('\u001f', Columns) + (Binding is { } binding ? "\0" + binding : "");
 }
 
@@ -16,7 +19,41 @@ internal sealed record ShapeQuery(string? Where, string? Columns, ShapeGrantRule
     internal bool IsEmpty => Where is null && Columns is null && Grant is null;
 }
 
-internal sealed record ShapeGrantRule(string? Where, string? Columns, string Binding);
+internal sealed record ShapeGrantRule(string? Where, string? Columns, string Binding, string Subject);
+
+internal enum RulesOperation
+{
+    Read,
+    Create,
+    Update,
+    Delete,
+    Validate,
+}
+
+internal enum ConditionSource
+{
+    Subject,
+    Uid,
+    OrgId,
+    OrgRole,
+    IsAnonymous,
+    Claim,
+    ClaimList,
+    RequestTime,
+    Row,
+}
+
+internal sealed record ConditionParameter(string Name, ConditionSource Source, string? Key = null);
+
+internal sealed record CompiledCondition(string Sql, IReadOnlyList<ConditionParameter> Parameters);
+
+internal abstract record ConditionScope(IReadOnlyList<string> Columns);
+
+internal sealed record RequestScope(IReadOnlyList<string> Columns, Forbidden? Hidden) : ConditionScope(Columns);
+
+internal sealed record GrantScope(IReadOnlyList<string> Columns) : ConditionScope(Columns);
+
+internal sealed record RuleScope(IReadOnlyList<string> Columns, RulesOperation Operation) : ConditionScope(Columns);
 
 internal static class ShapeFilters
 {
@@ -71,26 +108,31 @@ internal static class ShapeFilters
         string? condition = null;
         if (query.Where is { } where)
         {
-            var checkedWhere = Where(where, granted ?? tableColumns, granted is null ? null : ColumnNotGranted);
-            if (checkedWhere is not string text)
+            var checkedWhere = Where(where, new RequestScope(granted ?? tableColumns, granted is null ? null : ColumnNotGranted));
+            if (checkedWhere is not CompiledCondition text)
             {
                 return checkedWhere;
             }
 
-            condition = text;
+            condition = text.Sql;
         }
 
-        if (query.Grant?.Where is { } rule)
+        Dictionary<string, object?> parameters = new(StringComparer.Ordinal);
+        if (query.Grant is { Where: { } rule } grant)
         {
-            if (Where(rule, tableColumns, null) is not string checkedRule)
+            if (Where(rule, new GrantScope(tableColumns)) is not CompiledCondition checkedRule)
             {
                 return new Forbidden("the table's read grant no longer applies to its columns", "grant_invalid");
             }
 
-            condition = condition is null ? checkedRule : $"({checkedRule}) AND ({condition})";
+            condition = condition is null ? checkedRule.Sql : $"({checkedRule.Sql}) AND ({condition})";
+            foreach (var parameter in checkedRule.Parameters)
+            {
+                parameters[parameter.Name] = grant.Subject;
+            }
         }
 
-        return new ShapeFilter(condition, columns, query.Grant?.Binding);
+        return new ShapeFilter(condition, columns, query.Grant?.Binding) { Parameters = parameters.ToFrozenDictionary(StringComparer.Ordinal) };
     }
 
     private static object Columns(string list, IReadOnlyList<string> tableColumns)
@@ -115,32 +157,12 @@ internal static class ShapeFilters
         return chosen;
     }
 
-    internal static string? Bind(string where, string subject)
-    {
-        if (!SqlText.TryTokenize(where, out var tokens))
-        {
-            return null;
-        }
-
-        var text = new StringBuilder();
-        var at = 0;
-        foreach (var token in tokens.Where(token => token.Kind == SqlTokenKind.Parameter))
-        {
-            if (token.Value != Subject)
-            {
-                return null;
-            }
-
-            text.Append(where, at, token.Start - at).Append('\'').Append(subject.Replace("'", "''", StringComparison.Ordinal)).Append('\'');
-            at = token.End;
-        }
-
-        return text.Append(where, at, where.Length - at).ToString();
-    }
-
     internal const string Subject = ":sub";
 
-    private static object Where(string where, IReadOnlyList<string> tableColumns, Forbidden? hiddenColumn)
+    internal static bool IsClaimName(string name) => name is { Length: >= 1 and <= 63 } && name[0] is >= 'a' and <= 'z'
+        && name.All(character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '_');
+
+    internal static object Where(string where, ConditionScope scope)
     {
         if (where.Length > MaxWhere || !SqlText.TryTokenize(where, out var tokens) || tokens.Count == 0)
         {
@@ -148,25 +170,48 @@ internal static class ShapeFilters
         }
 
         var text = new StringBuilder();
-        var depth = 0;
+        List<ConditionParameter> parameters = [];
+        List<bool> lists = [];
+        var hiddenColumn = scope is RequestScope request ? request.Hidden : null;
+        var bareColumns = scope is not RuleScope;
         for (var index = 0; index < tokens.Count; index++)
         {
             var token = tokens[index];
             var previous = index > 0 ? tokens[index - 1] : default;
             var opens = index + 1 < tokens.Count && tokens[index + 1].Kind == SqlTokenKind.Open;
-            string? part = token.Kind switch
+            string? part;
+            if (scope is RuleScope rules && token.Kind == SqlTokenKind.Word && index + 1 < tokens.Count && tokens[index + 1].Kind == SqlTokenKind.Dot)
             {
-                SqlTokenKind.String or SqlTokenKind.Number or SqlTokenKind.Blob or SqlTokenKind.Comma => where[token.Start..token.End],
-                SqlTokenKind.Open => "(",
-                SqlTokenKind.Close => ")",
-                SqlTokenKind.Symbol when token.Value[0] is '=' or '<' or '>' or '!' or '+' or '-' or '*' or '/' or '%' or '|' or '&' or '~' => token.Value,
-                SqlTokenKind.Word when previous.Is("AS") => Types.Contains(token.Value) ? token.Value.ToUpperInvariant() : null,
-                SqlTokenKind.Word when previous.Is("COLLATE") => Collations.Contains(token.Value) ? token.Value.ToUpperInvariant() : null,
-                SqlTokenKind.Word when opens && Functions.Contains(token.Value) => token.Value.ToLowerInvariant(),
-                SqlTokenKind.Word when Operators.Contains(token.Value) => token.Value.ToUpperInvariant(),
-                SqlTokenKind.Word or SqlTokenKind.Quoted when !opens && Column(tableColumns, token.Value) is { } column => "+" + Quote(column),
-                _ => null,
-            };
+                var reference = Reference(tokens, ref index, rules, previous.Is("IN"), lists.Contains(true), parameters);
+                if (reference is not string compiled)
+                {
+                    return reference;
+                }
+
+                part = compiled;
+            }
+            else if (scope is RuleScope && previous.Is("IN") && token.Kind != SqlTokenKind.Open)
+            {
+                return Refused("IN takes a parenthesized list or one auth.claims list");
+            }
+            else
+            {
+                part = token.Kind switch
+                {
+                    SqlTokenKind.String or SqlTokenKind.Number or SqlTokenKind.Blob or SqlTokenKind.Comma => where[token.Start..token.End],
+                    SqlTokenKind.Open => "(",
+                    SqlTokenKind.Close => ")",
+                    SqlTokenKind.Symbol when token.Value[0] is '=' or '<' or '>' or '!' or '+' or '-' or '*' or '/' or '%' or '|' or '&' or '~' => token.Value,
+                    SqlTokenKind.Parameter when scope is GrantScope && token.Value == Subject => Bound(parameters, new ConditionParameter("$sub", ConditionSource.Subject)),
+                    SqlTokenKind.Word when previous.Is("AS") => Types.Contains(token.Value) ? token.Value.ToUpperInvariant() : null,
+                    SqlTokenKind.Word when previous.Is("COLLATE") => Collations.Contains(token.Value) ? token.Value.ToUpperInvariant() : null,
+                    SqlTokenKind.Word when opens && Functions.Contains(token.Value) => token.Value.ToLowerInvariant(),
+                    SqlTokenKind.Word when Operators.Contains(token.Value) => token.Value.ToUpperInvariant(),
+                    SqlTokenKind.Word or SqlTokenKind.Quoted when bareColumns && !opens && Column(scope.Columns, token.Value) is { } column => "+" + Quote(column),
+                    _ => null,
+                };
+            }
+
             if (part is null && hiddenColumn is not null && token.Kind is SqlTokenKind.Word or SqlTokenKind.Quoted && !opens && !previous.Is("AS")
                 && !previous.Is("COLLATE") && !Operators.Contains(token.Value))
             {
@@ -179,17 +224,24 @@ internal static class ShapeFilters
                 {
                     SqlTokenKind.Parameter => "where takes no parameters",
                     SqlTokenKind.Semicolon => "where is one expression",
-                    SqlTokenKind.Dot => "where names this table's columns without a qualifier",
+                    SqlTokenKind.Dot when bareColumns => "where names this table's columns without a qualifier",
+                    SqlTokenKind.Word or SqlTokenKind.Quoted when !bareColumns && !opens => $"{token.Value} must be qualified as row.{token.Value} or new.{token.Value}",
                     SqlTokenKind.Word when opens => $"where cannot call {token.Value}; it allows only deterministic functions without side effects",
                     SqlTokenKind.Word or SqlTokenKind.Quoted => $"where cannot use {token.Value}; it allows this table's columns, literals and operators, without subqueries",
                     _ => $"where cannot use {token.Value}",
                 });
             }
 
-            depth += token.Kind switch { SqlTokenKind.Open => 1, SqlTokenKind.Close => -1, _ => 0 };
-            if (depth < 0)
+            switch (token.Kind)
             {
-                return Refused("where has unbalanced parentheses");
+                case SqlTokenKind.Open:
+                    lists.Add(previous.Is("IN"));
+                    break;
+                case SqlTokenKind.Close when lists.Count == 0:
+                    return Refused("where has unbalanced parentheses");
+                case SqlTokenKind.Close:
+                    lists.RemoveAt(lists.Count - 1);
+                    break;
             }
 
             if (text.Length > 0 && !(token.Kind == SqlTokenKind.Symbol && previous.Kind == SqlTokenKind.Symbol && previous.End == token.Start))
@@ -200,7 +252,91 @@ internal static class ShapeFilters
             text.Append(part);
         }
 
-        return depth == 0 ? text.ToString() : Refused("where has unbalanced parentheses");
+        return lists.Count == 0 ? new CompiledCondition(text.ToString(), parameters) : Refused("where has unbalanced parentheses");
+    }
+
+    private static object Reference(List<SqlToken> tokens, ref int index, RuleScope scope, bool listPosition, bool inList,
+        List<ConditionParameter> parameters)
+    {
+        var head = tokens[index].Value;
+        List<SqlToken> path = [];
+        var at = index;
+        while (at + 2 < tokens.Count && tokens[at + 1].Kind == SqlTokenKind.Dot && tokens[at + 2].IsName)
+        {
+            path.Add(tokens[at + 2]);
+            at += 2;
+        }
+
+        if (path.Count == 0 || at + 1 < tokens.Count && tokens[at + 1].Kind is SqlTokenKind.Dot or SqlTokenKind.Open)
+        {
+            return Refused($"{head}. starts no reference this condition can use");
+        }
+
+        index = at;
+        var name = string.Join('.', path.Select(token => token.Value));
+        var reference = head + "." + name;
+        var operation = scope.Operation;
+        var isClaim = head == "auth" && path is [{ Kind: SqlTokenKind.Word, Value: "claims" }, { Kind: SqlTokenKind.Word } claim] && IsClaimName(claim.Value);
+        if (listPosition && !isClaim || inList && isClaim)
+        {
+            return Refused(listPosition ? "IN takes a parenthesized list or one auth.claims list" : $"{reference} is a list only as the whole right side of IN");
+        }
+
+        switch (head)
+        {
+            case "row" or "new" when path.Count == 1:
+                if (Column(scope.Columns, path[0].Value) is not { } column)
+                {
+                    return new Validation($"{reference}: the table has no column {path[0].Value}", "unknown_column");
+                }
+
+                var allowed = head == "row"
+                    ? operation is RulesOperation.Read or RulesOperation.Update or RulesOperation.Delete
+                    : operation is RulesOperation.Create or RulesOperation.Update or RulesOperation.Validate;
+                if (!allowed)
+                {
+                    return NotAllowed(head + ".*", operation);
+                }
+
+                return head == "row" && operation == RulesOperation.Update
+                    ? Bound(parameters, new ConditionParameter("$row_" + Enumerable.Range(0, scope.Columns.Count).First(at => scope.Columns[at] == column), ConditionSource.Row, column))
+                    : "+" + Quote(column);
+            case "auth" when path is [{ Kind: SqlTokenKind.Word } field]:
+                return field.Value switch
+                {
+                    "uid" => Bound(parameters, new ConditionParameter("$auth_uid", ConditionSource.Uid)),
+                    "org_id" => Bound(parameters, new ConditionParameter("$auth_org_id", ConditionSource.OrgId)),
+                    "org_role" => Bound(parameters, new ConditionParameter("$auth_org_role", ConditionSource.OrgRole)),
+                    "is_anonymous" => Bound(parameters, new ConditionParameter("$auth_is_anonymous", ConditionSource.IsAnonymous)),
+                    _ => Refused($"{reference} is not an auth value; use auth.uid, auth.org_id, auth.org_role, auth.is_anonymous or auth.claims.<name>"),
+                };
+            case "auth" when isClaim && listPosition:
+                var list = Bound(parameters, new ConditionParameter("$auth_list_" + path[1].Value, ConditionSource.ClaimList, path[1].Value));
+                return $"(SELECT value FROM json_each({list}) UNION ALL SELECT NULL WHERE {list} IS NULL)";
+            case "auth" when isClaim:
+                return Bound(parameters, new ConditionParameter("$auth_claim_" + path[1].Value, ConditionSource.Claim, path[1].Value));
+            case "request" when name == "time":
+                return operation == RulesOperation.Read
+                    ? NotAllowed("request.time", operation)
+                    : Bound(parameters, new ConditionParameter("$request_time", ConditionSource.RequestTime));
+            case "request" when name == "ulid":
+                return new Validation("request.ulid is allowed only as a set.create value", "reference_not_allowed");
+            default:
+                return Refused($"{reference} is not a reference; use row.<column>, new.<column>, auth.<value> or request.time");
+        }
+    }
+
+    private static Validation NotAllowed(string reference, RulesOperation operation) =>
+        new($"{reference} is not allowed in {operation.ToString().ToLowerInvariant()}", "reference_not_allowed");
+
+    private static string Bound(List<ConditionParameter> parameters, ConditionParameter parameter)
+    {
+        if (!parameters.Exists(existing => existing.Name == parameter.Name))
+        {
+            parameters.Add(parameter);
+        }
+
+        return parameter.Name;
     }
 
     private static string? Column(IReadOnlyList<string> columns, string name)
