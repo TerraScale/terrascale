@@ -15,7 +15,7 @@ if (process.env.GITHUB_EVENT_NAME === 'pull_request' && quarantine().length) {
   }
   const reporter = fileURLToPath(new URL('./quarantine-discovery.mjs', import.meta.url));
   const list = (selection, environment) => JSON.parse(execFileSync(process.execPath, [cli, 'test', ...selection, '--list', '--reporter=' + reporter], { env: environment, encoding: 'utf8', maxBuffer: 10_000_000 }));
-  const inventory = list(discovery, env);
+  const { projects, tests: inventory } = list(discovery, env);
   const entries = quarantine();
   const filters = new Set();
   const summary = [];
@@ -26,6 +26,13 @@ if (process.env.GITHUB_EVENT_NAME === 'pull_request' && quarantine().length) {
     const issue = quarantined(test, entries, inventory);
     if (!issue) continue;
     const group = test.serial ? inventory.filter(candidate => candidate.project === test.project && candidate.spec === test.spec && candidate.serial === test.serial) : [test];
+    const unavailable = new Set([test.project]);
+    for (const name of unavailable) {
+      const project = projects.find(project => project.name === name);
+      if (project.teardown) unavailable.add(project.teardown);
+      for (const dependent of projects.filter(project => project.dependencies.includes(name))) unavailable.add(dependent.name);
+    }
+    group.push(...inventory.filter(candidate => candidate.project !== test.project && unavailable.has(candidate.project)));
     if (group.some(ambiguous)) {
       summary.push(`- Warning: cannot exclude ambiguous or tagged identity ${test.spec} › ${test.titles.join(' › ')}`);
       continue;
@@ -34,13 +41,13 @@ if (process.env.GITHUB_EVENT_NAME === 'pull_request' && quarantine().length) {
       const filter = '^' + flat(member).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$';
       if (filters.has(filter)) continue;
       filters.add(filter);
-      summary.push(`- Skipped [${member.spec} › ${member.titles.join(' › ')}](${issue.url}) [${member.project}]${test.serial ? ' (whole serial group)' : ''}`);
+      summary.push(`- Skipped [${member.spec} › ${member.titles.join(' › ')}](${issue.url}) [${member.project}]${member.project !== test.project ? ' (project dependency or teardown)' : test.serial ? ' (whole serial group)' : ''}`);
     }
   }
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n### Quarantine exclusions\n${summary.join('\n') || 'No unambiguous matching tests.'}\n`);
   env.JOURNEY_QUARANTINE_GREP = JSON.stringify([...filters]);
-  if (filters.size && !list([...args, '--pass-with-no-tests'], env).length
-    && list(args, { ...env, JOURNEY_QUARANTINE_GREP: '[]' }).length) {
+  if (filters.size && !list([...args, '--pass-with-no-tests'], env).tests.length
+    && list(args, { ...env, JOURNEY_QUARANTINE_GREP: '[]' }).tests.length) {
     process.stdout.write('All selected tests were excluded by quarantine.\n');
     process.exit(0);
   }

@@ -10,7 +10,8 @@ export default class QuarantineDiscovery {
       }
       return { spec: relative(config.rootDir, test.location.file), titles: test.titlePath().slice(3), tags: test.tags, project: test.parent.project().name, serial };
     });
-    process.stdout.write(JSON.stringify(inventory));
+    const projects = config.projects.map(({ name, dependencies, teardown }) => ({ name, dependencies, teardown }));
+    process.stdout.write(JSON.stringify({ projects, tests: inventory }));
   }
 
   onError(error) {

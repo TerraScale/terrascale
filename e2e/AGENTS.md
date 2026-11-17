@@ -20,7 +20,7 @@ The list is the open issues in `TerraScale/terrascale` labeled `journey-quaranti
 `Flaky journey test: <spec path> › <test title>` quarantines one test, with nested describe titles separated
 by ` › `. Use one issue per test, shared across projects. Automatic entries also store a JSON identity line
 with the spec and title segments in the issue body. Long names use the file-only title with that exact identity;
-this quarantines sibling tests only when they belong to the same serial group. PR discovery excludes the whole outermost serial group to preserve setup dependencies and lists every excluded test in the summary.
+this quarantines sibling tests only when they belong to the same serial group. PR discovery excludes the whole outermost serial group to preserve setup dependencies, together with transitive dependent projects and teardowns. The group and project exclusions are collision checked together; the summary lists every excluded test and its reason.
 
 The Journey quarantine workflow compares per-attempt journey result artifacts after a successful CI rerun
 of the same commit. It opens an issue for each failed-then-passed test whose spec the PR did not change,
