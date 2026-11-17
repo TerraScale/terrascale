@@ -229,75 +229,16 @@ async function sqlCompletion(page: Page, id: string, screen: string): Promise<vo
   }
 }
 
-async function schemaCompletion(page: Page, id: string, table: string): Promise<void> {
-  const editor = page.locator('ts-code-editor').filter({ has: page.locator(id) });
-  await expect(editor).toHaveAttribute('data-ready', '');
-  for (const [sql, expected, delimiter = '`'] of [
-    ['SELECT * FROM sch|', table],
-    ['SELECT * FROM sch|', table, '"'],
-    ['SELECT * FROM sch|', table, "'"],
-    [`SELECT * FROM ${table} s JOIN sch|`, table],
-    ['INSERT INTO sch|', table],
-    ['UPDATE sch|', table],
-    [`SELECT sch| FROM ${table}`, 'schema_title'],
-    [`SELECT * FROM ${table} WHERE sch|`, 'schema_title'],
-    [`UPDATE ${table} SET sch|`, 'schema_title'],
-    [`SELECT * FROM ${table} s JOIN ${table} t ON s.sch|`, 'schema_title'],
-    [`SELECT s.sch| FROM ${table} AS s`, 'schema_title'],
-  ]) {
-    const source = `async function handler() { return sql.query(${delimiter}${sql}${delimiter}); }`;
-    const offset = source.indexOf('|');
-    await setSource(page, source.replace('|', ''), id);
-    await editor.evaluate((host: HTMLElement & { editor: { getModel(): { getPositionAt(offset: number): unknown }; setPosition(position: unknown): void; focus(): void } }, offset) => {
-      host.editor.setPosition(host.editor.getModel().getPositionAt(offset));
-      host.editor.focus();
-    }, offset);
-    await page.keyboard.press('Control+Space');
-    const suggestion = page.locator('.suggest-widget.visible .monaco-list-row').filter({ hasText: expected }).first();
-    await expect(suggestion).toBeVisible();
-    if (expected === 'schema_title') await expect(suggestion).toContainText('TEXT');
-    await suggestion.click();
-    const inserted = delimiter === '"' ? `\\"${expected}\\"` : `"${expected}"`;
-    await expect(page.locator(id)).toHaveValue(source.replace('sch|', inserted));
-    await page.keyboard.press('Escape');
-  }
-  await setSource(page, 'const text = "sch', id);
-  await editor.locator('.monaco-editor').click();
-  await page.keyboard.press('ControlOrMeta+End');
-  await page.keyboard.press('Control+Space');
-  await expect(page.locator('.suggest-widget.visible .monaco-list-row').filter({ hasText: table })).toHaveCount(0);
-  await page.keyboard.press('Escape');
-}
-
 test('create, deploy, test run, edit and redeploy a function from the editor', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   const current = journey();
   const name = unique('editor');
-  const table = unique('schema').replaceAll('-', '_');
-  const headers = await functionAccess(page.request);
-  const sqlUrl = functionUrl(name).split('/functions/')[0] + '/sql/execute';
-  const ddl = async (sql: string) => {
-    const response = await page.request.post(sqlUrl, { headers, data: { statements: [{ sql }] } });
-    expect(response.status()).toBe(200);
-  };
-  await ddl(`CREATE TABLE ${table} (schema_title TEXT, schema_count INTEGER)`);
-  const schemaRequests: string[] = [];
-  page.on('request', request => {
-    if (new URL(request.url()).pathname === '/api/v1/dashboard/data/schema') schemaRequests.push(request.url());
-  });
   const created = 'async function handler(event) { console.log("editor journey"); return { echo: event.body }; }';
   const edited = 'async function handler(event) { console.log("editor revised"); return { edited: true }; }';
-  const schemaLoaded = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/dashboard/data/schema');
   await page.goto(`/databases/${current.databaseId}/functions?edit=new`);
-  const catalog = await schemaLoaded;
-  expect(catalog.status()).toBe(200);
-  expect((await catalog.json()).tables).toContainEqual({ name: table, fields: [{ path: 'schema_title', type: 'TEXT' }, { path: 'schema_count', type: 'INTEGER' }] });
   await expect(page.locator('#function-editor')).toHaveValue(/async function handler\(event\)/);
   await expect(page.locator('#function-editor')).toHaveValue(/sql\.query\("SELECT 1 AS ok"\)/);
   await sqlCompletion(page, '#function-editor', 'create');
-  await schemaCompletion(page, '#function-editor', table);
-  expect(schemaRequests).toHaveLength(1);
-  expect(new URL(schemaRequests[0]).searchParams.get('databaseId')).toBe(current.databaseId);
   await page.locator('#function-name').fill(name);
   await setSource(page, 'function (');
   await page.getByRole('button', { name: 'Deploy function', exact: true }).click();
@@ -309,7 +250,6 @@ test('create, deploy, test run, edit and redeploy a function from the editor', a
   await expect(page.locator('#function-notice')).toHaveText('Function deployed.');
   await expect(page.locator('#function-source')).toHaveValue(created);
   await sqlCompletion(page, '#function-source', 'edit');
-  await schemaCompletion(page, '#function-source', table);
   await setSource(page, created, '#function-source');
   await expect(page.getByText('HTTPS calls', { exact: true }).first()).toBeVisible();
   await page.getByRole('link', { name: 'Last 7 days', exact: true }).click();
@@ -338,7 +278,6 @@ test('create, deploy, test run, edit and redeploy a function from the editor', a
   await expect(page).toHaveURL(detailUrl);
   await expect(page.getByText('Cron */5 * * * * UTC').first()).toBeVisible();
   await expect(page.getByRole('radio', { name: 'Every 5 min', exact: true })).toBeChecked();
-  await ddl(`DROP TABLE ${table}`);
   console.log('Functions editor: invalid JavaScript stays in the editor, deploy, in-place run, invalid JSON, in-place redeploy and trigger save.');
 });
 

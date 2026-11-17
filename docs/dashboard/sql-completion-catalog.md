@@ -8,15 +8,6 @@ No per-table HTTP requests or DDL parsing occur. Types come from the PRAGMA row'
 More than 100 tables produces an explicit truncation notice; no total count is inferred.
 Empty declared types are labeled accordingly. Missing metadata fails the catalog snapshot, preserving query results.
 
-The function create and edit editors fetch this catalog once per editor open through
-`GET /api/v1/dashboard/data/schema?databaseId=<database ULID>`. This signed-in dashboard endpoint
-resolves the current project and database and reads metadata with the user's project authority.
-Its response is not cached. An unavailable or empty catalog leaves SQL keyword completion available.
-Inside SQL API string arguments, table names complete after FROM, JOIN, INTO and UPDATE. Referenced
-tables supply column names and declared types in SELECT, WHERE, SET and ON, including alias-qualified
-columns and a FROM clause after the cursor. Names requiring SQL quotes are escaped for the surrounding
-JavaScript string or template. This does not change the function runtime or customer API.
-
 The existing SQL HTTP bridge (TS-907) shares source-generated JSON, current-user project scopes, canonical names,
 region pins and an 8 MiB response bound. Catalog work additionally has a 10-second deadline across both requests.
 Each HTTP request is its own transaction; the second batch shares one read-only snapshot. Concurrent DDL can
