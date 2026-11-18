@@ -276,7 +276,12 @@ test.describe('project MFA and session policy', () => {
     await expect(page).toHaveURL(new RegExp('/ui/' + project + '/sign-in'));
 
     await admin.goto(dash + '/auth/users');
+    const signedOut = admin.waitForResponse((response) => response.request().method() === 'POST'
+      && /^\/api\/v1\/auth-management\/users\/[^/]+\/sign-out$/.test(new URL(response.url()).pathname));
     await admin.getByRole('row').filter({ hasText: endUser }).getByRole('button', { name: 'Sign out everywhere', exact: true }).click();
+    const signOut = await signedOut;
+    expect(signOut.status()).toBe(200);
+    expect(await signOut.text()).not.toContain('id="auth-error"');
     expect((await refresh(replacement.refresh_token)).status()).toBe(400);
     await other.goto(auth + '/ui/' + project + '/security');
     await expect(other).toHaveURL(new RegExp('/ui/' + project + '/sign-in'));
