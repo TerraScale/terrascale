@@ -697,7 +697,7 @@ test('a regional prime whose writer refuses its replicas answers at once with th
   const transferOf = async () => (await kv.get<{ node: string; transfer: { id: string; phase: string } | null }>(owners, 'gru'))?.value;
   let blocked = false;
   const firewall = async (operation: '-I' | '-D') => {
-    await promisify(execFile)('iptables', [operation, 'OUTPUT', '-d', gru.address, '-p', 'tcp', '--dport', '8081', '-j', 'REJECT']);
+    await promisify(execFile)('iptables', [operation, 'OUTPUT', '-d', gru.address, '-p', 'tcp', '--dport', '8081', '-j', 'REJECT', '--reject-with', 'tcp-reset']);
     blocked = operation === '-I';
   };
   let failure: unknown;

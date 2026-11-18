@@ -8,7 +8,7 @@ internal sealed partial record ReplicaFailure(string Database, string Home, stri
     internal static ReplicaFailure From(string database, string home, Exception error) => new(database, home, error switch
     {
         _ when HomeCode().Match(error.Message) is { Success: true } answer => answer.Groups["code"].Value,
-        HttpRequestException or { InnerException: HttpRequestException } => "unreachable",
+        HttpRequestException or HttpIOException or { InnerException: HttpRequestException or HttpIOException } => "unreachable",
         _ => error.GetType().Name,
     });
 
