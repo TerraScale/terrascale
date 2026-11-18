@@ -1,11 +1,16 @@
 using System.Globalization;
-using TerraBase.Engine;
+using System.Text.RegularExpressions;
 
 namespace TerraBase.Features.Replicas;
 
-internal sealed record ReplicaFailure(string Database, string Home, string Code)
+internal sealed partial record ReplicaFailure(string Database, string Home, string Code)
 {
-    internal static ReplicaFailure From(string database, string home, Exception error) => new(database, home, SyncRefusals.Code(error));
+    internal static ReplicaFailure From(string database, string home, Exception error) => new(database, home, error switch
+    {
+        _ when HomeCode().Match(error.Message) is { Success: true } answer => answer.Groups["code"].Value,
+        HttpRequestException or { InnerException: HttpRequestException } => "unreachable",
+        _ => error.GetType().Name,
+    });
 
     internal static (string Reason, KeyValuePair<string, string>[] Details) Describe(IReadOnlyList<ReplicaFailure> failures)
     {
@@ -18,4 +23,9 @@ internal sealed record ReplicaFailure(string Database, string Home, string Code)
             new("homeCode", first.Code),
         ]);
     }
+
+    [GeneratedRegex("""
+        "code"\s*:\s*"(?<code>[a-z_]+)"
+        """)]
+    private static partial Regex HomeCode();
 }
