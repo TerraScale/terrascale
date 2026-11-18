@@ -18,13 +18,14 @@ internal sealed class RegionalDrainEndpoint(RegionalHandoff handoff) : EndpointW
         AllowAnonymous();
         Metadata(ListenerMetadata.Internal);
         Produces(StatusCodes.Status204NoContent);
-        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
+        Produces<DetailedErrorBody>(StatusCodes.Status503ServiceUnavailable);
     }
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var target = HttpContext.Request.Query["target"].ToString();
-        return await handoff.DrainAsync(target, cancellationToken).ConfigureAwait(false) switch
+        var transfer = HttpContext.Request.Query["transfer"].ToString();
+        return await handoff.DrainAsync(target, transfer.Length > 0 ? transfer : null, cancellationToken).ConfigureAwait(false) switch
         {
             Done => TypedResults.NoContent(),
             Unavailable error => ErrorResponse.From(error)

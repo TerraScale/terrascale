@@ -35,7 +35,7 @@ public static class LiveDatabaseView
                 return new(LiveErrorView.Create(new(region, 403, error.Message)), true);
             }
             catch (Exception error) when (!cancellationToken.IsCancellationRequested &&
-                (DatabaseResults.KnownFailure(error) || error is HttpRequestException or IOException or JsonException or OperationCanceledException))
+                (DatabaseResults.KnownFailure(error) || error is TimeoutException or HttpRequestException or IOException or JsonException or OperationCanceledException))
             {
                 return new(LiveErrorView.Create(new(region, DatabaseResults.Status(error), DatabaseResults.Message(error))), true);
             }

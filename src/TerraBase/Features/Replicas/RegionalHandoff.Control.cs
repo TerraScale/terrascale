@@ -170,6 +170,10 @@ internal sealed partial class RegionalHandoff
             recovered = new RegionalOwner(options.Region, transfer.Source, owner.Epoch + 1, owner.Node,
                 Transfer: transfer with { Phase = Recovering, Deadline = DateTimeOffset.UtcNow + ActivationBudget }, Version: ProtocolVersion);
         }
+        else if (transfer.Phase == Admitted)
+        {
+            recovered = owner with { Transfer = null };
+        }
         else if (transfer.Phase == Preparing && (owner.Node == transfer.Source || owner.Node == transfer.Target))
         {
             recovered = owner.Node != transfer.Source ? owner with { Transfer = null }
@@ -557,29 +561,30 @@ internal sealed partial class RegionalHandoff
         logger.ZLogInformation($"Database fence lifted: database {database:@Database} was fenced at epoch {fence.Status.Epoch:@Epoch} for {fence.Status.Reason:@Reason} and its local data now holds every write its replica saw");
     }
 
-    private async Task<DrainReservation> BeginDrainAsync(INatsKVStore kv, string target, DrainProgress progress, CancellationToken token)
+    private async Task<DrainReservation> BeginDrainAsync(INatsKVStore kv, string target, string phase, DrainProgress progress, CancellationToken token)
     {
         var entry = await ReadAsync(kv, options.Region, token).ConfigureAwait(false);
         if (entry is null)
         {
-            return DrainRefused(progress, "regional owner unavailable");
+            return DrainRefused(progress, "regional owner unavailable", "owner_unavailable");
         }
         var owner = Decode(entry.Value.Value!);
         var resuming = owner.Transfer is { Phase: Retiring } existing && existing.Source == options.MachineId
             && existing.SourceSession == _session && existing.Target == target;
         if (owner.Transfer is { } prior && !resuming)
         {
-            if (prior.Phase != Retiring)
+            if (prior.Phase == Admitted ? !Replaceable(prior) : prior.Phase != Retiring)
             {
-                return DrainRefused(progress, "another regional transfer is still in progress");
+                return DrainRefused(progress, "another regional transfer is still in progress", "transfer_in_progress");
             }
-            if (await ReplacedSourcePendingAsync(prior, owner, progress, token).ConfigureAwait(false) is { } pending)
+            if (prior.Phase == Retiring && await ReplacedSourcePendingAsync(prior, owner, progress, token).ConfigureAwait(false) is { } pending)
             {
                 var label = PendingLabel(pending);
                 LogSourceRetiring(logger, _lastRetiringStep == pending ? LogLevel.Debug : LogLevel.Information,
                     options.Region, prior.SourceSession, label);
                 _lastRetiringStep = pending;
-                return new Unavailable("the source is still retiring; waiting for " + label, "source_retiring");
+                return new Unavailable("the source is still retiring; waiting for " + label, "source_retiring",
+                    Details(progress.Label, prior.Source, new KeyValuePair<string, string>("waiting", PendingCode(pending))));
             }
         }
         _lastRetiringStep = null;
@@ -612,7 +617,7 @@ internal sealed partial class RegionalHandoff
         {
             return DrainRefused(progress, "the regional owner changed before reservation", "owner_changed");
         }
-        var transfer = new RegionalTransfer(Guid.NewGuid().ToString("N"), options.MachineId, target, _session, Preparing,
+        var transfer = new RegionalTransfer(Guid.NewGuid().ToString("N"), options.MachineId, target, _session, phase,
             DateTimeOffset.UtcNow + DrainBudget, owner.Epoch);
         var reserved = owner with { Transfer = transfer };
         var revision = await kv.UpdateAsync(options.Region, Encode(reserved), entry.Value.Revision, cancellationToken: token).ConfigureAwait(false);
@@ -671,6 +676,14 @@ internal sealed partial class RegionalHandoff
         PendingStep.Restart => "restart with a different session",
         PendingStep.Readiness => "readiness",
         PendingStep.CatchUp => "catch-up to the current writer",
+        _ => throw new UnreachableException()
+    };
+
+    private static string PendingCode(PendingStep pending) => pending switch
+    {
+        PendingStep.Restart => "restart",
+        PendingStep.Readiness => "readiness",
+        PendingStep.CatchUp => "catch_up",
         _ => throw new UnreachableException()
     };
 

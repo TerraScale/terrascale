@@ -18,13 +18,16 @@ internal sealed class RegionalPrimeEndpoint(RegionalHandoff handoff) : EndpointW
         AllowAnonymous();
         Metadata(ListenerMetadata.Internal);
         Produces(StatusCodes.Status204NoContent);
-        Produces(StatusCodes.Status503ServiceUnavailable);
+        Produces<DetailedErrorBody>(StatusCodes.Status503ServiceUnavailable);
     }
 
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var source = HttpContext.Request.Query["source"].ToString();
-        return await handoff.PrimeAsync(source, cancellationToken).ConfigureAwait(false)
-            ? TypedResults.NoContent() : ErrorResponse.From(new Unavailable("this node is not caught up with the regional writer; retry"));
+        return await handoff.PrimeAsync(source, cancellationToken).ConfigureAwait(false) switch
+        {
+            Done => TypedResults.NoContent(),
+            Unavailable error => ErrorResponse.From(error)
+        };
     }
 }

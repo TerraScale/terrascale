@@ -679,6 +679,91 @@ test('a regional writer role moves without publishing a revision during unproved
   await removeDatabase(cells, ledger.id);
 });
 
+test('a regional prime that runs out of its budget keeps what it pulled and the next one resumes, and a drain is admitted before it fences or refused with its reason', async ({ cells }) => {
+  test.setTimeout(240_000);
+  const kv = await Kv.open();
+  const gru = node('journey-1');
+  const partner = node('journey-3');
+  const foreign = node('journey-2');
+  const [ledger, fraLedger] = await createLedgers(cells, 2, 'prime-resume');
+  const moved = await json<{ homeRegion: string }>(await cells.post(`${endpoint('gru')}${database(fraLedger.id)}/move-home`, { data: { homeRegion: 'fra' }, timeout: 120_000 }));
+  expect(moved.homeRegion).toBe('fra');
+  await fraLedger.write(cells, 'fra', [[100, 'homed-in-fra']]);
+  await fraLedger.compare(cells);
+  const refusal = (response: { status: number; body: string }) => {
+    expect(response.status, response.body).toBe(503);
+    return (JSON.parse(response.body) as { error: { code: string; details: Record<string, string> } }).error;
+  };
+  const transferOf = async () => (await kv.get<{ node: string; transfer: { id: string; phase: string } | null }>(owners, 'gru'))?.value;
+  let blocked = false;
+  const firewall = async (operation: '-I' | '-D') => {
+    await promisify(execFile)('iptables', [operation, 'OUTPUT', '-d', gru.address, '-p', 'tcp', '--dport', '8081', '-j', 'REJECT']);
+    blocked = operation === '-I';
+  };
+  let failure: unknown;
+  try {
+    expect(refusal(await nodeRequest(gru, `/v1/rollout/drain/admit?target=${foreign.name}&spec=journey-admit`, 'POST')), 'an admission to a node of another region names its reason')
+      .toMatchObject({ code: 'target_not_admitted', details: { phase: 'admit', peer: gru.name } });
+    expect((await transferOf())?.transfer ?? null, 'a refused admission reserves nothing').toBeNull();
+    expect(refusal(await nodeRequest(gru, `/v1/rollout/drain?target=${foreign.name}`, 'POST')), 'a drain to a node of another region names its reason')
+      .toMatchObject({ code: 'target_not_admitted', details: { phase: 'admit', peer: gru.name } });
+    expect(refusal(await nodeRequest(gru, `/v1/rollout/drain?target=${partner.name}&transfer=never-admitted`, 'POST')), 'a drain that names no held admission is refused before it fences')
+      .toMatchObject({ code: 'admission_unknown', details: { phase: 'reserve', peer: gru.name } });
+    expect(await nodeStatus(gru), 'the refusals leave the writer serving').toMatchObject({ writer: true, ready: true });
+
+    await ledger.write(cells, 'gru', [[100, 'pulled-after-the-block']]);
+    const followers = await counted(partner, 'terrabase_replica_tracked_followers');
+    await firewall('-I');
+    const incomplete = refusal(await nodeRequest(partner, `/v1/rollout/prime?source=${gru.name}`, 'POST'));
+    await firewall('-D');
+    expect(incomplete, 'a prime that cannot reach the writer answers a retryable refusal when its budget runs out')
+      .toMatchObject({ code: 'prime_incomplete', details: { phase: 'prime', peer: gru.name } });
+    expect(Number(incomplete.details.behind), 'the replicas homed on the unreachable writer are still behind').toBeGreaterThan(0);
+    expect(Number(incomplete.details.behind), 'the replica homed in fra caught up during the attempt and is not waited for again').toBeLessThan(followers);
+    const resumed = await nodeRequest(partner, `/v1/rollout/prime?source=${gru.name}`, 'POST');
+    expect(resumed.status, `the next prime resumes from the first one's progress and completes: ${resumed.body}`).toBe(204);
+
+    const admit = `/v1/rollout/drain/admit?target=${partner.name}&spec=journey-admit`;
+    const admitted = await nodeRequest(gru, admit, 'POST');
+    expect(admitted.status, admitted.body).toBe(200);
+    const { transfer } = JSON.parse(admitted.body) as { transfer: string };
+    expect(JSON.parse((await nodeRequest(gru, admit, 'POST')).body), 'the same target and spec return the same admission').toEqual({ transfer });
+    expect(await transferOf(), 'the admission reserves the transfer without moving the writer').toMatchObject({ node: gru.name, transfer: { id: transfer, phase: 'admitted' } });
+    expect(await nodeStatus(gru), 'an admission fences nothing').toMatchObject({ writer: true, ready: true });
+    await ledger.write(cells, 'gru', [[101, 'written-while-admitted']]);
+    const drained = await nodeRequest(gru, `/v1/rollout/drain?target=${partner.name}&transfer=${transfer}`, 'POST');
+    expect(drained.status, drained.body).toBe(204);
+    await writerIs('gru', partner.name);
+    await ledger.compare(cells);
+
+    expect(refusal(await nodeRequest(partner, `/v1/rollout/drain/admit?target=${gru.name}&spec=journey-back`, 'POST')), 'the retired source must restart before it takes the role back')
+      .toMatchObject({ code: 'source_retiring' });
+    await restartAfterKill(gru, false)();
+    const primed = await nodeRequest(gru, `/v1/rollout/prime?source=${partner.name}`, 'POST');
+    expect(primed.status, primed.body).toBe(204);
+    const back = await nodeRequest(partner, `/v1/rollout/drain?target=${gru.name}`, 'POST');
+    expect(back.status, back.body).toBe(204);
+    await writerIs('gru', gru.name);
+    await ledger.write(cells, 'gru', [[102, 'after-the-drain-back']]);
+    await ledger.compare(cells);
+    await removeDatabase(cells, ledger.id);
+    await removeDatabase(cells, fraLedger.id);
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    await cleanUp(failure, async () => {
+      if (blocked) await firewall('-D');
+      const owner = await kv.get<Record<string, unknown> & { node: string; epoch: number }>(owners, 'gru');
+      if (owner?.value.node !== gru.name) {
+        await kv.put(owners, 'gru', { ...owner!.value, node: gru.name, epoch: 1, previous: null, activated: false, transfer: null }, owner!.seq);
+        await writerIs('gru', gru.name);
+      }
+      kv.close();
+    });
+  }
+});
+
 test('a regional writer role moves only with the target certificate, and a database whose primary file is stale stays fenced while the region serves the others', async ({ cells, request }) => {
   test.setTimeout(480_000);
   const token = await writerToken(request);
@@ -752,8 +837,9 @@ test('a regional writer role moves only with the target certificate, and a datab
     expect(((await nodeStatus(gru)).fenced ?? []).map(entry => entry.databaseId), 'the ledger stays fenced while the other database is served').toContain(ledger.id);
     await removeDatabase(cells, regional.id);
     const primed = await nodeRequest(partner, '/v1/rollout/prime?source=journey-1', 'POST');
-    expect(primed, 'journey-3 cannot read its replica of the fenced ledger from journey-1 and answers unavailable when its drain budget runs out')
-      .toMatchObject({ status: 503, body: expect.stringContaining('"unavailable"') });
+    expect(primed.status, primed.body).toBe(503);
+    expect(JSON.parse(primed.body).error, 'journey-3 cannot read its replica of the fenced ledger from journey-1 and names the prime as incomplete when its budget runs out')
+      .toMatchObject({ code: 'prime_incomplete', details: { phase: 'prime', peer: 'journey-1' } });
     await kv.put(owners, 'gru', { ...recreated!.value, node: 'journey-3', epoch: 1, previous: null, activated: false, transfer: null }, recreated!.seq);
     await writerIs('gru', 'journey-3');
     expect((await nodeStatus(partner)).fenced ?? [], 'journey-3 holds the lease with a primary file that covers its adopted position, so its unreadable replica fences nothing').toEqual([]);

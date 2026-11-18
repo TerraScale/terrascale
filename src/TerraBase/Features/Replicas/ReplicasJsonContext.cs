@@ -26,6 +26,7 @@ namespace TerraBase.Features.Replicas;
 [JsonSerializable(typeof(RegionalPrepare))]
 [JsonSerializable(typeof(RegionalStatus))]
 [JsonSerializable(typeof(RegionalDrain))]
+[JsonSerializable(typeof(RegionalAdmission))]
 [JsonSerializable(typeof(RegionalCatalogSnapshot))]
 [JsonSerializable(typeof(HomeLease))]
 [JsonSerializable(typeof(HeldRevisionAnswer))]

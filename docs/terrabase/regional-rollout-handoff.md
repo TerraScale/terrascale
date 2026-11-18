@@ -151,20 +151,68 @@ withdraws ingress from the source and drains in-flight responses.
    death and the source's drain response. A second stop remains blocked until
    the source restarts with a different session, passes readiness and catches
    up from the current writer. While blocked, the drain answers HTTP 503 with
-   `Retry-After: 1` and the standard error body code `source_retiring`; its message
-   names the pending restart with a different session, readiness or catch-up step.
+   `Retry-After: 1` and the detailed error body code `source_retiring`; its message
+   names the pending restart with a different session, readiness or catch-up step,
+   and its details add `waiting`: `restart`, `readiness` or `catch_up`.
    Each refusal logs the source region, source session and pending step once, at
    information level when the step changes and debug level on repeats.
 5. `recovering`: if activation never committed, CAS back to the retained source
    at a new epoch. It reacquires exclusive admission and any partially moved
    database leases. Once admitted, it clears recovery and resumes replication.
 
-Drain transport failures return HTTP 503, `Retry-After: 1` and the standard error
-body code `target_unreachable` for target readiness, preparation, verification or
-activation, `observer_unreachable` for route observation after the owner CAS, or
-`drain_unavailable` for admitting, reserving, collecting, priming or quiescing.
-The message names the phase and peer; the warning includes the exception. A
-non-caller deadline returns `drain_timeout` with the same phase and peer context.
+Every drain refusal answers HTTP 503, `Retry-After: 1` and the detailed error
+body `{"error":{"code","message","details":{"phase","peer"},"requestId"}}`.
+`phase` is one of `admit`, `reserve`, `readiness`, `collect`, `prepare`, `verify`,
+`prime`, `activate`, `observe` or `quiesce`, and `peer` names the node the phase was
+waiting on. The codes are:
+
+| Code | Meaning |
+| --- | --- |
+| `owner_store_unavailable` | the source has no connection to the regional owner store |
+| `target_not_admitted` | the target is not a peer of the source's region |
+| `owner_unavailable` | the regional owner record could not be read |
+| `transfer_in_progress` | another transfer holds the reservation |
+| `source_retiring` | the previous source has not restarted, become ready or caught up; `peer` is that source and `waiting` names the step |
+| `target_not_ready` | the target has not passed readiness |
+| `owner_changed` | the owner record changed under the reservation or the drain |
+| `memory_unavailable` | the 16 MiB bulk-memory reservation was refused |
+| `admission_unknown` | the drain named a transfer this source no longer holds as admitted |
+| `catalog_unavailable` | the regional catalog could not be listed |
+| `database_bound_reached` | the region homes more than 10,000 databases |
+| `position_unavailable` | the source has no applied position for one of its databases |
+| `payload_bound_reached` | the preparation payload is over 4 MiB |
+| `target_rejected` | the target refused the applied-position preparation or verification |
+| `target_unreachable` | the target was unreachable during readiness, preparation, verification or activation |
+| `observer_unreachable` | a peer was unreachable during route observation after the owner CAS |
+| `peer_unreachable` | a required peer was unreachable while admitting, reserving, collecting, priming or quiescing |
+| `drain_timeout` | the thirty-second drain budget ran out |
+| `drain_failed` | an unexpected exception stopped the drain; `error` names its type and the error log carries it |
+
+The message repeats the reason, phase and peer in prose; the warning log also
+carries the exception. None of these fields carries tenant data or credentials.
+
+`POST /v1/rollout/drain/admit?target=<node>&spec=<request>` on the source runs the
+admit and reserve steps of a drain without fencing anything. It checks the target,
+CAS-reserves the transfer in the `admitted` phase and holds the bulk-memory
+reservation, then answers `200 {"transfer":"<id>"}` or one of the refusals above.
+A refused admission changes nothing. The same `target` and `spec` return the same
+transfer while it is held; a new admission from the same source replaces it. An
+`admitted` transfer keeps the writer renewing and holds no ingress. An admission
+that no drain claims within thirty seconds releases its memory, and the next
+ownership refresh on any node clears its record without an epoch change.
+`POST /v1/rollout/drain?target=<node>&transfer=<id>` claims that admission, moves
+it to `preparing` and continues from the quiesce step; without `transfer`, the
+drain admits and reserves itself as before.
+
+`POST /v1/rollout/prime?source=<writer>` on the target catches every replica up to
+the writer. Each replica records when it last finished a pull with nothing left
+pending. A prime waits only for replicas that have not caught up since the first
+prime against the same writer and epoch, so a prime that runs out of its thirty-second
+budget keeps what it pulled and the next one resumes from there. A success clears
+the mark. A prime answers `204`, or the same 503 body with phase `prime` and peer
+`<writer>` and the code `prime_source_not_writer`, `prime_unready`, or
+`prime_incomplete`, whose details add `behind`, the number of replicas still behind,
+or `prime_failed`, whose details add `error`, the type of the exception the error log carries.
 Caller cancellation propagates. Retirement probe failures log the exception type
 at debug level and retain the pending step.
 
