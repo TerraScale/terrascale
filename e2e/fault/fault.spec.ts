@@ -685,12 +685,10 @@ test('a regional prime that runs out of its budget keeps what it pulled and the 
   const gru = node('journey-1');
   const partner = node('journey-3');
   const foreign = node('journey-2');
-  const [ledger] = await createLedgers(cells, 1, 'prime-resume');
-  const fraLedger = new Ledger((await json<{ id: string }>(await cells.post(`${endpoint('fra')}${project()}/databases`, {
-    data: { name: name('prime-resume-fra'), regions: [...regions] },
-  }), 201)).id);
-  await sql(cells, endpoint('fra'), fraLedger.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
-  await fraLedger.write(cells, 'fra', [[1, 'homed-in-fra']]);
+  const [ledger, fraLedger] = await createLedgers(cells, 2, 'prime-resume');
+  const moved = await json<{ homeRegion: string }>(await cells.post(`${endpoint('gru')}${database(fraLedger.id)}/move-home`, { data: { homeRegion: 'fra' }, timeout: 120_000 }));
+  expect(moved.homeRegion).toBe('fra');
+  await fraLedger.write(cells, 'fra', [[100, 'homed-in-fra']]);
   await fraLedger.compare(cells);
   const refusal = (response: { status: number; body: string }) => {
     expect(response.status, response.body).toBe(503);
@@ -738,6 +736,9 @@ test('a regional prime that runs out of its budget keeps what it pulled and the 
     await writerIs('gru', partner.name);
     await ledger.compare(cells);
 
+    expect(refusal(await nodeRequest(partner, `/v1/rollout/drain/admit?target=${gru.name}&spec=journey-back`, 'POST')), 'the retired source must restart before it takes the role back')
+      .toMatchObject({ code: 'source_retiring' });
+    await restartAfterKill(gru, false)();
     const primed = await nodeRequest(gru, `/v1/rollout/prime?source=${partner.name}`, 'POST');
     expect(primed.status, primed.body).toBe(204);
     const back = await nodeRequest(partner, `/v1/rollout/drain?target=${gru.name}`, 'POST');
