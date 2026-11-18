@@ -40,7 +40,7 @@ select_release() {
   echo "SELECTED $repository@$digest: release tag verified" | tee -a "$summary"
 }
 bash "$(dirname "$0")/fetch-ts-orch.sh" "$work"
-echo 'STAGING: future selection and wait go here after C28/C7 restore staging; existing release tags remain unchanged' | tee -a "$summary"
+echo 'STAGING: not part of app releases yet; staging selection and wait go here once staging serves' | tee -a "$summary"
 pids=()
 while IFS= read -r repository; do
   [[ $repository != */terrascale-stg/* ]] || continue
