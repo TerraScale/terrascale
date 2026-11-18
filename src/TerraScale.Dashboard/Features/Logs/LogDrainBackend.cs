@@ -39,7 +39,7 @@ namespace TerraScale.Dashboard.Features.Logs
             {
                 try { await drains.RunOnceAsync(stoppingToken); }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
-                catch (Exception error) when (error is TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or OperationCanceledException)
+                catch (Exception error) when (error is TerraBaseException or TimeoutException or HttpRequestException or IOException or JsonException or InvalidOperationException or OperationCanceledException)
                 {
                     logger.LogDrainsAreUnavailableRetryingShortly(error.GetType().Name);
                 }

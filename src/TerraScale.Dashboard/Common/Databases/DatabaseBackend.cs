@@ -113,7 +113,7 @@ namespace TerraScale.Dashboard.Common.Databases
                 var catalog = await CatalogAsync(cancellationToken);
                 return new(catalog, catalog);
             }
-            catch (Exception error) when (error is TerraBaseException or HttpRequestException or JsonException)
+            catch (Exception error) when (error is TerraBaseException or TimeoutException or HttpRequestException or JsonException)
             {
                 return new(await AnsweringRegionAsync(cancellationToken), []);
             }
