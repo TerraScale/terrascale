@@ -33,9 +33,22 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
 
     private static void RegionalBoundary(string step, TenantContext database) => RegionalCheckpoint?.Invoke(step, database);
 
-    private static bool RegionalPublishing() => new StackTrace().GetFrames().Any(frame => frame.GetMethod() is { } method
-        && (method.DeclaringType?.Name.StartsWith("<PublishAsync>", StringComparison.Ordinal) == true
-            || method.Name == "PublishAsync" && method.DeclaringType?.Name == "RegionReplication"));
+    private static readonly AsyncLocal<TenantContext?> RegionalRevision = new();
+
+    public class RegionalCatalog : DispatchProxy
+    {
+        internal object Catalog { get; set; } = null!;
+
+        protected override object? Invoke(MethodInfo? method, object?[]? args)
+        {
+            if (method!.Name == "FindAsync")
+            {
+                RegionalRevision.Value = args![0] as TenantContext;
+            }
+
+            return method.Invoke(Catalog, BindingFlags.DoNotWrapExceptions, null, args, null);
+        }
+    }
 
     private static object RegionalService(IServiceProvider services, IStorageEngine engine, string name) =>
         services.GetRequiredService(engine.GetType().Assembly.GetType("TerraBase.Features.Replicas." + name)!);
@@ -136,52 +149,65 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
         try
         {
             var replication = RegionalService(services, engine, "RegionReplication");
-            var nats = (NatsConnection)replication.GetType().GetField("_nats", Hidden)!.GetValue(replication)!;
-            await using var subscription = await nats.SubscribeCoreAsync<byte[]>("terrabase.revision.>", cancellationToken: cancellationToken);
-            using var observed = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            var subject = "terrabase.revision." + region + "." + region + "." + tenant.DatabaseId;
-            async Task PublishedAsync(CancellationToken token)
-            {
-                await foreach (var message in subscription.Msgs.ReadAllAsync(token))
-                {
-                    if (message.Subject == subject || message.Subject.StartsWith(subject + ".", StringComparison.Ordinal)) return;
-                }
-            }
-            var published = PublishedAsync(observed.Token);
-            var suppressed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            if (servingProperty is not null)
-            {
-                servingProperty.SetValue(gate, (Func<string, bool>)(database =>
-                {
-                    var serves = originalServing!(database);
-                    if (database == tenant.DatabaseId && !serves && RegionalPublishing()) suppressed.TrySetResult();
-                    return serves;
-                }));
-            }
-            var crossed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            RegionalCheckpoint = (step, database) =>
-            {
-                if (step != "writer.waiting" || database.DatabaseId != tenant.DatabaseId || !RegionalPublishing()) return;
-                RegionalCheckpoint = null;
-                RegionalObserve(handoff, NextRegionalOwner(owner, Environment.GetEnvironmentVariable("TS_NODE")!));
-                crossed.TrySetResult();
-            };
-            var publishedRevisions = replication.GetType().GetField("_published", Hidden)!.GetValue(replication)!;
-            ((IDictionary)publishedRevisions).Remove((tenant.OrganizationId, tenant.ProjectId!, tenant.DatabaseId!));
-            var writer = Writer(store);
-            await writer.WaitAsync(cancellationToken);
+            var catalogField = replication.GetType().GetField("<catalog>P", Hidden)!;
+            var catalog = catalogField.GetValue(replication)!;
+            var proxy = (RegionalCatalog)DispatchProxy.Create(catalogField.FieldType, typeof(RegionalCatalog));
+            proxy.Catalog = catalog;
+            catalogField.SetValue(replication, proxy);
             try
             {
-                engine.GetType().GetMethod("RaiseRevised", Hidden)!.Invoke(engine, [tenant]);
-                await crossed.Task.WaitAsync(cancellationToken);
+                var nats = (NatsConnection)replication.GetType().GetField("_nats", Hidden)!.GetValue(replication)!;
+                await using var subscription = await nats.SubscribeCoreAsync<byte[]>("terrabase.revision.>", cancellationToken: cancellationToken);
+                using var observed = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                var subject = "terrabase.revision." + region + "." + region + "." + tenant.DatabaseId;
+                async Task PublishedAsync(CancellationToken token)
+                {
+                    await foreach (var message in subscription.Msgs.ReadAllAsync(token))
+                    {
+                        if (message.Subject == subject || message.Subject.StartsWith(subject + ".", StringComparison.Ordinal)) return;
+                    }
+                }
+                var published = PublishedAsync(observed.Token);
+                var revision = tenant with { };
+                var suppressed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                if (servingProperty is not null)
+                {
+                    servingProperty.SetValue(gate, (Func<string, bool>)(database =>
+                    {
+                        var serves = originalServing!(database);
+                        if (database == tenant.DatabaseId && !serves && ReferenceEquals(RegionalRevision.Value, revision)) suppressed.TrySetResult();
+                        return serves;
+                    }));
+                }
+                var crossed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                RegionalCheckpoint = (step, database) =>
+                {
+                    if (step != "writer.waiting" || database.DatabaseId != tenant.DatabaseId || !ReferenceEquals(RegionalRevision.Value, revision)) return;
+                    RegionalCheckpoint = null;
+                    RegionalObserve(handoff, NextRegionalOwner(owner, Environment.GetEnvironmentVariable("TS_NODE")!));
+                    crossed.TrySetResult();
+                };
+                var publishedRevisions = replication.GetType().GetField("_published", Hidden)!.GetValue(replication)!;
+                ((IDictionary)publishedRevisions).Remove((tenant.OrganizationId, tenant.ProjectId!, tenant.DatabaseId!));
+                var writer = Writer(store);
+                await writer.WaitAsync(cancellationToken);
+                try
+                {
+                    engine.GetType().GetMethod("RaiseRevised", Hidden)!.Invoke(engine, [revision]);
+                    await crossed.Task.WaitAsync(cancellationToken);
+                }
+                finally
+                {
+                    writer.Release();
+                }
+                var outcome = await Task.WhenAny(published, suppressed.Task).WaitAsync(cancellationToken);
+                observed.Cancel();
+                return outcome == suppressed.Task ? "suppressed" : "published";
             }
             finally
             {
-                writer.Release();
+                catalogField.SetValue(replication, catalog);
             }
-            var outcome = await Task.WhenAny(published, suppressed.Task).WaitAsync(cancellationToken);
-            observed.Cancel();
-            return outcome == suppressed.Task ? "suppressed" : "published";
         }
         finally
         {
