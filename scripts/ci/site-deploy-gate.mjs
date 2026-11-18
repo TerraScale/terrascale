@@ -312,7 +312,7 @@ if (args[0] === '--prove') {
     const alert = states.get(name);
     const own = process.env.GITHUB_SHA;
     assert.match(own ?? '', /^[0-9a-f]{40}$/, 'Missing or invalid run commit');
-    const revision = await appQualified(own) ? own : null;
+    const revision = await (services[kind] ? appQualified(own) : qualified(own)) ? own : null;
     let deploy = false;
     if (revision === null) {
       assert.ok(deployed !== null, `${name}: ${own} is not qualified and there is no live revision`);
