@@ -1,42 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 service=${1:?service} image=${2:?image}
-[[ $image =~ @sha256:[0-9a-f]{64}$ ]] || { echo 'Expected <service> <image@sha256:...>' >&2; exit 2; }
+case "$service" in
+  terrabase|ts-auth) package=$service ;;
+  ts-dashboard) package=terrascale-dashboard ;;
+  *) echo "Unknown application service" >&2; exit 2 ;;
+esac
+[[ $image =~ ^ghcr\.io/terrascale/${package}@sha256:[0-9a-f]{64}$ ]] || { echo "Expected the existing ${package} package pinned by sha256" >&2; exit 2; }
 work=${RUNNER_TEMP:?}/ts-orch
-log=$RUNNER_TEMP/release.log
 summary=${GITHUB_STEP_SUMMARY:-/dev/null}
-tag=$(bash "$(dirname "$0")/fetch-ts-orch.sh" "$work")
-regions=$(jq -r '[.[].region] | join(",")' "$work/regions.json")
-echo "Releasing ${service} ${image} to ${regions} with ts-orch ${tag}"
-
-started=$SECONDS
-set +e
-"$work/terrascale-orchestrator-linux-amd64" release app --service "$service" --image "$image" \
-  --regions "$work/regions.json" 2>&1 | tee "$log"
-status=$?
-set -e
-elapsed=$((SECONDS - started))
-{
-  echo "### Release ${service} (${elapsed}s, exit ${status})"
-  echo '```text'
-  cat "$log"
-  echo '```'
-} >> "$summary"
-(( status == 0 )) && exit 0
-
-{
-  echo "ts-orch ${tag}; image ${image}"
-  for row in $(jq -r '.[] | "\(.region)=\(.nats)"' "$work/regions.json"); do
-    endpoint=${row#*=tls://}
-    if timeout 5 bash -c ": > /dev/tcp/${endpoint%:*}/${endpoint##*:}" 2> /dev/null; then
-      echo "${row%%=*}: NATS ${endpoint} reachable"
-    else
-      echo "${row%%=*}: NATS ${endpoint} unreachable"
-    fi
-  done
-  for url in https://api.terrascale.tech/healthz https://auth.terrascale.tech/healthz https://dash.terrascale.tech/readyz; do
-    echo "${url}: $(curl -s -o /dev/null --max-time 10 -w '%{http_code} revision=%header{x-terrascale-revision}' "$url" || echo unreachable)"
-  done
-} | tee -a "$summary"
-echo "::error::Release of ${service} failed after ${elapsed}s (exit ${status}); see the job summary."
-exit "$status"
+jq -cn --arg service "$service" --arg revision "${GITHUB_SHA:?}" \
+  '{service:$service, revision:$revision}' > "$RUNNER_TEMP/release-selection.json"
+cosign attest --yes --type https://terrascale.tech/attestations/release-selection/v1 \
+  --predicate "$RUNNER_TEMP/release-selection.json" "$image"
+docker buildx imagetools create --prefer-index=false --tag "ghcr.io/terrascale/${package}:release" "$image"
+printf 'Selected %s %s for verified host pulls\n' "$service" "$image" | tee -a "$summary"
+bash "$(dirname "$0")/fetch-ts-orch.sh" "$work"
+"$work/terrascale-orchestrator-linux-amd64" release wait --service "$service" --image "$image" \
+  --regions "$work/regions.json" | tee -a "$summary"

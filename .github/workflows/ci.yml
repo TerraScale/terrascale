@@ -806,6 +806,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/ci/site-deploy-gate.mjs auth
+      - uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad
+        if: steps.live.outputs.deploy == 'true'
       - name: Prepare the qualified target
         if: steps.live.outputs.deploy == 'true'
         run: |
