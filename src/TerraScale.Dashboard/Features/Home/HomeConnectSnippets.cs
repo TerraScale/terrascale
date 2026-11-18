@@ -1,4 +1,5 @@
 using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Home
 {
@@ -9,7 +10,7 @@ namespace TerraScale.Dashboard.Features.Home
         public const string Table = "posts";
         public static string ApiUrl => TerraBaseDiscovery.Origin.ToString().TrimEnd('/');
 
-        public const string TokenExchange = """
+        public static readonly string TokenExchange = $$"""
         set +x
         set -o pipefail
         read -rs TERRASCALE_API_KEY && export TERRASCALE_API_KEY  # paste the key, then press Enter
@@ -17,7 +18,7 @@ namespace TerraScale.Dashboard.Features.Home
           key="${TERRASCALE_API_KEY#sk_}"
           printf 'user = "%s:%s"\n' "${key%%_*}" "$TERRASCALE_API_KEY" |
             curl -sS --fail-with-body --config - -d grant_type=client_credentials \
-              https://auth.terrascale.tech/terrascale/oauth/token |
+              {{TsAuthOrigin.Text}}/terrascale/oauth/token |
             jq -er '.access_token | select(type == "string" and length > 0)'
         }
         export TERRASCALE_ACCESS_TOKEN="$(ts_token)"

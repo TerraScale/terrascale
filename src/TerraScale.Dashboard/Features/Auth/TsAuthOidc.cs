@@ -187,7 +187,7 @@ namespace TerraScale.Dashboard.Features.Auth
 
         private static string TrustedIssuer(string issuer)
         {
-            var expected = new Uri(AuthOrigin, "/" + Tenant);
+            var expected = new Uri(TsAuthOrigin.Value, "/" + Tenant);
             if (!Uri.TryCreate(issuer, UriKind.Absolute, out var uri) || uri.Scheme != "https" || !uri.IsDefaultPort ||
                 uri.UserInfo.Length != 0 || uri.Query.Length != 0 || uri.Fragment.Length != 0 ||
                 uri.AbsoluteUri != expected.AbsoluteUri)
@@ -202,7 +202,7 @@ namespace TerraScale.Dashboard.Features.Auth
         {
             if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) || uri.Scheme != "https" || !uri.IsDefaultPort ||
                 uri.UserInfo.Length != 0 || uri.Query.Length != 0 || uri.Fragment.Length != 0 ||
-                uri.Host != AuthOrigin.Host ||
+                uri.Host != TsAuthOrigin.Value.Host ||
                 (uri.AbsolutePath != "/" + Tenant && !uri.AbsolutePath.StartsWith("/" + Tenant + "/", StringComparison.Ordinal)))
             {
                 throw new HttpRequestException("ts-auth published an invalid OIDC endpoint.");

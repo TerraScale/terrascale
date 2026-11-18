@@ -58,8 +58,6 @@ namespace TerraScale.Dashboard.Features.Auth
                 () => UserInfoAsync(client, session.AccessToken, cancellationToken));
         }
 
-        // ts-auth serves one global issuer, https://auth.terrascale.tech/terrascale, from every region.
         private const string Tenant = "terrascale";
-        private static readonly Uri AuthOrigin = new("https://auth.terrascale.tech/");
     }
 }

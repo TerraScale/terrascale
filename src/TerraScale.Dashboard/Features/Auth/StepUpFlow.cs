@@ -8,6 +8,7 @@ using TerraScale.Dashboard.Features.Organizations;
 using TerraScale.Dashboard.Features.Profile;
 using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Auth
 {
@@ -107,7 +108,7 @@ namespace TerraScale.Dashboard.Features.Auth
                 $"{http.Request.Scheme}://{http.Request.Host}/auth/step-up/callback", http.RequestAborted);
             if (challenge.Proof.Length is 0 or > 4096 || challenge.ExpiresAt <= http.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow() ||
                 !Uri.TryCreate(challenge.StepUpUrl, UriKind.Absolute, out var url) || url.Scheme != "https" || !url.IsDefaultPort ||
-                url.Host != "auth.terrascale.tech" || url.UserInfo.Length != 0 || url.Fragment.Length != 0 || challenge.StepUpUrl.Contains(challenge.Proof, StringComparison.Ordinal))
+                url.Host != TsAuthOrigin.Value.Host || url.UserInfo.Length != 0 || url.Fragment.Length != 0 || challenge.StepUpUrl.Contains(challenge.Proof, StringComparison.Ordinal))
             {
                 throw new IOException("ts-auth returned an invalid confirmation challenge.");
             }

@@ -1,5 +1,6 @@
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.Dashboard.Platform.TsAuth;
 using TerraScale.TerraBase.Contracts;
 using TerraScale.TerraBase.Contracts.Usage;
 using System.Net.Http.Headers;
@@ -61,7 +62,7 @@ namespace TerraScale.Dashboard.Features.Notifications
         public async Task<string> SendEmailAsync(AlertEmail email, CancellationToken cancellationToken)
         {
             var credentials = await identity.ReadAsync(cancellationToken);
-            using var request = new HttpRequestMessage(HttpMethod.Post, "https://auth.terrascale.tech/v1/terrascale/email/alert") { Content = JsonContent.Create(email, options: Json) };
+            using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(TsAuthOrigin.Value, "v1/terrascale/email/alert")) { Content = JsonContent.Create(email, options: Json) };
             request.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(
                 Uri.EscapeDataString(credentials.AuthClientId) + ":" + Uri.EscapeDataString(credentials.AuthClientSecret))));
             using var response = await http.CreateClient("platform").SendAsync(request, cancellationToken);

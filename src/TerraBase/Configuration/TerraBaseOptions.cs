@@ -65,10 +65,6 @@ public sealed record TerraBaseOptions
     internal static bool IsMachineId([NotNullWhen(true)] string? id) => id is { Length: >= 1 and <= 63 } && id[0] != '-' && id[^1] != '-'
         && id.All(character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
 
-    public const string PlatformAuthIssuer = "https://auth.terrascale.tech/terrascale";
-
-    public const string PlatformAuthAudience = "https://api.terrascale.tech";
-
     public string? AuthIssuer { get; init; }
 
     public IReadOnlyList<string> AuthAudiences { get; init; } = [];
@@ -241,14 +237,8 @@ public sealed record TerraBaseOptions
         var (authIssuer, authAudiences) = ParseAuth(values);
         if (production && authIssuer is null)
         {
-            authIssuer = PlatformAuthIssuer;
-            authAudiences = [PlatformAuthAudience];
-        }
-
-        if (production && (authIssuer != PlatformAuthIssuer || !authAudiences.Contains(PlatformAuthAudience)))
-        {
             throw new TerraBaseConfigurationException(
-                $"outside Development, auth-issuer must be {PlatformAuthIssuer} and auth-audience must include {PlatformAuthAudience}: ts-auth issues every region's platform tokens with that pair");
+                "outside Development, TERRABASE_AUTH_ISSUER and TERRABASE_AUTH_AUDIENCE must name the ts-auth of this environment");
         }
 
         return new TerraBaseOptions

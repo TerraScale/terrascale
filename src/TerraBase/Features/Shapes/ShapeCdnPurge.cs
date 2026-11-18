@@ -9,7 +9,6 @@ using System.Security.Cryptography;
 using System.Text;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Management;
-using TerraBase.Configuration;
 using TerraBase.Hosting;
 using ZLogger;
 
@@ -20,7 +19,7 @@ internal interface IShapeCdnPurge
     Task<bool> QueueAsync(string url, CancellationToken cancellationToken);
 }
 
-internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, TimeProvider time, IMeterFactory meters, ILogger<ShapeCdnPurge> logger, SystemCatalog catalog, KeyCustody? custody)
+internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Uri? cdn, TimeProvider time, IMeterFactory meters, ILogger<ShapeCdnPurge> logger, SystemCatalog catalog, KeyCustody? custody)
     : BackgroundService, IShapeCdnPurge
 {
     internal const string HttpClientName = "cloudflare-api";
@@ -33,7 +32,7 @@ internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Time
     private const int QueueItems = 2000;
     private const int BatchUrls = 100;
     private const int Attempts = 5;
-    private const string ObjectPrefix = "https://" + ShapeStorageSettings.CdnHost + "/v1/shapes/";
+    private readonly string? _objectPrefix = cdn is null ? null : cdn.AbsoluteUri + "v1/shapes/";
     private static readonly SearchValues<char> LowerHex = SearchValues.Create("0123456789abcdef");
     private static readonly TimeSpan RequestInterval = TimeSpan.FromSeconds(12);
     private DateTimeOffset _nextRequest;
@@ -49,10 +48,10 @@ internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Time
 
     public async Task<bool> QueueAsync(string url, CancellationToken cancellationToken)
     {
-        if (url.Length != ObjectPrefix.Length + 84 || !url.StartsWith(ObjectPrefix, StringComparison.Ordinal)
-            || !url.AsSpan(ObjectPrefix.Length, 3).SequenceEqual("h1-") || url[ObjectPrefix.Length + 19] != '/'
-            || url.AsSpan(ObjectPrefix.Length + 3, 16).ContainsAnyExcept(LowerHex)
-            || url.AsSpan(ObjectPrefix.Length + 20).ContainsAnyExcept(LowerHex))
+        if (_objectPrefix is not { } prefix || url.Length != prefix.Length + 84 || !url.StartsWith(prefix, StringComparison.Ordinal)
+            || !url.AsSpan(prefix.Length, 3).SequenceEqual("h1-") || url[prefix.Length + 19] != '/'
+            || url.AsSpan(prefix.Length + 3, 16).ContainsAnyExcept(LowerHex)
+            || url.AsSpan(prefix.Length + 20).ContainsAnyExcept(LowerHex))
         {
             return false;
         }
@@ -124,7 +123,7 @@ internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Time
             var url = record.Work.Url;
             if (!await custody.Store.ReadAsync(new Uri(url).AbsolutePath[1..], static (_, _) => Task.CompletedTask, cancellationToken).ConfigureAwait(false))
             {
-                ready.Add((record.Id, url, url[8..(ObjectPrefix.Length + 20)]));
+                ready.Add((record.Id, url, url[8..^64]));
             }
         }).ConfigureAwait(false);
         if (!ready.IsEmpty)

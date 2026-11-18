@@ -1,5 +1,6 @@
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Platform.Persistence
 {
@@ -8,7 +9,7 @@ namespace TerraScale.Dashboard.Platform.Persistence
     public sealed class DependencyReadiness(IDbContextFactory<DashboardDbContext> storage, DashboardStateInitializer initializer, IHttpClientFactory http, IConfiguration configuration,
         TimeProvider time, ILogger<DependencyReadiness> logger)
     {
-        private static readonly Uri AuthReady = new("https://auth.terrascale.tech/readyz");
+        private static readonly Uri AuthReady = new(TsAuthOrigin.Value, "readyz");
         // The SDK's informational version carries the SourceRevisionId that the image build passes (+<sha>).
         public string Revision { get; } = typeof(DependencyReadiness).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+')[^1] ?? "unknown";
         private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(2);

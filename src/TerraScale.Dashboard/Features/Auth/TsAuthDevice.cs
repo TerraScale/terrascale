@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Auth
 {
@@ -88,7 +89,7 @@ namespace TerraScale.Dashboard.Features.Auth
         public async Task DeviceRevokeAsync(SessionRecord session, CancellationToken cancellationToken)
         {
             using var client = http.CreateClient("platform");
-            using var response = await client.PostAsync(new Uri(AuthOrigin, $"/{Tenant}/oauth/revoke"), new FormUrlEncodedContent(new Dictionary<string, string>
+            using var response = await client.PostAsync(new Uri(TsAuthOrigin.Value, $"/{Tenant}/oauth/revoke"), new FormUrlEncodedContent(new Dictionary<string, string>
             { ["token"] = session.RefreshToken ?? session.AccessToken, ["client_id"] = CliClient }), cancellationToken);
             response.EnsureSuccessStatusCode();
         }
@@ -120,14 +121,14 @@ namespace TerraScale.Dashboard.Features.Auth
         private async Task<CliAnswer> CliPostAsync(string endpoint, Dictionary<string, string> form, CancellationToken cancellationToken)
         {
             using var client = http.CreateClient("platform");
-            using var response = await client.PostAsync(new Uri(AuthOrigin, $"/{Tenant}/oauth/{endpoint}"), new FormUrlEncodedContent(form), cancellationToken);
+            using var response = await client.PostAsync(new Uri(TsAuthOrigin.Value, $"/{Tenant}/oauth/{endpoint}"), new FormUrlEncodedContent(form), cancellationToken);
             return new(response.StatusCode, await PlatformJson.ReadAsync(response.Content, cancellationToken));
         }
 
         private static bool OnIssuer(string value)
         {
             return Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == "https" &&
-            uri.IsDefaultPort && uri.Host == AuthOrigin.Host && uri.UserInfo.Length == 0 && uri.Fragment.Length == 0;
+            uri.IsDefaultPort && uri.Host == TsAuthOrigin.Value.Host && uri.UserInfo.Length == 0 && uri.Fragment.Length == 0;
         }
 
         private sealed record CliAnswer(HttpStatusCode Status, JsonDocument Body) : IDisposable
