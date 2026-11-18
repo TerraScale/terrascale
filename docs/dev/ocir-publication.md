@@ -45,12 +45,17 @@ All selection attachments must verify
 before any regional `:release` pointer moves. GHCR publication and its release
 pointer continue during migration.
 
-TerraBase moves its production pointers sequentially: sjc must serve the new
-digest before fra is selected, and fra must serve it before gru is selected.
-Each wait receives a regions file containing only that region. Any failure
-stops selection before the next pointer moves. After all three waits pass,
-the staging pointer moves last, followed by the retained GHCR pointer. Auth
-and dashboard select all four OCIR pointers and observe the full fleet.
+For TerraBase, auth and dashboard, an existing staging `:release` tag moves
+first and staging must serve the healthy selected digest before production
+selection begins. The staging check in `release-app.sh` is the single place
+to configure this gate; when the tag is absent it reports that staging rollout
+is not configured and leaves the tag absent. Production pointers move together
+to the same digest, followed by the retained GHCR pointer. The separate
+`Wait for rollout` step observes all three production regions with one
+`release wait`, using its existing timeout. The orchestrator owns rollout order.
+The step summary records each region's latest observed running digest, health
+and readiness against the selected digest, including when the wait fails.
+Release-record completion and rollback reasons remain follow-up work.
 
 The auth and dashboard reconciler inputs include the shared OCIR publisher,
 image copier, bundle attachment, repository list and signed publication proof
