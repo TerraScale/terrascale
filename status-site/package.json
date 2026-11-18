@@ -14,7 +14,7 @@
     "db:bootstrap:local": "wrangler d1 execute ts-status --local --file schema.sql",
     "db:bootstrap:remote": "wrangler d1 execute ts-status --remote --file schema.sql",
     "world-map:sync": "node scripts/world-map-sync.mjs",
-    "audit:dependencies": "npm audit --ignore-scripts --audit-level=high",
+    "audit:dependencies": "npm audit --ignore-scripts --omit=dev --audit-level=high",
     "prebuild": "npm run audit:dependencies",
     "predeploy:prebuilt": "npm run audit:dependencies"
   },

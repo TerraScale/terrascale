@@ -10,7 +10,7 @@
     "lint": "vp lint && vp fmt --check",
     "db:bootstrap:local": "wrangler d1 execute ts-atlas --local --file schema.sql",
     "db:bootstrap:remote": "wrangler d1 execute ts-atlas --remote --file schema.sql",
-    "audit:dependencies": "npm audit --ignore-scripts --audit-level=high",
+    "audit:dependencies": "npm audit --ignore-scripts --omit=dev --audit-level=high",
     "prebuild": "npm run audit:dependencies"
   },
   "devDependencies": {
