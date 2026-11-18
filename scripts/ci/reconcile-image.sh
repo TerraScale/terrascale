@@ -8,13 +8,7 @@ case "$thing" in
 esac
 image=ghcr.io/terrascale/$package
 export TS_AUTH_REVISION="$REVISION" TsDotnetRoot="$PWD/sdk/dotnet" TS_DOTNET_DIR=sdk/dotnet
-if docker buildx imagetools inspect "$image:$REVISION" --raw > "$RUNNER_TEMP/manifest.json" 2> "$RUNNER_TEMP/manifest-error"; then
-  echo "Reusing $image:$REVISION"
-else
-  if ! grep -Eq 'manifest unknown|not found' "$RUNNER_TEMP/manifest-error"; then
-    cat "$RUNNER_TEMP/manifest-error" >&2
-    exit 1
-  fi
+if [[ ${IMAGE_CACHED:?} == false ]]; then
   if [ "$thing" = auth ]; then
     bash scripts/ci/image-payloads.sh publish auth
     bash scripts/ci/image-payloads.sh runtime-dockerfile auth > "$RUNNER_TEMP/image-payloads/Dockerfile"
@@ -23,11 +17,10 @@ else
   else
     dotnet restore scripts/dashboard/TerraScale.Dashboard.slnx --locked-mode
     npm ci --prefix src/TerraScale.Dashboard/web
-    dotnet build scripts/dashboard/TerraScale.Dashboard.slnx --configuration Release --no-restore
-    Configuration=Release make dashboard-lint
     context=$RUNNER_TEMP/dashboard-publish
     dotnet publish src/TerraScale.Dashboard --configuration Release --no-restore --runtime linux-arm64 --self-contained false \
       --output "$context" -p:ContinuousIntegrationBuild=true -p:SourceRevisionId="$REVISION"
+    Configuration=Release make dashboard-lint
     dockerfile=scripts/dashboard/ci/Dockerfile.runtime
   fi
   bash scripts/ci/release-only.sh

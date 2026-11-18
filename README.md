@@ -75,6 +75,7 @@ here deploys or touches production.
 
 ## Docs
 
+- Application publishing and release qualification: [docs/dev/app-publication.md](docs/dev/app-publication.md)
 - Dev-host toolchain and placement checks: `docs/dev/host-toolchain.md`
 - Beta setup failure and recovery: `docs/dev/beta-setup-recovery.md`
 - TerraBase: [`docs/terrabase/README.md`](docs/terrabase/README.md)

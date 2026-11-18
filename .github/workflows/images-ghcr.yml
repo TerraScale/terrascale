@@ -1,6 +1,8 @@
 name: Images (GHCR)
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -35,7 +37,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-          ref: main
+          filter: blob:none
       - id: live
         name: Reconcile qualified main with the live dashboard
         env:
@@ -43,34 +45,31 @@ jobs:
         run: node scripts/ci/site-deploy-gate.mjs dashboard
       - uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad
         if: steps.live.outputs.deploy == 'true'
-      - name: Prepare the qualified target
-        if: steps.live.outputs.deploy == 'true'
-        run: |
-          cp scripts/ci/site-deploy-gate.mjs "$RUNNER_TEMP/reconcile.mjs"
-          cp scripts/ci/reconcile-image.sh "$RUNNER_TEMP/reconcile-image.sh"
-          cp scripts/ci/release-app.sh "$RUNNER_TEMP/release-app.sh"
-          cp scripts/ci/fetch-ts-orch.sh "$RUNNER_TEMP/fetch-ts-orch.sh"
-          cp scripts/ci/{publish-image,attach-image-bundles,prove-image-publication,publish-ocir,ocir-repositories}.sh "$RUNNER_TEMP/"
-          git checkout --detach "$REVISION"
-      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
-        if: steps.live.outputs.deploy == 'true'
-        with:
-          global-json-file: global.json
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
-        if: steps.live.outputs.deploy == 'true'
-        with:
-          node-version: '24.21.0'
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
-        if: steps.live.outputs.deploy == 'true'
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         if: steps.live.outputs.deploy == 'true'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
+      - id: cached
+        name: Inspect the immutable target image
+        if: steps.live.outputs.deploy == 'true'
+        run: bash scripts/ci/inspect-app-image.sh dashboard
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: "**/packages.lock.json"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
+        with:
+          node-version: '24.21.0'
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+        if: steps.live.outputs.deploy == 'true' && steps.cached.outputs.cached == 'false'
       - name: Build or reuse the target image and publish its main tag
         if: steps.live.outputs.deploy == 'true'
-        run: bash "$RUNNER_TEMP/reconcile-image.sh" dashboard
+        run: bash scripts/ci/reconcile-image.sh dashboard
       - id: dashboarddigest
         name: Extract the released arm64 child digest
         if: steps.live.outputs.deploy == 'true'
@@ -115,12 +114,6 @@ jobs:
         if: steps.live.outputs.deploy == 'true'
         with:
           version: 1.3.6
-      - name: Prove signed image publication through a local registry
-        if: steps.live.outputs.deploy == 'true'
-        env:
-          PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
-          SBOM: ${{ steps.sbom.outputs.bundle-path }}
-        run: bash "$RUNNER_TEMP/prove-image-publication.sh" "$IMAGE" "$PROVENANCE" "$SBOM"
       - name: Authenticate to OCIR with GitHub OIDC
         if: steps.live.outputs.deploy == 'true'
         uses: TerraScale/ts-orchestrator/.github/actions/ocir-login@0142407115eb66e6487764644b97ab1ec859a79d
@@ -134,15 +127,20 @@ jobs:
         env:
           PROVENANCE: ${{ steps.provenance.outputs.bundle-path }}
           SBOM: ${{ steps.sbom.outputs.bundle-path }}
-        run: bash "$RUNNER_TEMP/publish-ocir.sh" "$IMAGE" "$REVISION,main" "$PROVENANCE" "$SBOM"
-      - name: Release to every region
+        run: bash scripts/ci/app-image-regions.sh publish "$IMAGE" "$PROVENANCE" "$SBOM"
+      - name: Select the signed release
         if: steps.live.outputs.deploy == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash "$RUNNER_TEMP/release-app.sh" ts-dashboard "$IMAGE"
+        run: bash scripts/ci/release-app.sh ts-dashboard "$IMAGE"
+      - name: Wait for rollout
+        if: steps.live.outputs.deploy == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/ci/wait-app-rollout.sh ts-dashboard "$IMAGE"
       - name: Prove the live revision
         if: steps.live.outputs.deploy == 'true'
-        run: node "$RUNNER_TEMP/reconcile.mjs" dashboard --prove
+        run: node scripts/ci/site-deploy-gate.mjs dashboard --prove
       - name: Record the released source for the production journey
         if: steps.live.outputs.deploy == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

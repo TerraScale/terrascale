@@ -19,11 +19,15 @@ cosign attest-blob --yes --new-bundle-format --bundle "$RUNNER_TEMP/release-sele
   --predicate "$RUNNER_TEMP/release-selection.json" "$RUNNER_TEMP/release-manifest.json"
 bash "$(dirname "$0")/attach-image-bundles.sh" "$image" "$RUNNER_TEMP/release-selection.sigstore.json"
 repositories=$(bash "$(dirname "$0")/ocir-repositories.sh" "$package")
-while IFS= read -r repository; do
-  bash "$(dirname "$0")/attach-image-bundles.sh" "$repository@$digest" \
-    "$RUNNER_TEMP/release-selection.sigstore.json"
-done <<< "$repositories"
-bash "$(dirname "$0")/fetch-ts-orch.sh" "$work"
+if [[ $service == terrabase ]]; then
+  while IFS= read -r repository; do
+    bash "$(dirname "$0")/attach-image-bundles.sh" "$repository@$digest" \
+      "$RUNNER_TEMP/release-selection.sigstore.json"
+  done <<< "$repositories"
+  bash "$(dirname "$0")/fetch-ts-orch.sh" "$work"
+else
+  bash "$(dirname "$0")/app-image-regions.sh" attest "$image" "$RUNNER_TEMP/release-selection.sigstore.json"
+fi
 fleet=$package@$digest
 while IFS= read -r repository; do
   if [[ $service == terrabase && $repository != */terrascale-stg/* ]]; then
@@ -46,7 +50,3 @@ while IFS= read -r repository; do
 done <<< "$repositories"
 docker buildx imagetools create --prefer-index=false --tag "ghcr.io/terrascale/${package}:release" "$image"
 printf 'Selected %s %s for verified host pulls\n' "$service" "$fleet" | tee -a "$summary"
-if [[ $service != terrabase ]]; then
-  "$work/terrascale-orchestrator-linux-amd64" release wait --service "$service" --image "$fleet" \
-    --regions "$work/regions.json" | tee -a "$summary"
-fi
