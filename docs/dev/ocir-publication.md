@@ -53,8 +53,13 @@ is not configured and leaves the tag absent. Production pointers move together
 to the same digest, followed by the retained GHCR pointer. The separate
 `Wait for rollout` step observes all three production regions with one
 `release wait`, using its existing timeout. The orchestrator owns rollout order.
-The step summary records each region's latest observed running digest, health
-and readiness against the selected digest, including when the wait fails.
+The step summary records each region's latest fleet-ready digest projection,
+health and readiness against the selected digest, including when the wait fails.
+The current observer omits the app from `running` until every target region
+is ready, so a missing digest during a partial rollout does not identify what
+that region is actually serving. Regional runtime diagnostics remain unresolved.
+The staging gate also requires the release runner to reach the authenticated
+`stg.mesh.terrascale.tech` observation endpoint used by the current CLI.
 Release-record completion and rollback reasons remain follow-up work.
 
 The auth and dashboard reconciler inputs include the shared OCIR publisher,

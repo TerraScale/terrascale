@@ -29,9 +29,14 @@ else
 fi
 fleet=$package@$digest
 select_release() {
-  local repository=$1
+  local repository=$1 observed
   oras tag "$repository@$digest" release
-  [[ $(oras resolve "$repository:release") == "$digest" ]]
+  observed=$(oras resolve "$repository:release")
+  if [[ $observed != "$digest" ]]; then
+    printf '::error::Release tag mismatch for %s: expected %s, observed %s\n' \
+      "$repository:release" "$digest" "$observed" | tee -a "$summary" >&2
+    return 1
+  fi
   echo "SELECTED $repository@$digest: release tag verified" | tee -a "$summary"
 }
 bash "$(dirname "$0")/fetch-ts-orch.sh" "$work"
