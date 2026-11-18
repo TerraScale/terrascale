@@ -583,7 +583,8 @@ internal sealed partial class RegionalHandoff
                 LogSourceRetiring(logger, _lastRetiringStep == pending ? LogLevel.Debug : LogLevel.Information,
                     options.Region, prior.SourceSession, label);
                 _lastRetiringStep = pending;
-                return new Unavailable("the source is still retiring; waiting for " + label, "source_retiring");
+                return new Unavailable("the source is still retiring; waiting for " + label, "source_retiring",
+                    Details(progress.Label, prior.Source, new KeyValuePair<string, string>("waiting", PendingCode(pending))));
             }
         }
         _lastRetiringStep = null;
@@ -675,6 +676,14 @@ internal sealed partial class RegionalHandoff
         PendingStep.Restart => "restart with a different session",
         PendingStep.Readiness => "readiness",
         PendingStep.CatchUp => "catch-up to the current writer",
+        _ => throw new UnreachableException()
+    };
+
+    private static string PendingCode(PendingStep pending) => pending switch
+    {
+        PendingStep.Restart => "restart",
+        PendingStep.Readiness => "readiness",
+        PendingStep.CatchUp => "catch_up",
         _ => throw new UnreachableException()
     };
 

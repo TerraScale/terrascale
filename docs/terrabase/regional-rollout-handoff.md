@@ -151,8 +151,9 @@ withdraws ingress from the source and drains in-flight responses.
    death and the source's drain response. A second stop remains blocked until
    the source restarts with a different session, passes readiness and catches
    up from the current writer. While blocked, the drain answers HTTP 503 with
-   `Retry-After: 1` and the standard error body code `source_retiring`; its message
-   names the pending restart with a different session, readiness or catch-up step.
+   `Retry-After: 1` and the detailed error body code `source_retiring`; its message
+   names the pending restart with a different session, readiness or catch-up step,
+   and its details add `waiting`: `restart`, `readiness` or `catch_up`.
    Each refusal logs the source region, source session and pending step once, at
    information level when the step changes and debug level on repeats.
 5. `recovering`: if activation never committed, CAS back to the retained source
@@ -171,7 +172,7 @@ waiting on. The codes are:
 | `target_not_admitted` | the target is not a peer of the source's region |
 | `owner_unavailable` | the regional owner record could not be read |
 | `transfer_in_progress` | another transfer holds the reservation |
-| `source_retiring` | the previous source has not restarted, become ready or caught up (no details) |
+| `source_retiring` | the previous source has not restarted, become ready or caught up; `peer` is that source and `waiting` names the step |
 | `target_not_ready` | the target has not passed readiness |
 | `owner_changed` | the owner record changed under the reservation or the drain |
 | `memory_unavailable` | the 16 MiB bulk-memory reservation was refused |
@@ -185,6 +186,7 @@ waiting on. The codes are:
 | `observer_unreachable` | a peer was unreachable during route observation after the owner CAS |
 | `peer_unreachable` | a required peer was unreachable while admitting, reserving, collecting, priming or quiescing |
 | `drain_timeout` | the thirty-second drain budget ran out |
+| `drain_failed` | an unexpected exception stopped the drain; `error` names its type and the error log carries it |
 
 The message repeats the reason, phase and peer in prose; the warning log also
 carries the exception. None of these fields carries tenant data or credentials.
@@ -209,7 +211,8 @@ prime against the same writer and epoch, so a prime that runs out of its thirty-
 budget keeps what it pulled and the next one resumes from there. A success clears
 the mark. A prime answers `204`, or the same 503 body with phase `prime` and peer
 `<writer>` and the code `prime_source_not_writer`, `prime_unready`, or
-`prime_incomplete`, whose details add `behind`, the number of replicas still behind.
+`prime_incomplete`, whose details add `behind`, the number of replicas still behind,
+or `prime_failed`, whose details add `error`, the type of the exception the error log carries.
 Caller cancellation propagates. Retirement probe failures log the exception type
 at debug level and retain the pending step.
 

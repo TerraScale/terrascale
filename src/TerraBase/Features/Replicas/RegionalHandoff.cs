@@ -331,6 +331,12 @@ internal sealed partial class RegionalHandoff(
             return PrimeRefused(source, $"{behind} replicas have not caught up since this prime began; the next prime resumes from here", "prime_incomplete", error,
                 new KeyValuePair<string, string>("behind", behind.ToString(CultureInfo.InvariantCulture)));
         }
+        catch (Exception error) when (error is not OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            LogHandoffFailed(logger, error, "prime", source);
+            return new Unavailable($"the prime failed with {error.GetType().Name} during prime with peer {source}", "prime_failed",
+                Details("prime", source, new KeyValuePair<string, string>("error", error.GetType().Name)));
+        }
 
         lock (_primeGate)
         {
@@ -612,6 +618,12 @@ internal sealed partial class RegionalHandoff(
         {
             throw new OperationCanceledException(error.Message, error, cancellationToken);
         }
+        catch (Exception error) when (error is not OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            LogHandoffFailed(logger, error, progress.Label, progress.Peer);
+            return refused(new Unavailable($"the drain failed with {error.GetType().Name} during {progress.Label} with peer {progress.Peer}", "drain_failed",
+                Details(progress.Label, progress.Peer, new KeyValuePair<string, string>("error", error.GetType().Name))));
+        }
     }
 
     private sealed record AdmittedTarget(INatsKVStore Kv, ImmutableArray<ServingNode> Nodes, ServingNode Peer);
@@ -858,6 +870,9 @@ internal sealed partial class RegionalHandoff(
         LogDrainRefused(logger, exception, progress.Label, progress.Peer, reason, code);
         return new Unavailable($"{reason} during {progress.Label} with peer {progress.Peer}", code, Details(progress.Label, progress.Peer));
     }
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Regional handoff failed during {Phase} with peer {Peer}")]
+    private static partial void LogHandoffFailed(ILogger logger, Exception exception, string phase, string peer);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Regional handoff refused during {Phase} with peer {Peer}: {Reason} ({Code})")]
     private static partial void LogDrainRefused(ILogger logger, Exception? exception, string phase, string peer, string reason, string code);
