@@ -8,14 +8,14 @@ case "$service" in
 esac
 [[ $image =~ ^ghcr\.io/terrascale/${package}@sha256:[0-9a-f]{64}$ ]]
 work=${RUNNER_TEMP:?}/ts-orch
-regions=${3:-$work/regions.json}
+regions=$work/regions.json
 summary=${GITHUB_STEP_SUMMARY:-/dev/null}
 log=$RUNNER_TEMP/release-wait.log
 result=0
 "$work/terrascale-orchestrator-linux-amd64" release wait --service "$service" --image "$package@${image##*@}" \
   --regions "$regions" 2>&1 | tee "$log" || result=$?
 {
-  printf '\n### %s rollout\n\nWait exit status: %s\n\n```text\nRegion\tSelected\tRunning\tHealth\tReady\tObserved at\tReason\n' \
+  printf '\n### %s rollout\n\nWait exit status: %s\n\n```text\nRegion\tSelected\tFleet-ready digest\tHealth\tReady\tObserved at\tReason\n' \
     "$service" "$result"
   jq -Rrs --arg service "$service" --arg selected "$package@${image##*@}" --slurpfile regions "$regions" '
   split("\n") | map(select(contains("Region release observation"))

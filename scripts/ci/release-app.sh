@@ -40,18 +40,7 @@ select_release() {
   echo "SELECTED $repository@$digest: release tag verified" | tee -a "$summary"
 }
 bash "$(dirname "$0")/fetch-ts-orch.sh" "$work"
-while IFS= read -r repository; do
-  [[ $repository == */terrascale-stg/* ]] || continue
-  tags=$(oras repo tags "$repository" --format json)
-  staging_release=$(jq -r '.tags | index("release") != null' <<< "$tags")
-  if [[ $staging_release == true ]]; then
-    select_release "$repository"
-    jq -cn '[{region:"stg"}]' > "$RUNNER_TEMP/release-staging-region.json"
-    bash "$(dirname "$0")/wait-app-rollout.sh" "$service" "$image" "$RUNNER_TEMP/release-staging-region.json"
-  else
-    echo "STAGING $repository: no existing :release tag; staging rollout is not configured" | tee -a "$summary"
-  fi
-done <<< "$repositories"
+echo 'STAGING: future selection and wait go here after C28/C7 restore staging; existing release tags remain unchanged' | tee -a "$summary"
 pids=()
 while IFS= read -r repository; do
   [[ $repository != */terrascale-stg/* ]] || continue

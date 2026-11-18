@@ -45,21 +45,21 @@ All selection attachments must verify
 before any regional `:release` pointer moves. GHCR publication and its release
 pointer continue during migration.
 
-For TerraBase, auth and dashboard, an existing staging `:release` tag moves
-first and staging must serve the healthy selected digest before production
-selection begins. The staging check in `release-app.sh` is the single place
-to configure this gate; when the tag is absent it reports that staging rollout
-is not configured and leaves the tag absent. Production pointers move together
-to the same digest, followed by the retained GHCR pointer. The separate
+For TerraBase, auth and dashboard, staging tag selection and staging waits
+are excluded until C28/C7 restore staging. Existing staging release pointers
+remain unchanged, including when present in OCIR. The `STAGING:` message in
+`release-app.sh` marks the single insertion point for future staging selection
+and waiting. Staging image and bundle publication are unchanged.
+Production pointers move together to the same digest, followed by the retained GHCR pointer. The separate
 `Wait for rollout` step observes all three production regions with one
 `release wait`, using its existing timeout. The orchestrator owns rollout order.
 The step summary records each region's latest fleet-ready digest projection,
 health and readiness against the selected digest, including when the wait fails.
 The current observer omits the app from `running` until every target region
 is ready, so a missing digest during a partial rollout does not identify what
-that region is actually serving. Regional runtime diagnostics remain unresolved.
-The staging gate also requires the release runner to reach the authenticated
-`stg.mesh.terrascale.tech` observation endpoint used by the current CLI.
+that region is actually serving. This accepted diagnostics gap does not change
+the selected release or the wait's pass/fail result; regional runtime diagnostics
+are backlog work.
 Release-record completion and rollback reasons remain follow-up work.
 
 The auth and dashboard reconciler inputs include the shared OCIR publisher,
