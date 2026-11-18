@@ -679,7 +679,7 @@ test('a regional writer role moves without publishing a revision during unproved
   await removeDatabase(cells, ledger.id);
 });
 
-test('a regional prime that runs out of its budget keeps what it pulled and the next one resumes, and a drain is admitted before it fences or refused with its reason', async ({ cells }) => {
+test('a regional prime whose writer refuses its replicas answers at once with the home and its answer, the next one resumes, and a drain is admitted before it fences or refused with its reason', async ({ cells }) => {
   test.setTimeout(240_000);
   const kv = await Kv.open();
   const gru = node('journey-1');
@@ -712,14 +712,15 @@ test('a regional prime that runs out of its budget keeps what it pulled and the 
     expect(await nodeStatus(gru), 'the refusals leave the writer serving').toMatchObject({ writer: true, ready: true });
 
     await ledger.write(cells, 'gru', [[100, 'pulled-after-the-block']]);
-    const followers = await counted(partner, 'terrabase_replica_tracked_followers');
     await firewall('-I');
-    const incomplete = refusal(await nodeRequest(partner, `/v1/rollout/prime?source=${gru.name}`, 'POST'));
+    const asked = Date.now();
+    const unavailable = refusal(await nodeRequest(partner, `/v1/rollout/prime?source=${gru.name}`, 'POST'));
+    const answeredIn = Date.now() - asked;
     await firewall('-D');
-    expect(incomplete, 'a prime that cannot reach the writer answers a retryable refusal when its budget runs out')
-      .toMatchObject({ code: 'prime_incomplete', details: { phase: 'prime', peer: gru.name } });
-    expect(Number(incomplete.details.behind), 'the replicas homed on the unreachable writer are still behind').toBeGreaterThan(0);
-    expect(Number(incomplete.details.behind), 'the replica homed in fra caught up during the attempt and is not waited for again').toBeLessThan(followers);
+    expect(unavailable, 'a prime whose replicas the writer refuses names the home and its answer')
+      .toMatchObject({ code: 'replica_unavailable', details: { phase: 'prime', peer: gru.name, home: 'gru', homeCode: 'unreachable' } });
+    expect(Number(unavailable.details.databases), 'the refusal counts the replicas it could not pull').toBeGreaterThan(0);
+    expect(answeredIn, 'the refusal comes well before the thirty-second prime budget').toBeLessThan(15_000);
     const resumed = await nodeRequest(partner, `/v1/rollout/prime?source=${gru.name}`, 'POST');
     expect(resumed.status, `the next prime resumes from the first one's progress and completes: ${resumed.body}`).toBe(204);
 

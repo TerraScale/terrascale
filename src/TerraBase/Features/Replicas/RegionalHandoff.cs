@@ -319,7 +319,11 @@ internal sealed partial class RegionalHandoff(
         try
         {
             await replication.SyncCatalogsAsync(bounded.Token).ConfigureAwait(false);
-            await replication.CatchUpSinceAsync(mark.Since, bounded.Token).ConfigureAwait(false);
+            if (await replication.CatchUpSinceAsync(mark.Since, bounded.Token).ConfigureAwait(false) is [_, ..] failing)
+            {
+                var (reason, details) = ReplicaFailure.Describe(failing);
+                return PrimeRefused(source, reason, "replica_unavailable", details: details);
+            }
             if (await services.GetRequiredService<Health.INodeReadiness>().UnreadyAsync(bounded.Token).ConfigureAwait(false) is { } unready)
             {
                 return PrimeRefused(source, "this node is not ready: " + Health.ReadinessConditions.Label(unready), "prime_unready");
@@ -348,10 +352,16 @@ internal sealed partial class RegionalHandoff(
         return new Done();
     }
 
-    private Unavailable PrimeRefused(string source, string reason, string code, Exception? exception = null, params ReadOnlySpan<KeyValuePair<string, string>> details)
+    private Unavailable PrimeRefused(string source, string reason, string code, Exception? exception = null, params ReadOnlySpan<KeyValuePair<string, string>> details) =>
+        PeerRefused("prime", source, reason, code, exception, details);
+
+    private Unavailable VerifyRefused(string source, string reason, string code, params ReadOnlySpan<KeyValuePair<string, string>> details) =>
+        PeerRefused("verify", source, reason, code, null, details);
+
+    private Unavailable PeerRefused(string phase, string source, string reason, string code, Exception? exception, ReadOnlySpan<KeyValuePair<string, string>> details)
     {
-        LogDrainRefused(logger, exception, "prime", source, reason, code);
-        return new Unavailable($"{reason} during prime with peer {source}", code, Details("prime", source, details));
+        LogDrainRefused(logger, exception, phase, source, reason, code);
+        return new Unavailable($"{reason} during {phase} with peer {source}", code, Details(phase, source, details));
     }
 
     private static Dictionary<string, string> Details(string phase, string peer, params ReadOnlySpan<KeyValuePair<string, string>> extra)
@@ -501,48 +511,61 @@ internal sealed partial class RegionalHandoff(
         return true;
     }
 
-    internal async Task<bool> VerifyAsync(RegionalPrepare request, CancellationToken cancellationToken)
+    internal async Task<RegionalHandoffResult> VerifyAsync(RegionalPrepare request, CancellationToken cancellationToken)
     {
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         bounded.CancelAfter(DrainBudget);
         cancellationToken = bounded.Token;
-        var nodes = await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false);
-        if (!owners.Writer || request.Positions.Count > 10_000
-            || !nodes.Any(node => node.Name == request.Source && node.Region == options.Region && node.Name != options.MachineId))
+        if (!owners.Writer)
         {
-            return false;
+            return VerifyRefused(request.Source, "this node is not the region's writer", "verify_not_writer");
+        }
+        if (request.Positions.Count > 10_000)
+        {
+            return VerifyRefused(request.Source, "the preparation lists more than 10000 databases", "database_bound_reached");
+        }
+        var nodes = await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false);
+        if (!nodes.Any(node => node.Name == request.Source && node.Region == options.Region && node.Name != options.MachineId))
+        {
+            return VerifyRefused(request.Source, $"the source is not a peer in region {options.Region} of this node's peers file", "verify_source_not_peer");
         }
 
         var replication = services.GetRequiredService<RegionReplication>();
         await replication.SyncCatalogsAsync(cancellationToken).ConfigureAwait(false);
         var replicas = services.GetRequiredService<IDatabaseReplicas>();
+        IReadOnlyList<TenantContext> unapplied = [.. request.Positions
+            .Where(position => position.Home != options.Region && !Applied(replicas.HeldRevision(Database(position)), position))
+            .Select(Database)];
+        if (await replication.CatchUpAsync(unapplied, cancellationToken).ConfigureAwait(false) is [_, ..] failing)
+        {
+            var (reason, details) = ReplicaFailure.Describe(failing);
+            return VerifyRefused(request.Source, reason, "replica_unavailable", details);
+        }
+
         var revisions = services.GetRequiredService<IDatabaseRevisions>();
+        var behind = 0;
         foreach (var position in request.Positions)
         {
             var database = Database(position);
-            DatabaseRevision? actual;
-            if (position.Home == options.Region)
-            {
-                actual = await revisions.CurrentRevisionAsync(database, cancellationToken).ConfigureAwait(false);
-            }
-            else
-            {
-                if (!await replication.CatchUpAsync(database, cancellationToken).ConfigureAwait(false))
-                {
-                    return false;
-                }
-                actual = replicas.HeldRevision(database);
-            }
-
-            if (!DatabaseRevision.TryParse(position.Revision, out var expected) || actual is not { } applied
-                || applied.Incarnation != expected.Incarnation || DatabaseRevision.Compare(applied, expected) < 0)
-            {
-                return false;
-            }
+            var actual = position.Home == options.Region
+                ? await revisions.CurrentRevisionAsync(database, cancellationToken).ConfigureAwait(false)
+                : replicas.HeldRevision(database);
+            behind += Applied(actual, position) ? 0 : 1;
+        }
+        if (behind > 0)
+        {
+            return VerifyRefused(request.Source, $"{behind} databases have not applied the source's position", "replica_behind",
+                new KeyValuePair<string, string>("databases", behind.ToString(CultureInfo.InvariantCulture)));
         }
 
-        return await services.GetRequiredService<Health.INodeReadiness>().UnreadyAsync(cancellationToken).ConfigureAwait(false) is null;
+        return await services.GetRequiredService<Health.INodeReadiness>().UnreadyAsync(cancellationToken).ConfigureAwait(false) is { } unready
+            ? VerifyRefused(request.Source, "this node is not ready: " + Health.ReadinessConditions.Label(unready), "verify_unready")
+            : new Done();
     }
+
+    private static bool Applied(DatabaseRevision? actual, RegionalPosition position) =>
+        DatabaseRevision.TryParse(position.Revision, out var expected) && actual is { } applied
+        && applied.Incarnation == expected.Incarnation && DatabaseRevision.Compare(applied, expected) >= 0;
 
     private enum DrainPhase
     {
@@ -809,7 +832,7 @@ internal sealed partial class RegionalHandoff(
             using var response = await _http.PostAsync(new Uri(address, promoting ? "/v1/rollout/prepare" : "/v1/rollout/verify"), body, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                return DrainRefused(progress, "target rejected applied-position preparation", "target_rejected");
+                return await TargetRefusedAsync(progress, response, cancellationToken).ConfigureAwait(false);
             }
 
             progress.Phase = DrainPhase.Reserve;
@@ -863,6 +886,19 @@ internal sealed partial class RegionalHandoff(
                 _changing.Release();
             }
         }
+    }
+
+    private async Task<Unavailable> TargetRefusedAsync(DrainProgress progress, HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        if (response.Content.Headers.ContentType?.MediaType != "application/json"
+            || await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.DetailedErrorBody, cancellationToken).ConfigureAwait(false)
+                is not { Error: { Code: { } code, Message: { } message, Details: { } refused } })
+        {
+            return DrainRefused(progress, "target rejected applied-position preparation", "target_rejected");
+        }
+        LogDrainRefused(logger, null, progress.Label, progress.Peer, message, code);
+        Dictionary<string, string> details = new(refused, StringComparer.Ordinal) { ["phase"] = progress.Label, ["peer"] = progress.Peer };
+        return new Unavailable("the target refused: " + message, code, details);
     }
 
     private Unavailable DrainRefused(DrainProgress progress, string reason, string code, Exception? exception = null)
