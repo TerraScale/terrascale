@@ -69,15 +69,19 @@ function ancestor(base, head) {
   return result.status === 0;
 }
 
+function qualifiedJobs(jobs) {
+  const journey = jobs.filter((job) => job.name.startsWith('journey / journey '));
+  return journey.length >= 2 && journey.every((job) => job.conclusion === 'success') && jobs.some((job) => job.name === 'all-green' && job.conclusion === 'success');
+}
+
 async function qualified(revision) {
   const { workflow_runs: runs } = await github(`actions/workflows/ci.yml/runs?head_sha=${revision}&branch=main&event=push&per_page=1`);
   const run = runs[0];
-  if (!run || run.status !== 'completed' || run.conclusion !== 'success') return false;
+  if (!run) return false;
   assert.ok(run.head_sha === revision && run.head_branch === 'main' && run.event === 'push' && run.head_repository.full_name === repo, 'Unexpected CI identity');
   const { jobs, total_count: count } = await github(`actions/runs/${run.id}/jobs?filter=latest&per_page=100`);
   assert.ok(count <= 100, 'CI jobs exceed the qualification read bound');
-  const journey = jobs.filter((job) => job.name.startsWith('journey / journey '));
-  return journey.length >= 2 && journey.every((job) => job.conclusion === 'success') && jobs.some((job) => job.name === 'all-green' && job.conclusion === 'success');
+  return qualifiedJobs(jobs);
 }
 
 async function target() {
@@ -88,6 +92,7 @@ async function target() {
 }
 
 async function appQualified(revision) {
+  if (await qualified(revision)) return true;
   const tree = git('rev-parse', `${revision}^{tree}`);
   const { workflow_runs: runs } = await github('actions/workflows/ci.yml/runs?event=pull_request&status=success&per_page=30');
   for (const run of runs) {
@@ -97,12 +102,12 @@ async function appQualified(revision) {
     if (commit.commit.tree.sha !== tree) continue;
     const { jobs, total_count: count } = await github(`actions/runs/${run.id}/jobs?filter=latest&per_page=100`);
     assert.ok(count <= 100, 'PR CI jobs exceed the qualification read bound');
-    if (jobs.some((job) => job.name === 'all-green' && job.conclusion === 'success')) {
-      report(`${thing}: ${revision} tree ${tree} passed all-green as PR head ${run.head_sha} in ${run.html_url}`);
+    if (qualifiedJobs(jobs)) {
+      report(`${thing}: ${revision} tree ${tree} passed all-green and the journey as PR head ${run.head_sha} in ${run.html_url}`);
       return true;
     }
   }
-  return qualified(revision);
+  return false;
 }
 
 function inputs(thing) {

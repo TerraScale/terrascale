@@ -5,16 +5,22 @@ Main pushes start ts-auth publication in `ci.yml` and dashboard publication in
 reconciler. Neither publisher depends on another job. Each service retains its
 release lock and persistent deployment state, including the two-attempt limit.
 
-The locked publisher checks the latest 30 successful pull-request runs of
-`ci.yml`. A run must belong to this repository, its head commit must have the
+The locked publisher first checks the main validation jobs. If main does not
+yet qualify, it checks the latest 30 successful pull-request runs of `ci.yml`.
+A run must belong to this repository, its head commit must have the
 same Git tree as the publisher's commit, and its latest jobs must contain a
-successful `all-green`. The publisher checks these facts through GitHub's API
-using its existing contents/actions read permissions. A matching tree permits
+successful `all-green` and at least two journey shards, all successful. Skipped
+or missing journey shards cannot qualify a PR tree. The publisher checks these
+facts through GitHub's API using its existing contents/actions read permissions.
+A matching tree permits
 publication before the main journey completes. Main still runs its journey on
 every push. Without a matching PR tree, the publisher requires the existing
-successful main-push CI, `all-green`, and both journey shards. Sites dispatches
-the publisher after that qualification as before. Worker deployments, SDK tags,
-and TerraBase releases retain their existing main qualification.
+main-push CI's successful `all-green` and both journey shards. The main run's
+overall status and conclusion do not replace those job results: a failed,
+cancelled, or still-running publisher does not invalidate completed validation.
+Sites dispatches the publisher after that qualification as before. Workers
+continue to require these main validation jobs; they cannot reuse PR proof.
+SDK tags and TerraBase releases retain their separate main qualification.
 
 An immutable image hit avoids .NET, Node, and Buildx builder setup. The digest,
 architecture, OS, and revision label are still checked before promoting `main`.
