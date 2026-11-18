@@ -2,6 +2,7 @@ using System.Globalization;
 using TerraScale.Dashboard.Platform.Persistence;
 using System.Text.Json.Serialization;
 using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.Dashboard.Platform.TsAuth;
 using TerraScale.TerraBase.Contracts;
 using TerraScale.TerraBase.Contracts.Usage;
 using System.Net.Http.Headers;
@@ -26,7 +27,7 @@ namespace TerraScale.Dashboard.Features.Notifications
         public async Task<string> SendAsync(AllowanceAlert alert, CancellationToken cancellationToken)
         {
             var credentials = await identity.ReadAsync(cancellationToken);
-            using var request = new HttpRequestMessage(HttpMethod.Post, "https://auth.terrascale.tech/v1/terrascale/email/allowance")
+            using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(TsAuthOrigin.Value, "v1/terrascale/email/allowance"))
             {
                 Content = JsonContent.Create(new { alert.OrganizationId, alert.BillingMonth, alert.Metric, alert.Threshold, alert.Used, alert.Allowance })
             };

@@ -17,7 +17,6 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         private static readonly MediaTypeHeaderValue JsonContentType = new("application/json");
 
         private readonly HttpClient httpClient;
-        private static readonly Uri Origin = new("https://auth.terrascale.tech/");
 
         public TsAuthClient(HttpClient httpClient)
         {
@@ -224,7 +223,7 @@ namespace TerraScale.Dashboard.Platform.TsAuth
             string? deletionAuthorization = null)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            using var request = new HttpRequestMessage(method, new Uri(Origin, requestUri));
+            using var request = new HttpRequestMessage(method, new Uri(TsAuthOrigin.Value, requestUri));
             if (request.RequestUri!.Scheme == Uri.UriSchemeHttps)
             {
                 request.Version = HttpVersion.Version20;

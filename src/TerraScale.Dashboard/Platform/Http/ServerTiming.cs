@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using Microsoft.AspNetCore.Routing;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Platform.Http
 {
@@ -96,7 +97,7 @@ namespace TerraScale.Dashboard.Platform.Http
         {
             return uri?.Host switch
             {
-                "auth.terrascale.tech" => "auth",
+                { } host when host == TsAuthOrigin.Value.Host => "auth",
                 "api.stripe.com" => "stripe",
                 "127.0.0.1" or "localhost" or "::1" => "state",
                 { } host when host.EndsWith("api.terrascale.tech", StringComparison.Ordinal) => "terrabase",

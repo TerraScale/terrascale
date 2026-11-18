@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Auth
 {
@@ -36,11 +37,11 @@ namespace TerraScale.Dashboard.Features.Auth
     public sealed partial class TsAuthGateway : ITsAuthMfa
     {
         public const string MfaRequiredCode = "mfa_required";
-        public static readonly string ManageMfaUrl = new Uri(AuthOrigin, "ui/" + Tenant + "/security").ToString();
+        public static readonly string ManageMfaUrl = new Uri(TsAuthOrigin.Value, "ui/" + Tenant + "/security").ToString();
 
         public static string ResetPasswordUrl(string next)
         {
-            return new Uri(AuthOrigin, "ui/" + Tenant + "/reset?next=" + Uri.EscapeDataString(next)).ToString();
+            return new Uri(TsAuthOrigin.Value, "ui/" + Tenant + "/reset?next=" + Uri.EscapeDataString(next)).ToString();
         }
 
         public async Task<AccountMfaStatus?> GetAccountMfaAsync(SessionRecord session, CancellationToken cancellationToken)
@@ -50,7 +51,7 @@ namespace TerraScale.Dashboard.Features.Auth
                 using var body = await MfaCallAsync(HttpMethod.Get, "account/mfa", session, null, cancellationToken);
                 var root = body.RootElement;
                 var manage = root.TryGetProperty("manage_url", out var url) && Uri.TryCreate(url.GetString(), UriKind.Absolute, out var parsed) &&
-                    parsed.Scheme == Uri.UriSchemeHttps && parsed.Host == AuthOrigin.Host ? parsed.ToString() : ManageMfaUrl;
+                    parsed.Scheme == Uri.UriSchemeHttps && parsed.Host == TsAuthOrigin.Value.Host ? parsed.ToString() : ManageMfaUrl;
                 return new(root.GetProperty("enabled").GetBoolean(), root.TryGetProperty("recovery_codes_remaining", out var codes) ? codes.GetInt32() : 0, manage);
             }
             catch (Exception error) when (Unreported(error, cancellationToken)) { return null; }
@@ -111,7 +112,7 @@ namespace TerraScale.Dashboard.Features.Auth
         // Refusals become account errors with ts-auth's fixed code, as on the SDK routes; server failures stay HttpRequestException.
         private async Task<JsonDocument> MfaCallAsync(HttpMethod method, string path, SessionRecord session, string? json, CancellationToken cancellationToken)
         {
-            using var request = new HttpRequestMessage(method, new Uri(AuthOrigin, "v1/" + Tenant + "/" + path));
+            using var request = new HttpRequestMessage(method, new Uri(TsAuthOrigin.Value, "v1/" + Tenant + "/" + path));
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Bearer(session));
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
             if (json is not null)

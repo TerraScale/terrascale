@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Platform.Http
 {
@@ -46,7 +47,7 @@ namespace TerraScale.Dashboard.Platform.Http
                 request.Headers.Remove(Header);
                 request.Headers.Remove(ProofHeader);
                 if (Id is not null && request.RequestUri is { Scheme: "https", IsDefaultPort: true, UserInfo.Length: 0 } uri &&
-                    (uri.Host is "auth.terrascale.tech" or "api.terrascale.tech" || uri.Host.EndsWith(".api.terrascale.tech", StringComparison.Ordinal)))
+                    (uri.Host == TsAuthOrigin.Value.Host || uri.Host is "api.terrascale.tech" || uri.Host.EndsWith(".api.terrascale.tech", StringComparison.Ordinal)))
                 {
                     Forward(request, (await identity.ReadAsync(cancellationToken)).RequestProofKey);
                 }

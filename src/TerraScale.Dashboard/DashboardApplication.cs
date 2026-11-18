@@ -327,6 +327,7 @@ namespace TerraScale.Dashboard
             var timingLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("ServerTiming");
             app.Use((context, next) => RequestIdentity.MiddlewareAsync(context, next, timingLogger));
             app.Use((context, next) => ServerTiming.MiddlewareAsync(context, next, timingLogger));
+            var authOrigin = TsAuthOrigin.Text;
             app.Use(async (context, next) =>
             {
                 var nonce = Convert.ToBase64String(RandomNumberGenerator.GetBytes(24));
@@ -348,7 +349,7 @@ namespace TerraScale.Dashboard
                 string Policy()
                 {
                     return $"default-src 'none'; script-src 'self' 'nonce-{nonce}'; {(context.Items.ContainsKey("auth-branding") ? $"style-src 'self' 'nonce-{nonce}'" : styles)}; " +
-                    $"img-src 'self' data:{(context.Items.ContainsKey("auth-branding") ? " https:" : "")}; font-src 'self'; connect-src 'self' https://*.api.terrascale.tech" + fileOrigins + "; form-action 'self' https://auth.terrascale.tech https://checkout.stripe.com https://billing.stripe.com" + fileOrigins +
+                    $"img-src 'self' data:{(context.Items.ContainsKey("auth-branding") ? " https:" : "")}; font-src 'self'; connect-src 'self' https://*.api.terrascale.tech" + fileOrigins + "; form-action 'self' " + authOrigin + " https://checkout.stripe.com https://billing.stripe.com" + fileOrigins +
                     (context.Items[Platform.Mcp.McpOAuth.FormActionKey] is string client ? " " + client : "") + "; base-uri 'none'; frame-ancestors 'none'";
                 }
 

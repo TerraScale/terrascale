@@ -373,8 +373,6 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             return authClient.Platform;
         }
 
-        private static readonly Uri AuthOrigin = new("https://auth.terrascale.tech/");
-
         private static string KeysPath(DatabaseScope scope)
         {
             return ProjectPath(scope) + "/api-keys";
@@ -388,7 +386,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
         // ts-auth answers 400 with a reason for a bad CIDR; the user sees it. Other refusals keep their status.
         private async Task<JsonElement> SendAsync(AccountContext context, HttpMethod method, string path, HttpContent? content, CancellationToken cancellationToken)
         {
-            using var request = new HttpRequestMessage(method, new Uri(AuthOrigin, path)) { Content = content };
+            using var request = new HttpRequestMessage(method, new Uri(TsAuthOrigin.Value, path)) { Content = content };
             request.Headers.Authorization = new("Bearer", context.Session.AccessToken);
             using var response = await http.CreateClient("platform").SendAsync(request, cancellationToken);
             var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);

@@ -1,4 +1,5 @@
 using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Databases
 {
@@ -39,7 +40,7 @@ namespace TerraScale.Dashboard.Features.Databases
                     import { createTsAuthClient } from "@terrascale/sdk/ts-auth";
 
                     const apiKey = process.env.TERRASCALE_API_KEY;
-                    const auth = createTsAuthClient({ apiBaseUrl: "https://auth.terrascale.tech", instanceSlug: "terrascale" });
+                    const auth = createTsAuthClient({ apiBaseUrl: "{{TsAuthOrigin.Text}}", instanceSlug: "terrascale" });
                     const keyBody = apiKey.startsWith("sk_") ? apiKey.slice(3) : apiKey;
                     const keyId = keyBody.slice(0, keyBody.indexOf("_"));
                     async function getAccessToken() {

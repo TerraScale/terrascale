@@ -5,6 +5,7 @@ using System.Text.Json;
 using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Support
 {
@@ -30,7 +31,7 @@ namespace TerraScale.Dashboard.Features.Support
         public async Task<string> SendAsync(SupportRequest request, CancellationToken cancellationToken)
         {
             var credentials = await identity.ReadAsync(cancellationToken);
-            using var message = new HttpRequestMessage(HttpMethod.Post, "https://auth.terrascale.tech/v1/terrascale/email/support") { Content = JsonContent.Create(request) };
+            using var message = new HttpRequestMessage(HttpMethod.Post, new Uri(TsAuthOrigin.Value, "v1/terrascale/email/support")) { Content = JsonContent.Create(request) };
             message.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(
                 Uri.EscapeDataString(credentials.AuthClientId) + ":" + Uri.EscapeDataString(credentials.AuthClientSecret))));
             using var response = await http.CreateClient("platform").SendAsync(message, cancellationToken);

@@ -6,6 +6,7 @@ using TerraScale.Dashboard.Common.Accounts;
 using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Organizations.Sso
 {
@@ -35,8 +36,6 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
     // SDK's platform calls do. ts-auth rechecks the caller's role; the dashboard adds the plan gate.
     public sealed class OrganizationSsoService(IHttpClientFactory http)
     {
-        private static readonly Uri AuthOrigin = new("https://auth.terrascale.tech/");
-
         // Single sign-on is a Team and Enterprise feature. An internal billing policy copies a paid plan's
         // contract, so it counts by that base plan. An organization without an active plan has none.
         public static bool PlanIncludesSso(OrganizationRecord organization)
@@ -101,7 +100,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
 
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             deadline.CancelAfter(TimeSpan.FromSeconds(10));
-            using var request = new HttpRequestMessage(method, new Uri(AuthOrigin, $"/v1/terrascale/organizations/{organizationId}/sso{suffix}"));
+            using var request = new HttpRequestMessage(method, new Uri(TsAuthOrigin.Value, $"/v1/terrascale/organizations/{organizationId}/sso{suffix}"));
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", context.Session.AccessToken);
             request.Headers.Accept.ParseAdd("application/json");
             if (body is not null)

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Auth
 {
@@ -78,7 +79,7 @@ namespace TerraScale.Dashboard.Features.Auth
 
         private async Task<HttpResponseMessage> ProviderCallAsync(HttpMethod method, SessionRecord session, string suffix, string? json, CancellationToken cancellationToken)
         {
-            using var request = new HttpRequestMessage(method, new Uri(AuthOrigin, "v1/" + Tenant + "/account/providers" + suffix));
+            using var request = new HttpRequestMessage(method, new Uri(TsAuthOrigin.Value, "v1/" + Tenant + "/account/providers" + suffix));
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Bearer(session));
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
             if (json is not null)
