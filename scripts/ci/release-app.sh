@@ -23,14 +23,30 @@ while IFS= read -r repository; do
   bash "$(dirname "$0")/attach-image-bundles.sh" "$repository@$digest" \
     "$RUNNER_TEMP/release-selection.sigstore.json"
 done <<< "$repositories"
+bash "$(dirname "$0")/fetch-ts-orch.sh" "$work"
+fleet=$package@$digest
 while IFS= read -r repository; do
+  if [[ $service == terrabase && $repository != */terrascale-stg/* ]]; then
+    case ${repository%%/*} in
+      us-sanjose-1.ocir.io) region=sjc ;;
+      eu-frankfurt-1.ocir.io) region=fra ;;
+      sa-saopaulo-1.ocir.io) region=gru ;;
+      *) echo 'Unknown TerraBase release region' >&2; exit 2 ;;
+    esac
+    jq -e --arg region "$region" '[.[] | select(.region == $region)] | select(length == 1)' \
+      "$work/regions.json" > "$RUNNER_TEMP/release-region.json"
+  fi
   oras tag "$repository@$digest" release
   [[ $(oras resolve "$repository:release") == "$digest" ]]
   echo "SELECTED $repository@$digest: release tag verified" | tee -a "$summary"
+  if [[ $service == terrabase && $repository != */terrascale-stg/* ]]; then
+    "$work/terrascale-orchestrator-linux-amd64" release wait --service "$service" --image "$fleet" \
+      --regions "$RUNNER_TEMP/release-region.json" | tee -a "$summary"
+  fi
 done <<< "$repositories"
 docker buildx imagetools create --prefer-index=false --tag "ghcr.io/terrascale/${package}:release" "$image"
-image=$package@$digest
-printf 'Selected %s %s for verified host pulls\n' "$service" "$image" | tee -a "$summary"
-bash "$(dirname "$0")/fetch-ts-orch.sh" "$work"
-"$work/terrascale-orchestrator-linux-amd64" release wait --service "$service" --image "$image" \
-  --regions "$work/regions.json" | tee -a "$summary"
+printf 'Selected %s %s for verified host pulls\n' "$service" "$fleet" | tee -a "$summary"
+if [[ $service != terrabase ]]; then
+  "$work/terrascale-orchestrator-linux-amd64" release wait --service "$service" --image "$fleet" \
+    --regions "$work/regions.json" | tee -a "$summary"
+fi
