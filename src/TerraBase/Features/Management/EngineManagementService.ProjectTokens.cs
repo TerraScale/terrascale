@@ -152,7 +152,7 @@ internal sealed partial class EngineManagementService : IProjectCatalog
 
     private async ValueTask<bool> IsProjectRegisteredAsync(IStorageTransaction transaction, string projectId, string organizationId, CancellationToken cancellationToken) =>
         await CatalogTables.OrganizationProjectAsync(transaction, organizationId, projectId, cancellationToken).ConfigureAwait(false) is not null
-            && (!PlatformDatabases.IsPlatform(organizationId) || options.AuthIssuer == TerraBaseOptions.PlatformAuthIssuer);
+            && (!PlatformDatabases.IsPlatform(organizationId) || options.AuthIssuer is not null);
 
     private static bool ProjectActor(string userId, string organizationId) =>
         ProjectAccess.Current is { } access && access.Actor == userId && access.OrganizationId == organizationId;
