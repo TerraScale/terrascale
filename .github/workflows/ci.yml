@@ -16,9 +16,6 @@ on:
         description: 'Maintenance: prepare combined native release assets only (no builds, images or publication)'
         type: boolean
         default: false
-      # Cold maintenance pins the TerraBase digest into its fences before the window, then releases it to the fenced
-      # regions: build-only qualifies and publishes the immutable images without releasing; release-only releases one
-      # TerraBase arm64 digest this main revision built, to each region separately, without building.
       publication:
         description: 'release (default), build-only (TerraBase images, no release) or release-only (needs terrabase_arm64)'
         type: choice
@@ -825,6 +822,11 @@ jobs:
             jq -e --arg revision "$GITHUB_SHA" '.architecture == "arm64" and .os == "linux" and .config.Labels["org.opencontainers.image.revision"] == $revision'
           gh attestation verify "oci://${image}" --owner TerraScale --signer-workflow TerraScale/terrascale/.github/workflows/ci.yml --source-ref refs/heads/main --source-digest "$GITHUB_SHA" --bundle-from-oci
           bash scripts/ci/release-app.sh terrabase "$image"
+      - name: Wait for rollout
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARM64: ${{ inputs.terrabase_arm64 }}
+        run: bash scripts/ci/wait-app-rollout.sh terrabase "ghcr.io/terrascale/terrabase@${ARM64}"
 
   main-auth:
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.reconcile_auth && !inputs.pr_gate))

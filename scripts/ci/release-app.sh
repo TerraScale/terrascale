@@ -24,29 +24,33 @@ if [[ $service == terrabase ]]; then
     bash "$(dirname "$0")/attach-image-bundles.sh" "$repository@$digest" \
       "$RUNNER_TEMP/release-selection.sigstore.json"
   done <<< "$repositories"
-  bash "$(dirname "$0")/fetch-ts-orch.sh" "$work"
 else
   bash "$(dirname "$0")/app-image-regions.sh" attest "$image" "$RUNNER_TEMP/release-selection.sigstore.json"
 fi
 fleet=$package@$digest
-while IFS= read -r repository; do
-  if [[ $service == terrabase && $repository != */terrascale-stg/* ]]; then
-    case ${repository%%/*} in
-      us-sanjose-1.ocir.io) region=sjc ;;
-      eu-frankfurt-1.ocir.io) region=fra ;;
-      sa-saopaulo-1.ocir.io) region=gru ;;
-      *) echo 'Unknown TerraBase release region' >&2; exit 2 ;;
-    esac
-    jq -e --arg region "$region" '[.[] | select(.region == $region)] | select(length == 1)' \
-      "$work/regions.json" > "$RUNNER_TEMP/release-region.json"
-  fi
+select_release() {
+  local repository=$1 observed
   oras tag "$repository@$digest" release
-  [[ $(oras resolve "$repository:release") == "$digest" ]]
-  echo "SELECTED $repository@$digest: release tag verified" | tee -a "$summary"
-  if [[ $service == terrabase && $repository != */terrascale-stg/* ]]; then
-    "$work/terrascale-orchestrator-linux-amd64" release wait --service "$service" --image "$fleet" \
-      --regions "$RUNNER_TEMP/release-region.json" | tee -a "$summary"
+  observed=$(oras resolve "$repository:release")
+  if [[ $observed != "$digest" ]]; then
+    printf '::error::Release tag mismatch for %s: expected %s, observed %s\n' \
+      "$repository:release" "$digest" "$observed" | tee -a "$summary" >&2
+    return 1
   fi
+  echo "SELECTED $repository@$digest: release tag verified" | tee -a "$summary"
+}
+bash "$(dirname "$0")/fetch-ts-orch.sh" "$work"
+echo 'STAGING: not part of app releases yet; staging selection and wait go here once staging serves' | tee -a "$summary"
+pids=()
+while IFS= read -r repository; do
+  [[ $repository != */terrascale-stg/* ]] || continue
+  select_release "$repository" &
+  pids+=("$!")
 done <<< "$repositories"
+result=0
+for pid in "${pids[@]}"; do
+  wait "$pid" || result=1
+done
+[[ $result == 0 ]] || exit "$result"
 docker buildx imagetools create --prefer-index=false --tag "ghcr.io/terrascale/${package}:release" "$image"
 printf 'Selected %s %s for verified host pulls\n' "$service" "$fleet" | tee -a "$summary"
