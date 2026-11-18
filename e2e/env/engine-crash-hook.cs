@@ -1019,24 +1019,44 @@ public sealed class StartupHook : IObserver<DiagnosticListener>, IObserver<KeyVa
                         await writer.WriteLineAsync(count!.ToString().AsMemory(), cancellationToken);
                         continue;
                     }
-                    if (parts[0] == "ledger")
+                    if (parts[0] is "ledger" or "unowned-ledger")
                     {
                         var system = await engine.OpenSystemDatabaseAsync(cancellationToken);
                         var journal = engine.GetType().GetProperty("IntentStore", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(engine)!;
                         var io = engine.GetType().GetProperty("Io", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(engine)!;
-                        var counts = new List<long>();
-                        foreach (var (store, table) in new[] { (system, "_tb_fault"), ((IDatabaseStore)journal, "_tb_write_intent") })
+                        var live = parts[0] == "unowned-ledger" ? await engine.OpenDatabaseAsync(tenant, cancellationToken) : null;
+                        var operations = (SemaphoreSlim?)live?.GetType().GetField("_operations", Hidden)!.GetValue(live);
+                        if (operations is not null)
                         {
-                            var connectionString = await (Task<string>)store.GetType().GetMethod("ConnectionStringAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
-                                .Invoke(store, [io, cancellationToken])!;
-                            using var connection = new SqliteConnection(connectionString);
-                            connection.Open();
-                            using var command = connection.CreateCommand();
-                            command.CommandText = "SELECT count(*) FROM " + table + " WHERE database = $database OR $database = '*';";
-                            command.Parameters.AddWithValue("$database", parts[3]);
-                            counts.Add((long)command.ExecuteScalar()!);
+                            await operations.WaitAsync(cancellationToken);
                         }
-                        await writer.WriteLineAsync(string.Join(" ", counts).AsMemory(), cancellationToken);
+                        try
+                        {
+                            var owner = live is not null && (int)live.GetType().GetField("_activeOperations", Hidden)!.GetValue(live)! > 0
+                                ? live.Incarnation.ToString()
+                                : "";
+                            var counts = new List<long>();
+                            foreach (var (store, table, owned) in new[] { (system, "_tb_fault", ""), ((IDatabaseStore)journal, "_tb_write_intent", " AND NOT (incarnation = $owner AND run != 0)") })
+                            {
+                                var connectionString = await (Task<string>)store.GetType().GetMethod("ConnectionStringAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+                                    .Invoke(store, [io, cancellationToken])!;
+                                using var connection = new SqliteConnection(connectionString);
+                                connection.Open();
+                                using var command = connection.CreateCommand();
+                                command.CommandText = "SELECT count(*) FROM " + table + " WHERE (database = $database OR $database = '*')" + owned + ";";
+                                command.Parameters.AddWithValue("$database", parts[3]);
+                                if (owned.Length > 0)
+                                {
+                                    command.Parameters.AddWithValue("$owner", owner);
+                                }
+                                counts.Add((long)command.ExecuteScalar()!);
+                            }
+                            await writer.WriteLineAsync(string.Join(" ", counts).AsMemory(), cancellationToken);
+                        }
+                        finally
+                        {
+                            operations?.Release();
+                        }
                         continue;
                     }
                     if (parts[0] is "fault" or "unopened-fault")
