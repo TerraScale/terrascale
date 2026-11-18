@@ -87,10 +87,28 @@ async function target() {
   return null;
 }
 
+async function appQualified(revision) {
+  const tree = git('rev-parse', `${revision}^{tree}`);
+  const { workflow_runs: runs } = await github('actions/workflows/ci.yml/runs?event=pull_request&status=success&per_page=30');
+  for (const run of runs) {
+    if (run.event !== 'pull_request' || run.status !== 'completed' || run.conclusion !== 'success' || run.head_repository?.full_name !== repo) continue;
+    const commit = await github(`commits/${run.head_sha}`);
+    assert.equal(commit.sha, run.head_sha, 'Unexpected PR head identity');
+    if (commit.commit.tree.sha !== tree) continue;
+    const { jobs, total_count: count } = await github(`actions/runs/${run.id}/jobs?filter=latest&per_page=100`);
+    assert.ok(count <= 100, 'PR CI jobs exceed the qualification read bound');
+    if (jobs.some((job) => job.name === 'all-green' && job.conclusion === 'success')) {
+      report(`${thing}: ${revision} tree ${tree} passed all-green as PR head ${run.head_sha} in ${run.html_url}`);
+      return true;
+    }
+  }
+  return qualified(revision);
+}
+
 function inputs(thing) {
   const common = ['scripts/ci/site-deploy-gate.mjs', ':(exclude,glob)**/AGENTS.md', ':(exclude,glob)**/CLAUDE.md'];
   if (!services[thing]) return [...common, `${thing}-site`, '.github/workflows/sites.yml', 'scripts/ci/prove-worker-deploy.mjs', ...(thing === 'docs' ? ['Makefile', 'landing-site/static/pricing.json', 'landing-site/static/regions.json'] : [])];
-  const shared = ['Directory.*', 'global.json', 'NuGet.config', '.editorconfig', 'BannedSymbols.txt', 'Makefile', 'sdk/dotnet', ':(glob)src/TerraScale.Endpoints*/**', 'scripts/ci/reconcile-image.sh', 'scripts/ci/release-app.sh', 'scripts/ci/fetch-ts-orch.sh', 'scripts/ci/publish-ocir.sh', 'scripts/ci/publish-image.sh', 'scripts/ci/attach-image-bundles.sh', 'scripts/ci/ocir-repositories.sh', 'scripts/ci/prove-image-publication.sh'];
+  const shared = ['Directory.*', 'global.json', 'NuGet.config', '.editorconfig', 'BannedSymbols.txt', 'Makefile', 'sdk/dotnet', ':(glob)src/TerraScale.Endpoints*/**', 'scripts/ci/reconcile-image.sh', 'scripts/ci/inspect-app-image.sh', 'scripts/ci/app-image-regions.sh', 'scripts/ci/release-app.sh', 'scripts/ci/wait-app-rollout.sh', 'scripts/ci/fetch-ts-orch.sh', 'scripts/ci/publish-ocir.sh', 'scripts/ci/publish-image.sh', 'scripts/ci/attach-image-bundles.sh', 'scripts/ci/ocir-repositories.sh', 'scripts/ci/prove-image-publication.sh'];
   return [...common, ...shared, ...(thing === 'auth'
     ? [':(glob)src/TerraScale.Authentication*/**', 'src/TerraScale.Logging', 'auth.slnf', 'Dockerfile', 'scripts/auth', 'scripts/ci/image-payloads.sh', '.github/workflows/ci.yml']
     : [':(glob)src/TerraScale.Dashboard*/**', 'src/TerraScale.TerraBase.Contracts', 'scripts/dashboard', '.github/workflows/images-ghcr.yml', '.github/workflows/dashboard-ci.yml', 'scripts/efcore/check-design-host.py', 'scripts/ci/release-only.sh'])];
@@ -294,7 +312,7 @@ if (args[0] === '--prove') {
     const alert = states.get(name);
     const own = process.env.GITHUB_SHA;
     assert.match(own ?? '', /^[0-9a-f]{40}$/, 'Missing or invalid run commit');
-    const revision = await qualified(own) ? own : null;
+    const revision = await appQualified(own) ? own : null;
     let deploy = false;
     if (revision === null) {
       assert.ok(deployed !== null, `${name}: ${own} is not qualified and there is no live revision`);
