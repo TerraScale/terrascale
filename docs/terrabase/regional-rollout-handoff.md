@@ -181,15 +181,23 @@ waiting on. The codes are:
 | `database_bound_reached` | the region homes more than 10,000 databases |
 | `position_unavailable` | the source has no applied position for one of its databases |
 | `payload_bound_reached` | the preparation payload is over 4 MiB |
-| `target_rejected` | the target refused the applied-position preparation or verification |
+| `target_rejected` | the target refused the applied-position preparation, or answered a verification without a typed refusal |
+| `verify_not_writer` | the verifying writer is not this region's writer |
+| `verify_source_not_peer` | the source is not a peer of the writer's region in the writer's peers file |
+| `replica_unavailable` | a replica the handoff needs could not be opened or pulled; `databases` counts them, `database`, `home` and `homeCode` name the first and its home's answer, such as `storage_busy` or `unreachable` |
+| `replica_behind` | `databases` replicas have not applied the source's position |
+| `verify_unready` | the verifying writer has not passed readiness |
 | `target_unreachable` | the target was unreachable during readiness, preparation, verification or activation |
 | `observer_unreachable` | a peer was unreachable during route observation after the owner CAS |
 | `peer_unreachable` | a required peer was unreachable while admitting, reserving, collecting, priming or quiescing |
 | `drain_timeout` | the thirty-second drain budget ran out |
 | `drain_failed` | an unexpected exception stopped the drain; `error` names its type and the error log carries it |
 
+A verification refused by the target with a typed body answers the target's code and
+details, with `phase` `verify` and `peer` naming the target.
 The message repeats the reason, phase and peer in prose; the warning log also
-carries the exception. None of these fields carries tenant data or credentials.
+carries the exception. Apart from the database ID in `replica_unavailable`, none of
+these fields carries tenant identifiers, tenant data or credentials.
 
 `POST /v1/rollout/drain/admit?target=<node>&spec=<request>` on the source runs the
 admit and reserve steps of a drain without fencing anything. It checks the target,
@@ -210,7 +218,8 @@ pending. A prime waits only for replicas that have not caught up since the first
 prime against the same writer and epoch, so a prime that runs out of its thirty-second
 budget keeps what it pulled and the next one resumes from there. A success clears
 the mark. A prime answers `204`, or the same 503 body with phase `prime` and peer
-`<writer>` and the code `prime_source_not_writer`, `prime_unready`, or
+`<writer>` and the code `prime_source_not_writer`, `prime_unready`,
+`replica_unavailable` as soon as one replica's next open or pull attempt fails, or
 `prime_incomplete`, whose details add `behind`, the number of replicas still behind,
 or `prime_failed`, whose details add `error`, the type of the exception the error log carries.
 Caller cancellation propagates. Retirement probe failures log the exception type

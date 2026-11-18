@@ -1,3 +1,4 @@
+using TerraBase.Errors;
 using TerraBase.Features.Memory;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
@@ -18,9 +19,13 @@ internal sealed class RegionalVerifyEndpoint(RegionalHandoff handoff, IMemoryBud
         AllowAnonymous();
         Metadata(ListenerMetadata.Internal);
         Produces(StatusCodes.Status204NoContent);
-        Produces(StatusCodes.Status503ServiceUnavailable);
+        Produces<DetailedErrorBody>(StatusCodes.Status503ServiceUnavailable);
     }
 
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        RegionalPrepareEndpoint.AnswerAsync(HttpContext, handoff, memory, handoff.VerifyAsync, cancellationToken);
+        RegionalPrepareEndpoint.AnswerAsync(HttpContext, memory, async (request, token) => await handoff.VerifyAsync(request, token).ConfigureAwait(false) switch
+        {
+            Done => TypedResults.NoContent(),
+            Unavailable error => ErrorResponse.From(error)
+        }, cancellationToken);
 }

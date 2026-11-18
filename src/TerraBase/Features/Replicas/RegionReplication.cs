@@ -168,9 +168,26 @@ internal sealed partial class RegionReplication(
 
     internal long CatchUpMark => time.GetUtcNow().ToUnixTimeMilliseconds();
 
-    internal async Task CatchUpSinceAsync(long mark, CancellationToken cancellationToken) =>
-        await Task.WhenAll(_followers.Values.Where(follower => !follower.CaughtUpSince(mark)).Select(follower => follower.CatchUpSinceAsync(mark, cancellationToken)))
-            .ConfigureAwait(false);
+    internal Task<IReadOnlyList<ReplicaFailure>> CatchUpSinceAsync(long mark, CancellationToken cancellationToken) =>
+        RefusedAsync([.. _followers.Values.Where(follower => !follower.CaughtUpSince(mark))], (follower, token) => follower.CatchUpSinceAsync(mark, token), cancellationToken);
+
+    internal Task<IReadOnlyList<ReplicaFailure>> CatchUpAsync(IReadOnlyList<TenantContext> databases, CancellationToken cancellationToken) =>
+        RefusedAsync([.. databases.Select(database => _followers.GetValueOrDefault(Key(database))).OfType<Follower>()], (follower, token) => follower.PullNowAsync(token), cancellationToken);
+
+    private static async Task<IReadOnlyList<ReplicaFailure>> RefusedAsync(IReadOnlyList<Follower> followers,
+        Func<Follower, CancellationToken, Task<ReplicaFailure?>> catchUp, CancellationToken cancellationToken)
+    {
+        using var refused = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        await foreach (var caught in Task.WhenEach(followers.Select(follower => catchUp(follower, refused.Token))).ConfigureAwait(false))
+        {
+            if (await caught.ConfigureAwait(false) is not null)
+            {
+                await refused.CancelAsync().ConfigureAwait(false);
+                return [.. followers.Select(follower => follower.Failure).OfType<ReplicaFailure>()];
+            }
+        }
+        return [];
+    }
 
     internal int BehindSince(long mark) => _followers.Values.Count(follower => !follower.CaughtUpSince(mark));
 
@@ -475,8 +492,7 @@ internal sealed partial class RegionReplication(
             return false;
         }
 
-        await follower.PullNowAsync(cancellationToken).ConfigureAwait(false);
-        return Replicas.Holds(database);
+        return await follower.PullNowAsync(cancellationToken).ConfigureAwait(false) is null && Replicas.Holds(database);
     }
 
     internal async Task SuspendAsync(TenantContext database)
@@ -521,6 +537,8 @@ internal sealed partial class RegionReplication(
         private string? _reportedState;
         private ChecksumCursor? _cursor;
         private TaskCompletionSource _pulled = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private TaskCompletionSource<ReplicaFailure> _failed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private ReplicaFailure? _failure;
         private Task _loop = Task.CompletedTask;
         private Task _report = Task.CompletedTask;
         private int _fromHome;
@@ -573,6 +591,8 @@ internal sealed partial class RegionReplication(
 
         public ReplicaPeer Home => _home;
 
+        public ReplicaFailure? Failure => Volatile.Read(ref _failure);
+
         public static Follower Start(RegionReplication owner, TenantContext database, ReplicaPeer home)
         {
             var follower = new Follower(owner, database, home);
@@ -604,21 +624,26 @@ internal sealed partial class RegionReplication(
             _ = _signals.Writer.TryWrite(true);
         }
 
-        public Task PullNowAsync(CancellationToken cancellationToken)
+        public async Task<ReplicaFailure?> PullNowAsync(CancellationToken cancellationToken)
         {
             var pulled = Volatile.Read(ref _pulled).Task;
+            var failed = Volatile.Read(ref _failed).Task;
             Signal(0, fromHome: true);
-            return pulled.WaitAsync(cancellationToken);
+            return await Task.WhenAny(pulled, failed).WaitAsync(cancellationToken).ConfigureAwait(false) == pulled ? null : await failed.ConfigureAwait(false);
         }
 
         public bool CaughtUpSince(long mark) => Volatile.Read(ref _caughtUpFrom) >= mark;
 
-        public async Task CatchUpSinceAsync(long mark, CancellationToken cancellationToken)
+        public async Task<ReplicaFailure?> CatchUpSinceAsync(long mark, CancellationToken cancellationToken)
         {
             while (!CaughtUpSince(mark))
             {
-                await PullNowAsync(cancellationToken).ConfigureAwait(false);
+                if (await PullNowAsync(cancellationToken).ConfigureAwait(false) is { } failure)
+                {
+                    return failure;
+                }
             }
+            return null;
         }
 
         public async Task StopAsync()
@@ -907,14 +932,19 @@ internal sealed partial class RegionReplication(
             {
                 try
                 {
-                    return await attempt().ConfigureAwait(false);
+                    var succeeded = await attempt().ConfigureAwait(false);
+                    Volatile.Write(ref _failure, null);
+                    return succeeded;
                 }
                 catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
                 {
                     _owner._pullCount?.Add(1, new KeyValuePair<string, object?>("result", "failed"));
+                    var failure = ReplicaFailure.From(Database.DatabaseId!, _home.Region, error);
+                    Volatile.Write(ref _failure, failure);
+                    _ = Interlocked.Exchange(ref _failed, new TaskCompletionSource<ReplicaFailure>(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult(failure);
                     if (failures % 20 == 1)
                     {
-                        _owner.Logger.ZLogInformation($"A replica {what} failed and is retried: {error.GetType().Name:@Error} ({error.Message:@Detail})");
+                        _owner.Logger.ZLogInformation($"A replica {what} of database {Database.DatabaseId:@Database} from {_home.Name:@Home} in region {_home.Region:@HomeRegion} failed and is retried: {error.GetType().Name:@Error} ({error.Message:@Detail})");
                         _ = _owner._catalogWakes.Writer.TryWrite(_home.Region);
                     }
 

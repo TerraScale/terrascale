@@ -25,10 +25,11 @@ internal sealed class RegionalPrepareEndpoint(RegionalHandoff handoff, IMemoryBu
     }
 
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        AnswerAsync(HttpContext, handoff, memory, handoff.PrepareAsync, cancellationToken);
+        AnswerAsync(HttpContext, memory, async (request, token) => await handoff.PrepareAsync(request, token).ConfigureAwait(false)
+            ? TypedResults.NoContent() : TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable), cancellationToken);
 
-    internal static async ValueTask<IResult> AnswerAsync(HttpContext context, RegionalHandoff handoff, IMemoryBudget memory,
-        Func<RegionalPrepare, CancellationToken, Task<bool>> act, CancellationToken cancellationToken)
+    internal static async ValueTask<IResult> AnswerAsync(HttpContext context, IMemoryBudget memory,
+        Func<RegionalPrepare, CancellationToken, Task<IResult>> act, CancellationToken cancellationToken)
     {
         if (context.Request.ContentLength is not (> 0 and <= MaxBodyBytes))
         {
@@ -42,7 +43,6 @@ internal sealed class RegionalPrepareEndpoint(RegionalHandoff handoff, IMemoryBu
         }
 
         var request = await context.Request.ReadFromJsonAsync(ReplicasJsonContext.Default.RegionalPrepare, cancellationToken).ConfigureAwait(false);
-        return request is not null && await act(request, cancellationToken).ConfigureAwait(false)
-            ? TypedResults.NoContent() : TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        return request is null ? TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable) : await act(request, cancellationToken).ConfigureAwait(false);
     }
 }
