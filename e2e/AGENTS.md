@@ -41,6 +41,13 @@ Fix the root cause, prove the fix with the journey, and close the issue to leave
 removes the entry on the next invocation; no list file or follow-up PR is needed. Each quarantined test
 still needs its own real-fix backlog item.
 
+`regional-activation-proof` is tracked by [#2177](https://github.com/TerraScale/terrascale/issues/2177),
+whose canonical selector is `fault/fault.spec.ts › a regional writer role moves without publishing a revision during unproved activation`.
+Keep that selector title and its exact JSON identity; the informal operation name alone is not a quarantine selector.
+The issue holds the C1c evidence: the fault hook takes the database writer semaphore and awaits a callback
+recognized through synchronous stack inspection, which can miss an asynchronous publisher continuation.
+The separate deadlock fix must prove the journey before closing the issue; its open label remains the source of quarantine state.
+
 ## Run it on your machine (no root)
 
 ```sh
