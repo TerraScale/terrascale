@@ -45,6 +45,17 @@ All selection attachments must verify
 before any regional `:release` pointer moves. GHCR publication and its release
 pointer continue during migration.
 
+TerraBase moves its production pointers sequentially: sjc must serve the new
+digest before fra is selected, and fra must serve it before gru is selected.
+Each wait receives a regions file containing only that region. Any failure
+stops selection before the next pointer moves. After all three waits pass,
+the staging pointer moves last, followed by the retained GHCR pointer. Auth
+and dashboard select all four OCIR pointers and observe the full fleet.
+
+The auth and dashboard reconciler inputs include the shared OCIR publisher,
+image copier, bundle attachment, repository list and signed publication proof
+scripts, so a change to those paths schedules publication for both services.
+
 Each `:release` tag identifies the single-platform manifest directly. The
 release observer receives `<pkg>@sha256:<digest>`. Hosts discover the regional
 release tag and expand the package using their own registry host, namespace
