@@ -19,7 +19,7 @@ public sealed record Forbidden(string Message, string Code = "forbidden", IReadO
 
 public sealed record QuotaExceeded(string Message, string Code = "quota_exceeded");
 
-public sealed record Unavailable(string Message, string Code = "unavailable");
+public sealed record Unavailable(string Message, string Code = "unavailable", IReadOnlyDictionary<string, string>? Details = null);
 
 public sealed record PayloadTooLarge(string Message, string Code = "payload_too_large");
 

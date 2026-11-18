@@ -1,8 +1,10 @@
 using NATS.Client.Core;
 using NATS.Client.JetStream;
 using NATS.Client.KeyValueStore;
+using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using TerraBase.Features.Platform;
@@ -28,7 +30,9 @@ internal sealed record RegionalStatus(string Node, string? Owner, long Epoch, bo
     IReadOnlyList<UnservedDatabase>? Unserved = null, IReadOnlyList<KeptCopy>? Kept = null, IReadOnlyList<FencedDatabase>? Fenced = null, string? Unready = null);
 internal sealed record RegionalDrain(string Target);
 
-internal readonly union RegionalDrainResult(Done, Unavailable);
+internal readonly union RegionalHandoffResult(Done, Unavailable);
+internal readonly union RegionalAdmitResult(RegionalAdmission, Unavailable);
+internal sealed record RegionalAdmission(string Transfer);
 internal readonly union DrainReservation(NatsKVEntry<byte[]>, Unavailable);
 
 internal sealed partial class RegionalHandoff(
@@ -37,6 +41,8 @@ internal sealed partial class RegionalHandoff(
 {
     internal const string Bucket = "terrabase-region-owners";
     private readonly SemaphoreSlim _changing = new(1, 1);
+    private readonly Lock _primeGate = new();
+    private PrimeMark? _primeMark;
     private readonly HttpClient _http = PeerHttp.Create(credential);
     private readonly Dictionary<string, TenantContext> _promoted = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _prepared = new(StringComparer.Ordinal);
@@ -250,7 +256,7 @@ internal sealed partial class RegionalHandoff(
         }
         if (!changed)
         {
-            if (owner.Region == options.Region && owner.Node != options.MachineId && owner.Transfer is null)
+            if (owner.Region == options.Region && owner.Node != options.MachineId && owner.Transfer is null or { Phase: Admitted })
             {
                 ResumePromoted();
             }
@@ -293,26 +299,63 @@ internal sealed partial class RegionalHandoff(
         _promoted.Clear();
     }
 
-    internal async Task<bool> PrimeAsync(string source, CancellationToken cancellationToken)
+    internal async Task<RegionalHandoffResult> PrimeAsync(string source, CancellationToken cancellationToken)
     {
-        if (owners.Find(options.Region)?.Node != source || source == options.MachineId)
+        if (owners.Find(options.Region) is not { Node: var writer, Epoch: var epoch } || writer != source || source == options.MachineId)
         {
-            return false;
+            return PrimeRefused(source, "the source is not this region's writer", "prime_source_not_writer");
+        }
+
+        var replication = services.GetRequiredService<RegionReplication>();
+        PrimeMark mark;
+        lock (_primeGate)
+        {
+            mark = _primeMark is { } current && current.Source == source && current.Epoch == epoch ? current : new PrimeMark(source, epoch, replication.CatchUpMark);
+            _primeMark = mark;
         }
 
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         bounded.CancelAfter(DrainBudget);
-        var replication = services.GetRequiredService<RegionReplication>();
         try
         {
             await replication.SyncCatalogsAsync(bounded.Token).ConfigureAwait(false);
-            await replication.PullAllAsync(bounded.Token).ConfigureAwait(false);
-            return await services.GetRequiredService<Health.INodeReadiness>().UnreadyAsync(bounded.Token).ConfigureAwait(false) is null;
+            await replication.CatchUpSinceAsync(mark.Since, bounded.Token).ConfigureAwait(false);
+            if (await services.GetRequiredService<Health.INodeReadiness>().UnreadyAsync(bounded.Token).ConfigureAwait(false) is { } unready)
+            {
+                return PrimeRefused(source, "this node is not ready: " + Health.ReadinessConditions.Label(unready), "prime_unready");
+            }
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested)
         {
-            return false;
+            var behind = replication.BehindSince(mark.Since);
+            return PrimeRefused(source, $"{behind} replicas have not caught up since this prime began; the next prime resumes from here", "prime_incomplete", error,
+                new KeyValuePair<string, string>("behind", behind.ToString(CultureInfo.InvariantCulture)));
         }
+
+        lock (_primeGate)
+        {
+            if (_primeMark == mark)
+            {
+                _primeMark = null;
+            }
+        }
+        return new Done();
+    }
+
+    private Unavailable PrimeRefused(string source, string reason, string code, Exception? exception = null, params ReadOnlySpan<KeyValuePair<string, string>> details)
+    {
+        LogDrainRefused(logger, exception, "prime", source, reason, code);
+        return new Unavailable($"{reason} during prime with peer {source}", code, Details("prime", source, details));
+    }
+
+    private static Dictionary<string, string> Details(string phase, string peer, params ReadOnlySpan<KeyValuePair<string, string>> extra)
+    {
+        Dictionary<string, string> details = new(StringComparer.Ordinal) { ["phase"] = phase, ["peer"] = peer };
+        foreach (var (key, value) in extra)
+        {
+            details[key] = value;
+        }
+        return details;
     }
 
     internal async Task<bool> PrepareAsync(RegionalPrepare request, CancellationToken cancellationToken)
@@ -529,18 +572,24 @@ internal sealed partial class RegionalHandoff(
         };
     }
 
-    internal async Task<RegionalDrainResult> DrainAsync(string target, CancellationToken cancellationToken)
+    internal Task<RegionalHandoffResult> DrainAsync(string target, string? transfer, CancellationToken cancellationToken) =>
+        HandoffAsync<RegionalHandoffResult>((progress, token) => DrainCoreAsync(target, transfer, progress, token), refused => refused, cancellationToken);
+
+    internal Task<RegionalAdmitResult> AdmitAsync(string target, string spec, CancellationToken cancellationToken) =>
+        HandoffAsync<RegionalAdmitResult>((progress, token) => AdmitCoreAsync(target, spec, progress, token), refused => refused, cancellationToken);
+
+    private async Task<T> HandoffAsync<T>(Func<DrainProgress, CancellationToken, Task<T>> run, Func<Unavailable, T> refused, CancellationToken cancellationToken)
     {
         var progress = new DrainProgress(options.MachineId);
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         bounded.CancelAfter(DrainBudget);
         try
         {
-            return await DrainCoreAsync(target, progress, bounded.Token).ConfigureAwait(false);
+            return await run(progress, bounded.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested)
         {
-            return DrainRefused(progress, "the regional drain did not complete before its deadline", "drain_timeout", error);
+            return refused(DrainRefused(progress, "the regional drain did not complete before its deadline", "drain_timeout", error));
         }
         catch (HttpRequestException error) when (!cancellationToken.IsCancellationRequested)
         {
@@ -550,14 +599,14 @@ internal sealed partial class RegionalHandoff(
                 DrainPhase.Readiness or DrainPhase.Prepare or DrainPhase.Verify or DrainPhase.Activate
                     => ("the target could not be reached", "target_unreachable"),
                 DrainPhase.Admit or DrainPhase.Reserve or DrainPhase.Collect or DrainPhase.Prime or DrainPhase.Quiesce
-                    => ("the regional drain could not reach a required peer", "drain_unavailable"),
+                    => ("a required peer could not be reached", "peer_unreachable"),
                 _ => throw new UnreachableException()
             };
-            return DrainRefused(progress, reason, code, error);
+            return refused(DrainRefused(progress, reason, code, error));
         }
         catch (NatsKVWrongLastRevisionException error) when (!cancellationToken.IsCancellationRequested)
         {
-            return DrainRefused(progress, "the regional owner changed during the drain", "owner_changed", error);
+            return refused(DrainRefused(progress, "the regional owner changed during the drain", "owner_changed", error));
         }
         catch (NatsKVWrongLastRevisionException error)
         {
@@ -565,19 +614,76 @@ internal sealed partial class RegionalHandoff(
         }
     }
 
-    private async Task<RegionalDrainResult> DrainCoreAsync(string target, DrainProgress progress, CancellationToken cancellationToken)
+    private sealed record AdmittedTarget(INatsKVStore Kv, ImmutableArray<ServingNode> Nodes, ServingNode Peer);
+
+    private async Task<AdmittedTarget?> AdmitTargetAsync(string target, CancellationToken cancellationToken)
     {
-        var kv = _kv;
-        if (kv is null)
+        if (_kv is not { } kv)
         {
-            return DrainRefused(progress, "owner store unavailable");
+            return null;
         }
 
         var nodes = await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false);
-        var peer = nodes.FirstOrDefault(node => node.Region == options.Region && node.Name == target && target != options.MachineId);
-        if (peer is null)
+        return nodes.FirstOrDefault(node => node.Region == options.Region && node.Name == target && target != options.MachineId) is { } peer
+            ? new AdmittedTarget(kv, nodes, peer) : null;
+    }
+
+    private Unavailable TargetRefused(DrainProgress progress) => _kv is null
+        ? DrainRefused(progress, "owner store unavailable", "owner_store_unavailable")
+        : DrainRefused(progress, "target is outside admitted regional peers", "target_not_admitted");
+
+    private async Task<RegionalAdmitResult> AdmitCoreAsync(string target, string spec, DrainProgress progress, CancellationToken cancellationToken)
+    {
+        if (await AdmitTargetAsync(target, cancellationToken).ConfigureAwait(false) is not { Kv: var kv })
         {
-            return DrainRefused(progress, "target is outside admitted regional peers");
+            return TargetRefused(progress);
+        }
+
+        await _changing.WaitAsync(cancellationToken).ConfigureAwait(false);
+        IMemoryReservation? memory = null;
+        try
+        {
+            progress.Phase = DrainPhase.Reserve;
+            if (await HeldAdmissionAsync(kv, target, spec, cancellationToken).ConfigureAwait(false) is { } held)
+            {
+                return new RegionalAdmission(held);
+            }
+
+            ReleaseAdmission(null);
+            memory = services.GetRequiredService<IMemoryBudget>().TryReserve(DrainMemory, tenant: null);
+            if (memory is null)
+            {
+                return DrainRefused(progress, "bulk-memory reservation unavailable", "memory_unavailable");
+            }
+
+            var reserved = await BeginDrainAsync(kv, target, Admitted, progress, cancellationToken).ConfigureAwait(false);
+            if (reserved is not NatsKVEntry<byte[]> entry)
+            {
+                return reserved switch
+                {
+                    Unavailable error => error,
+                    NatsKVEntry<byte[]> => throw new UnreachableException()
+                };
+            }
+
+            var transfer = Decode(entry.Value!).Transfer!.Id;
+            HoldAdmission(transfer, target, spec, memory);
+            memory = null;
+            logger.ZLogInformation($"Regional drain admitted: {options.MachineId:@Source} to {target:@Target}, transfer {transfer:@Transfer}");
+            return new RegionalAdmission(transfer);
+        }
+        finally
+        {
+            memory?.Dispose();
+            _changing.Release();
+        }
+    }
+
+    private async Task<RegionalHandoffResult> DrainCoreAsync(string target, string? admitted, DrainProgress progress, CancellationToken cancellationToken)
+    {
+        if (await AdmitTargetAsync(target, cancellationToken).ConfigureAwait(false) is not (var kv, var nodes, var peer))
+        {
+            return TargetRefused(progress);
         }
 
         IDisposable? admission = null;
@@ -585,7 +691,24 @@ internal sealed partial class RegionalHandoff(
         try
         {
             progress.Phase = DrainPhase.Reserve;
-            var reserved = await BeginDrainAsync(kv, target, progress, cancellationToken).ConfigureAwait(false);
+            if (admitted is null)
+            {
+                ReleaseAdmission(null);
+            }
+
+            using var reservation = admitted is null
+                ? services.GetRequiredService<IMemoryBudget>().TryReserve(DrainMemory, tenant: null)
+                : TakeAdmission(admitted, target);
+            if (reservation is null)
+            {
+                return admitted is null
+                    ? DrainRefused(progress, "bulk-memory reservation unavailable", "memory_unavailable")
+                    : DrainRefused(progress, "the admitted transfer is unknown or expired", "admission_unknown");
+            }
+
+            var reserved = admitted is null
+                ? await BeginDrainAsync(kv, target, Preparing, progress, cancellationToken).ConfigureAwait(false)
+                : await ClaimAdmittedAsync(kv, target, admitted, progress, cancellationToken).ConfigureAwait(false);
             if (reserved is not NatsKVEntry<byte[]> entry)
             {
                 return reserved switch
@@ -600,14 +723,9 @@ internal sealed partial class RegionalHandoff(
             var promoting = owner.Node == options.MachineId;
             if (!promoting && owner.Node != target)
             {
-                return DrainRefused(progress, "regional owner changed");
+                return DrainRefused(progress, "regional owner changed", "owner_changed");
             }
 
-            using var reservation = services.GetRequiredService<IMemoryBudget>().TryReserve(16L * 1024 * 1024, tenant: null);
-            if (reservation is null)
-            {
-                return DrainRefused(progress, "bulk-memory reservation unavailable");
-            }
             progress.Phase = DrainPhase.Quiesce;
             admission = await services.GetRequiredService<RegionalIngress>().HoldAsync(cancellationToken).ConfigureAwait(false);
             owners.Drain();
@@ -626,14 +744,14 @@ internal sealed partial class RegionalHandoff(
                 {
                     if (await catalog.ListHomedAsync(region, after, cancellationToken).ConfigureAwait(false) is not TenantDatabasePage page)
                     {
-                        return DrainRefused(progress, "regional catalog unavailable");
+                        return DrainRefused(progress, "regional catalog unavailable", "catalog_unavailable");
                     }
 
                     foreach (var database in page.Databases)
                     {
                         if (positions.Count >= 10_000)
                         {
-                            return DrainRefused(progress, "regional database bound reached");
+                            return DrainRefused(progress, "regional database bound reached", "database_bound_reached");
                         }
 
                         DatabaseRevision? position;
@@ -651,7 +769,7 @@ internal sealed partial class RegionalHandoff(
 
                         if (region == options.Region && position is null)
                         {
-                            return DrainRefused(progress, "source applied position unavailable");
+                            return DrainRefused(progress, "source applied position unavailable", "position_unavailable");
                         }
 
                         if (position is { } applied)
@@ -670,7 +788,7 @@ internal sealed partial class RegionalHandoff(
                 ? await RegionalCatalog.ExportAsync(services.GetRequiredService<IStorageEngine>(), cancellationToken).ConfigureAwait(false) : null, transfer.Id), ReplicasJsonContext.Default.RegionalPrepare);
             if (payload.Length > 4 * 1024 * 1024)
             {
-                return DrainRefused(progress, "preparation payload bound reached");
+                return DrainRefused(progress, "preparation payload bound reached", "payload_bound_reached");
             }
             using var body = new ByteArrayContent(payload);
             body.Headers.ContentType = new MediaTypeHeaderValue("application/json");
@@ -679,7 +797,7 @@ internal sealed partial class RegionalHandoff(
             using var response = await _http.PostAsync(new Uri(address, promoting ? "/v1/rollout/prepare" : "/v1/rollout/verify"), body, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                return DrainRefused(progress, "target rejected applied-position preparation");
+                return DrainRefused(progress, "target rejected applied-position preparation", "target_rejected");
             }
 
             progress.Phase = DrainPhase.Reserve;
@@ -735,10 +853,10 @@ internal sealed partial class RegionalHandoff(
         }
     }
 
-    private Unavailable DrainRefused(DrainProgress progress, string reason, string code = "drain_unavailable", Exception? exception = null)
+    private Unavailable DrainRefused(DrainProgress progress, string reason, string code, Exception? exception = null)
     {
         LogDrainRefused(logger, exception, progress.Label, progress.Peer, reason, code);
-        return new Unavailable($"{reason} during {progress.Label} with peer {progress.Peer}", code);
+        return new Unavailable($"{reason} during {progress.Label} with peer {progress.Peer}", code, Details(progress.Label, progress.Peer));
     }
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Regional handoff refused during {Phase} with peer {Peer}: {Reason} ({Code})")]

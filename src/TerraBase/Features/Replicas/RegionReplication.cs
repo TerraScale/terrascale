@@ -166,8 +166,13 @@ internal sealed partial class RegionReplication(
         }
     }
 
-    internal async Task PullAllAsync(CancellationToken cancellationToken) =>
-        await Task.WhenAll(_followers.Values.Select(follower => follower.PullNowAsync(cancellationToken))).ConfigureAwait(false);
+    internal long CatchUpMark => time.GetUtcNow().ToUnixTimeMilliseconds();
+
+    internal async Task CatchUpSinceAsync(long mark, CancellationToken cancellationToken) =>
+        await Task.WhenAll(_followers.Values.Where(follower => !follower.CaughtUpSince(mark)).Select(follower => follower.CatchUpSinceAsync(mark, cancellationToken)))
+            .ConfigureAwait(false);
+
+    internal int BehindSince(long mark) => _followers.Values.Count(follower => !follower.CaughtUpSince(mark));
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -506,6 +511,7 @@ internal sealed partial class RegionReplication(
         private long _formatMismatchAt;
         private int _formatBlocked;
         private long _pullStartedAt;
+        private long _caughtUpFrom;
         private DateTimeOffset? _syncedAt;
         private DateTimeOffset? _verifiedAt;
         private DateTimeOffset _nextVerify;
@@ -603,6 +609,16 @@ internal sealed partial class RegionReplication(
             var pulled = Volatile.Read(ref _pulled).Task;
             Signal(0, fromHome: true);
             return pulled.WaitAsync(cancellationToken);
+        }
+
+        public bool CaughtUpSince(long mark) => Volatile.Read(ref _caughtUpFrom) >= mark;
+
+        public async Task CatchUpSinceAsync(long mark, CancellationToken cancellationToken)
+        {
+            while (!CaughtUpSince(mark))
+            {
+                await PullNowAsync(cancellationToken).ConfigureAwait(false);
+            }
         }
 
         public async Task StopAsync()
@@ -705,6 +721,10 @@ internal sealed partial class RegionReplication(
                 if (pending)
                 {
                     Signal(0, fromHome: false);
+                }
+                else
+                {
+                    Volatile.Write(ref _caughtUpFrom, started.ToUnixTimeMilliseconds());
                 }
 
                 await VerifyAsync(cancellationToken).ConfigureAwait(false);
