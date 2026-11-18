@@ -288,7 +288,7 @@ def hook(operation, database_id, count=None):
         result = client.recv(65536).decode().strip()
         if not result:
             raise RuntimeError("hook interrupted by process exit")
-        if operation in ("ledger", "pending", "refused"):
+        if operation in ("ledger", "unowned-ledger", "pending", "refused"):
             return [int(value) for value in result.split()]
         if operation == "idle-pass":
             return result
@@ -545,7 +545,7 @@ def delete_queued_case():
         assert hook("ledger", identity) == [0, 0], hook("ledger", identity)
         assert gauge("terrabase_storage_faulted_databases") == faulted
         hook("finish-delete", identity)
-        assert hook("ledger", identity) == [0, 0], hook("ledger", identity)
+        assert hook("unowned-ledger", identity) == [0, 0], hook("unowned-ledger", identity)
         assert sql(project, identity, ["SELECT 1;"])["results"][0]["rows"] == [[1]]
         with Postgres(identity) as client:
             assert client.query("SELECT 1;") == {}
