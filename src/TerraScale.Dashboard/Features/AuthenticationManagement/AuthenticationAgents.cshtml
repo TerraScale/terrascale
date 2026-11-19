@@ -1,0 +1,89 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.AuthenticationManagement.AuthenticationPage>
+@using System.Globalization
+@using TerraScale.Dashboard.Platform.TsAuth
+@{
+    var manage = Model.Context.CanManageProject;
+    var selected = Model.SelectedAgent;
+    string Date(DateTimeOffset? value, string empty = "Never") => value?.UtcDateTime.ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture) ?? empty;
+    string Prefix(string value) => value[..Math.Min(12, value.Length)];
+    string Detail(string id) => "/auth/agents?agent=" + Uri.EscapeDataString(id);
+    string Owner(string id) => "/auth/users?user=" + Uri.EscapeDataString(id);
+    string Path(string path) => "/api/v1/auth-management/agents/" + path + (selected is null ? "" : "?agent=" + Uri.EscapeDataString(selected.Id));
+    void Status(TsAuthAgent agent) {
+        <span class="@(agent.Status == "active" ? "ts-badge ts-badge-success" : "ts-badge ts-badge-neutral")">@agent.Status</span>
+    }
+    void Dialog(string id, string title, string consequence, string path, string label) {
+        var failed = Model.Error.Length > 0 && Model.Draft?["dialog"].ToString() == id;
+        <dialog class="ts-dialog" id="@id" closedby="any" aria-labelledby="@(id + "-title")" aria-describedby="@(id + "-description")" data-init="@(failed ? "el.showModal()" : "void 0")"><div class="ts-dialog-content">
+        <header class="ts-dialog-head"><div class="ts-dialog-header"><h2 class="ts-dialog-title" id="@(id + "-title")">@title</h2><p class="ts-dialog-description" id="@(id + "-description")">@consequence</p></div><button type="button" class="ts-icon-btn" command="close" commandfor="@id" aria-label="Close">@Icons.Render("X", 18)</button></header>
+        <form method="post" action="@Path(path)" class="ts-form" data-submit-once data-on:submit="evt.preventDefault(); @@post('@Path(path)', {contentType:'form'})">
+        <input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="dialog" value="@id" />
+        @if (failed) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p></div> }
+        <div class="ts-dialog-footer"><button type="button" class="ts-btn ts-btn-secondary" command="close" commandfor="@id">Cancel</button><button type="submit" class="ts-btn ts-btn-danger">@label</button></div>
+        </form></div></dialog>
+    }
+}
+@if (selected is not null) {
+<section class="ts-card ts-card-boxed ts-card-flush ts-idp-settings" aria-labelledby="auth-agents-title">
+<header class="ts-card-head"><h2 class="ts-card-title" id="auth-agents-title">@selected.Name</h2><div class="ts-card-actions"><a class="ts-btn ts-btn-ghost ts-btn-sm" href="/auth/agents">All agents</a>
+@if (manage && selected.Status == "active") { <button type="button" class="ts-btn ts-btn-danger ts-btn-sm" command="show-modal" commandfor="revoke-agent">Revoke agent</button> }
+</div></header>
+<div class="ts-card-body"><dl class="ts-kv ts-idp-kv">
+<dt>ID</dt><dd class="ts-mono ts-break">@selected.Id</dd>
+<dt>Owner</dt><dd><a class="ts-link ts-mono ts-break" href="@Owner(selected.OwnerUserId)">@selected.OwnerUserId</a></dd>
+<dt>Status</dt><dd>@{ Status(selected); }</dd>
+<dt>Scopes</dt><dd class="ts-break">@string.Join(", ", selected.AllowedScopes)</dd>
+<dt>Self subject</dt><dd>@(selected.AllowSelfSubject ? "Allowed" : "Not allowed")</dd>
+<dt>Created</dt><dd>@Date(selected.CreatedAt)</dd><dt>Last used</dt><dd>@Date(selected.LastUsedAt)</dd><dt>Expires</dt><dd>@Date(selected.ExpiresAt)</dd>
+@if (selected.RevokedAt is not null) { <dt>Revoked</dt><dd>@Date(selected.RevokedAt)</dd> }
+</dl></div>
+</section>
+<section class="ts-card ts-card-boxed ts-card-flush" aria-labelledby="agent-keys-title"><header class="ts-card-head"><h2 class="ts-card-title" id="agent-keys-title">Keys</h2></header>
+@if (selected.Keys.Count == 0) { <div class="ts-empty" role="status"><p class="ts-empty-title">No keys.</p></div> }
+else {
+<div class="ts-table-wrap" tabindex="0" role="region" aria-label="Agent keys"><table class="ts-table ts-table-stacked"><thead><tr><th scope="col">Key ID</th><th scope="col">Thumbprint</th><th scope="col">Created</th><th scope="col">Revoked</th><th scope="col"><span class="ts-sr-only">Actions</span></th></tr></thead><tbody>
+@for (var index = 0; index < selected.Keys.Count; index++) { var key = selected.Keys[index];
+<tr><td class="ts-mono" data-label="Key ID">@Prefix(key.Kid)</td><td class="ts-mono" data-label="Thumbprint">@Prefix(key.Thumbprint)</td><td data-label="Created">@Date(key.CreatedAt)</td><td data-label="Revoked">@Date(key.RevokedAt, "Active")</td><td class="ts-table-actions">
+@if (manage && selected.Status == "active" && key.RevokedAt is null) { <button type="button" class="ts-btn ts-btn-danger ts-btn-sm" command="show-modal" commandfor="@("revoke-agent-key-" + index)">Revoke key</button> }
+</td></tr>
+}
+</tbody></table></div>
+}
+</section>
+@if (manage && selected.Status == "active") {
+Dialog("revoke-agent", "Revoke " + selected.Name + "?", "It can no longer get tokens. Tokens it already holds expire within 10 minutes.", Uri.EscapeDataString(selected.Id) + "/revoke", "Revoke agent");
+@for (var index = 0; index < selected.Keys.Count; index++) { var key = selected.Keys[index]; if (key.RevokedAt is null) {
+Dialog("revoke-agent-key-" + index, "Revoke this key?", "The agent can still sign in with its other key, if it has one.", Uri.EscapeDataString(selected.Id) + "/keys/" + Uri.EscapeDataString(key.Kid) + "/revoke", "Revoke key");
+} }
+}
+} else {
+<section class="ts-card ts-card-boxed ts-card-flush" aria-labelledby="auth-agents-title">
+<header class="ts-card-head"><h2 class="ts-card-title" id="auth-agents-title">Agents</h2></header>
+<div class="ts-card-body"><p>AI agents that act for your users. Each agent signs in with its own key; revoke it here to stop it at once.</p>
+<form class="ts-filters" method="get" action="/auth/agents"><div class="ts-field"><label class="ts-label" for="agent-owner">Owner user ID</label><input class="ts-input ts-mono" id="agent-owner" name="owner" value="@Model.AgentOwner" pattern="[0-9A-HJKMNP-TV-Z]{26}" placeholder="01…" data-on:change="el.form.requestSubmit()" /></div></form></div>
+@if (Model.Agents is null) { <div class="ts-empty" role="status"><p class="ts-empty-title">Agents are unavailable.</p></div> }
+else if (Model.Agents.Count == 0) { <div class="ts-empty" role="status"><p class="ts-empty-title">No agents yet. Agents appear here when a user enrolls one or your backend creates one through the API.</p></div> }
+else {
+<div class="ts-table-wrap" tabindex="0" role="region" aria-label="Agents"><table class="ts-table ts-table-stacked"><thead><tr><th scope="col">Name</th><th scope="col">Owner</th><th scope="col">Status</th><th scope="col">Scopes</th><th scope="col">Keys</th><th scope="col">Created</th><th scope="col">Last used</th><th scope="col">Expires</th></tr></thead><tbody>
+@foreach (var agent in Model.Agents) {
+<tr><td class="ts-table-strong"><a class="ts-link" href="@Detail(agent.Id)">@agent.Name</a></td><td data-label="Owner"><a class="ts-link ts-mono ts-break" href="@Owner(agent.OwnerUserId)">@agent.OwnerUserId</a></td><td data-label="Status">@{ Status(agent); }</td><td class="ts-break" data-label="Scopes">@string.Join(", ", agent.AllowedScopes)</td>
+<td data-label="Keys"><ul class="ts-idp-uris">@foreach (var key in agent.Keys) { <li class="ts-mono">@Prefix(key.Kid) · @Prefix(key.Thumbprint)@(key.RevokedAt is null ? "" : " · Revoked")</li> }</ul></td>
+<td data-label="Created">@Date(agent.CreatedAt)</td><td data-label="Last used">@Date(agent.LastUsedAt)</td><td data-label="Expires">@Date(agent.ExpiresAt)</td></tr>
+}
+</tbody></table></div>
+}
+@if (Model.Next is not null || Model.After.Length > 0) {
+<nav class="ts-pager" aria-label="Agents pages"><div class="ts-row"><a class="ts-btn ts-btn-secondary ts-btn-sm" href="@("/auth/agents?owner=" + Uri.EscapeDataString(Model.AgentOwner))">First page</a>
+@if (Model.Next is not null) { <a class="ts-btn ts-btn-secondary ts-btn-sm" href="@("/auth/agents?owner=" + Uri.EscapeDataString(Model.AgentOwner) + "&after=" + Uri.EscapeDataString(Model.Next))">Next page</a> }
+</div></nav>
+}
+</section>
+@if (Model.AgentPolicy is { } policy) {
+<section class="ts-card ts-card-boxed ts-card-flush ts-idp-settings" aria-labelledby="agent-policy-title"><header class="ts-card-head"><h2 class="ts-card-title" id="agent-policy-title">Agent policy</h2></header>
+<form method="post" action="@Path("policy")" data-on:submit="evt.preventDefault(); @@post('@Path("policy")', {contentType:'form'})">
+<input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" />
+<div class="ts-card-body"><p>Scopes agents may request. An empty list blocks new agents; existing agents keep their scopes.</p><div class="ts-field"><label class="ts-label" for="agent-scopes">Allowed scopes</label><textarea class="ts-input ts-mono" id="agent-scopes" name="allowed_scopes" rows="3" placeholder="invoices:read&#10;invoices:write" disabled="@(!manage)">@(Model.Error.Length > 0 && Model.Draft is { } draft ? draft["allowed_scopes"].ToString() : string.Join("\n", policy.AllowedScopes))</textarea></div></div>
+@if (manage) { <footer class="ts-card-foot"><button type="submit" class="ts-btn ts-btn-primary">Save policy</button></footer> }
+</form></section>
+}
+}

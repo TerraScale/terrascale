@@ -116,6 +116,7 @@ const tabStates: Record<string, PagePattern['query']> = {
 const authSections: [string, string][] = [
   ['overview', 'Overview'],
   ['users', 'Users'],
+  ['agents', 'Agents'],
   ['invitations', 'Invitations'],
   ['waitlist', 'Waitlist'],
   ['restrictions', 'Restrictions'],
@@ -405,8 +406,8 @@ export const dashboardStates: readonly PageState[] = [
     ([section, label]): PageState => ({
       name: `authentication ${label.toLowerCase()}`,
       url: () => `/auth/${section}`,
-      covers: { path: new RegExp(`^/auth/${section}$`), query: { saved: /^1?$/, ...(section === 'logs' ? { after: optionalId } : section === 'users' || section === 'sessions' ? { user: optionalId } : section === 'organizations' ? { org: optionalId, after: optionalId, view: /^(members|invitations|domains)?$/ } : {}) } },
-      heading: title('Authentication'),
+      covers: { path: new RegExp(`^/auth/${section}$`), query: { saved: /^1?$/, ...(section === 'agents' ? { agent: optionalId, owner: optionalId, after: optionalId } : section === 'logs' ? { after: optionalId } : section === 'users' || section === 'sessions' ? { user: optionalId } : section === 'organizations' ? { org: optionalId, after: optionalId, view: /^(members|invitations|domains)?$/ } : {}) } },
+      heading: title(section === 'agents' ? 'Agents' : 'Authentication'),
       data: async (page, journey) => {
         if (section === 'overview') await expect(page.locator('.ts-idp-kv dd').first()).toHaveText(journey.projectName);
         else if (section === 'logs') await expect(page.getByText('No events in the last 30 days.', { exact: true })).toBeVisible();
@@ -425,6 +426,10 @@ export const dashboardStates: readonly PageState[] = [
         else if (section === 'organizations') {
           await expect(page.getByRole('button', { name: 'Create organization', exact: true })).toBeVisible();
           await expect(page.locator('#org-slug')).toBeVisible();
+        }
+        else if (section === 'agents') {
+          await expect(page.getByText('No agents yet. Agents appear here when a user enrolls one or your backend creates one through the API.', { exact: true })).toBeVisible();
+          await expect(page.locator('#agent-scopes')).toBeVisible();
         }
         else if (section === 'users') await expect(page.getByText('No users yet.', { exact: true })).toBeVisible();
         else if (section === 'invitations') await expect(page.getByText('No invitations yet.', { exact: true })).toBeVisible();
