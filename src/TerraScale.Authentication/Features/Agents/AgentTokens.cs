@@ -161,7 +161,7 @@ public sealed class AgentTokens(AuthData data, KeyRing ring, AttemptLimiter limi
             (long)(expiresAt - issuedAt).TotalSeconds, scope);
         var acceptedUntil = DateTimeOffset.FromUnixTimeSeconds(exp) + ClockSkew;
         var gate = clock.GetUtcNow();
-        if (gate > acceptedUntil || agent.Value.ExpiresAt <= gate || expiresAt <= issuedAt)
+        if (gate > acceptedUntil || expiresAt <= gate)
         {
             return this.Refuse(project, agentId, "assertion or agent expired during issuance");
         }
