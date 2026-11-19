@@ -23,11 +23,12 @@ public sealed class AgentIdTokenEndpoint(AgentIdTransactions transactions, Attem
         Post(AgentIdIssuer.TokenPath);
         Name("agentid_token");
         Summary("Sign in as agent: token endpoint");
-        Description("application/x-www-form-urlencoded grant_type=authorization_code with code, redirect_uri, code_verifier and client_id; the client is public and sends no secret. The code lives 60 seconds and is redeemed once; a second redemption answers invalid_grant. The agent, the key that proved the sign-in and the owner are checked again, and their row versions are asserted in the same save that consumes the code, so a revocation that commits first fails the redemption with invalid_grant: a revoked or expired agent, a revoked proof key, or an owner disabled or signed out everywhere answers invalid_grant. The answer has id_token (ES256, signed by the agent issuer's keys in {origin}/agents/.well-known/jwks.json, aud the client_id), an encrypted access_token for the userinfo endpoint only, token_type Bearer, expires_in 300 and scope; never a refresh token. Every POST charges the caller address's shared token budget (as /terrascale/oauth/token), and each client_id 600 and each agent 60 redemptions a minute; more answer 429 rate_limited with Retry-After. Storage that does not answer answers 503 temporarily_unavailable.");
+        Description("application/x-www-form-urlencoded grant_type=authorization_code with code, redirect_uri and code_verifier. An origin client is public: it sends client_id and no secret. A registered client (POST /v1/terrascale/agentid-clients) authenticates with client_secret_basic (HTTP Basic client_id:client_secret) or client_secret_post (client_id and client_secret in the form); a missing, wrong, retired or deleted client's secret answers 401 invalid_client. The registration, its owner and the secret it was checked against are asserted in the same save that consumes the code, so a rotation without grace or a deletion that commits first fails the redemption with invalid_grant and leaves the code unconsumed. The code lives 60 seconds and is redeemed once; a second redemption answers invalid_grant. The agent, the key that proved the sign-in and the owner are checked again, and their row versions are asserted in the same save that consumes the code, so a revocation that commits first fails the redemption with invalid_grant: a revoked or expired agent, a revoked proof key, or an owner disabled or signed out everywhere answers invalid_grant. The answer has id_token (ES256, signed by the agent issuer's keys in {origin}/agents/.well-known/jwks.json, aud the client_id; for a registered client granted owner_email it carries owner_email and owner_email_verified only while the agent's owner shares their email for this agent), an encrypted access_token for the userinfo endpoint only, token_type Bearer, expires_in 300 and scope; never a refresh token. Every POST charges the caller address's shared token budget (as /terrascale/oauth/token), and each client_id 600 and each agent 60 redemptions a minute; more answer 429 rate_limited with Retry-After. Storage that does not answer answers 503 temporarily_unavailable.");
         Tags("Sign in as agent");
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(TokenRequestForm)));
         Produces<TokenBody>();
         Produces<OAuthErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<OAuthErrorBody>(StatusCodes.Status401Unauthorized);
         Produces<OAuthErrorBody>(StatusCodes.Status429TooManyRequests);
         Produces<OAuthErrorBody>(StatusCodes.Status503ServiceUnavailable);
         AllowAnonymous();
@@ -80,7 +81,13 @@ public sealed class AgentIdTokenEndpoint(AgentIdTransactions transactions, Attem
             return OidcResults.Forbid(Errors.InvalidGrant, "The agent can no longer sign in.");
         }
 
-        this.HttpContext.Items[AgentIdFence.Item] = live;
-        return Results.SignIn(AgentIdIssuer.Principal(options, clientId, live.SignIn, principal.GetScopes()), null, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
+        var registration = this.HttpContext.Items[new AgentIdRegistration.RequestCopy(clientId)] as AgentIdRegistration;
+        if (!AgentIdIssuer.IsOpenClient(clientId) && registration is null)
+        {
+            return OidcResults.Forbid(Errors.InvalidGrant, "The client is no longer registered.");
+        }
+
+        this.HttpContext.Items[AgentIdFence.Item] = live with { Registration = registration };
+        return Results.SignIn(AgentIdIssuer.Principal(options, clientId, live.SignIn, principal.GetScopes(), redemption: true), null, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
     }
 }

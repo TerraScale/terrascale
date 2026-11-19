@@ -108,13 +108,13 @@ public static class AgentIdIssuer
         return Base64Url.EncodeToString(HMACSHA256.HashData(key, Encoding.UTF8.GetBytes($"{kind}\n{clientId}\n{id}")));
     }
 
-    public static ClaimsPrincipal Principal(AuthOptions options, string clientId, AgentIdSignIn signIn, IEnumerable<string> scopes)
+    public static ClaimsPrincipal Principal(AuthOptions options, string clientId, AgentIdSignIn signIn, IEnumerable<string> scopes, bool redemption)
     {
         ArgumentNullException.ThrowIfNull(signIn);
         var (agent, ownerId) = (signIn.Agent, signIn.Owner.Id);
         List<string> granted = [.. scopes.Intersect(SupportedScopes, StringComparer.Ordinal)];
         var profile = granted.Contains(Scopes.Profile);
-        var email = SharesOwnerEmail(clientId, granted, signIn.Agent);
+        var email = redemption && SharesOwnerEmail(clientId, granted, signIn.Agent);
         var identity = new ClaimsIdentity(TokenValidationParameters.DefaultAuthenticationType, Claims.Name, Claims.Role)
             .SetClaim(Claims.Subject, Pairwise(options, "agent", clientId, agent.Id))
             .SetClaim(ActorTypeClaim, "agent")

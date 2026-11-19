@@ -27,7 +27,7 @@ test('a registered app signs in an agent with its client secret and sees the own
       expect(await prove(request, opened.proof_url,
         signInProof(agent.key.privateKey, approved.kid, approved.agentId, opened.proof_url, { txn: opened.transaction_id, client_id: opened.client_id }))).toBe(204);
       const tokens = await rp.redeem(await completed(request, rp, started), started, undefined, method);
-      expect(tokens.status, JSON.stringify(tokens.body)).toBe(200);
+      expect(tokens.status, String(tokens.body.error)).toBe(200);
       expect(tokens.body.scope).toBe(scope);
       return { identity: await rp.verify(tokens.body.id_token as string, started), access: { Authorization: 'Bearer ' + (tokens.body.access_token as string) } };
     };
@@ -36,14 +36,15 @@ test('a registered app signs in an agent with its client secret and sees the own
     expect((await request.post(clients, { headers: owned, data: { name: 'Journey app', redirect_uris: ['http://app.journey.terrascale.tech/auth/callback'] } })).status()).toBe(400);
     const created = await request.post(clients, { headers: await stepped('create_oauth_client'), data: { name: 'Journey app', redirect_uris: [redirect] } });
     expect(created.status()).toBe(201);
-    const client = await created.json() as { client_id: string; client_secret: string; name: string; redirect_uris: string[]; created_at: string };
+    const { client_secret: firstSecret, ...client } = await created.json() as { client_id: string; client_secret: string; name: string; redirect_uris: string[]; created_at: string };
+    expect(typeof firstSecret === 'string' && firstSecret.length === 48).toBe(true);
     const clientId = client.client_id;
-    expect(client).toMatchObject({ client_id: expect.stringMatching(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/), client_secret: expect.any(String), name: 'Journey app', redirect_uris: [redirect] });
+    expect(client).toEqual({ client_id: expect.stringMatching(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/), name: 'Journey app', redirect_uris: [redirect], created_at: expect.any(String) });
     expect(created.headers().location).toBe('/v1/terrascale/agentid-clients/' + clientId);
     const listed = (await (await request.get(clients, { headers: owned })).json()).items as Record<string, unknown>[];
     expect(listed).toEqual([{ client_id: clientId, name: 'Journey app', redirect_uris: [redirect], created_at: client.created_at }]);
 
-    const rp = new RelyingParty(request, issuer, clientId, redirect, client.client_secret);
+    const rp = new RelyingParty(request, issuer, clientId, redirect, firstSecret);
     expect((await authorizeStatus(request, await rp.start(), { redirect_uri: 'https://app.journey.terrascale.tech/auth/other' })).status).toBe(400);
     const first = await signIn(rp, 'openid profile owner_email');
     expect(first.identity).toMatchObject({ aud: clientId, actor_type: 'agent', name: 'Shopping agent' });
@@ -66,8 +67,9 @@ test('a registered app signs in an agent with its client secret and sees the own
     const mine = (await (await request.get(root + '/me/agents', { headers: owned })).json()).items.find((item: { id: string }) => item.id === approved.agentId);
     expect(mine.share_owner_email).toBe(true);
 
-    expect(await (await request.get(issuer + '/oauth/userinfo', { headers: first.access })).json())
-      .toEqual({ ...firstInfo, owner_email: ownerEmail, owner_email_verified: true });
+    const sharedInfo = await request.get(issuer + '/oauth/userinfo', { headers: first.access });
+    expect(sharedInfo.headers()['cache-control']).toBe('no-store');
+    expect(await sharedInfo.json()).toEqual({ ...firstInfo, owner_email: ownerEmail, owner_email_verified: true });
     const second = await signIn(rp, 'openid owner_email', 'post');
     expect(second.identity).toMatchObject({ sub: first.identity.sub, owner_email: ownerEmail, owner_email_verified: true });
     expect(second.identity.name).toBeUndefined();
@@ -98,8 +100,8 @@ test('a registered app signs in an agent with its client secret and sees the own
       return { status: answer.status, error: answer.body.error };
     };
     const refused = { status: 401, error: 'invalid_client' };
-    expect(await accepts(client.client_secret)).toBe(true);
-    expect(await refusesClient('wrong-' + client.client_secret)).toEqual(refused);
+    expect(await accepts(firstSecret)).toBe(true);
+    expect(await refusesClient('wrong-' + firstSecret)).toEqual(refused);
     const secretless = await rp.start('openid');
     const secretlessOpened = await pending(request, secretless);
     expect(await prove(request, secretlessOpened.proof_url, signInProof(agent.key.privateKey, approved.kid, approved.agentId, secretlessOpened.proof_url,
@@ -110,20 +112,35 @@ test('a registered app signs in an agent with its client secret and sees the own
     expect((await rp.redeem(secretlessCode, secretless)).status).toBe(200);
     const rotated = await request.post(`${clients}/${clientId}/secret/rotate`, { headers: await stepped('rotate_oauth_client') });
     expect(rotated.status()).toBe(200);
-    const rotatedSecret = await rotated.json() as { client_id: string; client_secret: string; previous_secret_expires_at: string };
-    expect(rotatedSecret).toMatchObject({ client_id: clientId, previous_secret_expires_at: expect.any(String) });
-    expect(await accepts(client.client_secret)).toBe(true);
-    expect(await accepts(rotatedSecret.client_secret)).toBe(true);
+    const { client_secret: rotatedSecret, ...rotation } = await rotated.json() as { client_id: string; client_secret: string; previous_secret_expires_at: string };
+    expect(rotation).toEqual({ client_id: clientId, previous_secret_expires_at: expect.any(String) });
+    expect(await accepts(firstSecret)).toBe(true);
+    expect(await accepts(rotatedSecret)).toBe(true);
     const ended = await request.post(`${clients}/${clientId}/secret/rotate`, { headers: await stepped('rotate_oauth_client'), data: { grace_seconds: 0 } });
     expect(ended.status()).toBe(200);
     const lastSecret = (await ended.json()).client_secret as string;
-    expect(await refusesClient(client.client_secret)).toEqual(refused);
-    expect(await refusesClient(rotatedSecret.client_secret)).toEqual(refused);
+    expect(await refusesClient(firstSecret)).toEqual(refused);
+    expect(await refusesClient(rotatedSecret)).toEqual(refused);
     expect(await accepts(lastSecret)).toBe(true);
+
+    expect((await request.patch(`${root}/me/agents/${approved.agentId}`, { headers: owned, data: { share_owner_email: true } })).status()).toBe(200);
+    const latest = new RelyingParty(request, issuer, clientId, redirect, lastSecret);
+    const beforeDelete = await signIn(latest, 'openid owner_email');
+    expect(beforeDelete.identity.owner_email).toBe(ownerEmail);
+    const unredeemed = await latest.start('openid owner_email');
+    const unredeemedOpened = await pending(request, unredeemed);
+    expect(await prove(request, unredeemedOpened.proof_url, signInProof(agent.key.privateKey, approved.kid, approved.agentId, unredeemedOpened.proof_url,
+      { txn: unredeemedOpened.transaction_id, client_id: unredeemedOpened.client_id }))).toBe(204);
+    const unredeemedCode = await completed(request, latest, unredeemed);
 
     expect((await request.delete(`${clients}/${clientId}`, { headers: owned })).status()).toBe(403);
     expect((await request.delete(`${clients}/${clientId}`, { headers: await stepped('delete_oauth_client') })).status()).toBe(204);
     expect(await refusesClient(lastSecret)).toEqual(refused);
+    const deletedInfo = await request.get(issuer + '/oauth/userinfo', { headers: beforeDelete.access });
+    expect(deletedInfo.status()).toBe(401);
+    expect(deletedInfo.headers()['www-authenticate']).toContain('invalid_token');
+    const lateRedemption = await latest.redeem(unredeemedCode, unredeemed);
+    expect({ status: lateRedemption.status, error: lateRedemption.body.error }).toEqual(refused);
     expect((await authorizeStatus(request, probe, {})).status).toBe(400);
     expect((await (await request.get(clients, { headers: owned })).json()).items).toEqual([]);
     await audit.finish();

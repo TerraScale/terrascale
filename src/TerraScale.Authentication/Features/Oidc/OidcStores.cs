@@ -109,7 +109,9 @@ public sealed class OidcApplicationStore(AuthData data, Credentials credentials,
         var tenant = this.Tenant;
         if (tenant == AgentIdIssuer.Slug)
         {
-            return await services.GetRequiredService<AgentIdClients>().FindAsync(identifier, cancellationToken).ConfigureAwait(false);
+            var registration = await services.GetRequiredService<AgentIdClients>().FindAsync(identifier, cancellationToken).ConfigureAwait(false);
+            http.HttpContext?.Items[new AgentIdRegistration.RequestCopy(identifier)] = registration;
+            return registration?.Application;
         }
 
         var application = await data.ReadAsync((db, token) => db.OidcApplications.SingleOrDefaultAsync(row => row.InstanceId == tenant && row.Id == identifier, token),

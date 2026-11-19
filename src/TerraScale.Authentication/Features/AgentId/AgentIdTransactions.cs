@@ -27,11 +27,11 @@ public sealed record AgentIdPendingBody(string Status, string TransactionId, str
 
 public sealed record AgentIdSignIn(AgentRecord Agent, UserRecord Owner, string Kid);
 
-public sealed record AgentIdFence(Versioned<AgentKeyRecord> Key, Versioned<AgentRecord> Agent, Versioned<UserRecord> Owner)
+public sealed record AgentIdFence(Versioned<AgentKeyRecord> Key, Versioned<AgentRecord> Agent, Versioned<UserRecord> Owner, AgentIdRegistration? Registration = null)
 {
     public const string Item = "ts-auth:agentid-fence";
 
-    public IReadOnlyList<Change> Asserts => [Change.Assert(this.Key), Change.Assert(this.Agent), Change.Assert(this.Owner)];
+    public IReadOnlyList<Change> Asserts => [Change.Assert(this.Key), Change.Assert(this.Agent), Change.Assert(this.Owner), .. this.Registration?.Asserts ?? []];
 
     public AgentIdSignIn SignIn => new(this.Agent.Value, this.Owner.Value, this.Key.Value.Kid);
 }

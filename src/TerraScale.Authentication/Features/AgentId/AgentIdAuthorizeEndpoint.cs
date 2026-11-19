@@ -87,7 +87,7 @@ public abstract class AgentIdAuthorizeEndpoint(AgentIdTransactions transactions,
         }
 
         return await transactions.CompleteAsync(transaction, cancellationToken) is { } signIn
-            ? Results.SignIn(AgentIdIssuer.Principal(options, clientId, signIn, request.GetScopes()), null, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme)
+            ? Results.SignIn(AgentIdIssuer.Principal(options, clientId, signIn, request.GetScopes(), redemption: false), null, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme)
             : Results.Forbid(OidcResults.Error(Errors.AccessDenied, "The agent can no longer sign in."), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
     }
 }

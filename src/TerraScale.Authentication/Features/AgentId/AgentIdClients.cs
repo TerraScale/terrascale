@@ -20,6 +20,13 @@ public sealed record AgentIdClientRecord(string Id, string OwnerUserId, string N
     public const int MaxRedirectUriLength = 2048;
 }
 
+public sealed record AgentIdRegistration(Versioned<AgentIdClientRecord> Client, Versioned<UserRecord> Owner, OidcApplication Application)
+{
+    public IReadOnlyList<Change> Asserts => [Change.Assert(this.Client), Change.Assert(this.Owner)];
+
+    public readonly record struct RequestCopy(string ClientId);
+}
+
 public sealed record CreateAgentIdClientRequest(string? Name, IReadOnlyList<string>? RedirectUris);
 
 public sealed record RotateAgentIdClientRequest(int? GraceSeconds);
@@ -41,9 +48,11 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
 
     public static readonly TimeSpan MaxGrace = TimeSpan.FromDays(1);
 
-    public async Task<AgentIdClientBody> CreateAsync(UserRecord owner, string name, IReadOnlyList<string> redirectUris, CancellationToken cancellationToken)
+    internal async Task<AgentIdClientBody> CreateAsync(PreparedStepUp proof, string name, IReadOnlyList<string> redirectUris, CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(owner);
+        ArgumentNullException.ThrowIfNull(proof);
+        var owner = proof.Caller;
+        using var home = HomeReads.Begin();
         var user = await data.ReadAsync((db, token) => db.Users.Where(row => row.InstanceId == owner.InstanceId && row.Id == owner.Id).WithVersion().SingleOrDefaultAsync(token),
             cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
         var count = await data.ReadAsync((db, token) => db.AgentIdClients.CountAsync(row => row.OwnerUserId == owner.Id, token), cancellationToken).ConfigureAwait(false);
@@ -54,22 +63,22 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
 
         var secret = Tokens.RandomToken(48);
         var client = new AgentIdClientRecord(AuthIds.New(), owner.Id, name, redirectUris, Tokens.Sha256Hex(secret), clock.GetUtcNow());
-        if (!await data.SaveAsync([Change.Insert(client), Change.Update(user, user.Value)], cancellationToken).ConfigureAwait(false))
-        {
-            throw new ApiException(409, "version_conflict", "The account changed concurrently; try again.");
-        }
-
+        await this.SaveAsync(proof, [Change.Insert(client), Change.Update(user, user.Value)], cancellationToken).ConfigureAwait(false);
         logger.ZLogInformation($"Sign in as agent client {client.Id} created by {owner.Id}");
         return Body(client) with { ClientSecret = secret };
     }
 
-    public async Task<AgentIdClientPageBody> ListAsync(string ownerId, CancellationToken cancellationToken) =>
-        new([.. (await data.ReadAsync((db, token) => db.AgentIdClients.Where(row => row.OwnerUserId == ownerId).OrderBy(row => row.Id).ToListAsync(token), cancellationToken)
-            .ConfigureAwait(false)).Select(Body)]);
-
-    public async Task<AgentIdClientSecretBody> RotateAsync(string ownerId, string clientId, TimeSpan grace, CancellationToken cancellationToken)
+    public async Task<AgentIdClientPageBody> ListAsync(string ownerId, CancellationToken cancellationToken)
     {
-        var client = await this.OwnedAsync(ownerId, clientId, cancellationToken).ConfigureAwait(false);
+        using var home = HomeReads.Begin();
+        return new([.. (await data.ReadAsync((db, token) => db.AgentIdClients.Where(row => row.OwnerUserId == ownerId).OrderBy(row => row.Id).ToListAsync(token), cancellationToken)
+            .ConfigureAwait(false)).Select(Body)]);
+    }
+
+    internal async Task<AgentIdClientSecretBody> RotateAsync(PreparedStepUp proof, string clientId, TimeSpan grace, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(proof);
+        var client = await this.OwnedAsync(proof.Caller.Id, clientId, cancellationToken).ConfigureAwait(false);
         var secret = Tokens.RandomToken(48);
         var expires = grace > TimeSpan.Zero ? clock.GetUtcNow() + grace : (DateTimeOffset?)null;
         var rotated = client.Value with
@@ -78,34 +87,29 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
             PreviousSecretDigest = expires is null ? null : client.Value.SecretDigest,
             PreviousSecretExpiresAt = expires,
         };
-        if (!await data.SaveAsync(Change.Update(client, rotated), cancellationToken).ConfigureAwait(false))
-        {
-            throw new ApiException(409, "version_conflict", "The client changed concurrently; try again.");
-        }
-
-        logger.ZLogInformation($"Sign in as agent client {clientId} secret rotated by {ownerId}");
+        await this.SaveAsync(proof, [Change.Update(client, rotated)], cancellationToken).ConfigureAwait(false);
+        logger.ZLogInformation($"Sign in as agent client {clientId} secret rotated by {proof.Caller.Id}");
         return new(clientId, secret, expires);
     }
 
-    public async Task DeleteAsync(string ownerId, string clientId, CancellationToken cancellationToken)
+    internal async Task DeleteAsync(PreparedStepUp proof, string clientId, CancellationToken cancellationToken)
     {
-        var client = await this.OwnedAsync(ownerId, clientId, cancellationToken).ConfigureAwait(false);
-        if (!await data.SaveAsync(Change.Delete(client), cancellationToken).ConfigureAwait(false))
-        {
-            throw new ApiException(409, "version_conflict", "The client changed concurrently; try again.");
-        }
-
-        logger.ZLogInformation($"Sign in as agent client {clientId} deleted by {ownerId}");
+        ArgumentNullException.ThrowIfNull(proof);
+        var client = await this.OwnedAsync(proof.Caller.Id, clientId, cancellationToken).ConfigureAwait(false);
+        await this.SaveAsync(proof, [Change.Delete(client)], cancellationToken).ConfigureAwait(false);
+        logger.ZLogInformation($"Sign in as agent client {clientId} deleted by {proof.Caller.Id}");
     }
 
-    public async Task<OidcApplication?> FindAsync(string clientId, CancellationToken cancellationToken)
+    public async Task<AgentIdRegistration?> FindAsync(string clientId, CancellationToken cancellationToken)
     {
+        using var home = HomeReads.Begin();
         var (client, owner) = await data.ReadAsync(async (db, token) =>
         {
-            var found = await db.AgentIdClients.SingleOrDefaultAsync(row => row.Id == clientId, token).ConfigureAwait(false);
-            return (found, found is null ? null : await db.Users.SingleOrDefaultAsync(row => row.InstanceId == PlatformTenant.Id && row.Id == found.OwnerUserId, token).ConfigureAwait(false));
+            var found = await db.AgentIdClients.Where(row => row.Id == clientId).WithVersion().SingleOrDefaultAsync(token).ConfigureAwait(false);
+            return (found, found is null ? null : await db.Users.Where(row => row.InstanceId == PlatformTenant.Id && row.Id == found.Value.OwnerUserId).WithVersion()
+                .SingleOrDefaultAsync(token).ConfigureAwait(false));
         }, cancellationToken).ConfigureAwait(false);
-        return client is not null && owner is { Disabled: false } ? Describe(client, clock.GetUtcNow()) : null;
+        return client is not null && owner is { Value.Disabled: false } ? new(client, owner, Describe(client.Value, clock.GetUtcNow())) : null;
     }
 
     public static UserRecord Owner(UserRecord caller)
@@ -144,9 +148,25 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
         Version = string.Create(CultureInfo.InvariantCulture, $"agentid-client:{client.Id}"),
     };
 
-    private async Task<Versioned<AgentIdClientRecord>> OwnedAsync(string ownerId, string clientId, CancellationToken cancellationToken) =>
-        await data.ReadAsync((db, token) => db.AgentIdClients.Where(row => row.Id == clientId && row.OwnerUserId == ownerId).WithVersion().SingleOrDefaultAsync(token),
+    private async Task<Versioned<AgentIdClientRecord>> OwnedAsync(string ownerId, string clientId, CancellationToken cancellationToken)
+    {
+        using var home = HomeReads.Begin();
+        return await data.ReadAsync((db, token) => db.AgentIdClients.Where(row => row.Id == clientId && row.OwnerUserId == ownerId).WithVersion().SingleOrDefaultAsync(token),
             cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+    }
+
+    private async Task SaveAsync(PreparedStepUp proof, IReadOnlyList<Change> changes, CancellationToken cancellationToken)
+    {
+        if (proof.Record.ExpiresAt <= clock.GetUtcNow())
+        {
+            throw StepUpProofs.Required();
+        }
+
+        if (!await data.SaveAsync([.. proof.Operations, .. changes], cancellationToken).ConfigureAwait(false))
+        {
+            throw new ApiException(409, "version_conflict", "The client, the account or its step-up proof changed; try again.");
+        }
+    }
 
     private static AgentIdClientBody Body(AgentIdClientRecord client) =>
         new(client.Id, client.Name, client.RedirectUris, client.CreatedAt, client.PreviousSecretDigest is null ? null : client.PreviousSecretExpiresAt);

@@ -191,6 +191,7 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
 
     public async Task<AgentBody> ShareOwnerEmailAsync(string project, string agentId, string owner, bool share, CancellationToken cancellationToken)
     {
+        using var home = HomeReads.Begin();
         var agent = await data.ReadAsync((db, token) => db.Agents.Where(row => row.ProjectId == project && row.Id == agentId && row.OwnerUserId == owner).WithVersion()
             .SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
         var shared = agent.Value with { ShareOwnerEmail = share };

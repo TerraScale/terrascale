@@ -90,7 +90,11 @@ account has at most 10 clients (`409 client_limit`).
 The proof goes in `X-TerraScale-Step-Up-Proof` ([step-up proofs](step-up-proof.md)). Rotation answers the new
 `client_secret` once and `previous_secret_expires_at`: the previous secret keeps working for `grace_seconds` (default
 3600), then is refused like any wrong secret; rotating again inside the grace replaces the previous secret, and
-`grace_seconds: 0` ends it at once. A deleted client's next authorization request, redemption and secret are refused.
+`grace_seconds: 0` ends it at once. A deleted client's next authorization request, redemption and secret are refused, and UserInfo refuses its access
+tokens with `401 invalid_token`. Redemption asserts the client registration, its owner and the secret version it
+was checked against in the same save that consumes the code: a rotation without grace or a deletion that commits
+first fails the redemption and leaves the code unused. Creation, rotation and deletion spend their step-up proof in
+the same save as the change, so a sign-out everywhere that commits first refuses them with `409`.
 Only the account itself manages its clients: another account's client is `404`, and a token an agent acts with is
 `403 owner_required`. A disabled or deleted account's clients stop working with it.
 
@@ -123,7 +127,9 @@ ID token claims:
 Claims that are not granted are left out, never `null`. Nothing reveals the agent's or the owner's TerraScale ids, and
 only `owner_email` reveals the owner's email. Two apps cannot link their subjects: each pairwise value is an HMAC under a key derived from the master key,
 over the client ID and the id. `name` is profile data, not an identifier: apps that both ask for `profile` see the same
-name and can use it to correlate an agent across them.
+name and can use it to correlate an agent across them. Likewise `owner_email` is the same for every client: two
+registered clients that both receive it can correlate the owner's account across them, whatever their pairwise
+subjects say.
 
 UserInfo answers the same `sub`, `actor_type`, `name`, `owner_sub`, `owner_email` and `owner_email_verified` (as
 granted and shared) for the access token, and reads the agent and its owner again on every call. The access token is encrypted and is only good at this UserInfo endpoint; no other
@@ -147,8 +153,8 @@ Content-Type: application/json
 The answer is the agent, with `share_owner_email`; `GET /v1/terrascale/me/agents` lists it too. Consent is the
 owner's and covers every registered client the agent signs in to, whichever account registered it; the agent itself
 chooses which client it signs a proof for. ID tokens carry the email as of the redemption, which reads the flag in
-the same save that consumes the code; UserInfo reads it on every call, so turning sharing off hides the email from
-UserInfo at once, and ID tokens already issued keep it until they expire (5 minutes).
+the same save that consumes the code; UserInfo reads it from the home region on every call and answers with
+`Cache-Control: no-store`, so turning sharing off hides the email from UserInfo at once, and ID tokens already issued keep it until they expire (5 minutes).
 
 ## How an agent completes the sign-in
 
