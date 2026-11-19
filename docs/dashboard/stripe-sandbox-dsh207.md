@@ -34,7 +34,7 @@ The command reports observations from the account it reads. This guide does
 not claim that a current sandbox or live audit has passed. A read-only audit
 does not exercise signed webhook delivery, checkout completion, card failure,
 upgrades, downgrades, renewal or trial expiry; those require separate verified
-acceptance evidence before a staging gate can be considered complete.
+acceptance evidence before accepting the billing flows.
 
 ## OCI runtime
 

@@ -18,7 +18,7 @@ namespace TerraScale.Dashboard.Platform.TsAuth
             return Uri.TryCreate(value, UriKind.Absolute, out var origin) && origin.Scheme == Uri.UriSchemeHttps && origin.IsDefaultPort &&
                 origin.UserInfo.Length == 0 && origin.AbsolutePath == "/" && origin.Query.Length == 0 && origin.Fragment.Length == 0
                 ? origin
-                : throw new InvalidOperationException($"{Name} must be an https origin without port, path, query or fragment, such as https://stg.auth.terrascale.tech.");
+                : throw new InvalidOperationException($"{Name} must be an https origin without port, path, query or fragment, such as https://auth.terrascale.tech.");
         }
     }
 }
