@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { once } from 'node:events';
 import { request as httpRequest } from 'node:http';
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, truncateSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, renameSync, truncateSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect } from '@playwright/test';
 import { test, database, json, name, project, removeDatabase, sql, type Cells } from '../placement/support';
@@ -1886,22 +1886,21 @@ test('a home lease that names a non-writer of the home region at the placement v
     expect(await ledger.refusal(gru, token, [[940, 'while-not-writer']]), 'journey-1 refuses a write while the lease names journey-3')
       .toEqual({ status: 409, code: 'serialization_conflict' });
 
-    const files = join(stateDir, gru.service, organizationId, projectId);
-    const aside = join(stateDir, `aside-${ledger.id}`);
-    mkdirSync(aside);
-    const withoutPrimary = restartAfterKill(gru);
-    const moved = readdirSync(files).filter(file => file.startsWith(`${ledger.id}.db`));
-    expect(moved, 'journey-1 holds the primary file').toContain(`${ledger.id}.db`);
-    for (const file of moved) renameSync(join(files, file), join(aside, file));
-    await withoutPrimary();
-    const missing = await repair(ledger.id);
-    expect(missing.status, missing.body).toBe(409);
-    expect(JSON.parse(missing.body).error.code, 'a writer without a primary file proves nothing').toBe('unproven');
-    expect(missing.body).toContain('holds no primary file');
-    expect((await homeLease(kv, ledger.id)).seq, 'the refused repair leaves the lease revision as it was').toBe(claimed.seq);
-    const withPrimary = restartAfterKill(gru);
-    for (const file of moved) renameSync(join(aside, file), join(files, file));
-    await withPrimary();
+    const primary = join(stateDir, gru.service, organizationId, projectId, `${ledger.id}.db`);
+    const aside = join(stateDir, `aside-${ledger.id}.db`);
+    const heldPrimary = async () => JSON.parse((await nodeRequest(gru, `/v1/sync${route(ledger.id)}/positions`)).body).primary as string | null;
+    renameSync(primary, aside);
+    try {
+      await expect.poll(heldPrimary, { message: 'journey-1 answers that it holds no primary file once it is moved aside' }).toBeNull();
+      const missing = await repair(ledger.id);
+      expect(missing.status, missing.body).toBe(409);
+      expect(JSON.parse(missing.body).error.code, 'a writer without a primary file proves nothing').toBe('unproven');
+      expect(missing.body).toContain('holds no primary file');
+      expect((await homeLease(kv, ledger.id)).seq, 'the refused repair leaves the lease revision as it was').toBe(claimed.seq);
+    } finally {
+      renameSync(aside, primary);
+    }
+    await expect.poll(heldPrimary, { message: 'journey-1 holds its primary file again' }).not.toBeNull();
 
     const repaired = await repair(ledger.id);
     expect(repaired.status, repaired.body).toBe(200);
