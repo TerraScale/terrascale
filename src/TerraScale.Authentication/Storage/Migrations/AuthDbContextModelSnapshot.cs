@@ -3823,12 +3823,6 @@ namespace TerraScale.Authentication.Storage.Migrations
 
             modelBuilder.Entity("TerraScale.Authentication.Features.Agents.AgentEnrollmentRecord", b =>
                 {
-                    b.HasOne("TerraScale.Authentication.Contracts.ProjectRecord", null)
-                        .WithMany()
-                        .HasForeignKey("ProjectId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
                     b.HasOne("TerraScale.Authentication.Contracts.UserRecord", null)
                         .WithMany()
                         .HasForeignKey("UserId")
@@ -3863,12 +3857,6 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.HasOne("TerraScale.Authentication.Contracts.UserRecord", null)
                         .WithMany()
                         .HasForeignKey("OwnerUserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("TerraScale.Authentication.Contracts.ProjectRecord", null)
-                        .WithMany()
-                        .HasForeignKey("ProjectId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

@@ -24,7 +24,6 @@ public sealed partial class AuthDbContext
             agent.HasKey(row => new { row.ProjectId, row.Id });
             agent.HasIndex(row => new { row.ProjectId, row.OwnerUserId });
             agent.HasOne<UserRecord>().WithMany().HasForeignKey(row => row.OwnerUserId).OnDelete(DeleteBehavior.Cascade);
-            agent.HasOne<ProjectRecord>().WithMany().HasForeignKey(row => row.ProjectId).OnDelete(DeleteBehavior.Cascade);
             agent.Property(row => row.Name).HasMaxLength(64).IsRequired();
             agent.Property(row => row.Status).HasMaxLength(8).IsRequired();
             agent.Property(row => row.OwnerAuthStamp).HasMaxLength(26).IsRequired();
@@ -70,7 +69,6 @@ public sealed partial class AuthDbContext
             enrollment.HasKey(row => new { row.ProjectId, row.Id });
             enrollment.HasIndex(row => new { row.ProjectId, row.UserCodeHash }).IsUnique();
             enrollment.HasIndex(row => row.ExpiresAt);
-            enrollment.HasOne<ProjectRecord>().WithMany().HasForeignKey(row => row.ProjectId).OnDelete(DeleteBehavior.Cascade);
             enrollment.HasOne<UserRecord>().WithMany().HasForeignKey(row => row.UserId).OnDelete(DeleteBehavior.Cascade);
             enrollment.HasOne<AgentRecord>().WithMany().HasForeignKey(row => new { row.ProjectId, row.AgentId }).OnDelete(DeleteBehavior.Cascade);
             enrollment.Property(row => row.UserCodeHash).HasMaxLength(64).IsRequired();
