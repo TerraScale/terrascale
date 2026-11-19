@@ -685,3 +685,29 @@ An execute outside a confirmed transaction, or behind unanswered transaction con
 A lost read or non-committing statement inside a confirmed open transaction retains the transaction-lost behavior.
 Only a confirmed refusal or a request proven not sent permits a rollback assertion; reconcile an uncertain write
 through another session before deciding whether to repeat it.
+
+### Agent identities
+
+```js
+import { createTsAuthClient, verifyAgentToken } from '@terrascale/sdk/ts-auth';
+
+const auth = createTsAuthClient({ apiBaseUrl: 'https://auth.terrascale.tech', instanceSlug: project });
+const enrollment = await auth.agents.enroll({ project, name: 'Invoice agent', scopes: ['invoices:read'] });
+if (!enrollment.ok) throw new Error(enrollment.error.code);
+console.log(enrollment.value.userCode, enrollment.value.verificationUriComplete, enrollment.value.fingerprint);
+const identity = await enrollment.value.wait();
+if (!identity.ok) throw new Error(identity.error.code);
+const token = await auth.agents.getToken({ project, ...identity.value });
+if (!token.ok) throw new Error(token.error.code);
+const verified = await verifyAgentToken(token.value.access_token, { project });
+```
+
+The owner approves in the browser. Keep the non-extractable WebCrypto key in the agent process
+(or browser IndexedDB); no private key leaves it. Node 20+ and browsers with WebCrypto support the helpers.
+Tokens are cached in memory and refreshed thirty seconds before expiry. Agent tokens have no audience;
+passing an audience to verification requires that audience and refuses these tokens. Offline verification
+cannot detect revocation until the token expires, within five minutes. See the [agent contract](../../docs/auth/agent-identities.md).
+
+Project management provides `createAgent`, `listAgents`, `listUserAgents`, `getAgent` (including its keys),
+`revokeAgent`, `addAgentKey`, `revokeAgentKey`, `getAgentPolicy` and `setAgentPolicy` through `auth.projects`.
+These operations need an administrator sign-in or an unrestricted project key with `auth:read` or `auth:write`.
