@@ -781,18 +781,21 @@ test('a retired source whose fra replica cannot catch up hands the role back onl
   let lease: { key: string; served: { value: HomeLease } } | undefined;
   let stopRefusing: (() => Promise<void>) | undefined;
   let restartPartner: (() => Promise<void>) | undefined;
+  const created: string[] = [];
   let failure: unknown;
   try {
     await restartAfterKill(partner, false)();
     const [ledger] = await createLedgers(cells, 1, 'unserved-retiring');
-    const created = await json<{ id: string; homeRegion: string }>(await cells.post(`${endpoint('fra')}${project()}/databases`, {
+    created.push(ledger.id);
+    const homedInFra = await json<{ id: string; homeRegion: string }>(await cells.post(`${endpoint('fra')}${project()}/databases`, {
       data: { name: name('unserved-retiring-fra'), homeRegion: 'fra', replicaRegions: ['gru'] },
     }), 201);
-    expect(created.homeRegion, 'a database created in fra is homed there').toBe('fra');
-    const fraLedger = new Ledger(created.id);
-    await sql(cells, endpoint('fra'), created.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
-    await sql(cells, endpoint('fra'), created.id, 'CREATE TABLE local_rows (id TEXT PRIMARY KEY, value TEXT NOT NULL)');
-    await sql(cells, endpoint('fra'), created.id, "INSERT INTO local_rows (id, value) VALUES ('acknowledged', 'homed-in-fra')");
+    created.push(homedInFra.id);
+    expect(homedInFra.homeRegion, 'a database created in fra is homed there').toBe('fra');
+    const fraLedger = new Ledger(homedInFra.id);
+    await sql(cells, endpoint('fra'), homedInFra.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
+    await sql(cells, endpoint('fra'), homedInFra.id, 'CREATE TABLE local_rows (id TEXT PRIMARY KEY, value TEXT NOT NULL)');
+    await sql(cells, endpoint('fra'), homedInFra.id, "INSERT INTO local_rows (id, value) VALUES ('acknowledged', 'homed-in-fra')");
     await fraLedger.write(cells, 'fra', [[100, 'homed-in-fra']]);
     await fraLedger.compare(cells);
     const leaseKey = `home.${fraLedger.id}`;
@@ -810,7 +813,10 @@ test('a retired source whose fra replica cannot catch up hands the role back onl
     expect(away.status, away.body).toBe(204);
     await writerIs('gru', partner.name);
     await restartAfterKill(gru, false)();
-    await expect.poll(sameHeld, { message: 'the restarted journey-1 holds what journey-3 holds of the fra database', timeout: 60_000 }).toBe(true);
+    const beforeRestartWrite = await held(partner);
+    await fraLedger.write(cells, 'fra', [[99, 'pulled-by-the-restarted-journey-1']]);
+    await expect.poll(async () => { const [mine, theirs] = await Promise.all([held(gru), held(partner)]); return theirs !== beforeRestartWrite && mine === theirs; },
+      { message: 'the restarted journey-1 follows the fra database and pulls its new row', timeout: 60_000 }).toBe(true);
     const caughtUp = await prime();
     expect(caughtUp.status, `journey-1 catches every replica up before the fault: ${caughtUp.body}`).toBe(204);
     expect(caughtUp.headers['terrabase-primed-without'], 'a prime with every home served goes without nothing').toBeUndefined();
@@ -887,8 +893,7 @@ test('a retired source whose fra replica cannot catch up hands the role back onl
       .toEqual([101, 'missed-by-journey-1']);
     await restartPartner();
     restartPartner = undefined;
-    await removeDatabase(cells, ledger.id);
-    await removeDatabase(cells, fraLedger.id);
+    while (created.length > 0) await removeDatabase(cells, created.pop()!);
   } catch (error) {
     failure = error;
     throw error;
@@ -905,6 +910,7 @@ test('a retired source whose fra replica cannot catch up hands the role back onl
         await kv.put(owners, 'gru', { ...owner!.value, node: gru.name, epoch: 1, previous: null, activated: false, transfer: null }, owner!.seq);
         await writerIs('gru', gru.name);
       }
+      while (created.length > 0) await removeDatabase(cells, created.pop()!);
       kv.close();
     });
   }

@@ -196,6 +196,10 @@ The CI write-guarantees shard selects `placement/write-guarantees.spec.ts` and `
 
 ## Multi-region fault lane
 
+The `multi-region retired source` shard runs only the retired-source case on its own fresh two-region stack: it
+refuses one node's outgoing connections with strace and must not inherit the follower and lease state the other
+fault cases leave behind. The `multi-region faults` shard excludes it.
+
 The `multi-region faults` shard of `journey.yml` shares the normal service and SDK build artifacts. It sets
 `E2E_REGIONS=2 E2E_NODES_PER_REGION=2` before prepare/start and selects `--project fault`, with one worker for
 the fault specs. Local runs use the same variables and normal prepare/start/up/stop lifecycle, followed by
