@@ -1,12 +1,11 @@
 # Agent identities
 
-An agent is an AI agent that is its own principal in a project tenant, or in the platform tenant `terrascale` for a
-TerraScale account ([TerraScale accounts](#terrascale-accounts)). A user of that tenant owns it, and it holds its own
+An agent is an AI agent that is its own principal in a project tenant. A project user owns it, and it holds its own
 public key. The agent creates its key pair and keeps the private key; ts-auth stores only the public key. The model
 follows the AgentID idea: a stable agent id, an accountable owner and key-based proof of possession.
 
-This page covers the management API, self-enrollment with owner approval, the end user's own agent list, how
-an agent gets a token, and agents of TerraScale accounts with the dashboard's token exchange.
+This page covers the management API, self-enrollment with owner approval, the end user's own agent list and how
+an agent gets a token.
 
 ## Agent policy
 
@@ -141,9 +140,6 @@ Codes and races:
 - Each code lookup is charged to the stored hosted IP budgets (and the IPv6 /48 site budget) and a stored per-user
   budget before the code is read, and each start to its stored per-IP and per-project budgets; when that storage fails
   the request is refused, never admitted from a replica's memory.
-- A project's start asserts the project row's version in the same save as the new enrollment, so a start racing the
-  project's closure or deletion fails (`409 version_conflict`, then `404`) instead of leaving a row behind its deletion
-  cleanup.
 - The session pruner deletes enrollments on a later sweep once they have been expired for 600 seconds.
 
 ## Your agents
@@ -193,7 +189,7 @@ in every answer already includes the owner check.
 | Signing the owner out everywhere, a password reset or email change, or any other change of the owner's authentication state | The owner check fails: the agent captured the owner's authentication epoch and stamp at creation and they no longer match. The agent answers `status: revoked` with `revoked_at: null`; nothing reactivates it. |
 | Disabling the owner | The owner check fails (disabling also advances the owner's authentication state, so enabling the owner again does not bring the agent back). |
 | Deleting the owner | The owner's agents and their keys are deleted with the user (foreign keys with `ON DELETE CASCADE`), so the agent is `404`. |
-| Deleting the project | The project's agents, keys, enrollments and policy are deleted with it. |
+| Deleting the project | The project's agents, keys and policy are deleted with it. |
 
 ## Getting a token
 
@@ -275,101 +271,6 @@ Revoking an agent emits only `agent.revoked`, not one `agent.key_revoked` per ke
 deletion, emit the user events they already emit (`session.revoked`, `user.disabled`, `user.deleted`), not agent
 events.
 
-## TerraScale accounts
-
-A TerraScale account, the account you sign in to the dashboard with, can own agents too: a coding agent then calls
-the TerraScale MCP server with its own short-lived token instead of an API key. These agents live in the platform
-tenant `terrascale` and use the same rules and code as project agents, with these differences:
-
-| | Project agents | TerraScale account agents |
-| --- | --- | --- |
-| Agent policy | Set per project by its administrators | Fixed by TerraScale: `mcp:read` and `mcp:write`. No route reads or changes it. |
-| Enrollment | `POST /v1/{project}/agent-enrollments` | `POST /v1/terrascale/agent-enrollments`; the approval page is `https://auth.terrascale.tech/ui/terrascale/agent-enrollments`, signed in with the TerraScale account, with the same step-up (`approve_agent`) |
-| Collecting the result | `POST /v1/{project}/agent-enrollments/{id}/token` | `POST /v1/terrascale/agent-enrollments/{id}/token` |
-| Token | `POST /{project}/oauth/token`, project issuer | `POST /terrascale/oauth/token`; issuer `https://auth.terrascale.tech/terrascale`, keys at `/terrascale/.well-known/jwks.json` |
-| Your agents | `/v1/{project}/me/agents` with the hosted session cookie | `GET /v1/terrascale/me/agents` and `DELETE /v1/terrascale/me/agents/{agent}` with a platform sign-in access token |
-| Management API | `/v1/{project}/agents`, `/v1/{project}/users/{user}/agents` | None: an account agent is created only by enrollment and managed only by its owner |
-| Audit and events | An audit entry in the project's organization and lifecycle events | A ts-auth log line per change (`Platform agent audit: <action> <target> by <actor>`); no lifecycle events |
-
-Starts are limited to 10 per IP per 15 minutes and 300 an hour for the whole platform tenant. The token grant, the
-assertion rules, the limits, and what makes an agent unusable are the same as above. ts-auth's platform API does not
-accept an agent token itself; the dashboard exchanges it for its owner (below).
-
-An agent enrolling and getting a token:
-
-```http
-POST https://auth.terrascale.tech/v1/terrascale/agent-enrollments
-{"name":"Coding agent","requested_scopes":["mcp:read","mcp:write"],"public_jwk":{"kty":"EC","crv":"P-256","x":"…","y":"…"}}
-
-201 {"enrollment_id":"01KAEXAMPLE0000000000000004","user_code":"WDJB-MJHT","verification_uri":"https://auth.terrascale.tech/ui/terrascale/agent-enrollments","verification_uri_complete":"https://auth.terrascale.tech/ui/terrascale/agent-enrollments?user_code=WDJB-MJHT","expires_in":600,"interval":5}
-
-POST https://auth.terrascale.tech/v1/terrascale/agent-enrollments/01KAEXAMPLE0000000000000004/token
-{"proof":"<ES256 JWT, aud this URL>"}
-
-200 {"agent_id":"01KAEXAMPLE0000000000000001","kid":"01KAEXAMPLE0000000000000003"}
-
-POST https://auth.terrascale.tech/terrascale/oauth/token
-grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=<JWT, aud https://auth.terrascale.tech/terrascale/oauth/token>&scope=mcp:read
-
-200 {"access_token":"<agent token>","token_type":"Bearer","expires_in":300,"scope":"mcp:read"}
-```
-
-### Agent token exchange
-
-Only the ts-dashboard client exchanges an account agent's delegated token for an access token of its owner, so that
-the dashboard can act for the owner within the owner's own permissions. It is a token endpoint grant of the platform
-issuer, shaped like RFC 8693:
-
-```http
-POST https://auth.terrascale.tech/terrascale/oauth/token
-Authorization: Basic <ts-dashboard client id and secret>
-Content-Type: application/x-www-form-urlencoded
-
-grant_type=urn:terrascale:params:oauth:grant-type:agent-exchange&subject_token=<agent token>&subject_token_type=urn:ietf:params:oauth:token-type:access_token
-```
-
-- Client authentication is required (`client_secret_basic` or `client_secret_post`), and only the ts-dashboard client
-  holds the grant. Another client answers `400 unauthorized_client`; missing or wrong client authentication `401 invalid_client`.
-- `subject_token_type` must be `urn:ietf:params:oauth:token-type:access_token`. Any other parameter, or a missing
-  `subject_token`, is `400 invalid_request`.
-- The subject token must be signed by the platform key ring (`kid` of `/terrascale/.well-known/jwks.json`), with ES256,
-  `typ` `at+jwt`, `iss` `https://auth.terrascale.tech/terrascale`, no `aud`, not expired (no clock skew),
-  `token_use` and `actor_type` `agent`, `agent_id`, `act.sub` equal to `agent_id`, `sub` the owner and no `owner_sub`.
-  A self-subject token, a project issuer's agent token and a user's sign-in token are refused.
-- ts-auth then reads the agent: it must be active and unexpired, owned by `sub`, hold an active key, and its owner must
-  be enabled and have the authentication state the agent captured (no sign-out everywhere, password reset or email
-  change since).
-- Every refusal of the subject token or the agent is `400 invalid_grant` with the same description.
-
-ts-auth reads the agent and its owner from the home region, and the save that stores the new token's entry asserts
-both rows' versions. When either changed in between (a revocation, sign-out everywhere or disable committed), the
-entry is stored revoked and the answer is `400 invalid_grant`, so no token minted after such a change leaves ts-auth. The answer is a
-token response with `access_token`, `token_type: Bearer` and `expires_in`: 300 seconds, or less. The signed `exp` is
-capped at the subject token's `exp` when the token is generated, and a subject token that expired by then is refused,
-so the owner token never outlives it. There is no refresh token, no ID token and no scope. The access token is the
-owner's platform sign-in access token, with:
-
-| Claim | Value |
-| --- | --- |
-| `sub` | the owner |
-| `act`, `agent_id` | `{"sub": "<agent id>"}`, the agent id |
-| `aud` | the platform issuer and `TS_AUTH_ACCESS_TOKEN_AUDIENCES`, as a sign-in |
-| `auth_time` | the agent's `created_at`, when the owner approved it with a fresh verification |
-| `ts_auth_epoch`, `ts_auth_state` | the owner's current authentication state |
-| `token_use` | `user` |
-
-It never carries `ts_auth_mfa` or `platform_role`. So an organization that requires two-factor authentication refuses
-it, and an owner who has an authenticator turned on gets no access to the platform API through an agent. It never
-carries scopes either: the dashboard reads the agent's `mcp:read` and `mcp:write` from the agent token it exchanged.
-
-The owner token is checked again on every use. ts-auth's platform API, `/terrascale/oauth/userinfo` and the
-organization and project token exchange (every OpenIddict validation of a token carrying `agent_id`) read the agent
-named by `agent_id` from the home region on each call, and refuse the token once the agent is revoked or expired, its
-last key is revoked, or its owner signed out everywhere, was disabled or deleted. So a token issued in the instant
-before a revocation commits is refused on its first use after it. An organization or project token already issued
-from it stays valid until it expires (60 seconds), and an agent token until its own expiry (at most 5 minutes), but
-neither can be exchanged again.
-
 ## Storage
 
 `agents`, `agent_keys`, `agent_policies`, `agent_enrollments` and `agent_assertions` ([storage](storage.md)). `agent_assertions` holds each
@@ -377,9 +278,7 @@ used `(project_id, agent_id, jti)` as its primary key. A row is kept until 10 mi
 accepted (`exp` plus the 30 s skew). That margin outlasts the 10 s token request deadline and any clock difference
 between replicas, so no request that accepted the assertion can still be saving when its row is pruned. Session pruning
 deletes those rows every 10 minutes, and the rows go with their agent. An agent's primary key is
-`(project_id, id)`; a key's is `(project_id, kid)` with a foreign key to its agent. `project_id` always references
-`projects`: the platform tenant's agents and enrollments reference the hidden `terrascale` project row
-([platform bootstrap](platform-bootstrap.md#platform-tenant-row)), and every query names the tenant.
+`(project_id, id)`; a key's is `(project_id, kid)` with a foreign key to its agent.
 
 - Creation counts live agents and rewrites the owner's row version in the same save, so two creations that both
   read 24 live agents cannot both commit; it also asserts the agent policy version.

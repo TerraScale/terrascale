@@ -335,7 +335,7 @@ public abstract class AuthorizeEndpoint(Impersonations impersonations, Sessions 
 }
 
 public sealed class TokenEndpoint(Impersonations impersonations, TotpCredentials mfa, PlatformGrants platform, AuthOptions options, IOpenIddictApplicationStore<OidcApplication> applications,
-    Sessions sessions, ProjectAuthSettings settings, TimeProvider clock, IOpenIddictTokenManager tokens, AgentTokens agents, AgentExchange exchange) : EndpointWithoutRequest<IResult>
+    Sessions sessions, ProjectAuthSettings settings, TimeProvider clock, IOpenIddictTokenManager tokens, AgentTokens agents) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -347,8 +347,7 @@ public sealed class TokenEndpoint(Impersonations impersonations, TotpCredentials
             + " Project refresh tokens initially expire at the original auth_time plus the project's configured session lifetime (5 minutes to 30 days). Rotation never extends an observed expiry, and reducing policy immediately limits code and refresh redemption. Observing policy expiry revokes the whole sign-in, so later policy increases cannot revive its grants. Authorization-code redirect_uri must still satisfy the project's current nonempty allowlist as well as the client registration."
             + " Active MFA users' authorization-code, refresh and exchange grants need the ts_auth_mfa claim of a second-factor sign-in; primary-only ones answer invalid_grant. Pending and disabled factors permit primary authentication; corrupt or unavailable factor state answers 503 temporarily_unavailable. Machine client credentials and API keys are independent of user MFA. User sign-in access and identity tokens carry the server-issued numeric auth_time as Unix seconds; refresh and organization/project exchange preserve its original value. Submitted auth_time parameters are ignored. Exchange requires a nonnegative integer no more than 30 seconds ahead of the exchanging replica; missing, malformed, negative or further-ahead values answer invalid_grant. Machine tokens carry no auth_time. Authentication time alone does not establish MFA completion."
             + " Project machine apps use client_credentials with their own nonempty allowed scopes, an optional resource from allowed_audiences, and a per-app 5 to 60 minute lifetime (default 15). Their sub is client_id; aud is the selected resource. They have no end-user identity. A machine client has an additional 1000/minute budget. Interactive apps cannot use client_credentials."
-            + " Agents of a project, and agents of TerraScale accounts at /terrascale/oauth/token (allowed scopes mcp:read and mcp:write), use grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer (RFC 7523) without client authentication: assertion is an ES256 JWT signed by an active key of an active agent, header kid = the key's kid and no jwk, jku, x5u, x5c or crit member, iss = sub = the agent id, aud = exactly this token endpoint URL, integer iat and exp (no fraction, exponent or string) with exp at most 300 seconds after iat (30 seconds of clock skew) and a jti of at most 128 characters used once per agent. Optional scope is a subset of the agent's allowed_scopes (default all of them) and optional requested_subject is owner (default) or agent (only for an agent with allow_self_subject); any other parameter answers invalid_request. The answer has access_token, token_type Bearer, expires_in 300 (less when the agent's expires_at comes sooner; the token never outlives the agent) and scope, and no refresh or ID token. The token has token_use agent, actor_type agent, agent_id and scope, no aud, and either sub = the owner with act.sub = the agent, or sub = the agent with owner_sub = the owner. Every refusal (unknown or revoked key, bad signature, algorithm, header, issuer, audience or times, replayed jti, revoked or expired agent, owner disabled, deleted or signed out everywhere since the agent was created, scope outside allowed_scopes, self subject not allowed) answers the same 400 invalid_grant. Each agent has 60 tokens a minute and each owner's agents 600, charged only for requests that pass every check but the final save. The token is released only when one save commits the used jti (kept 10 minutes past the assertion's accepted window), the agent's last_used_at when due, and the versions of the key and owner it checked; a revocation, sign-out everywhere or disable committed before that save makes it fail."
-            + " Only the ts-dashboard client, authenticated with its secret, may use grant_type=urn:terrascale:params:oauth:grant-type:agent-exchange at /terrascale/oauth/token, with subject_token (a delegated agent token of the platform issuer: token_use agent, act.sub = agent_id, sub = the owner, no aud, unexpired) and subject_token_type urn:ietf:params:oauth:token-type:access_token and nothing else. ts-auth checks the agent online (active, unexpired, an active key, the owner enabled and not signed out everywhere since the agent was created) and answers an access token for the owner: the issuer audiences, agent_id and act.sub = the agent, auth_time = the agent's creation, no ts_auth_mfa, no scopes, no refresh or ID token, and expires_in at most 300 seconds and never past the subject token. Every use of it (platform API, userinfo, organization or project exchange) reads the agent again from the home region and refuses it once the agent is revoked or its owner signed out. Missing or failed client authentication answers 401 invalid_client; another client answers 400 unauthorized_client; another parameter, another subject_token_type or no subject_token answers 400 invalid_request; every refusal of the subject token or its agent answers 400 invalid_grant.");
+            + " Project agents use grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer (RFC 7523) without client authentication: assertion is an ES256 JWT signed by an active key of an active agent, header kid = the key's kid and no jwk, jku, x5u, x5c or crit member, iss = sub = the agent id, aud = exactly this token endpoint URL, integer iat and exp (no fraction, exponent or string) with exp at most 300 seconds after iat (30 seconds of clock skew) and a jti of at most 128 characters used once per agent. Optional scope is a subset of the agent's allowed_scopes (default all of them) and optional requested_subject is owner (default) or agent (only for an agent with allow_self_subject); any other parameter answers invalid_request. The answer has access_token, token_type Bearer, expires_in 300 (less when the agent's expires_at comes sooner; the token never outlives the agent) and scope, and no refresh or ID token. The token has token_use agent, actor_type agent, agent_id and scope, no aud, and either sub = the owner with act.sub = the agent, or sub = the agent with owner_sub = the owner. Every refusal (unknown or revoked key, bad signature, algorithm, header, issuer, audience or times, replayed jti, revoked or expired agent, owner disabled, deleted or signed out everywhere since the agent was created, scope outside allowed_scopes, self subject not allowed) answers the same 400 invalid_grant. Each agent has 60 tokens a minute and each owner's agents 600, charged only for requests that pass every check but the final save. The token is released only when one save commits the used jti (kept 10 minutes past the assertion's accepted window), the agent's last_used_at when due, and the versions of the key and owner it checked; a revocation, sign-out everywhere or disable committed before that save makes it fail.");
         Tags("OAuth");
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(TokenRequestForm)));
         Produces<TokenBody>();
@@ -383,7 +382,7 @@ public sealed class TokenEndpoint(Impersonations impersonations, TotpCredentials
         }
 
         var tenant = Tenancy.Current(this.HttpContext);
-        if (request.GrantType == AgentTokens.GrantType)
+        if (Tenancy.IsProject(tenant) && request.GrantType == AgentTokens.GrantType)
         {
             return await agents.GrantAsync(tenant, request, cancellationToken);
         }
@@ -391,11 +390,6 @@ public sealed class TokenEndpoint(Impersonations impersonations, TotpCredentials
         if (Tenancy.IsProject(tenant) && !request.IsAuthorizationCodeGrantType() && !request.IsRefreshTokenGrantType() && !request.IsClientCredentialsGrantType())
         {
             return OidcResults.Forbid(Errors.UnsupportedGrantType, "A project issuer grants authorization_code, refresh_token, machine client_credentials and the agent jwt-bearer grant.");
-        }
-
-        if (request.GrantType == AgentExchange.GrantType)
-        {
-            return await exchange.ExchangeAsync(this.HttpContext, request, cancellationToken);
         }
 
         if (request.IsAuthorizationCodeGrantType() && !await OidcResults.AllowsRedirectAsync(settings, tenant, request.RedirectUri, cancellationToken))
@@ -794,8 +788,7 @@ internal static class OidcResults
     /// platform owner (<see cref="PlatformBootstrap.OwnerEmail"/>) always carries it.
     /// </summary>
     public static IResult SignIn(AuthOptions options, UserRecord user, DateTimeOffset authenticatedAt, IEnumerable<string> scopes, IReadOnlyList<string> audiences,
-        DateTimeOffset? refreshExpiresAt = null, ImpersonationRecord? impersonation = null, OrganizationClaims? organization = null, bool organizationPicker = false,
-        string? agentId = null, TimeSpan? lifetime = null)
+        DateTimeOffset? refreshExpiresAt = null, ImpersonationRecord? impersonation = null, OrganizationClaims? organization = null, bool organizationPicker = false)
     {
         // TerraBase and platform scopes come only from the role-checked token exchange (TS-598), never with a sign-in,
         // although ts-dashboard holds their permissions for the exchange.
@@ -832,7 +825,7 @@ internal static class OidcResults
         // Only the platform's own tenant has platform admins; TerraBase's explore API reads the claim (platform-databases.md).
         // The platform owner is always one, in code, so a wiped and re-bootstrapped store needs no operator write; every
         // sign-in proves control of the mailbox first.
-        if (agentId is null && user.InstanceId == OidcIssuer.InstanceId && (user.PlatformRole == PlatformRoleAdmin || user.Email == PlatformBootstrap.OwnerEmail))
+        if (user.InstanceId == OidcIssuer.InstanceId && (user.PlatformRole == PlatformRoleAdmin || user.Email == PlatformBootstrap.OwnerEmail))
         {
             identity.SetClaim(PlatformRoleClaim, PlatformRoleAdmin);
         }
@@ -841,12 +834,6 @@ internal static class OidcResults
         {
             identity.SetClaim(Impersonations.Claim, impersonation.Id);
             identity.SetClaim("act", JsonSerializer.SerializeToElement(new ImpersonationActor(impersonation.ActorId), ImpersonationJson.Default.ImpersonationActor));
-        }
-
-        if (agentId is not null)
-        {
-            identity.SetClaim(LiveAgents.Claim, agentId);
-            identity.SetClaim("act", JsonSerializer.SerializeToElement(new ImpersonationActor(agentId), ImpersonationJson.Default.ImpersonationActor));
         }
 
         var profile = identity.HasScope(Scopes.Profile);
@@ -862,16 +849,11 @@ internal static class OidcResults
             Claims.GivenName or Claims.FamilyName or Claims.Picture or "public_metadata" => profile ? [Destinations.IdentityToken] : [],
             Claims.Email or Claims.EmailVerified => email ? [Destinations.AccessToken, Destinations.IdentityToken] : [Destinations.AccessToken],
             Claims.AuthenticationTime or "org_id" or "org_slug" or "org_role" or GuestSignIn.Claim => [Destinations.AccessToken, Destinations.IdentityToken],
-            "ts_auth_session" or "token_use" or LiveAgents.Claim or TrustedClaims.Claim or OidcIssuer.EpochClaim or OidcIssuer.StateClaim or OidcIssuer.MfaClaim or PlatformRoleClaim => [Destinations.AccessToken],
+            "ts_auth_session" or "token_use" or TrustedClaims.Claim or OidcIssuer.EpochClaim or OidcIssuer.StateClaim or OidcIssuer.MfaClaim or PlatformRoleClaim => [Destinations.AccessToken],
             OidcIssuer.OrganizationPickerClaim => [Destinations.IdentityToken],
             _ => [],
         });
         var principal = new ClaimsPrincipal(identity);
-        if (lifetime is { } limit)
-        {
-            principal.SetAccessTokenLifetime(limit);
-        }
-
         CredentialLineage.Attach(principal, user.AuthenticationBindings);
         return Results.SignIn(principal, null, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
     }

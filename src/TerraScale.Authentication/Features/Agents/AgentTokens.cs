@@ -273,7 +273,7 @@ internal sealed class RouteAgentGrant : IOpenIddictServerHandler<ExtractTokenReq
     public ValueTask HandleAsync(ExtractTokenRequestContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
-        if (context.Request?.GrantType == AgentTokens.GrantType)
+        if (context.Request?.GrantType == AgentTokens.GrantType && Tenancy.IsProject(Tenancy.Current(context.Transaction.GetHttpRequest()?.HttpContext)))
         {
             context.SkipRequest();
         }
