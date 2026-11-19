@@ -916,6 +916,75 @@ test('a retired source whose fra replica cannot catch up hands the role back onl
   }
 });
 
+test('a gru node that is not its region writer pulls a fra-homed replica again after its restart, and follows a home moved to fra from that new home', async ({ cells }) => {
+  test.setTimeout(300_000);
+  const kv = await Kv.open();
+  const gru = node('journey-1');
+  const partner = node('journey-3');
+  const [moving] = await createLedgers(cells, 1, 'follower-rebind');
+  const created = await json<{ id: string; homeRegion: string }>(await cells.post(`${endpoint('fra')}${project()}/databases`, {
+    data: { name: name('follower-rebind-fra'), homeRegion: 'fra', replicaRegions: ['gru'] },
+  }), 201);
+  expect(created.homeRegion, 'a database created in fra is homed there').toBe('fra');
+  const fraLedger = new Ledger(created.id);
+  await sql(cells, endpoint('fra'), created.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
+  await fraLedger.write(cells, 'fra', [[100, 'homed-in-fra']]);
+  await fraLedger.compare(cells);
+  const heldRoute = async (id: string) => {
+    const { value } = await homeLease(kv, id);
+    return `/v1/sync/organizations/${value.organizationId}/projects/${value.projectId}/databases/${id}/held`;
+  };
+  const held = async (member: Node, route: string) => (JSON.parse((await nodeRequest(member, route)).body) as { revision?: string }).revision;
+  const pulled = async (route: string, before: string | undefined, message: string) => {
+    await expect.poll(() => held(partner, route), { message: `journey-3 pulls what ${message}`, timeout: 60_000 }).not.toBe(before);
+    const reference = await held(partner, route);
+    await expect.poll(() => held(gru, route), { message: `journey-1 pulls what ${message}`, timeout: 60_000 }).toBe(reference);
+  };
+  const fraRoute = await heldRoute(fraLedger.id);
+  const movingRoute = await heldRoute(moving.id);
+  let failure: unknown;
+  try {
+    await restartAfterKill(partner, false)();
+    const primedPartner = await nodeRequest(partner, `/v1/rollout/prime?source=${gru.name}`, 'POST');
+    expect(primedPartner.status, primedPartner.body).toBe(204);
+    const away = await nodeRequest(gru, `/v1/rollout/drain?target=${partner.name}`, 'POST');
+    expect(away.status, away.body).toBe(204);
+    await writerIs('gru', partner.name);
+    await restartAfterKill(gru, false)();
+
+    const beforeWrite = await held(partner, fraRoute);
+    await fraLedger.write(cells, 'fra', [[101, 'after-the-restart']]);
+    await pulled(fraRoute, beforeWrite, 'fra wrote after journey-1 restarted');
+
+    const beforeMove = await held(partner, movingRoute);
+    const moved = await json<{ homeRegion: string }>(await cells.post(`${endpoint('gru')}${database(moving.id)}/move-home`, { data: { homeRegion: 'fra' }, timeout: 120_000 }));
+    expect(moved.homeRegion).toBe('fra');
+    await moving.write(cells, 'fra', [[100, 'after-the-move']]);
+    await pulled(movingRoute, beforeMove, 'its new fra home wrote after the move');
+    await moving.compare(cells);
+
+    const primed = await nodeRequest(gru, `/v1/rollout/prime?source=${partner.name}`, 'POST');
+    expect(primed.status, primed.body).toBe(204);
+    const back = await nodeRequest(partner, `/v1/rollout/drain?target=${gru.name}`, 'POST');
+    expect(back.status, back.body).toBe(204);
+    await writerIs('gru', gru.name);
+    await removeDatabase(cells, moving.id);
+    await removeDatabase(cells, fraLedger.id);
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    await cleanUp(failure, async () => {
+      const owner = await kv.get<Record<string, unknown> & { node: string; epoch: number }>(owners, 'gru');
+      if (owner?.value.node !== gru.name) {
+        await kv.put(owners, 'gru', { ...owner!.value, node: gru.name, epoch: 1, previous: null, activated: false, transfer: null }, owner!.seq);
+        await writerIs('gru', gru.name);
+      }
+      kv.close();
+    });
+  }
+});
+
 test('a regional writer role moves only with the target certificate, and a database whose primary file is stale stays fenced while the region serves the others', async ({ cells, request }) => {
   test.setTimeout(480_000);
   const token = await writerToken(request);
