@@ -28,6 +28,7 @@ internal sealed partial class RegionReplication
             logger.ZLogWarning($"The peers file could not be read; replicas keep the regions they know: {error.GetType().Name:@Error}");
         }
 
+        await ReconcileMovedHomesAsync(cancellationToken).ConfigureAwait(false);
         if (owners.Writer)
         {
             foreach (var (key, follower) in _followers.Where(entry => entry.Value.Home.Region == options.Region && !leaseGate.Fenced(entry.Key.Item3)).ToArray())
@@ -73,6 +74,7 @@ internal sealed partial class RegionReplication
     }
 
 
+    private readonly ConcurrentDictionary<(string, string, string), (TenantContext Database, string Region, long Version)> _movedHomes = new();
     private readonly Counter<long> _catalogErrors = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.replica.catalog_errors");
     private readonly ConcurrentDictionary<string, DateTimeOffset> _catalogLogged = new(StringComparer.Ordinal);
 
@@ -400,7 +402,6 @@ internal sealed partial class RegionReplication
                 else if (home.Region == options.Region)
                 {
                     await FollowMovedHomeAsync(database, entry.HomeRegion, entry.PlacementVersion, cancellationToken).ConfigureAwait(false);
-                    WakeCatalog(entry.HomeRegion);
                 }
                 else
                 {
@@ -419,15 +420,65 @@ internal sealed partial class RegionReplication
 
     internal async Task FollowMovedHomeAsync(TenantContext database, string region, long version, CancellationToken cancellationToken)
     {
-        if (_peers.FirstOrDefault(peer => peer.Region == region) is not { } target || !CanRebuild(target)
-            || await PlacementAtAsync(target, database, cancellationToken).ConfigureAwait(false) is not ReplicaCatalogEntry entry
-            || entry.HomeRegion != region || entry.PlacementVersion < version)
+        var key = Key(database);
+        _ = _movedHomes.AddOrUpdate(key, (database, region, version), (_, known) => version >= known.Version ? (database, region, version) : known);
+        await ReconcileMovedHomeAsync(key, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task ReconcileMovedHomesAsync(CancellationToken cancellationToken)
+    {
+        foreach (var key in _movedHomes.Keys)
+        {
+            try
+            {
+                await ReconcileMovedHomeAsync(key, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                logger.ZLogInformation($"A database whose home moved away is reconciled again on the next pass: {error.GetType().Name:@Error}");
+            }
+        }
+    }
+
+    private async Task ReconcileMovedHomeAsync((string, string, string) key, CancellationToken cancellationToken)
+    {
+        if (!_movedHomes.TryGetValue(key, out var moved))
         {
             return;
         }
 
-        var placement = new DatabasePlacement(entry.HomeRegion, entry.ReplicaRegions, entry.PlacementVersion, entry.AllRegions);
-        var key = Key(database);
+        var (database, region, version) = moved;
+        if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var recorded }
+            || recorded.Home != options.Region || recorded.Version >= version)
+        {
+            _ = _movedHomes.TryRemove(KeyValuePair.Create(key, moved));
+            return;
+        }
+
+        if (_peers.FirstOrDefault(peer => peer.Region == region) is not { } target || !CanRebuild(target))
+        {
+            return;
+        }
+
+        switch (await PlacementAtAsync(target, database, cancellationToken).ConfigureAwait(false))
+        {
+            case NotFound:
+                _ = _movedHomes.TryRemove(KeyValuePair.Create(key, moved));
+                break;
+            case ReplicaCatalogEntry entry when entry.HomeRegion != region && entry.PlacementVersion > version:
+                _ = _movedHomes.TryUpdate(key, (database, entry.HomeRegion, entry.PlacementVersion), moved);
+                break;
+            case ReplicaCatalogEntry entry when entry.HomeRegion == region && entry.PlacementVersion >= version:
+                await AdoptMovedHomeAsync(key, database, new DatabasePlacement(entry.HomeRegion, entry.ReplicaRegions, entry.PlacementVersion, entry.AllRegions), cancellationToken)
+                    .ConfigureAwait(false);
+                _ = _movedHomes.TryRemove(KeyValuePair.Create(key, moved));
+                WakeCatalog(region);
+                break;
+        }
+    }
+
+    private async Task AdoptMovedHomeAsync((string, string, string) key, TenantContext database, DatabasePlacement placement, CancellationToken cancellationToken)
+    {
         var gate = Lifecycle(key);
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try

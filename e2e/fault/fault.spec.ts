@@ -1259,12 +1259,13 @@ test('a writer that starts with a local replica it has not opened fences that da
   }
 });
 
-test('a gru node that is not its region writer pulls a fra-homed replica after a restart that finds its home lease lapsed, and takes the fra writer\'s placement of a home moved to fra, also when the move leaves gru', async ({ cells }) => {
-  test.setTimeout(300_000);
+test('a gru node that is not its region writer pulls a fra-homed replica after a restart that finds its home lease lapsed, and takes the fra writer\'s placement of a home moved to fra, also when fra is down at its restart and when the move leaves gru', async ({ cells, request }) => {
+  test.setTimeout(420_000);
   const kv = await Kv.open();
   const gru = node('journey-1');
   const partner = node('journey-3');
   const created: string[] = [];
+  const pending: (() => Promise<void>)[] = [];
   let failure: unknown;
   const route = async (id: string) => {
     const { value } = await homeLease(kv, id);
@@ -1295,8 +1296,9 @@ test('a gru node that is not its region writer pulls a fra-homed replica after a
     return { homeRegion, replicaRegions, placementVersion, allRegions };
   };
   try {
-    const [moving, leaving] = await createLedgers(cells, 2, 'follower-rebind');
-    created.push(moving.id, leaving.id);
+    const token = await writerToken(request);
+    const [moving, leaving, late] = await createLedgers(cells, 3, 'follower-rebind');
+    created.push(moving.id, leaving.id, late.id);
     const fraCreated = await json<{ id: string; homeRegion: string }>(await cells.post(`${endpoint('fra')}${project()}/databases`, {
       data: { name: name('follower-rebind-fra'), homeRegion: 'fra', replicaRegions: ['gru'] },
     }), 201);
@@ -1314,10 +1316,29 @@ test('a gru node that is not its region writer pulls a fra-homed replica after a
     const away = await nodeRequest(gru, `/v1/rollout/drain?target=${partner.name}`, 'POST');
     expect(away.status, away.body).toBe(204);
     await writerIs('gru', partner.name);
+    await late.write(cells, 'gru', [[100, 'before-the-move']]);
+    await holds(late.id, 'from its gru home before it moves while journey-1 is down');
     const lapsed = logged(gru, 'Home lease lapsed', fraLedger.id);
-    await restartAfterKill(gru, false)();
+    const startGru = restartAfterKill(gru, false);
+    pending.push(startGru);
+    const lateMove = await fetch(`http://127.0.0.1:${partner.port}${database(late.id)}/move-home`, {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ homeRegion: 'fra' }), signal: AbortSignal.timeout(120_000),
+    });
+    expect(lateMove.status, `journey-3, the gru writer, moves the database while journey-1 is down: ${await lateMove.clone().text()}`).toBe(200);
+    const lateMoved = await lateMove.json() as { homeRegion: string };
+    expect(lateMoved.homeRegion).toBe('fra');
+    await late.write(cells, 'fra', [[101, 'after-the-move']]);
+    const fraWriter = await writerOf(late.id);
+    const startFra = restartAfterKill(fraWriter, true);
+    pending.push(startFra);
+    await startGru();
+    pending.splice(pending.indexOf(startGru), 1);
     await expect.poll(() => logged(gru, 'Home lease lapsed', fraLedger.id), { message: 'the restarted journey-1 first sees the fra home lease without its node lease' })
       .toBeGreaterThan(lapsed);
+    await startFra();
+    pending.splice(pending.indexOf(startFra), 1);
+    await holds(late.id, 'once its fra home answers again after journey-1 restarted without it');
 
     await fraLedger.write(cells, 'fra', [[101, 'after-the-restart']]);
     await holds(fraLedger.id, 'after fra wrote past its restart');
@@ -1332,15 +1353,14 @@ test('a gru node that is not its region writer pulls a fra-homed replica after a
 
     await holds(leaving.id, 'from its gru home before it leaves gru');
     await expect.poll(async () => {
-      let response = await cells.patch(`${endpoint('gru')}${database(leaving.id)}`, { data: { regions: ['fra'] } });
-      if (response.status() === 421) response = await cells.patch(`https://${response.headers()['x-terrabase-database-home']}.api.terrascale.tech${database(leaving.id)}`, { data: { regions: ['fra'] } });
-      if (response.status() === 503) {
-        expect((await response.json()).error.code).toBe('replica_not_ready');
-        return [];
-      }
+      const response = await cells.get(`${endpoint('gru')}${database(leaving.id)}/regions`);
       expect(response.status(), await response.text()).toBe(200);
-      return (await response.json()).regions;
-    }, { message: 'the database leaves gru for fra once fra holds it', timeout: 60_000, intervals: [1000] }).toEqual(['fra']);
+      return (await response.json() as { regions: { region: string }[] }).regions.find(row => row.region === 'fra');
+    }, { message: 'fra has a completed pull observation of the database', timeout: 60_000 })
+      .toMatchObject({ revision: expect.any(String), lastPulledAt: expect.any(String), lagMs: expect.any(Number) });
+    const left = await cells.patch(`${endpoint('gru')}${database(leaving.id)}`, { data: { regions: ['fra'] } });
+    expect(left.status(), await left.text()).toBe(200);
+    expect((await left.json()).regions, 'the database leaves gru for fra').toEqual(['fra']);
     await expect.poll(async () => (await nodeRequest(gru, `${await route(leaving.id)}/held`)).status, { message: 'journey-1 drops the replica gru no longer holds' }).toBe(404);
 
     const primed = await nodeRequest(gru, `/v1/rollout/prime?source=${partner.name}`, 'POST');
@@ -1362,6 +1382,7 @@ test('a gru node that is not its region writer pulls a fra-homed replica after a
   } finally {
     await cleanUp(failure, async () => {
       try {
+        for (const start of pending.splice(0)) await start();
         const owner = await kv.get<Record<string, unknown> & { node: string; epoch: number }>(owners, 'gru');
         if (owner?.value.node !== gru.name) {
           await kv.put(owners, 'gru', { ...owner!.value, node: gru.name, epoch: 1, previous: null, activated: false, transfer: null }, owner!.seq);
