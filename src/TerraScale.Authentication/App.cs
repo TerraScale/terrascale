@@ -184,6 +184,7 @@ public static class App
         builder.Services.AddSingleton<AgentAssertions>();
         builder.Services.AddSingleton<AgentTokens>();
         builder.Services.AddSingleton<AgentIdTransactions>();
+        builder.Services.AddSingleton<AgentIdClients>();
         builder.Services.AddSingleton<LiveAgents>();
         builder.Services.AddSingleton<AgentExchange>();
         builder.Services.AddSingleton<AgentEnrollments>();

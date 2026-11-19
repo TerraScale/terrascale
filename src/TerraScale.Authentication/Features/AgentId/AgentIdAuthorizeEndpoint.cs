@@ -14,13 +14,13 @@ using static OpenIddict.Abstractions.OpenIddictConstants;
 
 namespace TerraScale.Authentication.Features.AgentId;
 
-public abstract class AgentIdAuthorizeEndpoint(AgentIdTransactions transactions, AuthOptions options) : EndpointWithoutRequest<IResult>
+public abstract class AgentIdAuthorizeEndpoint(AgentIdTransactions transactions, IOpenIddictApplicationManager applications, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
     protected void Describe(string operationId)
     {
         Name(operationId);
         Summary("Sign in as agent: authorization endpoint");
-        Description("The authorization endpoint of the agent issuer {origin}/agents, by GET with query parameters or POST with the same parameters form-encoded. Authorization code flow only (response_type=code) with PKCE code_challenge_method=S256; scopes openid and profile. client_id is the canonical https origin the app controls (lowercase ASCII host, punycode for international names, no default port, path, trailing slash or userinfo), and redirect_uri must be an https URL on that same origin. Without a proof for this exact request it answers a one-time transaction that lives 5 minutes: an HTML page that reloads itself every 2 seconds, or with Accept: application/json a JSON body with status pending, transaction_id, proof_url, client_id, client_name and expires_at. Both carry Link: <proof_url>; rel=\"agent-proof\". Once an agent posted a valid proof to proof_url, the same request (any parameter order) redirects to redirect_uri with code, state and iss, once. A request without the openid scope is answered invalid_scope at the redirect_uri before any transaction opens. An expired or used transaction answers 400 expired_transaction. Errors after client and redirect validation go to the client. Per caller address and per client_id it allows 120 and 600 requests a minute; more answer 429 rate_limited with Retry-After.");
+        Description("The authorization endpoint of the agent issuer {origin}/agents, by GET with query parameters or POST with the same parameters form-encoded. Authorization code flow only (response_type=code) with PKCE code_challenge_method=S256; scopes openid, profile and, for a registered client only, owner_email. client_id is either the canonical https origin the app controls (lowercase ASCII host, punycode for international names, no default port, path, trailing slash or userinfo), with redirect_uri an https URL on that same origin, or the client_id of a registered client (POST /v1/terrascale/agentid-clients), with redirect_uri exactly one of its redirect_uris. An origin client asking for owner_email is answered invalid_scope at the redirect_uri. Without a proof for this exact request it answers a one-time transaction that lives 5 minutes: an HTML page that reloads itself every 2 seconds, or with Accept: application/json a JSON body with status pending, transaction_id, proof_url, client_id, client_name (the origin, or a registered client's name) and expires_at. Both carry Link: <proof_url>; rel=\"agent-proof\". Once an agent posted a valid proof to proof_url, the same request (any parameter order) redirects to redirect_uri with code, state and iss, once. A request without the openid scope is answered invalid_scope at the redirect_uri before any transaction opens. An expired or used transaction answers 400 expired_transaction. Errors after client and redirect validation go to the client. Per caller address and per client_id it allows 120 and 600 requests a minute; more answer 429 rate_limited with Retry-After.");
         Tags("Sign in as agent");
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<AgentIdPendingBody>(StatusCodes.Status200OK);
@@ -43,6 +43,11 @@ public abstract class AgentIdAuthorizeEndpoint(AgentIdTransactions transactions,
             return Results.Forbid(OidcResults.Error(Errors.InvalidScope, "Sign in as agent requires the openid scope."), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
         }
 
+        if (request.HasScope(AgentIdIssuer.OwnerEmailScope) && AgentIdIssuer.IsOpenClient(clientId))
+        {
+            return Results.Forbid(OidcResults.Error(Errors.InvalidScope, "Only a registered client can request the owner_email scope."), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
+        }
+
         List<KeyValuePair<string, StringValues>> parameters = HttpMethods.IsPost(this.HttpContext.Request.Method)
             ? [.. await this.HttpContext.Request.ReadFormAsync(cancellationToken)]
             : [.. this.HttpContext.Request.Query];
@@ -58,10 +63,13 @@ public abstract class AgentIdAuthorizeEndpoint(AgentIdTransactions transactions,
 
         var transaction = await transactions.OpenAsync(AgentIdTransactions.RequestHash(parameters), clientId, cancellationToken);
         this.HttpContext.Response.Headers.CacheControl = "no-store";
+        var clientName = await applications.FindByClientIdAsync(clientId, cancellationToken) is OidcApplication { DisplayName: { } name }
+            ? name
+            : throw new InvalidOperationException("OpenIddict passed an authorization request of an unknown client.");
         if (!transactions.IsOpen(transaction) || transaction.ClientId != clientId)
         {
             return browser
-                ? AgentIdPageModel.Render(this.HttpContext, new(AgentIdStep.Expired, clientId), StatusCodes.Status400BadRequest)
+                ? AgentIdPageModel.Render(this.HttpContext, new(AgentIdStep.Expired, clientName), StatusCodes.Status400BadRequest)
                 : Results.Json(new OAuthErrorBody("expired_transaction", AgentIdTransactions.Expired), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status400BadRequest);
         }
 
@@ -72,10 +80,10 @@ public abstract class AgentIdAuthorizeEndpoint(AgentIdTransactions transactions,
             if (browser)
             {
                 this.HttpContext.Response.Headers["Refresh"] = "2;url=" + AgentIdIssuer.AuthorizePath + QueryString.Create(parameters);
-                return AgentIdPageModel.Render(this.HttpContext, new(AgentIdStep.Waiting, clientId, proofUrl));
+                return AgentIdPageModel.Render(this.HttpContext, new(AgentIdStep.Waiting, clientName, proofUrl));
             }
 
-            return Results.Json(new AgentIdPendingBody("pending", transaction.Id, proofUrl, clientId, clientId, transaction.ExpiresAt), AgentIdJson.Default.AgentIdPendingBody);
+            return Results.Json(new AgentIdPendingBody("pending", transaction.Id, proofUrl, clientId, clientName, transaction.ExpiresAt), AgentIdJson.Default.AgentIdPendingBody);
         }
 
         return await transactions.CompleteAsync(transaction, cancellationToken) is { } signIn

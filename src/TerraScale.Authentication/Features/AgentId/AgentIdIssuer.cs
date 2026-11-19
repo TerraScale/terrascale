@@ -29,6 +29,12 @@ public static class AgentIdIssuer
 
     public const string OwnerSubjectClaim = "owner_sub";
 
+    public const string OwnerEmailScope = "owner_email";
+
+    public const string OwnerEmailClaim = "owner_email";
+
+    public const string OwnerEmailVerifiedClaim = "owner_email_verified";
+
     public const string AgentClaim = "ts_agentid_agent";
 
     public const string OwnerClaim = "ts_agentid_owner";
@@ -41,10 +47,10 @@ public static class AgentIdIssuer
 
     public static readonly IReadOnlyList<string> Routes = ["oauth/authorize", "oauth/token", "oauth/userinfo", OidcIssuer.ConfigurationPath, OidcIssuer.JwksPath];
 
-    public static readonly IReadOnlyList<string> SupportedScopes = [Scopes.OpenId, Scopes.Profile];
+    public static readonly IReadOnlyList<string> SupportedScopes = [Scopes.OpenId, Scopes.Profile, OwnerEmailScope];
 
     public static readonly IReadOnlyList<string> SupportedClaims =
-        [Claims.Subject, Claims.Name, ActorTypeClaim, OwnerSubjectClaim, Claims.Nonce, Claims.Issuer, Claims.Audience, Claims.IssuedAt, Claims.ExpiresAt, Claims.JwtId];
+        [Claims.Subject, Claims.Name, ActorTypeClaim, OwnerSubjectClaim, OwnerEmailClaim, OwnerEmailVerifiedClaim, Claims.Nonce, Claims.Issuer, Claims.Audience, Claims.IssuedAt, Claims.ExpiresAt, Claims.JwtId];
 
     public static Uri Issuer(AuthOptions options) => OidcIssuer.Issuer(options, Slug);
 
@@ -83,11 +89,17 @@ public static class AgentIdIssuer
             Permissions =
             [
                 Permissions.Endpoints.Authorization, Permissions.Endpoints.Token, Permissions.GrantTypes.AuthorizationCode, Permissions.ResponseTypes.Code,
-                Permissions.Prefixes.Scope + Scopes.Profile,
+                Permissions.Prefixes.Scope + Scopes.Profile, Permissions.Prefixes.Scope + OwnerEmailScope,
             ],
             Version = string.Create(CultureInfo.InvariantCulture, $"agentid-open:{clientId}"),
         }
         : null;
+
+    public static bool SharesOwnerEmail(string clientId, IEnumerable<string> granted, AgentRecord agent)
+    {
+        ArgumentNullException.ThrowIfNull(agent);
+        return !IsOpenClient(clientId) && granted.Contains(OwnerEmailScope, StringComparer.Ordinal) && agent.ShareOwnerEmail;
+    }
 
     public static string Pairwise(AuthOptions options, string kind, string clientId, string id)
     {
@@ -102,11 +114,14 @@ public static class AgentIdIssuer
         var (agent, ownerId) = (signIn.Agent, signIn.Owner.Id);
         List<string> granted = [.. scopes.Intersect(SupportedScopes, StringComparer.Ordinal)];
         var profile = granted.Contains(Scopes.Profile);
+        var email = SharesOwnerEmail(clientId, granted, signIn.Agent);
         var identity = new ClaimsIdentity(TokenValidationParameters.DefaultAuthenticationType, Claims.Name, Claims.Role)
             .SetClaim(Claims.Subject, Pairwise(options, "agent", clientId, agent.Id))
             .SetClaim(ActorTypeClaim, "agent")
             .SetClaim(Claims.Name, profile ? agent.Name : null)
             .SetClaim(OwnerSubjectClaim, profile ? Pairwise(options, "owner", clientId, ownerId) : null)
+            .SetClaim(OwnerEmailClaim, email ? signIn.Owner.Email : null)
+            .SetClaim(OwnerEmailVerifiedClaim, email ? signIn.Owner.EmailVerified : null)
             .SetClaim(AgentClaim, agent.Id)
             .SetClaim(OwnerClaim, ownerId)
             .SetClaim(KeyClaim, signIn.Kid)
@@ -114,6 +129,7 @@ public static class AgentIdIssuer
         identity.SetDestinations(claim => claim.Type switch
         {
             Claims.Subject or ActorTypeClaim or Claims.Name or OwnerSubjectClaim => [Destinations.AccessToken, Destinations.IdentityToken],
+            OwnerEmailClaim or OwnerEmailVerifiedClaim => [Destinations.IdentityToken],
             AgentClaim or OwnerClaim or KeyClaim => [Destinations.AccessToken],
             _ => [],
         });

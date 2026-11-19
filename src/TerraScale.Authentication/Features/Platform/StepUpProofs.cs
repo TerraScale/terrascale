@@ -277,7 +277,7 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
     private static bool Pair(string purpose, string audience) => audience switch
     {
         "ts-dashboard" => purpose is "delete_account" or "create_pat",
-        "ts-auth" => purpose is "delete_account" or "delete_organization" or "start_ownership_transfer" or "change_plan" or "delete_passkey" or ApproveAgent or "rotate_api_key" or "create_oauth_client" or "update_oauth_client" or "rotate_oauth_client" or "change_email" or "add_passkey" or "create_webhook_endpoint" or "rotate_webhook_secret" or "start_impersonation",
+        "ts-auth" => purpose is "delete_account" or "delete_organization" or "start_ownership_transfer" or "change_plan" or "delete_passkey" or ApproveAgent or "rotate_api_key" or "create_oauth_client" or "update_oauth_client" or "rotate_oauth_client" or "delete_oauth_client" or "change_email" or "add_passkey" or "create_webhook_endpoint" or "rotate_webhook_secret" or "start_impersonation",
         _ => false,
     };
     private static bool ValidBinding(string purpose, string binding) =>

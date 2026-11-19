@@ -1391,6 +1391,66 @@ namespace TerraScale.Authentication.Storage.Migrations
                         });
                 });
 
+            modelBuilder.Entity("TerraScale.Authentication.Features.AgentId.AgentIdClientRecord", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name");
+
+                    b.Property<string>("OwnerUserId")
+                        .IsRequired()
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("owner_user_id");
+
+                    b.Property<string>("PreviousSecretDigest")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("previous_secret_digest");
+
+                    b.Property<DateTime?>("PreviousSecretExpiresAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("previous_secret_expires_at");
+
+                    b.Property<string>("RedirectUris")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("redirect_uris");
+
+                    b.Property<string>("SecretDigest")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("secret_digest");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OwnerUserId");
+
+                    b.ToTable("agentid_clients", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_agentid_clients_previous_secret", "(previous_secret_digest IS NULL) = (previous_secret_expires_at IS NULL)");
+                        });
+                });
+
             modelBuilder.Entity("TerraScale.Authentication.Features.AgentId.AgentIdTransactionRecord", b =>
                 {
                     b.Property<string>("Id")
@@ -1731,6 +1791,10 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.Property<DateTime?>("RevokedAt")
                         .HasColumnType("TEXT")
                         .HasColumnName("revoked_at");
+
+                    b.Property<bool>("ShareOwnerEmail")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("share_owner_email");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -3882,6 +3946,15 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.HasOne("TerraScale.Authentication.Contracts.UserRecord", null)
                         .WithMany()
                         .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.AgentId.AgentIdClientRecord", b =>
+                {
+                    b.HasOne("TerraScale.Authentication.Contracts.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

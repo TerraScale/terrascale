@@ -31,7 +31,7 @@ public sealed class ProjectDiscoveryMetadata : IOpenIddictServerHandler<HandleCo
             context.MtlsDeviceAuthorizationEndpointAlias = null;
             context.DeviceAuthorizationEndpointAuthenticationMethods.Clear();
             context.TokenEndpointAuthenticationMethods.Clear();
-            context.TokenEndpointAuthenticationMethods.Add(ClientAuthenticationMethods.None);
+            context.TokenEndpointAuthenticationMethods.UnionWith([ClientAuthenticationMethods.None, ClientAuthenticationMethods.ClientSecretBasic, ClientAuthenticationMethods.ClientSecretPost]);
             context.SubjectTypes.Clear();
             context.SubjectTypes.Add(SubjectTypes.Pairwise);
             return ValueTask.CompletedTask;
