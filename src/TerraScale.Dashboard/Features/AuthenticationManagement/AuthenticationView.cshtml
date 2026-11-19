@@ -7,7 +7,7 @@
     var sections = AuthenticationSection.All.Where(section => section.Key != "settings" || Model.Context.Project?.Id == PlatformDatabases.AuthProjectId);
 }
 <main class="ts-page ts-idp" data-auth-section="@current.Key">
-<header class="ts-page-header"><h1 class="ts-page-title">Authentication</h1><div class="ts-page-actions">
+<header class="ts-page-header"><h1 class="ts-page-title" id="authentication-page-title">@(current.Key == "agents" ? "Agents" : "Authentication")</h1><div class="ts-page-actions">
 @if (manage && current.Key is "users" or "invitations") { <button class="ts-btn ts-btn-primary" type="button" command="show-modal" commandfor="auth-invite-dialog">@Icons.Render("Plus", 16)<span>Invite user</span></button> }
 else if (manage && current.Key == "clients") { <button class="ts-btn ts-btn-primary" type="button" command="show-modal" commandfor="auth-create-client-dialog">@Icons.Render("Plus", 16)<span>New client</span></button> }
 else if (manage && current.Key == "webhooks") { <button class="ts-btn ts-btn-primary" type="button" command="show-modal" commandfor="auth-create-webhook-dialog">@Icons.Render("Plus", 16)<span>Add webhook</span></button> }

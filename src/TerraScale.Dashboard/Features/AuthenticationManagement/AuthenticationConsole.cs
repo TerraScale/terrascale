@@ -34,6 +34,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                 ["providers", var provider] => AuthenticationProvider.Find(provider) is not null,
                 ["providers", var provider, "delete"] => AuthenticationProvider.Find(provider) is not null,
                 ["users", _, "api-keys", _, "revoke"] => true,
+                ["agents", "policy"] or ["agents", _, "revoke"] or ["agents", _, "keys", _, "revoke"] => true,
                 ["users", _, "disable" or "enable" or "delete" or "impersonate" or "sign-out" or "profile"] or ["users", "impersonations", _, "end"] or ["sessions", _, "revoke"] or ["clients", _, "delete" or "edit" or "rotate"] or ["webhooks", _, "delete" or "rotate" or "test"] or ["webhooks", _, "deliveries", _, "replay"] => true,
                 ["organizations", ..] => true,
                 _ => false
@@ -70,6 +71,15 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
 
                 switch (parts)
                 {
+                    case ["agents", "policy"]:
+                        await projects.UpdateAgentPolicyAsync(session, project, new(Lines(form["allowed_scopes"])), cancel);
+                        break;
+                    case ["agents", var agent, "revoke"]:
+                        await projects.RevokeAgentAsync(session, project, agent, cancel);
+                        break;
+                    case ["agents", var agent, "keys", var kid, "revoke"]:
+                        await projects.RevokeAgentKeyAsync(session, project, agent, kid, cancel);
+                        break;
                     case ["invitations"]:
                         await projects.CreateInvitationAsync(session, project, new(form["email"].ToString()), cancel);
                         break;
@@ -239,6 +249,10 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             if (http.Request.IsDatastarRequest)
             {
                 var page = await PageModelAsync(http, context, projects, key, error, status);
+                if (key == "agents" && error.Length == 0)
+                {
+                    page = page with { Saved = true };
+                }
                 await DatastarEvents.PatchElementsAsync(http, AuthenticationSectionView.Create(page));
                 return Results.Empty;
             }
@@ -248,7 +262,10 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                 return await PageViewAsync(http, context, projects, key, error, status);
             }
 
-            return HttpRedirects.SeeOther("/auth/" + key + "?saved=1");
+            var query = key == "agents"
+                ? AuthenticationPage.Query(http.Request.Query["agent"].ToString(), http.Request.Query["owner"].ToString(), http.Request.Query["after"].ToString())
+                : QueryString.Empty;
+            return HttpRedirects.SeeOther("/auth/" + key + query.Add("saved", "1").ToString());
         }
 
         // At least one first factor stays on; ts-auth enforces the same rule.
@@ -503,6 +520,18 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                             Impersonations = context.CanManageProject ? (await projects.ListImpersonationsAsync(session, project, cancel)).Items : []
                         };
                         break;
+                    case "agents":
+                        page = page with { AgentId = query["agent"].ToString(), AgentOwner = query["owner"].ToString() };
+                        if (page.AgentId.Length > 0)
+                        {
+                            page = page with { SelectedAgent = await projects.GetAgentAsync(session, project, page.AgentId, cancel) };
+                        }
+                        else
+                        {
+                            var agents = await projects.ListAgentsAsync(session, project, Value(page.AgentOwner), Value(page.After), cancel);
+                            page = page with { Agents = agents.Items, Next = agents.Next, AgentPolicy = await projects.GetAgentPolicyAsync(session, project, cancel) };
+                        }
+                        break;
                     case "sessions": var live = await projects.ListSessionsAsync(session, project, Value(page.User), Value(page.After), cancel); page = page with { Sessions = live.Items, Next = live.Next }; break;
                     case "invitations": var invitations = await projects.ListInvitationsAsync(session, project, Value(page.After), cancel); page = page with { Invitations = invitations.Items, Next = invitations.Next }; break;
                     case "waitlist": var waitlist = await projects.ListWaitlistAsync(session, project, Value(page.After), cancel); page = page with { Waitlist = waitlist.Items, Next = waitlist.Next }; break;
@@ -569,6 +598,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         [
             new("overview", "Overview", "LayoutDashboard", ""),
             new("users", "Users", "Users", "Users"),
+            new("agents", "Agents", "Fingerprint", "Users"),
             new("invitations", "Invitations", "Mail", "Users"),
             new("waitlist", "Waitlist", "Users", "Users"),
             new("restrictions", "Restrictions", "Shield", "Security"),

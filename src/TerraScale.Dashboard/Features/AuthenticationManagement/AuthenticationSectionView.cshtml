@@ -84,8 +84,11 @@
 @if (Model.RotatedWebhook is { } rotatedSecret) {
 <section class="ts-alert ts-alert-success" id="auth-webhook-rotated" data-init="history.replaceState(null, '', '/auth/webhooks')"><h2 class="ts-alert-title">Rotated signing secret</h2>@{ Secret("Signing secret", "auth-webhook-rotated-secret", rotatedSecret.Secret, "signing secret", Previous(rotatedSecret.PreviousSecretExpiresAt)); }</section>
 }
-<section class="@(current.Key switch { "users" when Model.SelectedUser is not null => "ts-stack-lg", "overview" or "branding" or "restrictions" or "configuration" or "mfa-sessions" or "webhooks" or "organizations" => "ts-stack-lg", "danger" => "ts-card ts-card-boxed ts-card-flush ts-idp-panel ts-idp-danger", _ => "ts-card ts-card-boxed ts-card-flush ts-idp-panel" })" id="@("auth-" + current.Key)" aria-labelledby="@("auth-" + current.Key + "-title")">
-@if (current.Key == "overview") {
+<section class="@(current.Key switch { "users" when Model.SelectedUser is not null => "ts-stack-lg", "agents" or "overview" or "branding" or "restrictions" or "configuration" or "mfa-sessions" or "webhooks" or "organizations" => "ts-stack-lg", "danger" => "ts-card ts-card-boxed ts-card-flush ts-idp-panel ts-idp-danger", _ => "ts-card ts-card-boxed ts-card-flush ts-idp-panel" })" id="@("auth-" + current.Key)" aria-labelledby="@(current.Key == "agents" && Model.SelectedAgent is null ? "authentication-page-title" : "auth-" + current.Key + "-title")">
+@if (current.Key == "agents") {
+@(await RenderPartialAsync<AuthenticationAgents, AuthenticationPage>(Model))
+}
+else if (current.Key == "overview") {
 @if (settings is null) { <section class="ts-card ts-card-boxed ts-card-flush">@{ CardHead("Project authentication", "auth-overview-title"); }<div class="ts-card-body">@{ Empty("Authentication details are unavailable."); }</div></section> } else {
 <dl class="ts-stats" aria-label="Identity totals">
 <div class="ts-stat"><dt class="ts-stat-label">Users</dt><dd class="ts-stat-value" id="auth-count-users">@settings.Counts.Users</dd></div>
