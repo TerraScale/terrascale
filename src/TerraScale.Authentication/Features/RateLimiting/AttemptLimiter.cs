@@ -26,10 +26,10 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
     // Milliseconds a token bucket's stored write time may lead this replica's clock before it counts as corrupt.
     private const long MaxClockSkew = 24 * 60 * 60 * 1000;
 
-    private static readonly string[] Regions = ["gru", "sjc", "fra"];
+    private readonly IReadOnlyList<string> regions = options.Deployment.Regions;
 
-    private readonly int regionIndex = Array.IndexOf(Regions, region) is var index && index >= 0
-        ? index : throw new ArgumentException("The auth region must be gru, sjc or fra.", nameof(region));
+    private readonly int regionIndex = Array.IndexOf([.. options.Deployment.Regions], region) is var index && index >= 0
+        ? index : throw new ArgumentException($"The auth region must be one of {string.Join(", ", options.Deployment.Regions)}.", nameof(region));
 
     private readonly LocalAttemptStore local = new(clock);
 
@@ -118,7 +118,7 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(step, nameof(interval));
         var capacity = checked(burst * step);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(capacity, int.MaxValue, nameof(burst));
-        var keys = Regions.Select(component => this.BucketKey(purpose, component + ":" + subject)).ToArray();
+        var keys = this.regions.Select(component => this.BucketKey(purpose, component + ":" + subject)).ToArray();
         for (var attempt = 0; attempt < Math.Min(burst + 2L, MaxRounds); attempt++)
         {
             var now = clock.GetUtcNow().ToUnixTimeMilliseconds();
@@ -341,7 +341,7 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
         // A fixed window stores its window number, which only means something at one window size: the size is part
         // of the address, so changing a budget's window starts fresh buckets instead of reading old numbers as far-future windows.
         var address = cooldown ? purpose : $"{purpose}/{windowSeconds}s";
-        var keys = Regions.Select(component => this.BucketKey(address, component + ":" + subject)).ToArray();
+        var keys = this.regions.Select(component => this.BucketKey(address, component + ":" + subject)).ToArray();
         var key = keys[this.regionIndex];
         string[] others = [.. keys.Where((_, component) => component != this.regionIndex)];
 

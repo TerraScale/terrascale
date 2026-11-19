@@ -40,13 +40,12 @@ public static class App
     /// <summary>Service key for peer-only management calls to the regional TerraBase endpoint.</summary>
     public const string StorageAuthority = "terrabase-authority";
 
-    /// <summary>Single-use proofs and shared mail budgets require GRU's one TerraBase writer in production.</summary>
     public static void ValidateAuthenticationAuthority(AuthOptions options, string? region)
     {
         ArgumentNullException.ThrowIfNull(options);
-        if ((!options.Development || options.Smtp is not null || options.CloudflareEmail is not null) && (region ?? (options.Development ? "gru" : null)) != "gru")
+        if ((!options.Development || options.Smtp is not null || options.CloudflareEmail is not null) && options.Deployment.AdmittedRegion(region) != options.Deployment.Authority)
         {
-            throw new AuthConfigurationException("Authentication requires the GRU authority for durable single-use proofs and email admission");
+            throw new AuthConfigurationException($"The {options.Deployment.Name} ts-auth runs only in its authority region {options.Deployment.Authority}, which holds its durable single-use proofs and email admission");
         }
     }
 
@@ -59,15 +58,6 @@ public static class App
         ArgumentException.ThrowIfNullOrEmpty(host);
         var labels = host.Split('.');
         return labels.Length >= 3 ? string.Join(".", labels, 1, labels.Length - 1) : host;
-    }
-
-    /// <summary>Whether an allowed origin's host is the relying party itself or one of its subdomains.</summary>
-    public static bool PasskeyOriginMatches(string origin, string rpId)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(origin);
-        ArgumentException.ThrowIfNullOrEmpty(rpId);
-        return Uri.TryCreate(origin, UriKind.Absolute, out var uri)
-            && (uri.Host.Equals(rpId, StringComparison.OrdinalIgnoreCase) || uri.Host.EndsWith("." + rpId, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
@@ -146,15 +136,8 @@ public static class App
         builder.Services.AddSingleton<HostedAuth>();
         builder.Services.AddSingleton<TotpCredentials>();
         builder.Services.AddSingleton<PasskeyCredentials>();
-        var passkeyOrigins = new[] { options.PublicOrigin.AbsoluteUri.TrimEnd('/'), AuthOptions.DashboardOrigin };
-        var passkeyRpId = PasskeyRpId(options.PublicOrigin.Host);
-        if (!options.Development)
-        {
-            foreach (var origin in passkeyOrigins.Where(origin => !PasskeyOriginMatches(origin, passkeyRpId)))
-            {
-                throw new AuthConfigurationException($"The passkey origin {origin} must be the relying party {passkeyRpId} or a subdomain of it.");
-            }
-        }
+        var passkeyOrigins = new[] { options.PublicOrigin.AbsoluteUri.TrimEnd('/'), options.DashboardOrigin };
+        var passkeyRpId = options.Deployment.PasskeyRpId;
 
         builder.Services.AddSingleton(new Fido2NetLib.Fido2(new Fido2Configuration
         {
@@ -233,7 +216,7 @@ public static class App
         builder.Services.AddSingleton<SigningKeyRotation>();
         builder.Services.AddHostedService(provider => provider.GetRequiredService<SigningKeyRotation>());
         builder.Services.AddSingleton(services => new AttemptLimiter(services.GetRequiredService<IAttemptStore>(), services.GetRequiredService<TimeProvider>(), options,
-            services.GetRequiredService<IConfiguration>()["TS_REGION"] ?? (options.Development ? "gru" : throw new AuthConfigurationException("TS_REGION is required outside Development")),
+            options.Deployment.AdmittedRegion(services.GetRequiredService<IConfiguration>()["TS_REGION"]),
             services.GetRequiredService<ILogger<AttemptLimiter>>()));
         builder.Services.AddSingleton<EmailAdmission>();
         if (options.Smtp is { } smtp)
@@ -331,10 +314,7 @@ public static class App
         builder.Configuration["ForwardedHeaders_Enabled"] = "false";
 
         _ = TerraBaseOrigin(options);
-        if (!options.Development && (options.Smtp is null || options.CloudflareEmail is null))
-        {
-            throw new AuthConfigurationException("TS_AUTH_SMTP_HOST, TS_AUTH_SMTP_USERNAME, TS_AUTH_SMTP_PASSWORD, CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_EMAIL_TOKEN are required outside Development");
-        }
+        options.Deployment.ValidateEmail(options);
 
         var app = builder.Build();
         app.UseTerraScaleRequestIdentity(AuthIds.New, builder.Configuration[TerraBaseTransport.PeerSecretVariable]);

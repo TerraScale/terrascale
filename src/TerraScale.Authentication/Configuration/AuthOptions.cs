@@ -50,11 +50,11 @@ public sealed partial record AuthOptions
     /// </summary>
     public required IPEndPoint MetricsListen { get; init; }
 
-    /// <summary>The global origin of every issuer, <c>https://{origin}/{tenant}</c>, served behind the ts-orch TLS edge.</summary>
-    public const string GlobalOrigin = "https://auth.terrascale.tech";
+    public required AuthDeployment Deployment { get; init; }
 
-    /// <summary>The public origin browsers and clients use: <see cref="GlobalOrigin"/> unless a preview or test sets another.</summary>
-    public required Uri PublicOrigin { get; init; }
+    public Uri PublicOrigin => this.Deployment.PublicOrigin;
+
+    public string DashboardOrigin => this.Deployment.DashboardOrigin;
 
     /// <summary>32-byte key that encrypts recoverable secrets at rest.</summary>
     public required byte[] MasterKey { get; init; }
@@ -85,8 +85,6 @@ public sealed partial record AuthOptions
     /// <summary>The ts-dashboard OpenID Connect client, registered at startup when configured.</summary>
     public DashboardClientOptions? DashboardClient { get; init; }
 
-    public const string DashboardOrigin = "https://dash.terrascale.tech";
-
     /// <summary>
     /// TerraBase's audience: every access token carries it, in every region, so TerraBase trusts exactly one
     /// issuer/audience pair (<c>https://auth.terrascale.tech/terrascale</c>, this). Code, not configuration.
@@ -112,8 +110,7 @@ public sealed partial record AuthOptions
     /// </summary>
     public Uri? TerraBaseUrl { get; init; }
 
-    /// <summary>Whether <c>TS_AUTH_ENVIRONMENT=Development</c> disables the production guards.</summary>
-    public bool Development { get; init; }
+    public bool Development => this.Deployment is DevelopmentDeployment;
 
     /// <summary>
     /// Describes the configuration without any credential: the generated record
@@ -121,7 +118,7 @@ public sealed partial record AuthOptions
     /// </summary>
     public override string ToString() =>
         $"AuthOptions {{ Listen = {this.Listen}, MetricsListen = {this.MetricsListen}, PublicOrigin = {this.PublicOrigin}, "
-        + $"Development = {this.Development}, Email = {(this.Smtp is null && this.CloudflareEmail is null ? "off" : "on")}, "
+        + $"Deployment = {this.Deployment.Name}, Email = {(this.Smtp is null && this.CloudflareEmail is null ? "off" : "on")}, "
         + $"ErrorReporting = {(this.SentryDsn is null ? "off" : "on")}, DashboardClient = {(this.DashboardClient is null ? "off" : "on")}, "
         + $"AccessTokenAudiences = {this.AccessTokenAudiences.Count}, ServiceClients = {this.ServiceClients.Count} }}";
 
@@ -208,7 +205,7 @@ public sealed partial record AuthOptions
         string Required(string key) => Optional(key) ?? throw Invalid($"{EnvName(key)} is required");
 
         var development = string.Equals(Optional("environment"), "Development", StringComparison.OrdinalIgnoreCase);
-        var publicOrigin = AbsoluteHttpUrl("public-origin", Optional("public-origin") ?? GlobalOrigin);
+        var publicOrigin = AbsoluteHttpUrl("public-origin", Optional("public-origin") ?? ProductionDeployment.Origin);
         // Routes are mapped at the root, so the public origin cannot carry a base path.
         if (publicOrigin.AbsolutePath != "/")
         {
@@ -256,7 +253,7 @@ public sealed partial record AuthOptions
         {
             Listen = ParseListen("listen", Optional("listen") ?? "http://0.0.0.0:8090"),
             MetricsListen = ParseListen("metrics-listen", Optional("metrics-listen") ?? "http://0.0.0.0:9092"),
-            PublicOrigin = publicOrigin,
+            Deployment = AuthDeployment.Of(publicOrigin, development),
             MasterKey = DecodeKey("master-key", Required("master-key")),
             AuditSigningKey = Optional("audit-signing-key") is { } signing ? DecodeKey("audit-signing-key", signing) : null,
             AuditVerificationKeys = [.. verifyValues.Select(raw => DecodeKey("audit-verify-keys", raw))],
@@ -269,7 +266,6 @@ public sealed partial record AuthOptions
             AccessTokenAudiences = [.. ParseAudiences(Optional("access-token-audiences")).Prepend(TerraBaseAudience).Distinct(StringComparer.Ordinal)],
             ServiceClients = ParseServiceClients(Optional("service-clients")),
             TerraBaseUrl = Optional("terrabase-url") is { } terraBaseUrl ? ParseOrigin("terrabase-url", terraBaseUrl) : null,
-            Development = development,
         };
         options = options with { SocialClients = ParseSocialClients(options, Optional("github-oauth"), Optional("google-oauth")) };
         options.EnforceProductionGuards();

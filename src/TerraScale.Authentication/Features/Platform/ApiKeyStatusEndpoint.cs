@@ -57,10 +57,9 @@ public sealed class ApiKeyStatusEndpoint(ApiKeys keys, KeyRing ring, AuthOptions
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         this.HttpContext.Response.Headers.CacheControl = "no-store";
-        // Revocations are written on the GRU authority's storage; another region's copy may lag behind an acknowledged one.
-        if ((configuration["TS_REGION"] ?? (options.Development ? "gru" : null)) != "gru")
+        if ((configuration["TS_REGION"] ?? (options.Development ? options.Deployment.Authority : null)) != options.Deployment.Authority)
         {
-            return Unavailable("API key status is answered by the GRU authority only.");
+            return Unavailable("API key status is answered by the authority region only.");
         }
 
         try

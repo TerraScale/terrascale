@@ -30,7 +30,7 @@ internal static class Program
         {
             Listen = new IPEndPoint(IPAddress.Loopback, 8090),
             MetricsListen = new IPEndPoint(IPAddress.Loopback, 9092),
-            PublicOrigin = new Uri("https://auth.example.invalid/"),
+            Deployment = new DevelopmentDeployment(new Uri("https://auth.example.invalid/")),
             MasterKey = RandomNumberGenerator.GetBytes(32),
         };
         foreach (var name in new[] { "microsoft", "gitlab", "linkedin", "slack", "discord", "facebook", "x", "oauth2" })

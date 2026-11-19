@@ -1031,8 +1031,8 @@ internal static class SignInFlow
                 || Tenancy.IsProject(tenant) && next.StartsWith($"/ui/{tenant}/organization-invitations?token=", StringComparison.Ordinal)
                 || Tenancy.IsProject(tenant) && (next == AgentEnrollments.PagePath(tenant) || next.StartsWith(AgentEnrollments.PagePath(tenant) + "?user_code=", StringComparison.Ordinal))
                 || next == SecurityPath(tenant)
-                || next == AuthOptions.DashboardOrigin + "/profile"
-                || next == AuthOptions.DashboardOrigin + "/profile?tab=security"
+                || next == context.RequestServices.GetRequiredService<AuthOptions>().DashboardOrigin + "/profile"
+                || next == context.RequestServices.GetRequiredService<AuthOptions>().DashboardOrigin + "/profile?tab=security"
                 || !Tenancy.IsProject(tenant) && (next == DevicePath || next.StartsWith(DevicePath + "?", StringComparison.Ordinal)))
             && next.Length <= 4096
             && SignInPageModel.NavigationTarget(next) is not null

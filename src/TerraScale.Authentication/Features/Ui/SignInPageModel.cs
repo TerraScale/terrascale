@@ -121,6 +121,8 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
     /// <summary>The public origin used to classify footer destinations.</summary>
     public Uri? PublicOrigin { get; init; }
 
+    public string? DashboardOrigin { get; init; }
+
     /// <summary>A short bold headline over <see cref="Error"/>.</summary>
     public string? ErrorTitle { get; init; }
 
@@ -173,8 +175,8 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
 
     public string? SsoConfirmation { get; init; }
 
-    public string? AccountUrl => this.Next is { } next && (next == AuthOptions.DashboardOrigin + "/profile"
-        || next == AuthOptions.DashboardOrigin + "/profile?tab=security")
+    public string? AccountUrl => this.Next is { } next && (next == this.DashboardOrigin + "/profile"
+        || next == this.DashboardOrigin + "/profile?tab=security")
         ? next
         : null;
 
@@ -249,7 +251,7 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
 
     public string DefaultDestination => Tenancy.IsProject(this.Slug)
         ? SignInFlow.SecurityPath(this.Slug)
-        : AuthOptions.DashboardOrigin;
+        : this.DashboardOrigin ?? throw new InvalidOperationException("The sign-in page renders only after its dashboard origin is set");
 
     public string Link(string path, bool form = false)
     {
@@ -306,7 +308,7 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
         ArgumentNullException.ThrowIfNull(model);
         var nonce = BrowserSecurity.NewNonce();
         BrowserSecurity.ApplyPageHeaders(context.Response, nonce);
-        var located = model with { Nonce = nonce, Theme = HostedTheme.Of(context), RequestId = context.TraceIdentifier, PublicOrigin = context.RequestServices.GetRequiredService<AuthOptions>().PublicOrigin, Locale = AuthEmails.Locale(context.Request), UiLocales = AuthEmails.UiLocales(context.Request) };
+        var located = model with { Nonce = nonce, Theme = HostedTheme.Of(context), RequestId = context.TraceIdentifier, PublicOrigin = context.RequestServices.GetRequiredService<AuthOptions>().PublicOrigin, DashboardOrigin = context.RequestServices.GetRequiredService<AuthOptions>().DashboardOrigin, Locale = AuthEmails.Locale(context.Request), UiLocales = AuthEmails.UiLocales(context.Request) };
         var pending = located.Step == SignInStep.Code
             ? PendingSocialLinks.Open(context.RequestServices.GetRequiredService<AuthOptions>(), located.Slug,
                 PendingSocialLinks.Read(context, located.Slug), context.RequestServices.GetRequiredService<TimeProvider>()) : null;

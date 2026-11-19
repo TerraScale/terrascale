@@ -27,6 +27,7 @@ The served `/openapi/v1.json` and `/scalar` describe current HTTP operations. Pu
 - [API-key lifecycle](regional/api-key-lifecycle.md).
 - [Signing keys](signing-keys.md), [MFA](mfa.md), [MFA sign-in](mfa-sign-in.md) and [Passkeys](passkeys.md).
 - [Step-up proof](step-up-proof.md) and [email change](email-change.md).
+- [Deployments](deployments.md): production and the isolated staging deployment, their authority and email.
 
 - [User impersonation](impersonation.md).
 
