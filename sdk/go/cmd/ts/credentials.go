@@ -38,6 +38,10 @@ func saveCredentials(path string, t *tsauth.Tokens, write func(*os.File, []byte)
 	if err != nil {
 		return err
 	}
+	return saveSecretCredentials(path, data, write)
+}
+
+func saveSecretCredentials(path string, data []byte, write func(*os.File, []byte) (int, error)) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
