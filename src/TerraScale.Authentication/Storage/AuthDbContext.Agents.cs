@@ -56,7 +56,7 @@ public sealed partial class AuthDbContext
             assertion.HasKey(row => new { row.ProjectId, row.AgentId, row.Jti });
             assertion.HasIndex(row => row.KeepUntil);
             assertion.HasOne<AgentRecord>().WithMany().HasForeignKey(row => new { row.ProjectId, row.AgentId }).OnDelete(DeleteBehavior.Cascade);
-            assertion.Property(row => row.Jti).HasMaxLength(AgentTokens.MaxJtiLength).IsRequired();
+            assertion.Property(row => row.Jti).HasMaxLength(AgentAssertionRecord.MaxJtiLength).IsRequired();
             Versioned(assertion);
         });
         model.Entity<AgentEnrollmentRecord>(enrollment =>
