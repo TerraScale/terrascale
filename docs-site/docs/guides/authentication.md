@@ -6,6 +6,8 @@ title: Authentication
 
 Create an API key in the dashboard for the exact project and database your application needs, then exchange it for a short-lived access token. Your application sends that token with every request.
 
+For an AI agent with its own key and an accountable owner, use [Agent identities](/guides/agent-identities). The guide covers agents for your app's users, TerraScale MCP and OpenID Connect sign-in.
+
 ## API keys and access tokens
 
 A dashboard API key has the form `<key ID>_<secret>` and is an OAuth 2.0 client credential. The key ID is a 26-character canonical ULID, followed by `_` and 52 lowercase Crockford base32 characters (79 characters in total); the key ID is the part before `_`. A key may start with `sk_`. Exchange it at the token endpoint with the client credentials grant; the client ID is the key ID and the client secret is the whole key:
