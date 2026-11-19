@@ -921,11 +921,7 @@ internal sealed partial class HomeLeases(
             var database = new TenantContext(lease.OrganizationId, PlanTier.Hobby, lease.ProjectId, id);
             var placement = PlatformDatabase(id) ? null
                 : await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord { Placement: var found } ? found : null;
-            var cause = placement is null ? null
-                : !_nodes.ContainsKey(lease.Node) ? "lapsed"
-                : owners.Find(lease.Home) is { } owner && owner.Node != lease.Node ? "not_writer"
-                : lease.Home != placement.Home && lease.Epoch < placement.Version && !moving.Contains(id) ? "stale_lease"
-                : null;
+            var cause = placement is null ? null : UnservedCause(lease, placement, _nodes.ContainsKey(lease.Node), owners.Find(lease.Home), moving);
             if (cause is null || placement is null)
             {
                 if (_unserved.TryRemove(id, out var was))

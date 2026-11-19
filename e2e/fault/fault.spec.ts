@@ -17,7 +17,7 @@ import { keyStatusProxy } from './key-status-proxy';
 import { postgres } from './signing-keys-support';
 import { verifyRestoreDrill } from './restore-drill';
 import { extendPeers, startRegion } from '../placement/fleet';
-import { backupPuts, backupStore, cleanUp, continuity, counted, crashWrite, endpoint, faultId, fileHash, holdsFile, holeRecords, keptCopies, keptHash, Kv, Ledger, logged, metric, node, nodeBuild, nodeHoles, nodes, nodeRequest, nodeStatus, plantHole, probe, promoting, regions, restartAfterKill, scrape, signIn, exchangedToken, systemContinuity, tokenReady, topology, ulidAt, writerIs, writerToken, type HomeLease, type Node, type Row } from './support';
+import { backupPuts, backupStore, cleanUp, continuity, counted, crashWrite, endpoint, faultId, fileHash, holdsFile, holeRecords, keptCopies, keptHash, Kv, Ledger, logged, metric, node, nodeBuild, nodeHoles, nodes, nodeRequest, nodeStatus, plantHole, probe, promoting, refuseConnections, regions, restartAfterKill, scrape, signIn, exchangedToken, systemContinuity, tokenReady, topology, ulidAt, writerIs, writerToken, type HomeLease, type Node, type Row } from './support';
 
 test.beforeEach(async () => {
   expect(process.env.E2E_TARGET ?? 'local').toBe('local');
@@ -760,6 +760,157 @@ test('a regional prime whose writer refuses its replicas answers at once with th
         await kv.put(owners, 'gru', { ...owner!.value, node: gru.name, epoch: 1, previous: null, activated: false, transfer: null }, owner!.seq);
         await writerIs('gru', gru.name);
       }
+      kv.close();
+    });
+  }
+});
+
+test('a retired source whose fra replica cannot catch up hands the role back only while that replica\'s fra home is unserved, and the replica catches up once fra serves it again', async ({ cells, request }) => {
+  test.setTimeout(300_000);
+  const token = await writerToken(request);
+  const kv = await Kv.open();
+  const gru = node('journey-1');
+  const partner = node('journey-3');
+  const fra = [node('journey-2'), node('journey-4')];
+  const refusal = (response: { status: number; body: string }) => {
+    expect(response.status, response.body).toBe(503);
+    return (JSON.parse(response.body) as { error: { code: string; details: Record<string, string> } }).error;
+  };
+  const prime = () => nodeRequest(gru, `/v1/rollout/prime?source=${partner.name}`, 'POST');
+  const admit = () => nodeRequest(partner, `/v1/rollout/drain/admit?target=${gru.name}&spec=journey-unserved`, 'POST');
+  let lease: { key: string; served: { value: HomeLease } } | undefined;
+  let stopRefusing: (() => Promise<void>) | undefined;
+  let restartPartner: (() => Promise<void>) | undefined;
+  const created: string[] = [];
+  let failure: unknown;
+  try {
+    await restartAfterKill(partner, false)();
+    const [ledger] = await createLedgers(cells, 1, 'unserved-retiring');
+    created.push(ledger.id);
+    const homedInFra = await json<{ id: string; homeRegion: string }>(await cells.post(`${endpoint('fra')}${project()}/databases`, {
+      data: { name: name('unserved-retiring-fra'), homeRegion: 'fra', replicaRegions: ['gru'] },
+    }), 201);
+    created.push(homedInFra.id);
+    expect(homedInFra.homeRegion, 'a database created in fra is homed there').toBe('fra');
+    const fraLedger = new Ledger(homedInFra.id);
+    await sql(cells, endpoint('fra'), homedInFra.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
+    await sql(cells, endpoint('fra'), homedInFra.id, 'CREATE TABLE local_rows (id TEXT PRIMARY KEY, value TEXT NOT NULL)');
+    await sql(cells, endpoint('fra'), homedInFra.id, "INSERT INTO local_rows (id, value) VALUES ('acknowledged', 'homed-in-fra')");
+    await fraLedger.write(cells, 'fra', [[100, 'homed-in-fra']]);
+    await fraLedger.compare(cells);
+    const leaseKey = `home.${fraLedger.id}`;
+    const served = await homeLease(kv, fraLedger.id);
+    lease = { key: leaseKey, served };
+    const fraWriter = fra.find(member => member.name === served.value.node)!;
+    const unservedLease = { ...served.value, node: fra.find(member => member !== fraWriter)!.name };
+    const heldRoute = `/v1/sync/organizations/${served.value.organizationId}/projects/${served.value.projectId}/databases/${fraLedger.id}/held`;
+    const held = async (member: Node) => (JSON.parse((await nodeRequest(member, heldRoute)).body) as { revision?: string }).revision;
+    const sameHeld = async () => { const [mine, theirs] = await Promise.all([held(gru), held(partner)]); return mine !== undefined && mine === theirs; };
+    await expect.poll(sameHeld, { message: 'journey-3 holds what journey-1 holds of the fra database', timeout: 60_000 }).toBe(true);
+    const primedPartner = await nodeRequest(partner, `/v1/rollout/prime?source=${gru.name}`, 'POST');
+    expect(primedPartner.status, primedPartner.body).toBe(204);
+    const away = await nodeRequest(gru, `/v1/rollout/drain?target=${partner.name}`, 'POST');
+    expect(away.status, away.body).toBe(204);
+    await writerIs('gru', partner.name);
+    await restartAfterKill(gru, false)();
+    const beforeRestartWrite = await held(partner);
+    await fraLedger.write(cells, 'fra', [[99, 'pulled-by-the-restarted-journey-1']]);
+    await expect.poll(async () => { const [mine, theirs] = await Promise.all([held(gru), held(partner)]); return theirs !== beforeRestartWrite && mine === theirs; },
+      { message: 'the restarted journey-1 follows the fra database and pulls its new row', timeout: 60_000 }).toBe(true);
+    const caughtUp = await prime();
+    expect(caughtUp.status, `journey-1 catches every replica up before the fault: ${caughtUp.body}`).toBe(204);
+    expect(caughtUp.headers['terrabase-primed-without'], 'a prime with every home served goes without nothing').toBeUndefined();
+    const behind = await held(gru);
+
+    stopRefusing = await refuseConnections(gru, fra);
+    await fraLedger.write(cells, 'fra', [[101, 'missed-by-journey-1']]);
+    await expect.poll(() => held(partner), { message: 'journey-3 pulls the new fra row that journey-1 cannot' }).not.toBe(behind);
+    expect(refusal(await prime()), 'a prime refuses a replica whose fra home is served but cannot be pulled')
+      .toMatchObject({ code: 'replica_unavailable', details: { phase: 'prime', peer: partner.name, home: 'fra' } });
+    expect(refusal(await admit()), 'so the retired source still waits for its catch-up')
+      .toMatchObject({ code: 'source_retiring', details: { peer: gru.name, waiting: 'catch_up' } });
+
+    const unserve = async () => {
+      await kv.put(homes, leaseKey, unservedLease, (await homeLease(kv, fraLedger.id)).seq);
+      await expect.poll(async () => (await nodeStatus(gru)).unserved?.filter(entry => entry.databaseId === fraLedger.id && entry.node === unservedLease.node).map(entry => entry.cause) ?? [],
+        { message: 'journey-1 lists the fra database as unserved', timeout: 60_000 }).toEqual(['not_writer']);
+    };
+    await unserve();
+    await stopRefusing();
+    stopRefusing = await refuseConnections(gru, fra, '3s');
+    const racing = prime();
+    await kv.put(homes, leaseKey, served.value, (await homeLease(kv, fraLedger.id)).seq);
+    expect(refusal(await racing), 'a home served again while the prime waits is caught up, not skipped')
+      .toMatchObject({ code: 'replica_unavailable', details: { phase: 'prime', home: 'fra' } });
+    await stopRefusing();
+    stopRefusing = await refuseConnections(gru, fra);
+
+    await unserve();
+    const unique = `gru-local-${randomBytes(6).toString('hex')}`;
+    const onNode = (member: Node, statement: string) => fetch(`http://127.0.0.1:${member.port}${database(fraLedger.id)}/sql/execute`, {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ statements: [{ sql: statement }] }), signal: AbortSignal.timeout(15_000),
+    });
+    const acknowledged = async (member: Node) => {
+      const response = await onNode(member, "SELECT value FROM local_rows WHERE id = 'acknowledged'");
+      const body = await response.json() as { results?: { rows: [string][] }[] };
+      return response.status === 200 && response.headers.get('x-terrabase-region') === member.region ? body.results?.[0]?.rows[0]?.[0] : undefined;
+    };
+    const local = await onNode(partner, `UPDATE local_rows SET value = '${unique}' WHERE id = 'acknowledged'`);
+    expect(local.status, await local.clone().text()).toBe(200);
+    expect(local.headers.get('x-terrabase-region')).toBe('gru');
+    expect(local.headers.get('terrascale-write-route'), 'journey-3, the gru writer, acknowledges the fra database write locally').toContain('commit=local');
+    expect(await counted(gru, 'terrabase_localack_held'), 'journey-1 holds the locally acknowledged transaction for its partner').toBeGreaterThanOrEqual(1);
+    expect(await acknowledged(fraWriter), 'fra has not applied it').toBe('homed-in-fra');
+
+    const primed = await prime();
+    expect(primed.status, `a prime completes without a replica whose fra home is unserved: ${primed.body}`).toBe(204);
+    expect(primed.headers['terrabase-primed-without'], 'the prime names the replica it went without').toBe(fraLedger.id);
+    expect(primed.headers['terrabase-primed-without-count']).toBe('1');
+    expect((await nodeStatus(gru)).primedWithout, 'the rollout status names it too').toEqual([fraLedger.id]);
+    expect(await held(gru), 'journey-1 still lacks the fra position journey-3 holds').not.toBe(await held(partner));
+
+    const admitted = await admit();
+    expect(admitted.status, `the retired source clears its retirement: ${admitted.body}`).toBe(200);
+    const { transfer } = JSON.parse(admitted.body) as { transfer: string };
+    const back = await nodeRequest(partner, `/v1/rollout/drain?target=${gru.name}&transfer=${transfer}`, 'POST');
+    expect(back.status, `the drain does not wait for the fra position journey-1 cannot pull: ${back.body}`).toBe(204);
+    await writerIs('gru', gru.name);
+    expect(logged(gru, 'does not wait for database', fraLedger.id, 'preparation'), 'the preparation names the position it went without').toBeGreaterThanOrEqual(1);
+    await ledger.write(cells, 'gru', [[102, 'after-the-drain-back']]);
+    await ledger.compare(cells);
+
+    restartPartner = restartAfterKill(partner, false);
+    await stopRefusing();
+    await kv.put(homes, leaseKey, served.value, (await homeLease(kv, fraLedger.id)).seq);
+    await expect.poll(async () => (await nodeStatus(fraWriter)).unserved?.filter(entry => entry.databaseId === fraLedger.id) ?? [],
+      { message: `${fraWriter.name} serves the fra database again`, timeout: 60_000 }).toEqual([]);
+    for (const reader of [gru, fraWriter]) {
+      await expect.poll(() => acknowledged(reader),
+        { message: `${reader.name} reads the write journey-3 acknowledged locally, without journey-3 and without a resubmission`, timeout: 60_000 }).toBe(unique);
+    }
+    await expect.poll(async () => (await fraLedger.readNode(gru, token)).find(([id]) => id === 101), { message: 'journey-1 reads the fra row it missed' })
+      .toEqual([101, 'missed-by-journey-1']);
+    await restartPartner();
+    restartPartner = undefined;
+    while (created.length > 0) await removeDatabase(cells, created.pop()!);
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    await cleanUp(failure, async () => {
+      await stopRefusing?.();
+      await restartPartner?.();
+      const current = lease ? await kv.get<HomeLease>(homes, lease.key) : null;
+      if (lease && current && current.value.node !== lease.served.value.node) {
+        await kv.put(homes, lease.key, lease.served.value, current.seq);
+      }
+      const owner = await kv.get<Record<string, unknown> & { node: string; epoch: number }>(owners, 'gru');
+      if (owner?.value.node !== gru.name) {
+        await kv.put(owners, 'gru', { ...owner!.value, node: gru.name, epoch: 1, previous: null, activated: false, transfer: null }, owner!.seq);
+        await writerIs('gru', gru.name);
+      }
+      while (created.length > 0) await removeDatabase(cells, created.pop()!);
       kv.close();
     });
   }

@@ -27,10 +27,13 @@ internal sealed record UnservedDatabase(string DatabaseId, string Region, string
 internal sealed record FencedDatabase(string DatabaseId, string Reason, long Epoch, string Detail);
 
 internal sealed record RegionalStatus(string Node, string? Owner, long Epoch, bool Writer, bool Ready, string Session = "",
-    IReadOnlyList<UnservedDatabase>? Unserved = null, IReadOnlyList<KeptCopy>? Kept = null, IReadOnlyList<FencedDatabase>? Fenced = null, string? Unready = null);
+    IReadOnlyList<UnservedDatabase>? Unserved = null, IReadOnlyList<KeptCopy>? Kept = null, IReadOnlyList<FencedDatabase>? Fenced = null, string? Unready = null,
+    IReadOnlyList<string>? PrimedWithout = null);
 internal sealed record RegionalDrain(string Target);
 
 internal readonly union RegionalHandoffResult(Done, Unavailable);
+internal readonly union RegionalPrimeResult(PrimedWithout, Unavailable);
+internal sealed record PrimedWithout(IReadOnlyList<string> Databases);
 internal readonly union RegionalAdmitResult(RegionalAdmission, Unavailable);
 internal sealed record RegionalAdmission(string Transfer);
 internal readonly union DrainReservation(NatsKVEntry<byte[]>, Unavailable);
@@ -43,6 +46,7 @@ internal sealed partial class RegionalHandoff(
     private readonly SemaphoreSlim _changing = new(1, 1);
     private readonly Lock _primeGate = new();
     private PrimeMark? _primeMark;
+    private IReadOnlyList<string> _primedWithout = [];
     private readonly HttpClient _http = PeerHttp.Create(credential);
     private readonly Dictionary<string, TenantContext> _promoted = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _prepared = new(StringComparer.Ordinal);
@@ -64,7 +68,7 @@ internal sealed partial class RegionalHandoff(
             unready is null, _session,
             services.GetRequiredService<HomeLeases>().Unserved, services.GetRequiredService<KeptCopies>().List(),
             region is null || region == options.Region ? Fenced : [],
-            unready is { } condition ? Health.ReadinessConditions.Label(condition) : null);
+            unready is { } condition ? Health.ReadinessConditions.Label(condition) : null, Volatile.Read(ref _primedWithout));
     }
 
     private IReadOnlyList<FencedDatabase> Fenced =>
@@ -299,7 +303,7 @@ internal sealed partial class RegionalHandoff(
         _promoted.Clear();
     }
 
-    internal async Task<RegionalHandoffResult> PrimeAsync(string source, CancellationToken cancellationToken)
+    internal async Task<RegionalPrimeResult> PrimeAsync(string source, CancellationToken cancellationToken)
     {
         if (owners.Find(options.Region) is not { Node: var writer, Epoch: var epoch } || writer != source || source == options.MachineId)
         {
@@ -314,24 +318,41 @@ internal sealed partial class RegionalHandoff(
             _primeMark = mark;
         }
 
+        IReadOnlyList<FollowedReplica> waiting = [];
+        IReadOnlyList<FollowedReplica> skipped = [];
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         bounded.CancelAfter(DrainBudget);
         try
         {
             await replication.SyncCatalogsAsync(bounded.Token).ConfigureAwait(false);
-            if (await replication.CatchUpSinceAsync(mark.Since, bounded.Token).ConfigureAwait(false) is [_, ..] failing)
+            var leases = services.GetRequiredService<HomeLeases>();
+            var following = replication.Followed();
+            var exempt = await leases.ConfirmUnservedElsewhereAsync(
+                following.Where(replica => replica.HomeRegion != options.Region).Select(replica => replica.Database), bounded.Token).ConfigureAwait(false);
+            skipped = [.. following.Where(replica => replica.HomeRegion != options.Region && exempt.ContainsKey(replica.Database))];
+            waiting = [.. following.Except(skipped)];
+            while (true)
             {
-                var (reason, details) = ReplicaFailure.Describe(failing);
-                return PrimeRefused(source, reason, "replica_unavailable", details: details);
-            }
-            if (await services.GetRequiredService<Health.INodeReadiness>().UnreadyAsync(bounded.Token).ConfigureAwait(false) is { } unready)
-            {
-                return PrimeRefused(source, "this node is not ready: " + Health.ReadinessConditions.Label(unready), "prime_unready");
+                if (await replication.CatchUpSinceAsync(mark.Since, waiting, bounded.Token).ConfigureAwait(false) is [_, ..] failing)
+                {
+                    var (reason, details) = ReplicaFailure.Describe(failing);
+                    return PrimeRefused(source, reason, "replica_unavailable", details: details);
+                }
+                if (await services.GetRequiredService<Health.INodeReadiness>().UnreadyAsync(bounded.Token).ConfigureAwait(false) is { } unready)
+                {
+                    return PrimeRefused(source, "this node is not ready: " + Health.ReadinessConditions.Label(unready), "prime_unready");
+                }
+                if (await ServedAgainAsync(leases, skipped, exempt, bounded.Token).ConfigureAwait(false) is not [_, ..] served)
+                {
+                    break;
+                }
+                skipped = [.. skipped.Except(served)];
+                waiting = served;
             }
         }
         catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested)
         {
-            var behind = replication.BehindSince(mark.Since);
+            var behind = replication.BehindSince(mark.Since, waiting);
             return PrimeRefused(source, $"{behind} replicas have not caught up since this prime began; the next prime resumes from here", "prime_incomplete", error,
                 new KeyValuePair<string, string>("behind", behind.ToString(CultureInfo.InvariantCulture)));
         }
@@ -349,7 +370,27 @@ internal sealed partial class RegionalHandoff(
                 _primeMark = null;
             }
         }
-        return new Done();
+        IReadOnlyList<string> without = [.. skipped.Select(replica => replica.Database).Order(StringComparer.Ordinal)];
+        if (without is [_, ..])
+        {
+            LogPrimeSkippedUnserved(logger, source, without.Count, string.Join(',', without));
+        }
+        Volatile.Write(ref _primedWithout, without);
+        return new PrimedWithout(without);
+    }
+
+    private static async Task<IReadOnlyList<FollowedReplica>> ServedAgainAsync(HomeLeases leases, IReadOnlyList<FollowedReplica> skipped,
+        IReadOnlyDictionary<string, ulong> exempt, CancellationToken cancellationToken)
+    {
+        List<FollowedReplica> served = [];
+        foreach (var replica in skipped)
+        {
+            if (!await leases.StillUnservedElsewhereAsync(replica.Database, exempt[replica.Database], cancellationToken).ConfigureAwait(false))
+            {
+                served.Add(replica);
+            }
+        }
+        return served;
     }
 
     private Unavailable PrimeRefused(string source, string reason, string code, Exception? exception = null, params ReadOnlySpan<KeyValuePair<string, string>> details) =>
@@ -406,34 +447,25 @@ internal sealed partial class RegionalHandoff(
 
         var replicas = services.GetRequiredService<IDatabaseReplicas>();
         var replication = services.GetRequiredService<RegionReplication>();
+        var leases = services.GetRequiredService<HomeLeases>();
+        var exempt = await leases.ConfirmUnservedElsewhereAsync(
+            request.Positions.Where(position => position.Home != options.Region).Select(position => position.Database), cancellationToken).ConfigureAwait(false);
+        List<RegionalPosition> exempted = [];
         foreach (var position in request.Positions)
         {
-            var database = Database(position);
             if (_prepared.GetValueOrDefault(position.Database) == position.Revision)
             {
                 continue;
             }
-
-            if (!DatabaseRevision.TryParse(position.Revision, out var expected))
+            if (position.Home != options.Region && exempt.ContainsKey(position.Database))
             {
-                return Refuse("invalid applied-position proof");
+                exempted.Add(position);
+                continue;
             }
-            var held = replicas.HeldRevision(database);
-            if (held is not { } current || current.Incarnation != expected.Incarnation
-                || DatabaseRevision.Compare(current, expected) < 0)
+            if (await ProveAppliedAsync(position, request, cancellationToken).ConfigureAwait(false) is { } refused)
             {
-                logger.ZLogInformation($"Regional candidate catches up database {position.Database:@Database} from {held?.ToString() ?? "no position":@Held} to the certified {position.Revision:@SourceRevision}, epoch {request.Epoch:@Epoch}");
-                if (!await replication.CatchUpAsync(database, cancellationToken).ConfigureAwait(false))
-                {
-                    return Refuse("replica follower unavailable during preparation");
-                }
+                return Refuse(refused);
             }
-            if (replicas.HeldRevision(database) is not { } actual || actual.Incarnation != expected.Incarnation
-                || DatabaseRevision.Compare(actual, expected) < 0)
-            {
-                return Refuse("replica has not applied the certified source position");
-            }
-            logger.ZLogInformation($"Regional candidate applied proof: {request.Source:@Source} to {options.MachineId:@Target}, database {position.Database:@Database}, source {position.Revision:@SourceRevision}, target {actual.ToString():@TargetRevision}, epoch {request.Epoch:@Epoch}");
         }
 
         foreach (var position in request.Positions.Where(position => position.Home == options.Region))
@@ -480,6 +512,13 @@ internal sealed partial class RegionalHandoff(
             return Refuse("retained manifest or certified positions did not verify");
         }
         await services.GetRequiredService<HomePush.HomePush>().RebuildForPromotionAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var position in await ServedAgainAsync(leases, exempted, exempt, request, "preparation", cancellationToken).ConfigureAwait(false))
+        {
+            if (await ProveAppliedAsync(position, request, cancellationToken).ConfigureAwait(false) is { } refused)
+            {
+                return Refuse(refused);
+            }
+        }
         if (!await PreparingAsync(request, cancellationToken).ConfigureAwait(false))
         {
             return Refuse("preparation owner or reservation changed");
@@ -532,8 +571,28 @@ internal sealed partial class RegionalHandoff(
 
         var replication = services.GetRequiredService<RegionReplication>();
         await replication.SyncCatalogsAsync(cancellationToken).ConfigureAwait(false);
+        var leases = services.GetRequiredService<HomeLeases>();
+        var exempt = await leases.ConfirmUnservedElsewhereAsync(
+            request.Positions.Where(position => position.Home != options.Region).Select(position => position.Database), cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<RegionalPosition> exempted = [.. request.Positions.Where(position => position.Home != options.Region && exempt.ContainsKey(position.Database))];
+        if (await VerifyAppliedAsync(request, [.. request.Positions.Except(exempted)], cancellationToken).ConfigureAwait(false) is { } behind)
+        {
+            return behind;
+        }
+        if (await services.GetRequiredService<Health.INodeReadiness>().UnreadyAsync(cancellationToken).ConfigureAwait(false) is { } unready)
+        {
+            return VerifyRefused(request.Source, "this node is not ready: " + Health.ReadinessConditions.Label(unready), "verify_unready");
+        }
+        return await ServedAgainAsync(leases, exempted, exempt, request, "verification", cancellationToken).ConfigureAwait(false) is [_, ..] served
+            && await VerifyAppliedAsync(request, served, cancellationToken).ConfigureAwait(false) is { } late
+            ? late : new Done();
+    }
+
+    private async Task<Unavailable?> VerifyAppliedAsync(RegionalPrepare request, IReadOnlyList<RegionalPosition> positions, CancellationToken cancellationToken)
+    {
+        var replication = services.GetRequiredService<RegionReplication>();
         var replicas = services.GetRequiredService<IDatabaseReplicas>();
-        IReadOnlyList<TenantContext> unapplied = [.. request.Positions
+        IReadOnlyList<TenantContext> unapplied = [.. positions
             .Where(position => position.Home != options.Region && !Applied(replicas.HeldRevision(Database(position)), position))
             .Select(Database)];
         if (await replication.CatchUpAsync(unapplied, cancellationToken).ConfigureAwait(false) is [_, ..] failing)
@@ -544,7 +603,7 @@ internal sealed partial class RegionalHandoff(
 
         var revisions = services.GetRequiredService<IDatabaseRevisions>();
         var behind = 0;
-        foreach (var position in request.Positions)
+        foreach (var position in positions)
         {
             var database = Database(position);
             var actual = position.Home == options.Region
@@ -552,15 +611,55 @@ internal sealed partial class RegionalHandoff(
                 : replicas.HeldRevision(database);
             behind += Applied(actual, position) ? 0 : 1;
         }
-        if (behind > 0)
-        {
-            return VerifyRefused(request.Source, $"{behind} databases have not applied the source's position", "replica_behind",
-                new KeyValuePair<string, string>("databases", behind.ToString(CultureInfo.InvariantCulture)));
-        }
+        return behind > 0
+            ? VerifyRefused(request.Source, $"{behind} databases have not applied the source's position", "replica_behind",
+                new KeyValuePair<string, string>("databases", behind.ToString(CultureInfo.InvariantCulture)))
+            : null;
+    }
 
-        return await services.GetRequiredService<Health.INodeReadiness>().UnreadyAsync(cancellationToken).ConfigureAwait(false) is { } unready
-            ? VerifyRefused(request.Source, "this node is not ready: " + Health.ReadinessConditions.Label(unready), "verify_unready")
-            : new Done();
+    private async Task<string?> ProveAppliedAsync(RegionalPosition position, RegionalPrepare request, CancellationToken cancellationToken)
+    {
+        var replicas = services.GetRequiredService<IDatabaseReplicas>();
+        var database = Database(position);
+        if (!DatabaseRevision.TryParse(position.Revision, out var expected))
+        {
+            return "invalid applied-position proof";
+        }
+        var held = replicas.HeldRevision(database);
+        if (held is not { } current || current.Incarnation != expected.Incarnation
+            || DatabaseRevision.Compare(current, expected) < 0)
+        {
+            logger.ZLogInformation($"Regional candidate catches up database {position.Database:@Database} from {held?.ToString() ?? "no position":@Held} to the certified {position.Revision:@SourceRevision}, epoch {request.Epoch:@Epoch}");
+            if (!await services.GetRequiredService<RegionReplication>().CatchUpAsync(database, cancellationToken).ConfigureAwait(false))
+            {
+                return "replica follower unavailable during preparation";
+            }
+        }
+        if (replicas.HeldRevision(database) is not { } actual || actual.Incarnation != expected.Incarnation
+            || DatabaseRevision.Compare(actual, expected) < 0)
+        {
+            return "replica has not applied the certified source position";
+        }
+        logger.ZLogInformation($"Regional candidate applied proof: {request.Source:@Source} to {options.MachineId:@Target}, database {position.Database:@Database}, source {position.Revision:@SourceRevision}, target {actual.ToString():@TargetRevision}, epoch {request.Epoch:@Epoch}");
+        return null;
+    }
+
+    private async Task<IReadOnlyList<RegionalPosition>> ServedAgainAsync(HomeLeases leases, IReadOnlyList<RegionalPosition> exempted,
+        IReadOnlyDictionary<string, ulong> exempt, RegionalPrepare request, string phase, CancellationToken cancellationToken)
+    {
+        List<RegionalPosition> served = [];
+        foreach (var position in exempted)
+        {
+            if (await leases.StillUnservedElsewhereAsync(position.Database, exempt[position.Database], cancellationToken).ConfigureAwait(false))
+            {
+                LogPositionUnserved(logger, phase, position.Database, position.Home, position.Revision, request.Source, request.Epoch);
+            }
+            else
+            {
+                served.Add(position);
+            }
+        }
+        return served;
     }
 
     private static bool Applied(DatabaseRevision? actual, RegionalPosition position) =>
@@ -909,6 +1008,12 @@ internal sealed partial class RegionalHandoff(
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Regional handoff failed during {Phase} with peer {Peer}")]
     private static partial void LogHandoffFailed(ILogger logger, Exception exception, string phase, string peer);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Regional {Phase} from {Source} at epoch {Epoch} does not wait for database {Database} at {Revision}: its home in {Home} is unserved")]
+    private static partial void LogPositionUnserved(ILogger logger, string phase, string database, string home, string revision, string source, long epoch);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Regional prime against {Source} completed without {Count} replicas whose home in another region is unserved: {Databases}")]
+    private static partial void LogPrimeSkippedUnserved(ILogger logger, string source, int count, string databases);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Regional handoff refused during {Phase} with peer {Peer}: {Reason} ({Code})")]
     private static partial void LogDrainRefused(ILogger logger, Exception? exception, string phase, string peer, string reason, string code);
