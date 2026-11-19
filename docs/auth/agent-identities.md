@@ -4,7 +4,8 @@ An agent is an AI agent that is its own principal in a project tenant. A project
 public key. The agent creates its key pair and keeps the private key; ts-auth stores only the public key. The model
 follows the AgentID idea: a stable agent id, an accountable owner and key-based proof of possession.
 
-This page covers the management API and how an agent gets a token.
+This page covers the management API, self-enrollment with owner approval, the end user's own agent list and how
+an agent gets a token.
 
 ## Agent policy
 
@@ -74,6 +75,86 @@ The answer (`201`):
 
 There is no secret in any answer. `last_used_at` is the last time the agent got a token (below), written at most once a
 minute.
+
+## Enrollment
+
+An agent (a CLI, a script) can ask to be enrolled itself; the project user who will own it approves in the browser. The
+agent generates its key pair first and never sends the private key.
+
+1. Start, unauthenticated:
+
+   ```http
+   POST /v1/{project}/agent-enrollments
+   {"name":"Invoice agent","requested_scopes":["invoices:read"],"allow_self_subject":false,"public_jwk":{"kty":"EC","crv":"P-256","x":"…","y":"…"}}
+   ```
+
+   `name`, `requested_scopes` and `public_jwk` follow the create rules above (the scopes are checked against the agent
+   policy only at approval). The answer (`201`):
+
+   ```json
+   {"enrollment_id":"01KAEXAMPLE0000000000000004","user_code":"WDJB-MJHT","verification_uri":"https://auth.terrascale.tech/ui/{project}/agent-enrollments","verification_uri_complete":"https://auth.terrascale.tech/ui/{project}/agent-enrollments?user_code=WDJB-MJHT","expires_in":600,"interval":5}
+   ```
+
+   Starts are limited to 10 per IP per 15 minutes and 300 per project per hour (`429` with `Retry-After`). An unknown
+   project is `404`.
+2. The agent shows `user_code` and `verification_uri` (or opens `verification_uri_complete`) to its user, together with
+   the first 16 characters of its key's RFC 7638 thumbprint.
+3. The user signs in on the project's hosted pages, which carry the project's branding, and sees the agent's name,
+   the requested scopes the agent policy allows, whether it asks to act as itself, the key fingerprint, the code and
+   the signed-in account, and asks the user to check that the agent shows the same code. Opening the page never decides. **Deny** ends the request. **Approve** first asks for a fresh
+   verification (password or emailed code, then the authenticator code when MFA is on) through the hosted step-up page
+   with purpose `approve_agent`, bound to this enrollment; the user returns and approves. Approval creates the agent
+   owned by that user exactly as `create_agent` does (limits, policy check, audit and `agent.created`), with the
+   allowed requested scopes, and consumes the step-up proof in the same save.
+4. The agent polls no faster than `interval`:
+
+   ```http
+   POST /v1/{project}/agent-enrollments/{enrollment_id}/token
+   {"proof":"<ES256 JWT>"}
+   ```
+
+   The proof is signed by the enrolled private key: header `alg` `ES256`, claims `aud` (this exact URL), `jti`, `iat`
+   and `exp` at most 300 seconds ahead. Every accepted poll's `iat` must be later than the previous one's, so a
+   proof works once. Without such a proof the answer is `401 invalid_proof` and reveals nothing about the enrollment.
+   Otherwise the answer is `400` with `authorization_pending`, `slow_down` (sooner than `interval` after the last
+   poll), `access_denied` or `expired_token`, or `200 {"agent_id":"…","kid":"…"}` once approved. The result is answered
+   once; later polls answer `expired_token`.
+
+Codes and races:
+
+- `user_code` is 8 letters from `BCDFGHJKLMNPQRSTVWXZ` (no vowels or look-alike digits), shown as `XXXX-XXXX`; case,
+  spaces and the dash are ignored. Only its SHA-256 is stored, unique per project. It works for 600 seconds and only
+  while the request is undecided; a code of another project is never found.
+- Each code lookup on the page charges the hosted IP budget and 20 per user per 15 minutes.
+- Approve and deny write the enrollment row at the version they read, and so does a poll that is admitted and answers
+  `authorization_pending` or the result; a poll refused with `invalid_proof`, `slow_down`, `access_denied` or
+  `expired_token` writes nothing. Of two concurrent decisions one wins and the other answers that the request
+  changed; a poll that loses to a decision answers `slow_down`. After approval the agent has another 600 seconds to
+  collect its id.
+- Approval is bound to what the page showed: the form carries an HMAC (keyed from the master key) over the project,
+  the enrollment, the signed-in user and the allowed scopes it listed. A form rendered for another account, or a
+  different allowed set (the agent policy changed), shows the page again for a fresh decision; the step-up proof must
+  belong to the same signed-in user. The approval save also asserts the agent
+  policy, the approver's user row and live session, and is refused when the enrollment, the step-up proof or the
+  session expired before it is submitted.
+- Each code lookup is charged to the stored hosted IP budgets (and the IPv6 /48 site budget) and a stored per-user
+  budget before the code is read, and each start to its stored per-IP and per-project budgets; when that storage fails
+  the request is refused, never admitted from a replica's memory.
+- The session pruner deletes enrollments on a later sweep once they have been expired for 600 seconds.
+
+## Your agents
+
+The signed-in end user of a project manages the agents they own with the project's hosted session cookie, like
+`/me/api-keys`:
+
+| Operation | Route |
+| --- | --- |
+| List | `GET /v1/{project}/me/agents?limit=&after=` |
+| Revoke | `DELETE /v1/{project}/me/agents/{agent}` |
+
+Mutations need the `Origin` of the auth public origin (`403` otherwise). Without a live session the answer is `401`.
+The user comes from the session, never the request; another user's agent is `404`. Revoking behaves as the
+management revoke.
 
 ## Keys
 
@@ -192,7 +273,7 @@ events.
 
 ## Storage
 
-`agents`, `agent_keys`, `agent_policies` and `agent_assertions` ([storage](storage.md)). `agent_assertions` holds each
+`agents`, `agent_keys`, `agent_policies`, `agent_enrollments` and `agent_assertions` ([storage](storage.md)). `agent_assertions` holds each
 used `(project_id, agent_id, jti)` as its primary key. A row is kept until 10 minutes after the assertion stops being
 accepted (`exp` plus the 30 s skew). That margin outlasts the 10 s token request deadline and any clock difference
 between replicas, so no request that accepted the assertion can still be saving when its row is pruned. Session pruning

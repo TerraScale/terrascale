@@ -1,0 +1,64 @@
+@inherits RazorSlice<AgentEnrollmentPageModel>
+@using TerraScale.Authentication.Features.Agents
+@implements IUsesLayout<HostedLayout, HostedLayoutModel>
+<div class="head"><h1>@AgentEnrollmentPageModel.Title</h1>
+@if (Model.Step == AgentEnrollmentStep.Confirm)
+{
+<p class="sub">@Model.AgentName wants to act for you in @Model.ProjectName.</p>
+}
+</div>
+@if (Model.Error is { } error)
+{
+<div class="alert" id="agent-enrollment-error" data-state="error" role="alert"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-alert"></use></svg><p>@error</p></div>
+}
+@switch (Model.Step)
+{
+case AgentEnrollmentStep.Enter:
+<form method="get" action="@Model.Action">
+<div class="field">
+<label for="agent-code">Code</label>
+<input id="agent-code" class="code" name="user_code" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="32" placeholder="XXXX-XXXX" required autofocus value="@Model.UserCode" aria-describedby="@(Model.Error is null ? null : "agent-enrollment-error")">
+</div>
+<button type="submit">Continue<svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-arrow-right"></use></svg></button>
+</form>
+break;
+case AgentEnrollmentStep.Confirm:
+<div class="chip"><svg class="icon icon-sm" aria-hidden="true"><use href="/admin/icons.svg#i-mail"></use></svg><span>@Model.Account</span></div>
+<div class="device-code" aria-describedby="agent-code-compare">@Model.UserCode</div>
+<p id="agent-code-compare">Check that your agent shows the same code.</p>
+@if (Model.Scopes.Count > 0)
+{
+<p>It asks to:</p>
+<ul class="scopes">@foreach (var scope in Model.Scopes) { <li>@scope</li> }</ul>
+}
+else
+{
+<p>@AgentEnrollments.NothingAllowed</p>
+}
+@if (Model.SelfSubject)
+{
+<p>It also asks to act as itself, not only for you.</p>
+}
+<p>Key fingerprint <code>@Model.Fingerprint</code></p>
+<form method="post" action="@Model.Action">
+<input type="hidden" name="user_code" value="@Model.UserCode">
+<input type="hidden" name="confirmation" value="@Model.Confirmation">
+<div class="actions">
+@if (Model.Scopes.Count > 0)
+{
+<button type="submit" name="decision" value="approve">Approve</button>
+}
+<button type="submit" name="decision" value="deny" class="secondary">Deny</button>
+</div>
+</form>
+break;
+case AgentEnrollmentStep.Approved:
+<div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-check"></use></svg><p>Agent approved. You can close this page.</p></div>
+break;
+case AgentEnrollmentStep.Denied:
+<div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-check"></use></svg><p>Request denied.</p></div>
+break;
+}
+@functions {
+    public HostedLayoutModel LayoutModel => HostedLayoutModel.Themed(AgentEnrollmentPageModel.Title, Model.Nonce, Model.Theme, Model.Tenant, null);
+}

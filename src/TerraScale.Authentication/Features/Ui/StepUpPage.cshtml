@@ -12,7 +12,7 @@ else
 {
 <p role="status">@notice</p>
 }
-<form method="post" action="/ui/terrascale/step-up/@Model.Id">
+<form method="post" action="/ui/@Model.Tenant/step-up/@Model.Id">
 @if (Model.Mfa)
 {
 <div class="field"><label for="code">@Model.Copy.AuthOrRecoveryCode</label><input id="code" name="code" autocomplete="one-time-code" maxlength="32" required autofocus></div>
@@ -35,5 +35,5 @@ else
 </form>
 }
 @functions {
-    public HostedLayoutModel LayoutModel => new(Model.Operation, Model.Nonce, locale: Model.ResolvedLocale) { ContinueOnly = Model.ReturnUri is not null };
+    public HostedLayoutModel LayoutModel => HostedLayoutModel.Themed(Model.Operation, Model.Nonce, Model.Theme, Model.Tenant, Model.ResolvedLocale) with { ContinueOnly = Model.ReturnUri is not null };
 }

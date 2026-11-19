@@ -1,4 +1,6 @@
 using TerraScale.Authentication.Features.Email;
+using TerraScale.Authentication.Features.Platform;
+using TerraScale.Authentication.Features.ProjectTenants;
 
 namespace TerraScale.Authentication.Features.Ui;
 
@@ -6,6 +8,10 @@ namespace TerraScale.Authentication.Features.Ui;
 public sealed record StepUpPageModel(string Id, string Email, string Purpose, bool Mfa, bool Password, bool MailRequested, string? Notice, string Nonce, string? Locale = null)
 {
     public string? ReturnUri { get; init; }
+
+    public required string Tenant { get; init; }
+
+    public required HostedTheme Theme { get; init; }
 
     public string ResolvedLocale => Locale == AuthEmails.Portuguese ? AuthEmails.Portuguese : AuthEmails.English;
 
@@ -23,6 +29,7 @@ public sealed record StepUpPageModel(string Id, string Email, string Purpose, bo
         "create_webhook_endpoint" => this.Copy.OpCreateWebhookEndpoint,
         "rotate_webhook_secret" => this.Copy.OpRotateWebhookSecret,
         "change_email" => this.Copy.OpChangeEmail,
+        StepUpProofs.ApproveAgent => this.Copy.OpApproveAgent,
         _ => this.Copy.OpVerifyAccount,
     };
 }

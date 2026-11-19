@@ -102,7 +102,8 @@ public static partial class OpenApiSetup
                 }
 
                 if (operation.OperationId != "update_self_profile" && context.Description.RelativePath?.StartsWith("v1/{project}/", StringComparison.Ordinal) == true
-                    && !context.Description.RelativePath.StartsWith("v1/{project}/me/", StringComparison.Ordinal))
+                    && !context.Description.RelativePath.StartsWith("v1/{project}/me/", StringComparison.Ordinal)
+                    && !context.Description.RelativePath.StartsWith("v1/{project}/agent-enrollments", StringComparison.Ordinal))
                 {
                     var personOnly = operation.OperationId is "create_project_client" or "update_project_client"
                         or "rotate_project_client_secret" or "create_webhook_endpoint" or "rotate_webhook_secret" or "start_impersonation" or "list_impersonations" or "end_impersonation";
@@ -217,7 +218,7 @@ public static partial class OpenApiSetup
                     });
                 }
 
-                if (operation.OperationId is "list_agents" or "list_user_agents")
+                if (operation.OperationId is "list_agents" or "list_user_agents" or "list_self_agents")
                 {
                     if (operation.OperationId == "list_agents")
                     {

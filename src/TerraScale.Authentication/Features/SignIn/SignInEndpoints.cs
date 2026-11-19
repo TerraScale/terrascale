@@ -2,6 +2,7 @@ using System.Globalization;
 using TerraScale.Authentication.Features.AttackProtection;
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
+using TerraScale.Authentication.Features.Agents;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
@@ -35,7 +36,7 @@ public sealed class SignInPageEndpoint : EndpointWithoutRequest<IResult>
         Get("/ui/{slug}/sign-in");
         Name("ui_sign_in");
         Summary("Hosted sign-in page");
-        Description("Email passcode or password sign-in for existing accounts, with links to sign-up and password reset. next is honoured only when it is this issuer's /{slug}/oauth/authorize URL, the /ui/{slug}/device page, or exactly the dashboard's https://dash.terrascale.tech/profile or https://dash.terrascale.tech/profile?tab=security URL.");
+        Description("Email passcode or password sign-in for existing accounts, with links to sign-up and password reset. next is honoured only when it is this issuer's /{slug}/oauth/authorize URL, the /ui/{slug}/device page, a project's /ui/{slug}/agent-enrollments page with or without user_code, or exactly the dashboard's https://dash.terrascale.tech/profile or https://dash.terrascale.tech/profile?tab=security URL.");
         Tags("Sign-in");
         Produces<string>(StatusCodes.Status200OK, "text/html");
         AllowAnonymous();
@@ -1028,6 +1029,7 @@ internal static class SignInFlow
             && (next.StartsWith($"/{tenant}/oauth/authorize?", StringComparison.Ordinal)
                 || HostedTheme.Of(context).RedirectUrls.Contains(next, StringComparer.Ordinal)
                 || Tenancy.IsProject(tenant) && next.StartsWith($"/ui/{tenant}/organization-invitations?token=", StringComparison.Ordinal)
+                || Tenancy.IsProject(tenant) && (next == AgentEnrollments.PagePath(tenant) || next.StartsWith(AgentEnrollments.PagePath(tenant) + "?user_code=", StringComparison.Ordinal))
                 || next == SecurityPath(tenant)
                 || next == AuthOptions.DashboardOrigin + "/profile"
                 || next == AuthOptions.DashboardOrigin + "/profile?tab=security"

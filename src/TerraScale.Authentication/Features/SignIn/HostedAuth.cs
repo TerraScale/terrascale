@@ -266,6 +266,34 @@ public sealed class HostedAuth(UserProfiles profiles, Users users, Passcodes pas
     /// <summary>Charges the IP call and mail budgets, including the IPv6 /48 budget, across sign-in surfaces.</summary>
     public async Task<TimeSpan?> LimitIpAsync(string ip, bool mails, CancellationToken cancellationToken)
     {
+        foreach (var (purpose, subject, burst, interval) in IpBudgets(ip, mails))
+        {
+            if (await limiter.AcquireTokenAsync(this.Tenant, purpose, limiter.Fold(subject), burst, interval, cancellationToken) is { } wait)
+            {
+                logger.ZLogWarning($"Audit: hosted request rate-limited by the {purpose:@Purpose} budget");
+                return wait;
+            }
+        }
+
+        return null;
+    }
+
+    public async Task<TimeSpan?> LimitIpDurablyAsync(string ip, CancellationToken cancellationToken)
+    {
+        foreach (var (purpose, subject, burst, interval) in IpBudgets(ip, mails: false))
+        {
+            if (await limiter.AcquireTokenDurableAsync(this.Tenant, purpose, limiter.Fold(subject), burst, interval, cancellationToken) is { } wait)
+            {
+                logger.ZLogWarning($"Audit: hosted request rate-limited by the {purpose:@Purpose} budget");
+                return wait;
+            }
+        }
+
+        return null;
+    }
+
+    private static List<(string Purpose, string Subject, int Burst, TimeSpan Interval)> IpBudgets(string ip, bool mails)
+    {
         var site = IPAddress.Parse(ip) is { AddressFamily: AddressFamily.InterNetworkV6 } v6 ? Prefix(v6, 6) : null;
         List<(string Purpose, string Subject, int Burst, TimeSpan Interval)> budgets = [("hosted-ip", ip, PerIp, IpInterval)];
         if (site is not null)
@@ -282,16 +310,7 @@ public sealed class HostedAuth(UserProfiles profiles, Users users, Passcodes pas
             }
         }
 
-        foreach (var (purpose, subject, burst, interval) in budgets)
-        {
-            if (await limiter.AcquireTokenAsync(this.Tenant, purpose, limiter.Fold(subject), burst, interval, cancellationToken) is { } wait)
-            {
-                logger.ZLogWarning($"Audit: hosted request rate-limited by the {purpose:@Purpose} budget");
-                return wait;
-            }
-        }
-
-        return null;
+        return budgets;
     }
 
     /// <summary>

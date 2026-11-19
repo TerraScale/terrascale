@@ -209,6 +209,12 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
         throw ApiException.Unavailable();
     }
 
+    public Task<TimeSpan?> AcquireTokenDurableAsync(string instanceId, string purpose, string subject, int burst, TimeSpan interval, CancellationToken cancellationToken) =>
+        this.AcquireTokenAsync(store, instanceId, purpose, subject, burst, interval, cancellationToken);
+
+    public async Task<TimeSpan?> AcquireDurableAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, CancellationToken cancellationToken) =>
+        (await this.AcquireAsync(store, instanceId, purpose, subject, maximum, window, false, true, cancellationToken)).Rejection?.RetryAfter;
+
     public async Task<AttemptRejection?> CheckAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, CancellationToken cancellationToken) =>
         (await this.WithFallbackAsync(source => this.AcquireAsync(source, instanceId, purpose, subject, maximum, window, false, false, cancellationToken), purpose, cancellationToken)).Rejection;
 
