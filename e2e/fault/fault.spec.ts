@@ -542,6 +542,62 @@ test('a source on the previous build keeps its file while a new target drains pa
   }
 });
 
+test('a replacement on this build takes the regional writer role over from a writer on the previous build, and a node of another region primes from that writer', async ({ cells }) => {
+  test.setTimeout(300_000);
+  const previous = process.env.E2E_PREVIOUS_TERRABASE;
+  expect(previous, 'E2E_PREVIOUS_TERRABASE names the base revision\'s TerraBase build').toMatch(/terrabase\.dll$/);
+  expect(existsSync(previous!), `${previous} exists`).toBe(true);
+  const gru = node('journey-1');
+  const partner = node('journey-3');
+  const fra = node('journey-2');
+  const fraPartner = node('journey-4');
+  const own = nodeBuild(gru);
+  await restartAfterKill(gru, true, undefined, undefined, previous)();
+  const kv = await Kv.open();
+  let failure: unknown;
+  try {
+    expect(nodeBuild(gru), 'journey-1 runs the previous build').toBe(previous);
+    const [ledger] = await createLedgers(cells, 1, 'mixed-takeover');
+    await ledger.write(cells, 'gru', [[200, 'written-on-the-previous-writer']]);
+    await ledger.compare(cells);
+
+    const fraPrimed = await nodeRequest(fraPartner, `/v1/rollout/prime?source=${fra.name}`, 'POST');
+    expect(fraPrimed.status, `a node of another region pulls its gru replicas from the previous build's writer: ${fraPrimed.body}`).toBe(204);
+    const primed = await nodeRequest(partner, `/v1/rollout/prime?source=${gru.name}`, 'POST');
+    expect(primed.status, `the replacement primes from the previous build's writer: ${primed.body}`).toBe(204);
+    const drained = await nodeRequest(gru, `/v1/rollout/drain?target=${partner.name}`, 'POST');
+    expect(drained.status, `the previous build's writer hands the role to this build: ${drained.body}`).toBe(204);
+    await writerIs('gru', partner.name);
+    await ledger.write(cells, 'gru', [[201, 'written-on-the-replacement']]);
+    await ledger.compare(cells);
+
+    await restartAfterKill(gru, false, undefined, undefined, own)();
+    const back = await nodeRequest(gru, `/v1/rollout/prime?source=${partner.name}`, 'POST');
+    expect(back.status, back.body).toBe(204);
+    const returned = await nodeRequest(partner, `/v1/rollout/drain?target=${gru.name}`, 'POST');
+    expect(returned.status, returned.body).toBe(204);
+    await writerIs('gru', gru.name);
+    await restartAfterKill(partner, false)();
+    await ledger.write(cells, 'gru', [[202, 'written-after-the-role-returned']]);
+    await ledger.compare(cells);
+    await removeDatabase(cells, ledger.id);
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    await cleanUp(failure, async () => {
+      if (nodeBuild(gru) !== own) await restartAfterKill(gru, true, undefined, undefined, own)();
+      const owner = await kv.get<Record<string, unknown> & { node: string; epoch: number }>(owners, 'gru');
+      if (owner?.value.node !== gru.name) {
+        await kv.put(owners, 'gru', { ...owner!.value, node: gru.name, epoch: 1, previous: null, activated: false, transfer: null }, owner!.seq);
+        await writerIs('gru', gru.name);
+      }
+      kv.close();
+      expect(nodeBuild(gru), 'journey-1 runs this build again').toBe(own);
+    });
+  }
+});
+
 test('a lease that names a node that cannot serve leaves the database unserved, and the old home keeps its file without serving it', async ({ cells, request }) => {
   test.setTimeout(240_000);
   const token = await writerToken(request);
