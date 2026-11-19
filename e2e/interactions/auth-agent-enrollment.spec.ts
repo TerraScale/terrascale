@@ -1,5 +1,6 @@
-import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign, type KeyObject } from 'node:crypto';
-import type { APIRequestContext, Page } from '@playwright/test';
+import { randomBytes } from 'node:crypto';
+import type { Page } from '@playwright/test';
+import { Agent, agentKey, proof } from '../support/agents';
 import { Audit, auditedContext, expect, test } from '../support/audit';
 import { authStorage, signInToken } from '../support/auth-management';
 import { hostedReady } from '../support/hosted';
@@ -9,42 +10,6 @@ import { auth, dash, desktop, onLocalStack } from '../support/stack';
 import { saveSecret } from '../support/state';
 import { sdkAgentEnrollment } from '../sdk/agent-identities';
 import { cliAgentEnrollment } from '../sdk/cli-agent-identities';
-
-type Jwk = { kty: string; crv: string; x: string; y: string };
-type Enrollment = { enrollment_id: string; user_code: string; verification_uri: string; verification_uri_complete: string; expires_in: number; interval: number };
-
-function agentKey(): { jwk: Jwk; privateKey: KeyObject; thumbprint: string } {
-  const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
-  const jwk = publicKey.export({ format: 'jwk' }) as Jwk;
-  const canonical = JSON.stringify({ crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y });
-  return { jwk, privateKey, thumbprint: createHash('sha256').update(canonical).digest('base64url') };
-}
-
-function proof(privateKey: KeyObject, audience: string, issuedAt = Math.floor(Date.now() / 1000)): string {
-  const part = (value: object) => Buffer.from(JSON.stringify(value)).toString('base64url');
-  const input = `${part({ alg: 'ES256', typ: 'JWT' })}.${part({ aud: audience, jti: randomUUID(), iat: issuedAt, exp: issuedAt + 120 })}`;
-  return `${input}.${sign('sha256', Buffer.from(input), { key: privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url')}`;
-}
-
-class Agent {
-  constructor(private readonly request: APIRequestContext, private readonly root: string, readonly key: ReturnType<typeof agentKey>, readonly enrollment: Enrollment) {}
-
-  get url(): string {
-    return `${this.root}/agent-enrollments/${this.enrollment.enrollment_id}/token`;
-  }
-
-  async poll(signed = proof(this.key.privateKey, this.url)): Promise<{ status: number; body: { error?: { code: string }; agent_id?: string; kid?: string } }> {
-    const response = await this.request.post(this.url, { data: { proof: signed } });
-    return { status: response.status(), body: await response.json() };
-  }
-
-  static async start(request: APIRequestContext, root: string, data: { name: string; requested_scopes: string[]; allow_self_subject?: boolean }): Promise<Agent> {
-    const key = agentKey();
-    const started = await request.post(root + '/agent-enrollments', { data: { ...data, public_jwk: key.jwk } });
-    expect(started.status()).toBe(201);
-    return new Agent(request, root, key, await started.json() as Enrollment);
-  }
-}
 
 async function openRequest(page: Page, audit: Audit, agent: Agent, label: string): Promise<void> {
   await page.goto(agent.enrollment.verification_uri_complete);

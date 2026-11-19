@@ -148,6 +148,7 @@ public static class OidcIssuer
                     // The bound GitHub Actions workload only (GitHubActionsBinding creates its client).
                     .AllowCustomFlow(GitHubActionsGrant.GrantType)
                     .AllowCustomFlow(GuestSignIn.GrantType)
+                    .AllowCustomFlow(AgentExchange.GrantType)
                     .RequireProofKeyForCodeExchange()
                     .RegisterScopes(Scopes.Email, Scopes.Profile, Scopes.OfflineAccess)
                     // Each client's scope permissions still bound what it may request; there is no scope store.
@@ -670,6 +671,7 @@ public sealed class ClientRegistration(IServiceScopeFactory scopes, AuthOptions 
                 Permissions.GrantTypes.AuthorizationCode, Permissions.GrantTypes.RefreshToken, Permissions.ResponseTypes.Code,
                 // Organization and project tokens for its signed-in users (TS-598).
                 Permissions.GrantTypes.TokenExchange,
+                Permissions.Prefixes.GrantType + AgentExchange.GrantType,
                 Permissions.Scopes.Email, Permissions.Scopes.Profile,
             },
             Requirements = { Requirements.Features.ProofKeyForCodeExchange },

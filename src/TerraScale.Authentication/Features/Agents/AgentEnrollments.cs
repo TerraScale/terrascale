@@ -86,7 +86,10 @@ public sealed class AgentEnrollments(AuthData data, PlatformDirectory platform, 
         }
 
         var key = AgentJwk.Parse(request.PublicJwk);
-        _ = await platform.ProjectAsync(project, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+        if (Tenancy.IsProject(project))
+        {
+            _ = await platform.ProjectAsync(project, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+        }
         if ((await limiter.AcquireDurableAsync(project, "agent-enrollment-ip", limiter.Fold(ip), StartsPerIp, LookupWindow, cancellationToken).ConfigureAwait(false)
             ?? await limiter.AcquireDurableAsync(project, "agent-enrollment", project, StartsPerProject, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false)) is { } wait)
         {

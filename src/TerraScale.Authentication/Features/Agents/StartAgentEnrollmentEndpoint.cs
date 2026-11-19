@@ -15,7 +15,7 @@ public sealed class StartAgentEnrollmentEndpoint(PlatformAuthentication authenti
 
     protected override async Task<IResult> HandleAnonymousAsync(CancellationToken cancellationToken)
     {
-        var project = this.RouteId("project");
+        var project = this.TenantId();
         var request = await this.BodyAsync(AgentEnrollmentJson.Default.StartAgentEnrollmentRequest, cancellationToken);
         return Results.Json(await enrollments.StartAsync(project, SignInFlow.Ip(this.HttpContext), request, cancellationToken), AgentEnrollmentJson.Default.AgentEnrollmentBody,
             statusCode: StatusCodes.Status201Created);
