@@ -1391,6 +1391,39 @@ namespace TerraScale.Authentication.Storage.Migrations
                         });
                 });
 
+            modelBuilder.Entity("TerraScale.Authentication.Features.Agents.AgentAssertionRecord", b =>
+                {
+                    b.Property<string>("ProjectId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("AgentId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("agent_id");
+
+                    b.Property<string>("Jti")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("jti");
+
+                    b.Property<DateTime>("KeepUntil")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("keep_until");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("ProjectId", "AgentId", "Jti");
+
+                    b.HasIndex("KeepUntil");
+
+                    b.ToTable("agent_assertions", (string)null);
+                });
+
             modelBuilder.Entity("TerraScale.Authentication.Features.Agents.AgentKeyRecord", b =>
                 {
                     b.Property<string>("ProjectId")
@@ -3672,6 +3705,15 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.HasOne("TerraScale.Authentication.Contracts.UserRecord", null)
                         .WithMany()
                         .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.Agents.AgentAssertionRecord", b =>
+                {
+                    b.HasOne("TerraScale.Authentication.Features.Agents.AgentRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId", "AgentId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

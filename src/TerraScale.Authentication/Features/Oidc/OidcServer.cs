@@ -10,6 +10,7 @@ using OpenIddict.Server.AspNetCore;
 using OpenIddict.Server;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.Agents;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Impersonation;
 using TerraScale.Authentication.Features.Platform;
@@ -199,6 +200,9 @@ public static class OidcIssuer
                         .SetType(OpenIddictServerHandlerType.Custom))
                     .AddEventHandler<ExtractTokenRequestContext>(handler => handler.UseSingletonHandler<RouteGuestGrant>()
                         .SetOrder(OpenIddictServerAspNetCoreHandlers.ExtractBasicAuthenticationCredentials<ExtractTokenRequestContext>.Descriptor.Order + 1_000)
+                        .SetType(OpenIddictServerHandlerType.Custom))
+                    .AddEventHandler<ExtractTokenRequestContext>(handler => handler.UseSingletonHandler<RouteAgentGrant>()
+                        .SetOrder(OpenIddictServerAspNetCoreHandlers.ExtractBasicAuthenticationCredentials<ExtractTokenRequestContext>.Descriptor.Order + 1_001)
                         .SetType(OpenIddictServerHandlerType.Custom))
                     .AddEventHandler<ValidateTokenRequestContext>(handler => handler.UseSingletonHandler<RefuseScopeExpansion>()
                         .SetOrder(OpenIddictServerHandlers.Exchange.ValidateScopePermissions.Descriptor.Order - 1)

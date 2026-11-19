@@ -236,4 +236,5 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
 [JsonSerializable(typeof(AgentKeyBody))]
 [JsonSerializable(typeof(AgentBody))]
 [JsonSerializable(typeof(AgentPageBody))]
+[JsonSerializable(typeof(AgentTokenBody))]
 internal sealed partial class AgentJson : JsonSerializerContext;

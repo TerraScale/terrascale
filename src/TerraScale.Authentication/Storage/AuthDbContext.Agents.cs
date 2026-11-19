@@ -9,6 +9,7 @@ public sealed partial class AuthDbContext
     public DbSet<AgentRecord> Agents => this.Set<AgentRecord>();
     public DbSet<AgentKeyRecord> AgentKeys => this.Set<AgentKeyRecord>();
     public DbSet<AgentPolicyRecord> AgentPolicies => this.Set<AgentPolicyRecord>();
+    public DbSet<AgentAssertionRecord> AgentAssertions => this.Set<AgentAssertionRecord>();
 
     private static void ConfigureAgents(ModelBuilder model)
     {
@@ -47,6 +48,15 @@ public sealed partial class AuthDbContext
             policy.HasOne<ProjectRecord>().WithMany().HasForeignKey(row => row.ProjectId).OnDelete(DeleteBehavior.Cascade);
             policy.Property(row => row.AllowedScopes).HasJson(StorageJson.Default.IReadOnlyListString);
             Versioned(policy);
+        });
+        model.Entity<AgentAssertionRecord>(assertion =>
+        {
+            assertion.ToTable("agent_assertions");
+            assertion.HasKey(row => new { row.ProjectId, row.AgentId, row.Jti });
+            assertion.HasIndex(row => row.KeepUntil);
+            assertion.HasOne<AgentRecord>().WithMany().HasForeignKey(row => new { row.ProjectId, row.AgentId }).OnDelete(DeleteBehavior.Cascade);
+            assertion.Property(row => row.Jti).HasMaxLength(AgentTokens.MaxJtiLength).IsRequired();
+            Versioned(assertion);
         });
     }
 }
