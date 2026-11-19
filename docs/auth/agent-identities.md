@@ -106,9 +106,10 @@ in every answer already includes the owner check.
 | Deleting the owner | The owner's agents and their keys are deleted with the user (foreign keys with `ON DELETE CASCADE`), so the agent is `404`. |
 | Deleting the project | The project's agents, keys and policy are deleted with it. |
 
-## Webhooks
+## Lifecycle events
 
-Each mutation commits its audit entry and webhook outbox event in the same save as the change.
+Each mutation commits its audit entry and its lifecycle event in the same save as the change. Subscribe endpoints to
+these names as for the other end-user lifecycle events.
 
 | Event | Trigger | `data` |
 | --- | --- | --- |
