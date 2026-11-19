@@ -199,7 +199,7 @@ Any app can use TerraScale account agents as a custom OpenID Connect provider. T
 | Discovery URL | `https://auth.terrascale.tech/agents/.well-known/openid-configuration` |
 | Response type | `code` |
 | PKCE | `S256`, required |
-| Scopes | `openid` required; `profile` optional |
+| Scopes | `openid` required; `profile` optional; `owner_email` for registered clients |
 | Token signing | ES256 |
 | Token lifetime | Five minutes |
 
@@ -211,9 +211,51 @@ An open client needs no registration or secret. Use your app's canonical HTTPS o
 
 Its `redirect_uri` must be an HTTPS URL on exactly that origin. Another subdomain or port is not accepted. Use token endpoint authentication `none`.
 
-Registered confidential clients are coming next. A TerraScale account will create one with a name and 1–10 HTTPS redirect URIs at `POST /v1/terrascale/agentid-clients`, with the secret shown once and list, rotate and delete operations. Use an open client until registered clients are available; an integration that requires a client secret must wait for that support.
+Register a confidential client when your integration requires a secret or needs the owner's email. Use your TerraScale account's platform sign-in access token and a fresh `create_oauth_client` [step-up proof](/guides/sensitive-actions):
 
-Registered clients will also be able to request `owner_email`. The owner must separately allow sharing for that agent through `PATCH /v1/terrascale/me/agents/{agent}` with `{"share_owner_email":true}`. Sharing is off by default. Do not request this scope with an open client or assume email will be returned.
+```http
+POST https://auth.terrascale.tech/v1/terrascale/agentid-clients
+Authorization: Bearer <platform sign-in access token>
+X-TerraScale-Step-Up-Proof: <create_oauth_client proof>
+Content-Type: application/json
+
+{"name":"Example app","redirect_uris":["https://app.example.com/auth/callback"]}
+```
+
+The `201` response includes `client_id`, `name`, `redirect_uris`, `created_at` and a `client_secret` shown once. Save the secret on your server. The registered client ID is a ULID, not the app's origin.
+
+The name is 1–64 characters and appears as `client_name` to the agent and waiting page. Supply 1–10 distinct absolute HTTPS redirect URLs in canonical form: lowercase scheme and host, no default port, userinfo or fragment. Every authorization request's `redirect_uri` must exactly equal a registered URL. Each account can register at most ten clients.
+
+| Client operation | Route | Step-up proof |
+| --- | --- | --- |
+| Register | `POST /v1/terrascale/agentid-clients` | `create_oauth_client` |
+| List, without secrets | `GET /v1/terrascale/agentid-clients` | None |
+| Rotate secret | `POST /v1/terrascale/agentid-clients/{client_id}/secret/rotate` | `rotate_oauth_client` |
+| Delete | `DELETE /v1/terrascale/agentid-clients/{client_id}` | `delete_oauth_client` |
+
+Each management request uses the owning account's platform sign-in access token. Send the proof in `X-TerraScale-Step-Up-Proof`. An agent-acted token is refused with `403 owner_required`; another account's client is `404`.
+
+Rotation accepts an optional `{"grace_seconds":3600}` body, with a range of 0–86400 seconds and a default of 3600. It returns the new secret once and `previous_secret_expires_at`. The old secret works until that deadline. Rotating again during grace replaces the previous secret; zero grace ends its use immediately.
+
+At code redemption, authenticate a registered client with `client_secret_basic` or `client_secret_post`. PKCE (`S256`) remains required. Request `openid profile`, adding `owner_email` only when needed. An open client requesting `owner_email` receives `invalid_scope` at its redirect URI.
+
+### Owner email consent
+
+In **Profile › Agents**, the agent's owner chooses **Share my email with apps**. Sharing is off by default for every agent. The equivalent request uses the owner's platform sign-in access token:
+
+```http
+PATCH https://auth.terrascale.tech/v1/terrascale/me/agents/{agent}
+Authorization: Bearer <platform sign-in access token>
+Content-Type: application/json
+
+{"share_owner_email":true}
+```
+
+The response is the agent, including `share_owner_email`; the owner's agent list includes this field too. An agent-acted token cannot change consent (`403 owner_required`).
+
+Consent covers every registered client the agent signs in to, including clients registered by other accounts. It is not a separate consent choice for each app. The agent still chooses which client's sign-in it proves.
+
+A registered client granted `owner_email` receives both `owner_email` and `owner_email_verified` only while sharing is on. Otherwise both claims are omitted without an error. ID tokens capture consent and email at code redemption. UserInfo reads current consent on every call with `Cache-Control: no-store`: turning sharing off removes the email there immediately. Previously issued ID tokens retain it until their five-minute expiry.
 
 ### Claims
 
@@ -226,9 +268,9 @@ Registered clients will also be able to request `owner_email`. The owner must se
 | `nonce` | When sent | Your authorization attempt's nonce |
 | `name` | With `profile` | Agent name chosen by its owner |
 | `owner_sub` | With `profile` | Accountable owner, pairwise for your client ID |
-| `owner_email` | Coming next: registered client, scope and owner consent | Owner's email |
+| `owner_email`, `owner_email_verified` | `owner_email` scope, registered client and owner consent | Owner's TerraScale email and whether it is verified |
 
-The same agent and client ID get the same `sub`. Different client IDs get unrelated subjects, including for `owner_sub`. The provider does not reveal TerraScale account or agent IDs. The profile `name` is shared across clients, so it can still help apps correlate an agent.
+The same agent and client ID get the same `sub`. Different client IDs get unrelated subjects, including for `owner_sub`. The provider does not reveal TerraScale account or agent IDs. The profile `name` is shared across clients, so it can still help apps correlate an agent. Shared `owner_email` is also the same across registered clients and can correlate the owner's account despite pairwise subjects.
 
 Ungranted claims are omitted. UserInfo returns the granted identity claims and checks that the agent, proof key and owner remain usable. Do not use the owner subject as the agent's subject, or assume the two principals have the same permissions in your app.
 
@@ -247,6 +289,8 @@ Configure a maintained OIDC library with:
   "code_challenge_method": "S256"
 }
 ```
+
+For a registered client, replace the origin client ID with the returned ULID and use a registered redirect URL. Configure `client_secret_basic` or `client_secret_post` and the server-held secret. Use `openid profile owner_email` if you need consented owner email.
 
 Let the library generate and bind a one-time `state`, `nonce` and PKCE verifier to the initiating session. Validate callback state before redeeming the code. Before creating a session, verify the ID token's ES256 signature against the discovered JWKS, exact issuer, client audience, expiry and nonce. When using UserInfo, require its `sub` to match the validated ID token.
 
@@ -269,19 +313,38 @@ Add this OIDC provider to your Auth.js providers:
 
 Serve the callback on that exact origin. Keep the agent subject and owner subject separate in your session model.
 
+For a registered client, use its returned ID and secret instead:
+
+```js
+{
+  id: 'agent',
+  name: 'Sign in as agent',
+  type: 'oidc',
+  issuer: 'https://auth.terrascale.tech/agents',
+  clientId: process.env.AGENT_CLIENT_ID,
+  clientSecret: process.env.AGENT_CLIENT_SECRET,
+  client: { token_endpoint_auth_method: 'client_secret_basic' },
+  checks: ['pkce', 'state', 'nonce'],
+  authorization: { params: { scope: 'openid profile owner_email' } },
+}
+```
+
+Register Auth.js's exact callback URL when creating the client. The email claims remain optional because the owner controls sharing.
+
 ### Clerk
 
-Use a custom OIDC provider with these settings where your Clerk configuration supports public clients:
+Use a custom OIDC provider. For a connection that requires a secret, register the connection's exact callback URL and use:
 
 ```text
 Discovery: https://auth.terrascale.tech/agents/.well-known/openid-configuration
-Client ID: https://app.example.com
+Client ID: <registered client_id>
+Client secret: <server-held client_secret>
 Scopes: openid profile
 PKCE: S256
-Token endpoint authentication: none
+Token endpoint authentication: client_secret_basic or client_secret_post
 ```
 
-Check the actual callback origin before choosing the client ID. If the connection requires a secret, use registered-client support when available.
+For a configuration supporting public clients, use the open-client origin ID and authentication `none` instead. Add `owner_email` only for a registered client and handle absent email claims.
 
 ### Supabase
 
@@ -298,19 +361,23 @@ Token endpoint authentication: none
 
 Pass the validated ID token through `signInWithIdToken` only with the matching provider configured in Supabase. Do not treat this issuer as a built-in social provider. Your app must implement the code exchange and callback validation; adding an issuer URL alone does not complete it.
 
+If your integration requires a secret or owner email, use a registered client, its exact redirect URL and server-side `client_secret_basic` or `client_secret_post` authentication. Keep PKCE and add `owner_email` only when needed.
+
 ### Auth0
 
 Use an enterprise OpenID Connect connection on the front channel, with:
 
 ```text
 Discovery: https://auth.terrascale.tech/agents/.well-known/openid-configuration
-Client ID: https://app.example.com
+Client ID: <registered client_id>
+Client secret: <server-held client_secret>
 Scopes: openid profile
 PKCE: S256
 Response type: code
+Token endpoint authentication: client_secret_basic or client_secret_post
 ```
 
-Choose the client ID for the origin hosting the callback. A connection that requires a secret needs registered-client support when available. Do not invent a secret for an open client.
+Register the connection's exact callback URL. Add `owner_email` if needed and handle absent claims when the owner does not share their email. A public-client connection can instead use an open origin ID, no secret and authentication `none`.
 
 ### How the agent completes sign-in
 
@@ -328,6 +395,9 @@ A browser receives a waiting page that redirects after the proof succeeds. Openi
 | Live agents per owner | 25 |
 | Agent creations per owner | 100 per hour |
 | Active keys per agent | 2 |
+| Registered sign-in clients per account | 10 (`409 client_limit`) |
+| Registered client name / redirect URLs | 1–64 characters / 1–10 distinct canonical HTTPS URLs |
+| Secret rotation grace | 0–86400 seconds; default 3600 |
 | Agent name | 1–64 characters |
 | Scopes on an agent | 1–64 unique scopes, each allowed by policy |
 | Enrollment starts | 10 per IP per 15 minutes; 300 per project per hour, or for the whole account tenant |
@@ -346,3 +416,5 @@ To rotate a project agent's key, add a new public key, switch the agent to its r
 Revoking an agent revokes its active keys. Signing the owner out everywhere, resetting their password, changing their email or disabling their account makes existing agents unusable. Enabling the owner again does not restore those agents; enroll again. Deleting the owner removes their agents.
 
 For your backend, an issued agent token remains valid offline until expiry. MCP rechecks through the owner exchange on each request. OIDC checks the agent, owner and proof key before accepting proof, issuing a code, redeeming it and serving UserInfo; an already issued ID token remains valid until its five-minute expiry. Set your app's own session and reauthentication policy accordingly.
+
+Deleting a registered client refuses its next authorization, code redemption and secret use; UserInfo rejects its access tokens with `401 invalid_token`. Disabling or deleting the account that registered it also stops the client. Rotation without grace or deletion that wins a race with redemption makes that redemption fail without consuming the code. Client creation, rotation and deletion require the owner's live sign-in state; signing out everywhere first makes these changes fail with `409`.
