@@ -215,22 +215,28 @@ it to `preparing` and continues from the quiesce step; without `transfer`, the
 drain admits and reserves itself as before.
 
 `POST /v1/rollout/prime?source=<writer>` on the target catches every replica up to
-the writer, except a replica whose home is unserved in another region. Such a
-home is one the node's rollout status lists as unserved (`lapsed`, `not_writer` or
-`stale_lease`) and that the prime confirms again after its catalog sync from
-current evidence: the home lease read from the lease store names the same region,
-node and epoch, its node lease is present or absent as the cause says, the
-home region's owner is confirmed, and the database's placement and the lease are
-both outside this region. Anything it cannot confirm counts as served. A prime
-leaves out at most 1,000 such databases; with more it leaves out none. It still
-answers `204`, names the databases it left out in the
-`TerraBase-Primed-Without` header (comma-separated IDs), lists them as
-`primedWithout` in `GET /v1/rollout/status` until the next successful prime, and
-logs one warning. A replica homed in this region, or homed elsewhere on a served
-home that cannot be pulled, still refuses the prime. A drain's preparation and
-verification apply the same confirmed exemption to the source's applied
-positions of those databases, and log each one; every position of a database
-homed in this region is still proven and imported.
+the writer, except a replica whose home is unserved in another region. The
+prime lists the replicas it follows once, after its catalog sync, and decides
+from that list. A database's home counts as unserved only when the node's
+rollout status lists it as unserved (`lapsed`, `not_writer` or `stale_lease`)
+and current evidence confirms it: the home lease read from the lease store names
+the same region, node and epoch; the lease's node lease is present or absent as
+the cause says; the home region's owner is confirmed, and an unconfirmed owner
+counts as served; the database's placement and the lease are both outside this
+region; and the lease's revision is unchanged when the check ends. Right before
+it answers, the prime checks each skipped home again at the same lease revision;
+a home served again by then is caught up like any other replica, and the prime
+refuses if it cannot be. A prime answers `204` and names the replicas it went
+without in `TerraBase-Primed-Without-Count` and `TerraBase-Primed-Without`
+(comma-separated IDs, the first 1,000), lists all of them as `primedWithout` in
+`GET /v1/rollout/status` until the next successful prime, and logs one warning.
+A replica homed in this region, or homed elsewhere on a served home that cannot
+be pulled, still refuses the prime. A drain's preparation and verification apply
+the same confirmed exemption to the source's applied positions of databases
+homed elsewhere, log each one, and check each exempted home again right before
+the preparation certificate or the verification answer; a home served again by
+then must prove the position as usual. Every position of a database homed in
+this region is still proven and imported.
 
 A replica of a database homed elsewhere can hold writes this region
 acknowledged: a local SQL write returns only after its sealed transaction is

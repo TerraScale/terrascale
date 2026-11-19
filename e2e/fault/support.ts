@@ -595,9 +595,10 @@ export function faultId(): string {
   return '01' + Array.from(randomBytes(24), value => alphabet[value % 32]).join('');
 }
 
-export async function refuseConnections(node: Node, peers: Node[]): Promise<() => Promise<void>> {
+export async function refuseConnections(node: Node, peers: Node[], delay?: string): Promise<() => Promise<void>> {
   const pid = readFileSync(join(stateDir, 'pids', `${node.service}.pid`), 'utf8').trim();
-  const child = spawn('strace', ['--interruptible=1', '-f', '-p', pid, '-e', 'trace=connect', '-e', 'inject=connect:error=ECONNREFUSED', '-o', '/dev/null'],
+  const inject = `inject=connect:error=ECONNREFUSED${delay ? `:delay_enter=${delay}` : ''}`;
+  const child = spawn('strace', ['--interruptible=1', '-f', '-p', pid, '-e', 'trace=connect', '-e', inject, '-o', '/dev/null'],
     { stdio: ['ignore', 'ignore', 'pipe'] });
   const exited = new Promise<void>(resolve => child.once('exit', () => resolve()));
   let stderr = '';

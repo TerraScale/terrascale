@@ -20,6 +20,8 @@ using ZLogger;
 
 namespace TerraBase.Features.Replicas;
 
+internal sealed record FollowedReplica(string Organization, string Project, string Database, string HomeRegion);
+
 internal sealed partial class RegionReplication(
     TerraBaseOptions options, IReplicaPeers peers, IReplicaCatalog catalog, IDatabaseReplicas replicas,
     IDatabaseRevisions revisions, IMemoryBudget memory, ReplicaHolds holds, InternalCredential credential, IMeterFactory meters, TimeProvider time, ILogger<RegionReplication> logger,
@@ -168,17 +170,14 @@ internal sealed partial class RegionReplication(
 
     internal long CatchUpMark => time.GetUtcNow().ToUnixTimeMilliseconds();
 
-    internal Task<IReadOnlyList<ReplicaFailure>> CatchUpSinceAsync(long mark, IReadOnlySet<string> unserved, CancellationToken cancellationToken) =>
-        RefusedAsync([.. Owed(unserved).Where(follower => !follower.CaughtUpSince(mark))], (follower, token) => follower.CatchUpSinceAsync(mark, token), cancellationToken);
+    internal IReadOnlyList<FollowedReplica> Followed() =>
+        [.. _followers.Select(entry => new FollowedReplica(entry.Key.Organization, entry.Key.Project, entry.Key.Database, entry.Value.Home.Region))];
 
-    internal IReadOnlyList<string> Exempted(IReadOnlySet<string> unserved) =>
-        [.. _followers.Where(entry => !Owes(entry, unserved)).Select(entry => entry.Key.Database).Order(StringComparer.Ordinal)];
+    internal Task<IReadOnlyList<ReplicaFailure>> CatchUpSinceAsync(long mark, IReadOnlyList<FollowedReplica> replicas, CancellationToken cancellationToken) =>
+        RefusedAsync([.. Resolve(replicas).Where(follower => !follower.CaughtUpSince(mark))], (follower, token) => follower.CatchUpSinceAsync(mark, token), cancellationToken);
 
-    private IEnumerable<Follower> Owed(IReadOnlySet<string> unserved) =>
-        _followers.Where(entry => Owes(entry, unserved)).Select(entry => entry.Value);
-
-    private bool Owes(KeyValuePair<(string Organization, string Project, string Database), Follower> entry, IReadOnlySet<string> unserved) =>
-        entry.Value.Home.Region == Region || !unserved.Contains(entry.Key.Database);
+    private IEnumerable<Follower> Resolve(IReadOnlyList<FollowedReplica> replicas) =>
+        replicas.Select(replica => _followers.GetValueOrDefault((replica.Organization, replica.Project, replica.Database))).OfType<Follower>();
 
     internal Task<IReadOnlyList<ReplicaFailure>> CatchUpAsync(IReadOnlyList<TenantContext> databases, CancellationToken cancellationToken) =>
         RefusedAsync([.. databases.Select(database => _followers.GetValueOrDefault(Key(database))).OfType<Follower>()], (follower, token) => follower.PullNowAsync(token), cancellationToken);
@@ -198,7 +197,7 @@ internal sealed partial class RegionReplication(
         return [];
     }
 
-    internal int BehindSince(long mark, IReadOnlySet<string> unserved) => Owed(unserved).Count(follower => !follower.CaughtUpSince(mark));
+    internal int BehindSince(long mark, IReadOnlyList<FollowedReplica> replicas) => Resolve(replicas).Count(follower => !follower.CaughtUpSince(mark));
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {

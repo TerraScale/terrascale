@@ -6,42 +6,58 @@ namespace TerraBase.Features.Replicas;
 
 internal sealed partial class HomeLeases
 {
-    internal async Task<IReadOnlySet<string>> ConfirmedUnservedElsewhereAsync(CancellationToken cancellationToken)
+    internal async Task<IReadOnlyDictionary<string, ulong>> ConfirmUnservedElsewhereAsync(IEnumerable<string> databases, CancellationToken cancellationToken)
     {
-        if (_kv is not { } kv || _unserved.IsEmpty)
+        Dictionary<string, ulong> confirmed = new(StringComparer.Ordinal);
+        if (_kv is not { } kv)
         {
-            return new HashSet<string>(StringComparer.Ordinal);
+            return confirmed;
         }
 
-        var moving = await MovingAsync(cancellationToken).ConfigureAwait(false);
-        HashSet<string> confirmed = new(StringComparer.Ordinal);
-        foreach (var hint in _unserved.Values)
+        IReadOnlySet<string>? moving = null;
+        foreach (var id in databases.Distinct(StringComparer.Ordinal))
         {
-            if (await StillUnservedElsewhereAsync(kv, hint, moving, cancellationToken).ConfigureAwait(false))
+            if (!_unserved.TryGetValue(id, out var hint))
             {
-                confirmed.Add(hint.DatabaseId);
+                continue;
+            }
+            moving ??= await MovingAsync(cancellationToken).ConfigureAwait(false);
+            if (await UnservedRevisionAsync(kv, hint, moving, cancellationToken).ConfigureAwait(false) is { } revision)
+            {
+                confirmed[id] = revision;
             }
         }
         return confirmed;
     }
 
-    private async Task<bool> StillUnservedElsewhereAsync(INatsKVStore kv, UnservedDatabase hint, IReadOnlySet<string> moving, CancellationToken cancellationToken)
+    internal async Task<bool> StillUnservedElsewhereAsync(string database, ulong revision, CancellationToken cancellationToken) =>
+        _kv is { } kv && _unserved.TryGetValue(database, out var hint)
+        && await UnservedRevisionAsync(kv, hint, await MovingAsync(cancellationToken).ConfigureAwait(false), cancellationToken).ConfigureAwait(false) == revision;
+
+    private async Task<ulong?> UnservedRevisionAsync(INatsKVStore kv, UnservedDatabase hint, IReadOnlySet<string> moving, CancellationToken cancellationToken)
     {
-        if (await ReadAsync(kv, hint.DatabaseId, cancellationToken).ConfigureAwait(false) is not { Value: { } bytes } || Decode(bytes) is not { } lease
-            || lease.Home == options.Region || lease.Home != hint.Region || lease.Node != hint.Node || lease.Epoch != hint.Epoch)
+        if (await ReadAsync(kv, hint.DatabaseId, cancellationToken).ConfigureAwait(false) is not { Value: { } bytes } read || Decode(bytes) is not { } lease
+            || lease.Home == options.Region || lease.Home != hint.Region || lease.Node != hint.Node || lease.Epoch != hint.Epoch
+            || owners.Confirmed(lease.Home) is not { } owner)
         {
-            return false;
+            return null;
         }
 
         var database = new TenantContext(lease.OrganizationId, PlanTier.Hobby, lease.ProjectId, lease.DatabaseId);
         if (await catalog.FindAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord { Placement: var placement }
             || placement.Home == options.Region)
         {
-            return false;
+            return null;
         }
 
         var live = await NodeLiveAsync(kv, lease.Node, cancellationToken).ConfigureAwait(false);
-        return UnservedCause(lease, placement, live, owners.Confirmed(lease.Home), moving) == hint.Cause;
+        if (UnservedCause(lease, placement, live, owner, moving) != hint.Cause || owners.Confirmed(lease.Home) != owner)
+        {
+            return null;
+        }
+
+        return await ReadAsync(kv, hint.DatabaseId, cancellationToken).ConfigureAwait(false) is { } again && again.Revision == read.Revision
+            ? read.Revision : null;
     }
 
     private static async Task<bool> NodeLiveAsync(INatsKVStore kv, string node, CancellationToken cancellationToken)

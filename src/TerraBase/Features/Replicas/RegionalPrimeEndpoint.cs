@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.AspNetCore.Http.HttpResults;
 using TerraBase.Errors;
 using TerraBase.Hosting;
@@ -9,6 +10,8 @@ namespace TerraBase.Features.Replicas;
 internal sealed class RegionalPrimeEndpoint(RegionalHandoff handoff) : EndpointWithoutRequest<IResult>
 {
     internal const string PrimedWithoutHeader = "TerraBase-Primed-Without";
+    internal const string PrimedWithoutCountHeader = "TerraBase-Primed-Without-Count";
+    private const int MaxHeaderDatabases = 1_000;
 
     public override void Configure()
     {
@@ -38,7 +41,8 @@ internal sealed class RegionalPrimeEndpoint(RegionalHandoff handoff) : EndpointW
     {
         if (skipped is [_, ..])
         {
-            HttpContext.Response.Headers[PrimedWithoutHeader] = string.Join(',', skipped);
+            HttpContext.Response.Headers[PrimedWithoutCountHeader] = skipped.Count.ToString(CultureInfo.InvariantCulture);
+            HttpContext.Response.Headers[PrimedWithoutHeader] = string.Join(',', skipped.Take(MaxHeaderDatabases));
         }
         return TypedResults.NoContent();
     }
