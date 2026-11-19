@@ -306,6 +306,9 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	if handled, err := requestedHelp(args, out); handled {
 		return err
 	}
+	if handled, err := dispatchAgentCommand(ctx, args, out, prompt); handled {
+		return err
+	}
 	fs := flag.NewFlagSet("ts", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	project := fs.String("project", "", "project name or id")
@@ -326,12 +329,6 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	exportFile := fs.String("o", "", "db export: write the SQL dump to a file")
 	force := fs.Bool("force", false, "db export: overwrite the output file")
 	allowDrop := fs.Bool("allow-drop", false, "schema apply: consent to DROP operations")
-	if err := fs.Parse(args); err != nil {
-		return parserError(err)
-	}
-	if fs.NArg() > 0 && fs.Args()[0] == "agent" {
-		return agentCommand(ctx, args, out, prompt)
-	}
 	args, err := parseOptions(fs, args)
 	if err != nil {
 		return err

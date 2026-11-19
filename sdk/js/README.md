@@ -700,14 +700,19 @@ if (!identity.ok) throw new Error(identity.error.code);
 const token = await auth.agents.getToken({ project, ...identity.value });
 if (!token.ok) throw new Error(token.error.code);
 const verified = await verifyAgentToken(token.value.access_token, { project });
+if (!verified.ok) throw new Error(verified.error.code);
+console.log(verified.value.agentId, verified.value.actingFor);
 ```
 
-The owner approves in the browser. Keep the non-extractable WebCrypto key in the agent process
-(or browser IndexedDB); no private key leaves it. Node 20+ and browsers with WebCrypto support the helpers.
+The owner approves in the browser. The returned key is an opaque in-memory signer: it holds a
+non-extractable WebCrypto key without exposing the underlying CryptoKey to Node conversion APIs.
+Keep this signer in the agent process. The helpers support the package runtimes, Node 22 and 24,
+and browsers with WebCrypto when the deployment permits requests from the browser origin.
 Tokens are cached in memory and refreshed thirty seconds before expiry. Agent tokens have no audience;
 passing an audience to verification requires that audience and refuses these tokens. Offline verification
 cannot detect revocation until the token expires, within five minutes. See the [agent contract](../../docs/auth/agent-identities.md).
 
 Project management provides `createAgent`, `listAgents`, `listUserAgents`, `getAgent` (including its keys),
 `revokeAgent`, `addAgentKey`, `revokeAgentKey`, `getAgentPolicy` and `setAgentPolicy` through `auth.projects`.
-These operations need an administrator sign-in or an unrestricted project key with `auth:read` or `auth:write`.
+Reads require a viewer sign-in or an unrestricted project key with `auth:read`. Mutations require
+an administrator sign-in or an unrestricted project key with `auth:write`.

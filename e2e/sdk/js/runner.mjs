@@ -80,12 +80,14 @@ const operations = {
     check((await auth.projects.setAgentPolicy(credential, project, { allowed_scopes: ['invoices:read'] })).ok, 'set agent policy');
     const policy = await auth.projects.getAgentPolicy(process.env.E2E_AUTH_READ_KEY, project);
     check(policy.ok && policy.value.allowed_scopes.includes('invoices:read'), 'get agent policy');
-    const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']);
-    const public_jwk = await crypto.subtle.exportKey('jwk', pair.publicKey);
-    const created = await auth.projects.createAgent(credential, project, owner, { name: 'SDK agent', allowed_scopes: ['invoices:read'], public_jwk });
-    check(created.ok, 'create agent');
-    const agentId = created.value.id;
-    const kid = created.value.keys[0].kid;
+    const started = await auth.agents.enroll({ project, name: 'SDK runner agent', scopes: ['invoices:read'] });
+    check(started.ok, 'start agent enrollment');
+    check(typeof process.send === 'function', 'SDK runner requires hosted approval coordination');
+    process.send({ type: 'agent-enrollment', enrollment: { userCode: started.value.userCode,
+      verificationUriComplete: started.value.verificationUriComplete, fingerprint: started.value.fingerprint } });
+    const enrolled = await started.value.wait();
+    check(enrolled.ok, 'collect approved agent enrollment');
+    const { agentId, kid, key } = enrolled.value;
     try {
       const listed = await auth.projects.listAgents(readCredential, project, { owner });
       check(listed.ok && listed.value.items.some(item => item.id === agentId), 'list agent');
@@ -97,7 +99,7 @@ const operations = {
       const added = await auth.projects.addAgentKey(credential, project, agentId, { public_jwk: await crypto.subtle.exportKey('jwk', rotated.publicKey) });
       check(added.ok, 'add agent key');
       check((await auth.projects.revokeAgentKey(credential, project, agentId, added.value.kid)).ok, 'revoke agent key');
-      const token = await auth.agents.getToken({ project, agentId, kid, key: pair.privateKey });
+      const token = await auth.agents.getToken({ project, agentId, kid, key });
       check(token.ok, 'agent token');
       writeFileSync(join(process.env.E2E_SECRETS, 'user-api-key-js-agent'), token.value.access_token, { mode: 0o600 });
       const verified = await verifyAgentToken(token.value.access_token, { project });
@@ -106,7 +108,7 @@ const operations = {
       check((await auth.projects.revokeAgent(credential, project, agentId)).ok, 'revoke agent');
     }
     const fresh = createTsAuthClient({ apiBaseUrl: 'https://auth.terrascale.tech', instanceSlug: project });
-    const refused = await fresh.agents.getToken({ project, agentId, kid, key: pair.privateKey });
+    const refused = await fresh.agents.getToken({ project, agentId, kid, key });
     check(!refused.ok && refused.error.code === 'invalid_grant', 'revoked agent cannot issue a token');
   },
   async 'auth.manage_user'() {

@@ -1,10 +1,12 @@
+import { KeyObject } from 'node:crypto';
 import type { Page } from '@playwright/test';
 import { createTsAuthClient, verifyAgentToken } from '../../sdk/js/src/ts-auth.js';
 import { expect, type Audit } from '../support/audit';
 import { hostedReady } from '../support/hosted';
 import { enterSecret } from '../support/secret';
 import { saveSecret } from '../support/state';
-import { auth } from '../support/stack';
+import { auth, onLocalStack } from '../support/stack';
+import { authStorage } from '../support/auth-management';
 
 export async function sdkAgentEnrollment(page: Page, audit: Audit, project: string, credential: string, owner: string, password: string): Promise<void> {
   const transport: typeof fetch = async (input, init) => {
@@ -24,7 +26,9 @@ export async function sdkAgentEnrollment(page: Page, audit: Audit, project: stri
   const enrolled = await waiting;
   expect(enrolled.ok).toBe(true);
   if (!enrolled.ok) throw new Error('SDK enrollment completion failed');
-  expect(enrolled.value.key.extractable).toBe(false);
+  expect(() => KeyObject.from(enrolled.value.key as unknown as Parameters<typeof KeyObject.from>[0])).toThrow();
+  await expect(crypto.subtle.exportKey('jwk', enrolled.value.key as unknown as CryptoKey)).rejects.toThrow();
+  expect(JSON.stringify(enrolled.value.key)).toBe('{}');
   for (const subject of ['owner', 'agent'] as const) {
     const token = await client.agents.getToken({ ...enrolled.value, project, subject });
     expect(token.ok).toBe(true);
@@ -40,9 +44,41 @@ export async function sdkAgentEnrollment(page: Page, audit: Audit, project: stri
     expect(wrongProject.ok).toBe(false);
     const wrongAudience = await verifyAgentToken(token.value.access_token, { project, audience: 'customer-api', fetch: transport });
     expect(wrongAudience.ok).toBe(false);
+    const originalToken = token.value.access_token;
+    const originalScope = token.value.scope;
+    token.value.access_token = 'changed';
+    token.value.expires_in = 0;
+    token.value.scope = 'different:scope';
     const cached = await client.agents.getToken({ ...enrolled.value, project, subject });
-    expect(cached.ok && cached.value.access_token === token.value.access_token).toBe(true);
+    expect(cached.ok && cached.value.access_token === originalToken && cached.value.scope === originalScope && cached.value.expires_in > 0).toBe(true);
   }
+  const controller = new AbortController();
+  const abandoned = await client.agents.enroll({ project, name: 'Canceled SDK agent', scopes: ['invoices:read'], signal: controller.signal });
+  expect(abandoned.ok).toBe(true);
+  if (!abandoned.ok) throw new Error('Could not start abort journey');
+  const canceled = abandoned.value.wait();
+  controller.abort();
+  const aborted = await canceled;
+  expect(!aborted.ok && aborted.error.code).toBe('request_aborted');
+  await onLocalStack(async () => {
+    await authStorage('UPDATE agents SET expires_at = ? WHERE project_id = ? AND id = ?',
+      [new Date(Date.now() + 8000).toISOString(), project, enrolled.value.agentId]);
+    const freshToken = await createTsAuthClient({ apiBaseUrl: auth, instanceSlug: project, fetch: transport }).agents.getToken({ ...enrolled.value, project });
+    expect(freshToken.ok).toBe(true);
+    if (!freshToken.ok) throw new Error('Could not mint expiry journey token');
+    saveSecret('sdk-agent-expiring', freshToken.value.access_token);
+    const exp = Number(JSON.parse(Buffer.from(freshToken.value.access_token.split('.')[1], 'base64url').toString('utf8')).exp);
+    expect(exp * 1000).toBeGreaterThan(Date.now());
+    let fetched = false;
+    const expired = await verifyAgentToken(freshToken.value.access_token, { project, fetch: async (input, init) => {
+      const response = await transport(input, init);
+      fetched = true;
+      await expect.poll(() => Date.now()).toBeGreaterThanOrEqual(exp * 1000);
+      return response;
+    } });
+    expect(fetched).toBe(true);
+    expect(!expired.ok && expired.error.code).toBe('invalid_agent_token');
+  });
   const revoked = await client.projects.revokeAgent(credential, project, enrolled.value.agentId);
   expect(revoked.ok).toBe(true);
   const fresh = createTsAuthClient({ apiBaseUrl: auth, instanceSlug: project, fetch: transport });

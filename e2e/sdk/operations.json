@@ -6,7 +6,7 @@
       "id": "auth.agents",
       "group": "a",
       "sdks": ["js"],
-      "title": "manage agent policy, agents and keys; issue, verify and revoke an agent token"
+      "title": "enroll with hosted owner approval, manage agent policy and keys, issue, verify and revoke an agent token"
     },
     {
       "id": "auth.manage_user",

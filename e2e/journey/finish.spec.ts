@@ -184,7 +184,7 @@ test.describe('SDK group A', () => {
   for (const sdk of sdks) {
     test(`${sdk} SDK: SQL, values, sessions, conflicts and ids on the journey database`, async ({ page }) => {
       const management = await prepareAuthManagement(page, sdk);
-      try { await runOperations(sdk, 'a', management); }
+      try { await runOperations(sdk, 'a', management, page); }
       finally { await closeAuthManagement(page, management); }
     });
   }

@@ -15,7 +15,9 @@ export async function cliAgentEnrollment(page: Page, audit: Audit, project: stri
   const binary = join(process.env.E2E_SDK_BUILD ?? join(stateDir, 'sdk'), 'go', 'ts');
   const env = { ...process.env, XDG_CONFIG_HOME: config, TERRASCALE_API_KEY: credential };
   const command = async (...args: string[]): Promise<string> => {
-    const child = spawn(binary, ['agent', ...args, '--project', project], { env: { ...env, TERRASCALE_API_KEY: args[0] === 'list' || args[0] === 'policy' && args[1] === 'get' ? readCredential : credential }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const flagIndex = args.findIndex(arg => arg.startsWith('--'));
+    const split = flagIndex < 0 ? args.length : flagIndex;
+    const child = spawn(binary, [...args.slice(split), 'agent', ...args.slice(0, split), '--project', project], { env: { ...env, TERRASCALE_API_KEY: args[0] === 'list' || args[0] === 'policy' && args[1] === 'get' ? readCredential : credential }, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
     child.stdout.on('data', chunk => { output += chunk; });
     child.stderr.resume();
@@ -57,6 +59,12 @@ export async function cliAgentEnrollment(page: Page, audit: Audit, project: stri
     expect(verified.ok && verified.value).toEqual({ isAgent: true, agentId: agent.agent_id, ownerId: owner, actingFor: 'owner', scopes: ['invoices:read'] });
     const listed = JSON.parse(await command('list')) as { items: { id: string }[] };
     expect(listed.items.some(item => item.id === agent.agent_id)).toBe(true);
+    const first = JSON.parse(await command('list', '--limit', '1')) as { items: { id: string }[], next: string | null };
+    expect(first.items).toHaveLength(1);
+    expect(first.next).toBeTruthy();
+    const second = JSON.parse(await command('list', '--limit', '1', '--after', first.next!)) as { items: { id: string }[] };
+    expect(second.items).toHaveLength(1);
+    expect(second.items[0].id).not.toBe(first.items[0].id);
     const policy = JSON.parse(await command('policy', 'get')) as { allowed_scopes: string[] };
     const set = JSON.parse(await command('policy', 'set', ...policy.allowed_scopes.flatMap(scope => ['--scope', scope]))) as { allowed_scopes: string[] };
     expect(set.allowed_scopes).toEqual(policy.allowed_scopes);

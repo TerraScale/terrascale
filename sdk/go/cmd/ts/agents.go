@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -190,7 +191,7 @@ func enrollAgent(ctx context.Context, project, name string, scopes []string, sel
 	if _, err := fmt.Fprintf(prompt, "Code: %s\nOpen %s\nKey fingerprint: %s\n", enrollment.Code, enrollment.URL, base64.RawURLEncoding.EncodeToString(fingerprint[:])[:16]); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(enrollment.ExpiresIn)*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(enrollment.ExpiresIn+600)*time.Second)
 	defer cancel()
 	interval := time.Duration(enrollment.Interval) * time.Second
 	pollPath := root + "/" + enrollment.ID + "/token"
@@ -252,7 +253,7 @@ func enrollAgent(ctx context.Context, project, name string, scopes []string, sel
 	}
 }
 
-func agentCommand(ctx context.Context, args []string, out, prompt io.Writer) error {
+func dispatchAgentCommand(ctx context.Context, args []string, out, prompt io.Writer) (bool, error) {
 	fs := flag.NewFlagSet("agent", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	project := fs.String("project", "", "project id")
@@ -260,147 +261,150 @@ func agentCommand(ctx context.Context, args []string, out, prompt io.Writer) err
 	agent := fs.String("agent", "", "agent id")
 	self := fs.Bool("allow-self-subject", false, "allow agent subject")
 	subject := fs.String("subject", "owner", "owner or agent")
+	after := fs.String("after", "", "agent list: next page cursor")
+	limit := fs.Int("limit", 50, "agent list: page size 1 to 100")
 	scopes := []string{}
 	fs.Func("scope", "scope (repeatable)", func(s string) error { scopes = append(scopes, s); return nil })
 	operands, err := parseOptions(fs, args)
-	if err != nil {
-		return err
+	if err != nil || len(operands) == 0 || operands[0] != "agent" {
+		return false, nil
 	}
-	command := strings.TrimPrefix(strings.Join(operands, " "), "agent ")
-	validFlags := true
-	fs.Visit(func(f *flag.Flag) {
-		allowed := f.Name == "project" ||
-			command == "enroll" && (f.Name == "name" || f.Name == "scope" || f.Name == "allow-self-subject") ||
-			command == "token" && (f.Name == "agent" || f.Name == "scope" || f.Name == "subject") ||
-			command == "revoke" && f.Name == "agent" || command == "policy set" && f.Name == "scope"
-		validFlags = validFlags && allowed
-	})
-	if !validFlags {
-		return errUsage
-	}
-	if entityid.Check(*project) != nil {
-		return fmt.Errorf("agent requires --project <ULID>: %w", errUsage)
-	}
-	if (*agent != "" && entityid.Check(*agent) != nil) || (*subject != "owner" && *subject != "agent") {
-		return errUsage
-	}
-	switch command {
-	case "enroll":
-		if *name == "" || len(scopes) == 0 || *agent != "" {
+	return true, func() error {
+		command := strings.TrimPrefix(strings.Join(operands, " "), "agent ")
+		validFlags := true
+		fs.Visit(func(f *flag.Flag) {
+			allowed := f.Name == "project" || command == "list" && (f.Name == "after" || f.Name == "limit") ||
+				command == "enroll" && (f.Name == "name" || f.Name == "scope" || f.Name == "allow-self-subject") ||
+				command == "token" && (f.Name == "agent" || f.Name == "scope" || f.Name == "subject") ||
+				command == "revoke" && f.Name == "agent" || command == "policy set" && f.Name == "scope"
+			validFlags = validFlags && allowed
+		})
+		if !validFlags || *limit < 1 || *limit > 100 || len(*after) > 8192 {
 			return errUsage
 		}
-		return enrollAgent(ctx, *project, *name, scopes, *self, out, prompt)
-	case "token":
-		if *agent == "" {
+		if entityid.Check(*project) != nil {
+			return fmt.Errorf("agent requires --project <ULID>: %w", errUsage)
+		}
+		if (*agent != "" && entityid.Check(*agent) != nil) || (*subject != "owner" && *subject != "agent") {
 			return errUsage
 		}
-		path, err := agentCredentialPath(*project, *agent)
-		if err != nil {
-			return err
-		}
-		info, err := os.Lstat(path)
-		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
-			return errors.New("Agent credentials must be a regular mode 0600 file")
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return errors.New("Could not read agent credentials")
-		}
-		var identity agentCredential
-		if json.Unmarshal(data, &identity) != nil || identity.AgentID != *agent || entityid.Check(identity.Kid) != nil {
-			return errors.New("Invalid stored agent identity")
-		}
-		parsed, err := x509.ParsePKCS8PrivateKey(identity.Key)
-		if err != nil {
-			return errors.New("Invalid stored agent key")
-		}
-		key, valid := parsed.(*ecdsa.PrivateKey)
-		if !valid || key.Curve != elliptic.P256() {
-			return errors.New("Agent key must be P-256")
-		}
-		path = "/" + *project + "/oauth/token"
-		assertion, err := agentAssertion(key, agentOrigin+path, *agent, identity.Kid)
-		if err != nil {
-			return err
-		}
-		form := url.Values{"grant_type": {"urn:ietf:params:oauth:grant-type:jwt-bearer"}, "assertion": {assertion}, "requested_subject": {*subject}}
-		if len(scopes) > 0 {
-			form.Set("scope", strings.Join(scopes, " "))
-		}
-		var token struct {
-			AccessToken string `json:"access_token"`
-			TokenType   string `json:"token_type"`
-			ExpiresIn   int    `json:"expires_in"`
-		}
-		if err := agentRequest(ctx, "POST", path, "", []byte(form.Encode()), true, &token); err != nil {
-			return err
-		}
-		if token.AccessToken == "" || strings.ContainsAny(token.AccessToken, "\r\n\t ") || token.TokenType != "Bearer" || token.ExpiresIn < 1 || token.ExpiresIn > 300 {
-			return errors.New("Invalid agent token response")
-		}
-		if jsonMode(out) {
-			return emitJSON(out, token)
-		}
-		if _, err := fmt.Fprintln(out, token.AccessToken); err != nil {
-			return errors.New("Could not write agent token")
-		}
-		return nil
-	case "list", "revoke", "policy get", "policy set":
-		if command == "revoke" && *agent == "" {
+		switch command {
+		case "enroll":
+			if *name == "" || len(scopes) == 0 || *agent != "" {
+				return errUsage
+			}
+			return enrollAgent(ctx, *project, *name, scopes, *self, out, prompt)
+		case "token":
+			if *agent == "" {
+				return errUsage
+			}
+			path, err := agentCredentialPath(*project, *agent)
+			if err != nil {
+				return err
+			}
+			if err := verifyCredentialFile(path); err != nil {
+				return err
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return errors.New("Could not read agent credentials")
+			}
+			var identity agentCredential
+			if json.Unmarshal(data, &identity) != nil || identity.AgentID != *agent || entityid.Check(identity.Kid) != nil {
+				return errors.New("Invalid stored agent identity")
+			}
+			parsed, err := x509.ParsePKCS8PrivateKey(identity.Key)
+			if err != nil {
+				return errors.New("Invalid stored agent key")
+			}
+			key, valid := parsed.(*ecdsa.PrivateKey)
+			if !valid || key.Curve != elliptic.P256() {
+				return errors.New("Agent key must be P-256")
+			}
+			path = "/" + *project + "/oauth/token"
+			assertion, err := agentAssertion(key, agentOrigin+path, *agent, identity.Kid)
+			if err != nil {
+				return err
+			}
+			form := url.Values{"grant_type": {"urn:ietf:params:oauth:grant-type:jwt-bearer"}, "assertion": {assertion}, "requested_subject": {*subject}}
+			if len(scopes) > 0 {
+				form.Set("scope", strings.Join(scopes, " "))
+			}
+			var token struct {
+				AccessToken string `json:"access_token"`
+				TokenType   string `json:"token_type"`
+				ExpiresIn   int    `json:"expires_in"`
+			}
+			if err := agentRequest(ctx, "POST", path, "", []byte(form.Encode()), true, &token); err != nil {
+				return err
+			}
+			if token.AccessToken == "" || strings.ContainsAny(token.AccessToken, "\r\n\t ") || token.TokenType != "Bearer" || token.ExpiresIn < 1 || token.ExpiresIn > 300 {
+				return errors.New("Invalid agent token response")
+			}
+			if jsonMode(out) {
+				return emitJSON(out, token)
+			}
+			if _, err := fmt.Fprintln(out, token.AccessToken); err != nil {
+				return errors.New("Could not write agent token")
+			}
+			return nil
+		case "list", "revoke", "policy get", "policy set":
+			if command == "revoke" && *agent == "" {
+				return errUsage
+			}
+		default:
 			return errUsage
 		}
-	default:
-		return errUsage
-	}
-	credential := os.Getenv("TERRASCALE_API_KEY")
-	if credential == "" {
-		device, err := tsauth.NewDevice(tsauth.DeviceConfig{})
-		if err != nil {
-			return err
-		}
-		credential, err = accessToken(ctx, device)
-		if err != nil {
-			return err
-		}
-	}
-	root := "/v1/" + *project
-	switch command {
-	case "revoke":
-		if err := agentRequest(ctx, "DELETE", root+"/agents/"+*agent, credential, nil, false, nil); err != nil {
-			return err
-		}
-		return emitJSON(out, struct {
-			Revoked string `json:"revoked"`
-		}{*agent})
-	case "list":
-		var page struct {
-			Items []struct {
-				ID     string `json:"id"`
-				Name   string `json:"name"`
-				Owner  string `json:"owner_user_id"`
-				Status string `json:"status"`
-			} `json:"items"`
-			Next *string `json:"next"`
-		}
-		if err := agentRequest(ctx, "GET", root+"/agents", credential, nil, false, &page); err != nil {
-			return err
-		}
-		return emitJSON(out, page)
-	case "policy get", "policy set":
-		method := "GET"
-		var body []byte
-		if command == "policy set" {
-			method = "PUT"
-			body, err = agentJSON(agentPolicy{scopes})
+		credential := os.Getenv("TERRASCALE_API_KEY")
+		if credential == "" {
+			device, err := tsauth.NewDevice(tsauth.DeviceConfig{})
+			if err != nil {
+				return err
+			}
+			credential, err = accessToken(ctx, device)
 			if err != nil {
 				return err
 			}
 		}
-		var policy agentPolicy
-		if err := agentRequest(ctx, method, root+"/agent-policy", credential, body, false, &policy); err != nil {
-			return err
+		root := "/v1/" + *project
+		switch command {
+		case "revoke":
+			if err := agentRequest(ctx, "DELETE", root+"/agents/"+*agent, credential, nil, false, nil); err != nil {
+				return err
+			}
+			return emitJSON(out, struct {
+				Revoked string `json:"revoked"`
+			}{*agent})
+		case "list":
+			var page struct {
+				Items []struct {
+					ID     string `json:"id"`
+					Name   string `json:"name"`
+					Owner  string `json:"owner_user_id"`
+					Status string `json:"status"`
+				} `json:"items"`
+				Next *string `json:"next"`
+			}
+			if err := agentRequest(ctx, "GET", root+"/agents?limit="+strconv.Itoa(*limit)+"&after="+url.QueryEscape(*after), credential, nil, false, &page); err != nil {
+				return err
+			}
+			return emitJSON(out, page)
+		case "policy get", "policy set":
+			method := "GET"
+			var body []byte
+			if command == "policy set" {
+				method = "PUT"
+				body, err = agentJSON(agentPolicy{scopes})
+				if err != nil {
+					return err
+				}
+			}
+			var policy agentPolicy
+			if err := agentRequest(ctx, method, root+"/agent-policy", credential, body, false, &policy); err != nil {
+				return err
+			}
+			return emitJSON(out, policy)
 		}
-		return emitJSON(out, policy)
-	}
-	return errUsage
+		return errUsage
+	}()
 }

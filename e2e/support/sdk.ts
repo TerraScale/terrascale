@@ -1,3 +1,6 @@
+import type { Page } from '@playwright/test';
+import { Audit } from './audit';
+import { approveAgentEnrollment } from '../sdk/agent-identities';
 import { spawn } from 'node:child_process';
 import { mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -100,26 +103,58 @@ const commands: Record<Sdk, [string, string[]]> = {
   rust: [join(built, 'rust', 'runner'), []],
 };
 
-function execute(sdk: Sdk, env: NodeJS.ProcessEnv): Promise<{ code: number | null; stdout: string; stderr: string }> {
+type EnrollmentApproval = { userCode: string; verificationUriComplete: string; fingerprint: string };
+
+function execute(sdk: Sdk, env: NodeJS.ProcessEnv, approve?: (enrollment: EnrollmentApproval) => Promise<void>): Promise<{ code: number | null; stdout: string; stderr: string }> {
   const [command, args] = commands[sdk];
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(command, args, { env: { ...process.env, ...env }, stdio: sdk === 'js' && approve ? ['ignore', 'pipe', 'pipe', 'ipc'] : ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
-    child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
-    child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+    let approval: Promise<void> = Promise.resolve();
+    let approvalError: unknown;
+    let approvalStarted = false;
+    child.on('message', (message: unknown) => {
+      if (typeof message !== 'object' || message === null || Reflect.get(message, 'type') !== 'agent-enrollment' || approvalStarted || !approve) {
+        approvalError = new Error('Unexpected SDK runner approval message');
+        child.kill();
+        return;
+      }
+      const enrollment: unknown = Reflect.get(message, 'enrollment');
+      if (typeof enrollment !== 'object' || enrollment === null ||
+          ['userCode', 'verificationUriComplete', 'fingerprint'].some(field => typeof Reflect.get(enrollment, field) !== 'string')) {
+        approvalError = new Error('Invalid SDK runner enrollment');
+        child.kill();
+        return;
+      }
+      approvalStarted = true;
+      approval = approve(enrollment as EnrollmentApproval).catch(error => { approvalError = error; child.kill(); });
+    });
+    child.stdout!.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
+    child.stderr!.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
     child.on('error', reject);
-    child.on('close', (code) => resolve({ code, stdout, stderr }));
+    child.on('close', (code) => {
+      void approval.then(() => {
+        if (approvalError) reject(approvalError);
+        else resolve({ code, stdout, stderr });
+      }, reject);
+    });
   });
 }
 
-export async function runOperations(sdk: Sdk, group: Group, management?: { user: string; readKey: string; writeKey: string }): Promise<void> {
+export async function runOperations(sdk: Sdk, group: Group, management?: { user: string; readKey: string; writeKey: string }, page?: Page): Promise<void> {
   const current = journey<Journey & Partial<Pick<PaidJourney, 'secondDatabaseName'>>>();
   mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
   const planned = operations.filter((op) => op.group === group && (!op.sdks || op.sdks.includes(sdk)));
   for (const op of planned.filter((candidate) => !runnable(candidate))) {
     test.info().annotations.push({ type: 'not run', description: `${op.id} (${op.title}): ${op.needs}` });
   }
+  const approve = sdk === 'js' && planned.some(op => op.id === 'auth.agents') ? async (enrollment: EnrollmentApproval) => {
+    if (!page) throw new Error('JS agent enrollment requires its hosted approval page');
+    const audit = new Audit(page, test.info());
+    await approveAgentEnrollment(page, audit, enrollment, current.password);
+    await audit.finish();
+  } : undefined;
   const booked = requestsPerRunner[group] + planned.reduce((sum, op) => sum + (op.requests ?? 0), 0);
   const { before, result } = await paced(group, async () => ({
     before: production ? undefined : await lane(current.organizationId, plans[group]),
@@ -134,7 +169,7 @@ export async function runOperations(sdk: Sdk, group: Group, management?: { user:
       E2E_RUN_ID: `${current.runId}${Date.now().toString(36)}`,
       E2E_OPERATIONS: operationsFile,
       E2E_SECRETS: secretsDir,
-    }),
+    }, approve),
   }), booked);
   if (before) await lane(current.organizationId, plans[group]);
   const used = before && since(await lane(current.organizationId, plans[group]), before);

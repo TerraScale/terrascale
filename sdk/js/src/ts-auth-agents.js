@@ -3,11 +3,25 @@ import { requireId, isValidId } from "./ids.js";
 import { parseStrictJson } from "./strict-json.js";
 import { TsAuthHttp } from "./http.js";
 
-/** @typedef {{agentId: string, kid: string, key: CryptoKey}} AgentIdentity */
+/** @typedef {{agentId: string, kid: string, key: AgentSigner}} AgentIdentity */
 /** @typedef {{access_token: string, expires_in: number, token_type: "Bearer", scope: string}} AgentToken */
 /** @typedef {{isAgent: true, agentId: string, ownerId: string, actingFor: "owner" | "self", scopes: string[]}} VerifiedAgent */
 /** @typedef {{enrollment_id: string, user_code: string, verification_uri: string, verification_uri_complete: string, expires_in: number, interval: number}} Enrollment */
 /** @import { TerraScaleResult } from "./result.js" */
+
+class AgentSigner {
+  /** @type {CryptoKey} */
+  #key;
+  /** @param {CryptoKey} key */
+  constructor(key) {
+    this.#key = key;
+    Object.freeze(this);
+  }
+  /** @param {BufferSource} data @returns {Promise<ArrayBuffer>} */
+  sign(data) {
+    return crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, this.#key, data);
+  }
+}
 
 /** @param {Uint8Array} bytes */
 function base64url(bytes) {
@@ -20,11 +34,11 @@ function decode(text) {
 }
 /** @param {object} value */
 function part(value) { return base64url(new TextEncoder().encode(JSON.stringify(value))); }
-/** @param {CryptoKey} key @param {string} aud @param {Record<string, string>} [claims] @param {number} [iat] */
+/** @param {AgentSigner} key @param {string} aud @param {Record<string, string>} [claims] @param {number} [iat] */
 async function assertion(key, aud, claims = {}, iat = Math.floor(Date.now() / 1000)) {
   const { kid, ...identity } = claims;
   const input = `${part({ alg: "ES256", typ: "JWT", ...(kid === undefined ? {} : { kid }) })}.${part({ ...identity, aud, iat, exp: iat + 120, jti: crypto.randomUUID() })}`;
-  const signature = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key, new TextEncoder().encode(input));
+  const signature = await key.sign(new TextEncoder().encode(input));
   return `${input}.${base64url(new Uint8Array(signature))}`;
 }
 /** @param {number} ms @param {AbortSignal} [signal] @returns {Promise<void>} */
@@ -40,7 +54,7 @@ function waitInterval(ms, signal) {
 export class TsAuthAgentsClient {
   /** @type {TsAuthHttp} */
   #http;
-  /** @type {WeakMap<CryptoKey, Map<string, {token: AgentToken, expires: number}>>} */
+  /** @type {WeakMap<AgentSigner, Map<string, {token: AgentToken, expires: number}>>} */
   #tokens = new WeakMap();
   /** @param {TsAuthHttp} http */
   constructor(http) { this.#http = http; }
@@ -52,6 +66,7 @@ export class TsAuthAgentsClient {
   async enroll({ project, name, scopes, allowSelfSubject = false, signal }) {
     const path = `v1/${requireId(project, "project")}/agent-enrollments`;
     const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
+    const signer = new AgentSigner(pair.privateKey);
     const { crv, kty, x, y } = await crypto.subtle.exportKey("jwk", pair.publicKey);
     const fingerprint = base64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify({ crv, kty, x, y }))))).slice(0, 16);
     /** @type {TerraScaleResult<Enrollment>} */
@@ -65,27 +80,32 @@ export class TsAuthAgentsClient {
         enrollment.verification_uri !== verificationUri || enrollment.verification_uri_complete !== `${verificationUri}?user_code=${enrollment.user_code}`)
       return err("tsauth.oidc.agent_enroll", { kind: "invalid-response", code: "invalid_enrollment", message: "Invalid agent enrollment response." });
     let interval = enrollment.interval * 1000;
-    const deadline = Date.now() + enrollment.expires_in * 1000;
+    const deadline = Date.now() + (enrollment.expires_in + 600) * 1000;
     const pollPath = `${path}/${enrollment.enrollment_id}/token`;
     /** @type {Promise<TerraScaleResult<AgentIdentity>> | undefined} */
     let pending;
     /** @returns {Promise<TerraScaleResult<AgentIdentity>>} */
     const poll = async () => {
-      while (Date.now() < deadline) {
-        await waitInterval(Math.min(interval, deadline - Date.now()), signal);
-        if (Date.now() >= deadline) break;
-        const proof = await assertion(pair.privateKey, `${this.#http.config.apiBaseUrl}/${pollPath}`);
-        /** @type {TerraScaleResult<{agent_id: string, kid: string}>} */
-        const result = await this.#http.request({ method: "POST", path: pollPath, routeName: "tsauth.oidc.agent_poll", body: { proof }, signal });
-        if (result.ok) {
-          if (!isValidId(result.value.agent_id) || !isValidId(result.value.kid))
-            return err(result.routeName, { kind: "invalid-response", code: "invalid_agent", message: "Invalid enrollment identity." });
-          return ok(result.routeName, result.status, result.headers, { agentId: result.value.agent_id, kid: result.value.kid, key: pair.privateKey });
+      try {
+        while (Date.now() < deadline) {
+          await waitInterval(Math.min(interval, deadline - Date.now()), signal);
+          if (Date.now() >= deadline) break;
+          const proof = await assertion(signer, `${this.#http.config.apiBaseUrl}/${pollPath}`);
+          /** @type {TerraScaleResult<{agent_id: string, kid: string}>} */
+          const result = await this.#http.request({ method: "POST", path: pollPath, routeName: "tsauth.oidc.agent_poll", body: { proof }, signal });
+          if (result.ok) {
+            if (!isValidId(result.value.agent_id) || !isValidId(result.value.kid))
+              return err(result.routeName, { kind: "invalid-response", code: "invalid_agent", message: "Invalid enrollment identity." });
+            return ok(result.routeName, result.status, result.headers, { agentId: result.value.agent_id, kid: result.value.kid, key: signer });
+          }
+          if (result.error.code === "slow_down") interval += 5000;
+          else if (result.error.code !== "authorization_pending") return result;
         }
-        if (result.error.code === "slow_down") interval += 5000;
-        else if (result.error.code !== "authorization_pending") return result;
+        return err("tsauth.oidc.agent_poll", { kind: "authentication", code: "expired_token", message: "Agent enrollment expired." });
+      } catch (error) {
+        if (signal?.aborted) return err("tsauth.oidc.agent_poll", { kind: "transport", code: "request_aborted", message: "The request was aborted." });
+        throw error;
       }
-      return err("tsauth.oidc.agent_poll", { kind: "authentication", code: "expired_token", message: "Agent enrollment expired." });
     };
     return ok(started.routeName, started.status, started.headers, { userCode: enrollment.user_code, verificationUri: enrollment.verification_uri,
       verificationUriComplete: enrollment.verification_uri_complete, fingerprint, wait: () => pending ??= poll() });
@@ -115,7 +135,7 @@ export class TsAuthAgentsClient {
           !Number.isInteger(token.expires_in) || token.expires_in < 1 || token.expires_in > 300)
         return err(result.routeName, { kind: "invalid-response", code: "invalid_token_response", message: "Invalid agent token response." });
       if (cache.size >= 32) cache.clear();
-      cache.set(cacheKey, { token, expires: sent + token.expires_in * 1000 });
+      cache.set(cacheKey, { token: { ...token }, expires: sent + token.expires_in * 1000 });
     }
     return result;
   }
@@ -156,6 +176,7 @@ export async function verifyAgentToken(token, { project, audience, apiBaseUrl = 
     const ownerId = requireId(self ? c.owner_sub : c.sub, "owner");
     if (ownerId === agentId) throw new TypeError();
     if (typeof c.scope !== "string" || c.scope.length === 0) throw new TypeError();
+    if (Number(c.exp) <= Date.now() / 1000) throw new TypeError();
     return ok(route, 200, new Headers(), { isAgent: true, agentId, ownerId, actingFor: self ? "self" : "owner", scopes: c.scope.split(" ") });
   } catch {
     return err(route, { kind: "authentication", code: "invalid_agent_token", message: "Invalid agent access token." });
