@@ -31,6 +31,7 @@ public sealed record ListenerMetadata(params IReadOnlyList<TerraBaseListener> Li
     public static ListenerMetadata Metrics { get; } = new(TerraBaseListener.Internal, TerraBaseListener.Metrics);
 }
 public sealed record AnsweringRegion(string Region);
+internal sealed record InternalAdmission;
 public static class Listeners
 {
     private static readonly object ListenerKey = typeof(TerraBaseListener);
@@ -268,6 +269,7 @@ public static class Listeners
                 {
                     return;
                 }
+                context.Features.Set(new InternalAdmission());
             }
 
             if (arrivedOn == TerraBaseListener.Client)

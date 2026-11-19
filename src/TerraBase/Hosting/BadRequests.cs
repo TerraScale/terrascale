@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraBase.Engine;
@@ -89,10 +90,23 @@ public static class BadRequests
             {
                 context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(BadRequests)).ZLogError(error, $"Unhandled error serving {context.Request.Method:@Method} {context.GetEndpoint()?.DisplayName:@Endpoint}");
                 Replace(context.Response);
-                await WriteAsync(context, StatusCodes.Status500InternalServerError, "internal_error", message: null, op: null).ConfigureAwait(false);
+                await WriteAsync(context, StatusCodes.Status500InternalServerError, "internal_error", AdmittedInternalCall(context) ? Unhandled(error) : null, op: null).ConfigureAwait(false);
             }
         });
         return app;
+    }
+
+    private const int UnhandledLength = 200;
+
+    private static bool AdmittedInternalCall(HttpContext context) =>
+        context.Features.Get<InternalAdmission>() is not null
+        && ReferenceEquals(context.GetEndpoint()?.Metadata.GetMetadata<ListenerMetadata>(), ListenerMetadata.Internal);
+
+    private static string Unhandled(Exception error)
+    {
+        var thrower = new StackTrace(error, fNeedFileInfo: false).GetFrame(0)?.GetMethod();
+        var named = thrower is null ? error.GetType().Name : $"{error.GetType().Name} thrown in {thrower.DeclaringType?.FullName}.{thrower.Name}";
+        return named.Length <= UnhandledLength ? named : named[..UnhandledLength];
     }
 
     private static string CodeFor(int status) => status switch
