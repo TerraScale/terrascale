@@ -397,6 +397,11 @@ internal sealed partial class RegionReplication
                 {
                     await RecordAsync(entry, null, lookups, cancellationToken).ConfigureAwait(false);
                 }
+                else if (home.Region == options.Region)
+                {
+                    await FollowMovedHomeAsync(database, entry.HomeRegion, entry.PlacementVersion, cancellationToken).ConfigureAwait(false);
+                    WakeCatalog(entry.HomeRegion);
+                }
                 else
                 {
                     await catalog.UpdatePlacementAsync(database, new DatabasePlacement(entry.HomeRegion, entry.ReplicaRegions, entry.PlacementVersion, entry.AllRegions), cancellationToken).ConfigureAwait(false);
@@ -409,6 +414,33 @@ internal sealed partial class RegionReplication
             case Unavailable:
                 faults.Unanswered(database, home.Region);
                 break;
+        }
+    }
+
+    internal async Task FollowMovedHomeAsync(TenantContext database, string region, long version, CancellationToken cancellationToken)
+    {
+        if (_peers.FirstOrDefault(peer => peer.Region == region) is not { } target || !CanRebuild(target)
+            || await PlacementAtAsync(target, database, cancellationToken).ConfigureAwait(false) is not ReplicaCatalogEntry entry
+            || entry.HomeRegion != region || entry.PlacementVersion < version)
+        {
+            return;
+        }
+
+        var placement = new DatabasePlacement(entry.HomeRegion, entry.ReplicaRegions, entry.PlacementVersion, entry.AllRegions);
+        var key = Key(database);
+        var gate = Lifecycle(key);
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (await moves.FollowHomeLeaseAsync(database, placement, cancellationToken).ConfigureAwait(false) is PlacementUpdate { Updated: true }
+                && !placement.PlacedIn(options.Region))
+            {
+                await StopFollowingAsync(key, database, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            gate.Release();
         }
     }
 

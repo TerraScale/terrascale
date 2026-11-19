@@ -860,7 +860,7 @@ internal sealed partial class HomeLeases(
         }
         else if (home.Home != options.Region && home.Adopted is not null)
         {
-            _ = await moves.FollowHomeLeaseAsync(database, Moved(placement, home), cancellationToken).ConfigureAwait(false);
+            await replication.FollowMovedHomeAsync(database, home.Home, home.Epoch, cancellationToken).ConfigureAwait(false);
         }
 
         replication.WakeCatalog(home.Home);
