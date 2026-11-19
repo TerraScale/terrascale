@@ -169,6 +169,7 @@ test('project agents hold their own public keys, stay within their limits and ca
     const racedAssertion = assertion(first.privateJwk, firstKid, agent.id, tokenEndpoint);
     const replayRace = await Promise.all([grant(racedAssertion), grant(racedAssertion)]);
     expect(replayRace.map(response => response.status()).sort()).toEqual([200, 400]);
+    expect((await replayRace.find(response => response.status() === 400)!.json()).error).toBe('invalid_grant');
 
     const selfKeys = [keyPair(), keyPair()];
     const selfCreated = await page.request.post(`${root}/users/${user}/agents`, {
@@ -186,14 +187,14 @@ test('project agents hold their own public keys, stay within their limits and ca
     await refused(assertion(first.privateJwk, firstKid, selfAgent.id, tokenEndpoint));
 
     const expiring = keyPair();
+    const expiresAt = Date.now() + 3_000;
     const expiringCreated = await page.request.post(`${root}/users/${user}/agents`, {
-      headers: write, data: { name: 'Expiring agent', allowed_scopes: ['invoices:read'], expires_at: new Date(Date.now() + 5_000).toISOString(), public_jwk: expiring.publicJwk },
+      headers: write, data: { name: 'Expiring agent', allowed_scopes: ['invoices:read'], expires_at: new Date(expiresAt).toISOString(), public_jwk: expiring.publicJwk },
     });
     expect(expiringCreated.status()).toBe(201);
     const expiringAgent = await expiringCreated.json() as Agent;
-    const expiringGrant = () => grant(assertion(expiring.privateJwk, expiringAgent.keys[0].kid, expiringAgent.id, tokenEndpoint));
-    expect((await expiringGrant()).status()).toBe(200);
-    await expect.poll(async () => (await expiringGrant()).status()).toBe(400);
+    await expect.poll(async () => Date.parse((await page.request.get(issuer + '/.well-known/openid-configuration')).headers()['date'])).toBeGreaterThan(expiresAt + 1_000);
+    await refused(assertion(expiring.privateJwk, expiringAgent.keys[0].kid, expiringAgent.id, tokenEndpoint));
 
     const secondOwner = await page.request.post(root + '/users', { headers: write, data: { email: `agent-second-owner-${run}@example.com` } });
     expect(secondOwner.status()).toBe(201);

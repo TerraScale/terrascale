@@ -1,4 +1,5 @@
 using System.Collections.Frozen;
+using System.Text.Json;
 using Microsoft.AspNetCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.JsonWebTokens;
@@ -128,8 +129,7 @@ public sealed class AgentTokens(AuthData data, KeyRing ring, AttemptLimiter limi
         }
 
         var now = clock.GetUtcNow();
-        if (!unverified.TryGetPayloadValue<long>(JwtRegisteredClaimNames.Iat, out var iat) || !unverified.TryGetPayloadValue<long>(JwtRegisteredClaimNames.Exp, out var exp)
-            || iat is < 0 or > MaxUnixSeconds || exp is < 0 or > MaxUnixSeconds || iat >= exp || exp - iat > (long)MaxAssertionLifetime.TotalSeconds
+        if (Times(unverified) is not var (iat, exp) || iat is < 0 or > MaxUnixSeconds || exp is < 0 or > MaxUnixSeconds || iat >= exp || exp - iat > (long)MaxAssertionLifetime.TotalSeconds
             || DateTimeOffset.FromUnixTimeSeconds(iat) > now + ClockSkew)
         {
             return this.Refuse(project, agentId, "assertion times");
@@ -155,11 +155,15 @@ public sealed class AgentTokens(AuthData data, KeyRing ring, AttemptLimiter limi
         }
 
         var scope = string.Join(' ', scopes);
-        var body = new AgentTokenBody(await this.SignAsync(project, agent.Value, scope, self, now, cancellationToken).ConfigureAwait(false), "Bearer", (long)Lifetime.TotalSeconds, scope);
+        var issuedAt = DateTimeOffset.FromUnixTimeSeconds(now.ToUnixTimeSeconds());
+        var expiresAt = DateTimeOffset.FromUnixTimeSeconds(Math.Min((issuedAt + Lifetime).ToUnixTimeSeconds(), agent.Value.ExpiresAt?.ToUnixTimeSeconds() ?? long.MaxValue));
+        var body = new AgentTokenBody(await this.SignAsync(project, agent.Value, scope, self, issuedAt, expiresAt, cancellationToken).ConfigureAwait(false), "Bearer",
+            (long)(expiresAt - issuedAt).TotalSeconds, scope);
         var acceptedUntil = DateTimeOffset.FromUnixTimeSeconds(exp) + ClockSkew;
-        if (clock.GetUtcNow() > acceptedUntil)
+        var gate = clock.GetUtcNow();
+        if (gate > acceptedUntil || agent.Value.ExpiresAt <= gate || expiresAt <= issuedAt)
         {
-            return this.Refuse(project, agentId, "assertion expired during issuance");
+            return this.Refuse(project, agentId, "assertion or agent expired during issuance");
         }
 
         List<Change> changes = [Change.Insert(new AgentAssertionRecord(project, agentId, jti, acceptedUntil + ReplayRetention)), Change.Assert(key), Change.Assert(owner)];
@@ -173,7 +177,7 @@ public sealed class AgentTokens(AuthData data, KeyRing ring, AttemptLimiter limi
             : this.Refuse(project, agentId, "assertion replayed, or the key, owner or agent changed");
     }
 
-    private async Task<string> SignAsync(string project, AgentRecord agent, string scope, bool self, DateTimeOffset now, CancellationToken cancellationToken)
+    private async Task<string> SignAsync(string project, AgentRecord agent, string scope, bool self, DateTimeOffset issuedAt, DateTimeOffset expiresAt, CancellationToken cancellationToken)
     {
         var signing = await ring.GetActiveAsync(project, cancellationToken).ConfigureAwait(false);
         try
@@ -200,9 +204,9 @@ public sealed class AgentTokens(AuthData data, KeyRing ring, AttemptLimiter limi
             {
                 TokenType = "at+jwt",
                 Issuer = OidcIssuer.Issuer(options, project).AbsoluteUri,
-                IssuedAt = now.UtcDateTime,
-                NotBefore = now.UtcDateTime,
-                Expires = (now + Lifetime).UtcDateTime,
+                IssuedAt = issuedAt.UtcDateTime,
+                NotBefore = issuedAt.UtcDateTime,
+                Expires = expiresAt.UtcDateTime,
                 SigningCredentials = new SigningCredentials(signing[0].SecurityKey, SecurityAlgorithms.EcdsaSha256),
                 Claims = claims,
             });
@@ -213,6 +217,21 @@ public sealed class AgentTokens(AuthData data, KeyRing ring, AttemptLimiter limi
             {
                 signer.Dispose();
             }
+        }
+    }
+
+    private static (long Iat, long Exp)? Times(JsonWebToken assertion)
+    {
+        try
+        {
+            using var payload = JsonDocument.Parse(Base64UrlEncoder.DecodeBytes(assertion.EncodedPayload), new JsonDocumentOptions { AllowDuplicateProperties = false });
+            return payload.RootElement.TryGetProperty(JwtRegisteredClaimNames.Iat, out var iat) && iat.ValueKind == JsonValueKind.Number && iat.TryGetInt64(out var issued)
+                && payload.RootElement.TryGetProperty(JwtRegisteredClaimNames.Exp, out var exp) && exp.ValueKind == JsonValueKind.Number && exp.TryGetInt64(out var expires)
+                ? (issued, expires) : null;
+        }
+        catch (Exception error) when (error is JsonException or FormatException)
+        {
+            return null;
         }
     }
 

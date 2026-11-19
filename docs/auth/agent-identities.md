@@ -130,14 +130,15 @@ The assertion is an ES256 JWS (no other algorithm, no encryption) with header `k
 | --- | --- |
 | `iss`, `sub` | the agent id |
 | `aud` | the token endpoint URL exactly, `https://auth.terrascale.tech/{project}/oauth/token`, as the only audience |
-| `iat`, `exp` | integer Unix seconds, `iat` before `exp`, `exp - iat` at most 300 s; `iat` not in the future and `exp` not past, each within 30 s of clock skew |
+| `iat`, `exp` | JSON integers of Unix seconds (a fraction, exponent or string is refused, never rounded), `iat` before `exp`, `exp - iat` at most 300 s; `iat` not in the future and `exp` not past, each within 30 s of clock skew |
 | `jti` | 1 to 128 characters, unique per agent: a used `jti` is refused until the assertion has expired |
 
 `scope` (optional) is a space-separated subset of the agent's `allowed_scopes`; without it the token gets all of them.
 `requested_subject` (optional) is `owner` (default) or `agent`. No other parameter is accepted (`400 invalid_request`),
 and there is no client authentication.
 
-The answer is a token response with `access_token`, `token_type: Bearer`, `expires_in: 300` and `scope`; there is no
+The answer is a token response with `access_token`, `token_type: Bearer`, `expires_in` (300, or less when the agent's `expires_at` comes
+sooner: a token never outlives its agent) and `scope`; there is no
 refresh token and no ID token. The access token is an ES256 JWT (`typ: at+jwt`) signed by the project's key ring under
 the project issuer, verifiable against the project JWKS:
 
@@ -160,13 +161,16 @@ is not usable (above: revoked, expired, owner disabled, deleted or signed out ev
 scope outside `allowed_scopes`, or a self subject the agent does not allow. Each agent may get 60 tokens a minute and
 each owner's agents 600 together (`429 rate_limited` with `Retry-After`), on top of the token endpoint's address
 budget. Only a request that passes every check above is charged, so a revoked key or a refused scope never spends the
-budget its agent's live keys share.
+budget its agent's live keys share. A replayed assertion passes those checks and fails only at the final save, so
+replay attempts still consume the agent's and owner's rate budget.
 
 ts-auth signs the token first and releases it only when one save commits. That save inserts the `jti`, writes
 `last_used_at` when it is due, and asserts the versions of the key and the owner it checked. The save is the point
 that orders issuance against revocation: revoking the agent rewrites every active key, revoking a key rewrites that
 key, and a sign-out everywhere or a disable rewrites the owner, so any of them that commits before the save makes it
-fail and no token leaves ts-auth. A concurrent token request of the same agent that also writes `last_used_at` can
+fail and no token leaves ts-auth. Agent expiry is time, not a row change: right before the save ts-auth checks the
+assertion's and the agent's deadlines again on a fresh clock, and the token's `exp` is never later than the agent's
+`expires_at`, so a token issued in the last moment before expiry still ends with the agent. A concurrent token request of the same agent that also writes `last_used_at` can
 lose that save and get `invalid_grant`; its `jti` was not used, so it may send the same assertion again. A token
 already issued stays valid until it expires (at most 5 minutes); there is no online revocation of agent tokens.
 
