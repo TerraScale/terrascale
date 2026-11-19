@@ -677,7 +677,6 @@ public sealed class ClientRegistration(IServiceScopeFactory scopes, AuthOptions 
                 Permissions.GrantTypes.AuthorizationCode, Permissions.GrantTypes.RefreshToken, Permissions.ResponseTypes.Code,
                 // Organization and project tokens for its signed-in users (TS-598).
                 Permissions.GrantTypes.TokenExchange,
-                Permissions.Prefixes.GrantType + AgentExchange.GrantType,
                 Permissions.Scopes.Email, Permissions.Scopes.Profile,
             },
             Requirements = { Requirements.Features.ProofKeyForCodeExchange },

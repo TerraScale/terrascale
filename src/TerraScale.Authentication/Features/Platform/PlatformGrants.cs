@@ -438,6 +438,14 @@ public sealed class ApiKeyApplicationManager(
                 : null;
     }
 
+    public override async ValueTask<bool> HasPermissionAsync(OidcApplication application, string permission, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(application);
+        return permission == Permissions.Prefixes.GrantType + AgentExchange.GrantType
+            ? application.InstanceId == OidcIssuer.InstanceId && application.ClientId == OidcIssuer.DashboardClientId
+            : await base.HasPermissionAsync(application, permission, cancellationToken).ConfigureAwait(false);
+    }
+
     public override async ValueTask<bool> ValidateClientSecretAsync(OidcApplication application, string secret, CancellationToken cancellationToken = default)
     {
         var machine = MachineClients.Policy(application) is not null;
