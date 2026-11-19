@@ -19,6 +19,7 @@ The served `/openapi/v1.json` and `/scalar` describe current HTTP operations. Pu
 - [Project sign-in attack protection](attack-protection.md).
 - [Machine tokens and user-owned API keys](machine-tokens-and-user-api-keys.md).
 - [Agent identities](agent-identities.md): agents owned by a project user or a TerraScale account, with their own public keys.
+- [Sign in as agent](agentid-provider.md): the public OpenID Connect provider that tells any app which agent signs in and who owns it.
 - [Custom tokens](custom-tokens.md) a project backend mints for its own users.
 - [Project social sign-in](project-social-sign-in.md).
 - [Extended social providers](social-providers/README.md).

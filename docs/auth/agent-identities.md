@@ -6,7 +6,8 @@ public key. The agent creates its key pair and keeps the private key; ts-auth st
 follows the AgentID idea: a stable agent id, an accountable owner and key-based proof of possession.
 
 This page covers the management API, self-enrollment with owner approval, the end user's own agent list, how
-an agent gets a token, and agents of TerraScale accounts with the dashboard's token exchange.
+an agent gets a token, and agents of TerraScale accounts with the dashboard's token exchange. Agents of TerraScale
+accounts can also sign in to any app through [Sign in as agent](agentid-provider.md).
 
 ## Agent policy
 
