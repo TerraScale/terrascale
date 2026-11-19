@@ -168,8 +168,17 @@ internal sealed partial class RegionReplication(
 
     internal long CatchUpMark => time.GetUtcNow().ToUnixTimeMilliseconds();
 
-    internal Task<IReadOnlyList<ReplicaFailure>> CatchUpSinceAsync(long mark, CancellationToken cancellationToken) =>
-        RefusedAsync([.. _followers.Values.Where(follower => !follower.CaughtUpSince(mark))], (follower, token) => follower.CatchUpSinceAsync(mark, token), cancellationToken);
+    internal Task<IReadOnlyList<ReplicaFailure>> CatchUpSinceAsync(long mark, IReadOnlySet<string> unserved, CancellationToken cancellationToken) =>
+        RefusedAsync([.. Owed(unserved).Where(follower => !follower.CaughtUpSince(mark))], (follower, token) => follower.CatchUpSinceAsync(mark, token), cancellationToken);
+
+    internal IReadOnlyList<string> UnservedElsewhere(IReadOnlySet<string> unserved) =>
+        [.. _followers.Where(entry => !Owes(entry, unserved)).Select(entry => entry.Key.Database).Order(StringComparer.Ordinal)];
+
+    private IEnumerable<Follower> Owed(IReadOnlySet<string> unserved) =>
+        _followers.Where(entry => Owes(entry, unserved)).Select(entry => entry.Value);
+
+    private bool Owes(KeyValuePair<(string Organization, string Project, string Database), Follower> entry, IReadOnlySet<string> unserved) =>
+        entry.Value.Home.Region == Region || !unserved.Contains(entry.Key.Database);
 
     internal Task<IReadOnlyList<ReplicaFailure>> CatchUpAsync(IReadOnlyList<TenantContext> databases, CancellationToken cancellationToken) =>
         RefusedAsync([.. databases.Select(database => _followers.GetValueOrDefault(Key(database))).OfType<Follower>()], (follower, token) => follower.PullNowAsync(token), cancellationToken);
@@ -189,7 +198,7 @@ internal sealed partial class RegionReplication(
         return [];
     }
 
-    internal int BehindSince(long mark) => _followers.Values.Count(follower => !follower.CaughtUpSince(mark));
+    internal int BehindSince(long mark, IReadOnlySet<string> unserved) => Owed(unserved).Count(follower => !follower.CaughtUpSince(mark));
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {

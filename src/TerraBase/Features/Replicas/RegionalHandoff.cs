@@ -314,12 +314,13 @@ internal sealed partial class RegionalHandoff(
             _primeMark = mark;
         }
 
+        HashSet<string> unserved = [with(StringComparer.Ordinal), .. services.GetRequiredService<HomeLeases>().Unserved.Select(database => database.DatabaseId)];
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         bounded.CancelAfter(DrainBudget);
         try
         {
             await replication.SyncCatalogsAsync(bounded.Token).ConfigureAwait(false);
-            if (await replication.CatchUpSinceAsync(mark.Since, bounded.Token).ConfigureAwait(false) is [_, ..] failing)
+            if (await replication.CatchUpSinceAsync(mark.Since, unserved, bounded.Token).ConfigureAwait(false) is [_, ..] failing)
             {
                 var (reason, details) = ReplicaFailure.Describe(failing);
                 return PrimeRefused(source, reason, "replica_unavailable", details: details);
@@ -331,7 +332,7 @@ internal sealed partial class RegionalHandoff(
         }
         catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested)
         {
-            var behind = replication.BehindSince(mark.Since);
+            var behind = replication.BehindSince(mark.Since, unserved);
             return PrimeRefused(source, $"{behind} replicas have not caught up since this prime began; the next prime resumes from here", "prime_incomplete", error,
                 new KeyValuePair<string, string>("behind", behind.ToString(CultureInfo.InvariantCulture)));
         }
@@ -348,6 +349,10 @@ internal sealed partial class RegionalHandoff(
             {
                 _primeMark = null;
             }
+        }
+        if (replication.UnservedElsewhere(unserved) is [_, ..] skipped)
+        {
+            LogPrimeSkippedUnserved(logger, source, skipped.Count, string.Join(',', skipped));
         }
         return new Done();
     }
@@ -909,6 +914,9 @@ internal sealed partial class RegionalHandoff(
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Regional handoff failed during {Phase} with peer {Peer}")]
     private static partial void LogHandoffFailed(ILogger logger, Exception exception, string phase, string peer);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Regional prime against {Source} completed without {Count} replicas whose home in another region is unserved: {Databases}")]
+    private static partial void LogPrimeSkippedUnserved(ILogger logger, string source, int count, string databases);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Regional handoff refused during {Phase} with peer {Peer}: {Reason} ({Code})")]
     private static partial void LogDrainRefused(ILogger logger, Exception? exception, string phase, string peer, string reason, string code);

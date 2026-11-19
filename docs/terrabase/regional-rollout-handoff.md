@@ -149,8 +149,10 @@ withdraws ingress from the source and drains in-flight responses.
    route observation and direct-request drain. A successful response permits
    stopping only the recorded source process. This phase survives controller
    death and the source's drain response. A second stop remains blocked until
-   the source restarts with a different session, passes readiness and catches
-   up from the current writer. While blocked, the drain answers HTTP 503 with
+   the source restarts with a different session, passes readiness, names the
+   current writer at its epoch and answers a prime against it. A replica whose
+   home in another region is unserved does not hold up that prime (see the prime
+   below), so a stale lease elsewhere never blocks a later handoff here. While blocked, the drain answers HTTP 503 with
    `Retry-After: 1` and the detailed error body code `source_retiring`; its message
    names the pending restart with a different session, readiness or catch-up step,
    and its details add `waiting`: `restart`, `readiness` or `catch_up`.
@@ -213,7 +215,12 @@ it to `preparing` and continues from the quiesce step; without `transfer`, the
 drain admits and reserves itself as before.
 
 `POST /v1/rollout/prime?source=<writer>` on the target catches every replica up to
-the writer. Each replica records when it last finished a pull with nothing left
+the writer, except a replica whose home is in another region and is listed as
+unserved in the node's rollout status (`lapsed`, `not_writer` or `stale_lease`):
+nothing serves that home, and its replica holds no write this region acknowledged.
+The prime still answers `204`, and logs one warning naming the replicas it went
+without. A replica homed in this region, or homed elsewhere on a served home that
+cannot be pulled, still refuses the prime. Each replica records when it last finished a pull with nothing left
 pending. A prime waits only for replicas that have not caught up since the first
 prime against the same writer and epoch, so a prime that runs out of its thirty-second
 budget keeps what it pulled and the next one resumes from there. A success clears

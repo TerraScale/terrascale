@@ -679,7 +679,7 @@ test('a regional writer role moves without publishing a revision during unproved
   await removeDatabase(cells, ledger.id);
 });
 
-test('a regional prime whose writer refuses its replicas answers at once with the home and its answer, the next one resumes, and a drain is admitted before it fences or refused with its reason', async ({ cells }) => {
+test('a regional prime whose writer refuses its replicas answers at once with the home and its answer, the next one resumes, a drain is admitted before it fences or refused with its reason, and a retired source hands the role back once its only refused replica is one whose fra home is unserved', async ({ cells }) => {
   test.setTimeout(240_000);
   const kv = await Kv.open();
   const gru = node('journey-1');
@@ -695,10 +695,14 @@ test('a regional prime whose writer refuses its replicas answers at once with th
     return (JSON.parse(response.body) as { error: { code: string; details: Record<string, string> } }).error;
   };
   const transferOf = async () => (await kv.get<{ node: string; transfer: { id: string; phase: string } | null }>(owners, 'gru'))?.value;
-  let blocked = false;
-  const firewall = async (operation: '-I' | '-D') => {
-    await promisify(execFile)('iptables', [operation, 'OUTPUT', '-d', gru.address, '-p', 'tcp', '--dport', '8081', '-j', 'REJECT', '--reject-with', 'tcp-reset']);
-    blocked = operation === '-I';
+  const fra = [node('journey-2'), node('journey-4')];
+  const blocked = new Set<string>();
+  const firewall = async (operation: '-I' | '-D', targets = [gru]) => {
+    for (const target of targets) {
+      await promisify(execFile)('iptables', [operation, 'OUTPUT', '-d', target.address, '-p', 'tcp', '--dport', '8081', '-j', 'REJECT', '--reject-with', 'tcp-reset']);
+      if (operation === '-I') blocked.add(target.name);
+      else blocked.delete(target.name);
+    }
   };
   let failure: unknown;
   try {
@@ -740,11 +744,31 @@ test('a regional prime whose writer refuses its replicas answers at once with th
     expect(refusal(await nodeRequest(partner, `/v1/rollout/drain/admit?target=${gru.name}&spec=journey-back`, 'POST')), 'the retired source must restart before it takes the role back')
       .toMatchObject({ code: 'source_retiring' });
     await restartAfterKill(gru, false)();
+    await firewall('-I', fra);
+    expect(refusal(await nodeRequest(gru, `/v1/rollout/prime?source=${partner.name}`, 'POST')), 'a prime still refuses a replica whose home in fra is served but cannot be pulled')
+      .toMatchObject({ code: 'replica_unavailable', details: { phase: 'prime', peer: partner.name, home: 'fra' } });
+    expect(refusal(await nodeRequest(partner, `/v1/rollout/drain/admit?target=${gru.name}&spec=journey-back`, 'POST')), 'so the retired source still waits for its catch-up')
+      .toMatchObject({ code: 'source_retiring', details: { peer: gru.name, waiting: 'catch_up' } });
+    const fraWriter = (await kv.get<{ node: string }>(owners, 'fra'))!.value.node;
+    const served = await homeLease(kv, fraLedger.id);
+    await kv.put(homes, `home.${fraLedger.id}`, { ...served.value, node: fra.find(member => member.name !== fraWriter)!.name }, served.seq);
+    await expect.poll(async () => (await nodeStatus(gru)).unserved?.filter(entry => entry.databaseId === fraLedger.id).map(entry => entry.cause) ?? [],
+      { message: 'journey-1 lists the fra database as unserved', timeout: 60_000 }).toEqual(['not_writer']);
     const primed = await nodeRequest(gru, `/v1/rollout/prime?source=${partner.name}`, 'POST');
-    expect(primed.status, primed.body).toBe(204);
-    const back = await nodeRequest(partner, `/v1/rollout/drain?target=${gru.name}`, 'POST');
+    expect(primed.status, `a prime completes without a replica whose home in another region is unserved: ${primed.body}`).toBe(204);
+    expect(logged(gru, 'whose home in another region is unserved', fraLedger.id), 'the prime names the replica it went without').toBeGreaterThanOrEqual(1);
+    const backAdmitted = await nodeRequest(partner, `/v1/rollout/drain/admit?target=${gru.name}&spec=journey-back`, 'POST');
+    expect(backAdmitted.status, `the retired source clears its retirement while its unserved fra replica is refused: ${backAdmitted.body}`).toBe(200);
+    expect(await transferOf(), 'the admission replaces the retiring transfer without moving the writer')
+      .toMatchObject({ node: partner.name, transfer: { phase: 'admitted' } });
+    await firewall('-D', fra);
+    const { transfer: backTransfer } = JSON.parse(backAdmitted.body) as { transfer: string };
+    const back = await nodeRequest(partner, `/v1/rollout/drain?target=${gru.name}&transfer=${backTransfer}`, 'POST');
     expect(back.status, back.body).toBe(204);
     await writerIs('gru', gru.name);
+    await kv.put(homes, `home.${fraLedger.id}`, served.value, (await homeLease(kv, fraLedger.id)).seq);
+    await expect.poll(async () => (await nodeStatus(gru)).unserved?.filter(entry => entry.databaseId === fraLedger.id) ?? [],
+      { message: 'journey-1 sees the fra database served again', timeout: 60_000 }).toEqual([]);
     await ledger.write(cells, 'gru', [[102, 'after-the-drain-back']]);
     await ledger.compare(cells);
     await removeDatabase(cells, ledger.id);
@@ -754,7 +778,7 @@ test('a regional prime whose writer refuses its replicas answers at once with th
     throw error;
   } finally {
     await cleanUp(failure, async () => {
-      if (blocked) await firewall('-D');
+      await firewall('-D', [gru, ...fra].filter(target => blocked.has(target.name)));
       const owner = await kv.get<Record<string, unknown> & { node: string; epoch: number }>(owners, 'gru');
       if (owner?.value.node !== gru.name) {
         await kv.put(owners, 'gru', { ...owner!.value, node: gru.name, epoch: 1, previous: null, activated: false, transfer: null }, owner!.seq);
