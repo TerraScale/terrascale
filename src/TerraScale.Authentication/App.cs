@@ -181,8 +181,6 @@ public static class App
         builder.Services.AddSingleton<AgentLifecycleEvents>();
         builder.Services.AddSingleton<AgentDirectory>();
         builder.Services.AddSingleton<AgentTokens>();
-        builder.Services.AddSingleton<LiveAgents>();
-        builder.Services.AddSingleton<AgentExchange>();
         builder.Services.AddSingleton<AgentEnrollments>();
         builder.Services.AddSingleton<PlatformGrants>();
         builder.Services.AddSingleton<CustomTokens>();

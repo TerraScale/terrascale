@@ -14,7 +14,7 @@ public sealed class RedeemAgentEnrollmentEndpoint(PlatformAuthentication authent
 
     protected override async Task<IResult> HandleAnonymousAsync(CancellationToken cancellationToken)
     {
-        var project = this.TenantId();
+        var project = this.RouteId("project");
         var enrollment = this.RouteId("enrollment");
         var request = await this.BodyAsync(AgentEnrollmentJson.Default.AgentEnrollmentTokenRequest, cancellationToken);
         return Results.Json(await enrollments.RedeemAsync(project, enrollment, request.Proof, cancellationToken), AgentEnrollmentJson.Default.AgentEnrollmentTokenBody);

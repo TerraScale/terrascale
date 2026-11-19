@@ -3,7 +3,6 @@ using System.Net.Http.Headers;
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
-using TerraScale.Authentication.Features.Agents;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.SigningKeys;
@@ -20,7 +19,7 @@ namespace TerraScale.Authentication.Features.Platform;
 /// is refused at once on every replica; so is a token from before the user signed out everywhere or reset its password,
 /// whose authentication epoch no longer matches the user's.
 /// </summary>
-public sealed class PlatformAuthentication(KeyRing ring, TotpCredentials mfa, IOpenIddictAuthorizationStore<OidcAuthorization> authorizations, IOpenIddictTokenStore<OidcToken> tokens, AuthOptions options, LiveAgents agents)
+public sealed class PlatformAuthentication(KeyRing ring, TotpCredentials mfa, IOpenIddictAuthorizationStore<OidcAuthorization> authorizations, IOpenIddictTokenStore<OidcToken> tokens, AuthOptions options)
 {
     private const int MaxTokenLength = 8 * 1024;
 
@@ -60,10 +59,8 @@ public sealed class PlatformAuthentication(KeyRing ring, TotpCredentials mfa, IO
         var userRead = mfa.PrimaryUserAsync(instanceId, userId, Claim(claims, OidcIssuer.EpochClaim), Claim(claims, OidcIssuer.StateClaim),
             Claim(claims, OidcIssuer.MfaClaim), cancellationToken);
         var liveRead = this.LiveAsync(claims, userId, cancellationToken);
-        var agentRead = Claim(claims, LiveAgents.Claim) is { } agentId ? agents.ActiveAsync(agentId, userId, cancellationToken) : null;
-        await Task.WhenAll(userRead, liveRead, agentRead ?? Task.CompletedTask).ConfigureAwait(false);
+        await Task.WhenAll(userRead, liveRead).ConfigureAwait(false);
         return await liveRead.ConfigureAwait(false) is { } entry && await userRead.ConfigureAwait(false) is { } user
-            && (agentRead is null || await agentRead.ConfigureAwait(false) is not null)
             ? user with { AuthenticationBindings = entry.Bindings, SessionId = Claim(claims, "ts_auth_session") }
             : null;
     }

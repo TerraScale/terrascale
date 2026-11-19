@@ -1,4 +1,3 @@
-using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.ProjectTenants;
 
 namespace TerraScale.Authentication.Features.Ui;
@@ -31,7 +30,7 @@ public sealed record AgentEnrollmentPageModel(string Tenant, AgentEnrollmentStep
 
     public string? Confirmation { get; init; }
 
-    public string ProjectName => this.Theme.Name ?? (Tenancy.IsProject(this.Tenant) ? this.Tenant : "TerraScale");
+    public string ProjectName => this.Theme.Name ?? this.Tenant;
 
     public string Action => "/ui/" + this.Tenant + "/agent-enrollments";
 
