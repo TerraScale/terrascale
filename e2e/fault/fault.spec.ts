@@ -916,122 +916,6 @@ test('a retired source whose fra replica cannot catch up hands the role back onl
   }
 });
 
-test('a gru node that is not its region writer pulls a fra-homed replica after a restart that finds its home lease lapsed, and takes the fra writer\'s placement of a home moved to fra, also when the move leaves gru', async ({ cells }) => {
-  test.setTimeout(300_000);
-  const kv = await Kv.open();
-  const gru = node('journey-1');
-  const partner = node('journey-3');
-  const created: string[] = [];
-  let failure: unknown;
-  const route = async (id: string) => {
-    const { value } = await homeLease(kv, id);
-    return `/v1/sync/organizations/${value.organizationId}/projects/${value.projectId}/databases/${id}`;
-  };
-  const writerOf = async (id: string) => node((await homeLease(kv, id)).value.node);
-  const reaches = (held: string, written: string) => {
-    const [prefix, incarnation, generation, frame] = held.split(':');
-    const [writtenPrefix, writtenIncarnation, writtenGeneration, writtenFrame] = written.split(':');
-    return prefix === writtenPrefix && incarnation === writtenIncarnation
-      && (Number(generation) > Number(writtenGeneration) || Number(generation) === Number(writtenGeneration) && Number(frame) >= Number(writtenFrame));
-  };
-  const holds = async (id: string, message: string) => {
-    const path = await route(id);
-    const writer = await writerOf(id);
-    const answer = await nodeRequest(writer, `${path}/checksums?revision=ts1:00000000000000000000000000:1:0`);
-    expect(answer.status, `${writer.name} answers its position: ${answer.body}`).toBe(200);
-    const written = (JSON.parse(answer.body) as { revision: string }).revision;
-    await expect.poll(async () => {
-      const response = await nodeRequest(gru, `${path}/held`);
-      return response.status === 200 && reaches((JSON.parse(response.body) as { revision: string }).revision, written);
-    }, { message: `journey-1 holds ${writer.name}'s position ${written} ${message}`, timeout: 60_000 }).toBe(true);
-  };
-  const placement = async (member: Node, id: string) => {
-    const response = await nodeRequest(member, `${await route(id)}/placement`);
-    expect(response.status, `${member.name} answers the placement as its region writer: ${response.body}`).toBe(200);
-    const { homeRegion, replicaRegions, placementVersion, allRegions } = JSON.parse(response.body) as Record<string, unknown>;
-    return { homeRegion, replicaRegions, placementVersion, allRegions };
-  };
-  try {
-    const [moving, leaving] = await createLedgers(cells, 2, 'follower-rebind');
-    created.push(moving.id, leaving.id);
-    const fraCreated = await json<{ id: string; homeRegion: string }>(await cells.post(`${endpoint('fra')}${project()}/databases`, {
-      data: { name: name('follower-rebind-fra'), homeRegion: 'fra', replicaRegions: ['gru'] },
-    }), 201);
-    created.push(fraCreated.id);
-    expect(fraCreated.homeRegion, 'a database created in fra is homed there').toBe('fra');
-    const fraLedger = new Ledger(fraCreated.id);
-    await sql(cells, endpoint('fra'), fraLedger.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
-    await fraLedger.write(cells, 'fra', [[100, 'homed-in-fra']]);
-    await fraLedger.compare(cells);
-    await holds(fraLedger.id, 'before its restart');
-
-    await restartAfterKill(partner, false)();
-    const primedPartner = await nodeRequest(partner, `/v1/rollout/prime?source=${gru.name}`, 'POST');
-    expect(primedPartner.status, primedPartner.body).toBe(204);
-    const away = await nodeRequest(gru, `/v1/rollout/drain?target=${partner.name}`, 'POST');
-    expect(away.status, away.body).toBe(204);
-    await writerIs('gru', partner.name);
-    const lapsed = logged(gru, 'Home lease lapsed', fraLedger.id);
-    await restartAfterKill(gru, false)();
-    await expect.poll(() => logged(gru, 'Home lease lapsed', fraLedger.id), { message: 'the restarted journey-1 first sees the fra home lease without its node lease' })
-      .toBeGreaterThan(lapsed);
-
-    await fraLedger.write(cells, 'fra', [[101, 'after-the-restart']]);
-    await holds(fraLedger.id, 'after fra wrote past its restart');
-
-    await moving.write(cells, 'gru', [[100, 'before-the-move']]);
-    await holds(moving.id, 'from its gru home before the move');
-    const moved = await json<{ homeRegion: string }>(await cells.post(`${endpoint('gru')}${database(moving.id)}/move-home`, { data: { homeRegion: 'fra' }, timeout: 120_000 }));
-    expect(moved.homeRegion).toBe('fra');
-    await moving.write(cells, 'fra', [[101, 'after-the-move']]);
-    await holds(moving.id, 'from its new fra home');
-    await moving.compare(cells);
-
-    await holds(leaving.id, 'from its gru home before it leaves gru');
-    await expect.poll(async () => {
-      let response = await cells.patch(`${endpoint('gru')}${database(leaving.id)}`, { data: { regions: ['fra'] } });
-      if (response.status() === 421) response = await cells.patch(`https://${response.headers()['x-terrabase-database-home']}.api.terrascale.tech${database(leaving.id)}`, { data: { regions: ['fra'] } });
-      if (response.status() === 503) {
-        expect((await response.json()).error.code).toBe('replica_not_ready');
-        return [];
-      }
-      expect(response.status(), await response.text()).toBe(200);
-      return (await response.json()).regions;
-    }, { message: 'the database leaves gru for fra once fra holds it', timeout: 60_000, intervals: [1000] }).toEqual(['fra']);
-    await expect.poll(async () => (await nodeRequest(gru, `${await route(leaving.id)}/held`)).status, { message: 'journey-1 drops the replica gru no longer holds' }).toBe(404);
-
-    const primed = await nodeRequest(gru, `/v1/rollout/prime?source=${partner.name}`, 'POST');
-    expect(primed.status, `journey-1 catches every replica it follows up: ${primed.body}`).toBe(204);
-    const back = await nodeRequest(partner, `/v1/rollout/drain?target=${gru.name}`, 'POST');
-    expect(back.status, back.body).toBe(204);
-    await writerIs('gru', gru.name);
-    for (const id of [moving.id, leaving.id]) {
-      expect(await placement(gru, id), 'journey-1 recorded the fra writer\'s placement, not one it derived from its own').toEqual(await placement(await writerOf(id), id));
-    }
-    expect((await placement(gru, leaving.id)).replicaRegions, 'the placement that left gru names no gru replica').not.toContain('gru');
-    for (const id of [...created]) {
-      await removeDatabase(cells, id);
-      created.splice(created.indexOf(id), 1);
-    }
-  } catch (error) {
-    failure = error;
-    throw error;
-  } finally {
-    await cleanUp(failure, async () => {
-      try {
-        const owner = await kv.get<Record<string, unknown> & { node: string; epoch: number }>(owners, 'gru');
-        if (owner?.value.node !== gru.name) {
-          await kv.put(owners, 'gru', { ...owner!.value, node: gru.name, epoch: 1, previous: null, activated: false, transfer: null }, owner!.seq);
-          await writerIs('gru', gru.name);
-        }
-        for (const id of created) await removeDatabase(cells, id);
-      } finally {
-        kv.close();
-      }
-    });
-  }
-});
-
 test('a regional writer role moves only with the target certificate, and a database whose primary file is stale stays fenced while the region serves the others', async ({ cells, request }) => {
   test.setTimeout(480_000);
   const token = await writerToken(request);
@@ -1371,6 +1255,122 @@ test('a writer that starts with a local replica it has not opened fences that da
   } finally {
     await cleanUp(failure, async () => {
       kv.close();
+    });
+  }
+});
+
+test('a gru node that is not its region writer pulls a fra-homed replica after a restart that finds its home lease lapsed, and takes the fra writer\'s placement of a home moved to fra, also when the move leaves gru', async ({ cells }) => {
+  test.setTimeout(300_000);
+  const kv = await Kv.open();
+  const gru = node('journey-1');
+  const partner = node('journey-3');
+  const created: string[] = [];
+  let failure: unknown;
+  const route = async (id: string) => {
+    const { value } = await homeLease(kv, id);
+    return `/v1/sync/organizations/${value.organizationId}/projects/${value.projectId}/databases/${id}`;
+  };
+  const writerOf = async (id: string) => node((await homeLease(kv, id)).value.node);
+  const reaches = (held: string, written: string) => {
+    const [prefix, incarnation, generation, frame] = held.split(':');
+    const [writtenPrefix, writtenIncarnation, writtenGeneration, writtenFrame] = written.split(':');
+    return prefix === writtenPrefix && incarnation === writtenIncarnation
+      && (Number(generation) > Number(writtenGeneration) || Number(generation) === Number(writtenGeneration) && Number(frame) >= Number(writtenFrame));
+  };
+  const holds = async (id: string, message: string) => {
+    const path = await route(id);
+    const writer = await writerOf(id);
+    const answer = await nodeRequest(writer, `${path}/checksums?revision=ts1:00000000000000000000000000:1:0`);
+    expect(answer.status, `${writer.name} answers its position: ${answer.body}`).toBe(200);
+    const written = (JSON.parse(answer.body) as { revision: string }).revision;
+    await expect.poll(async () => {
+      const response = await nodeRequest(gru, `${path}/held`);
+      return response.status === 200 && reaches((JSON.parse(response.body) as { revision: string }).revision, written);
+    }, { message: `journey-1 holds ${writer.name}'s position ${written} ${message}`, timeout: 60_000 }).toBe(true);
+  };
+  const placement = async (member: Node, id: string) => {
+    const response = await nodeRequest(member, `${await route(id)}/placement`);
+    expect(response.status, `${member.name} answers the placement as its region writer: ${response.body}`).toBe(200);
+    const { homeRegion, replicaRegions, placementVersion, allRegions } = JSON.parse(response.body) as Record<string, unknown>;
+    return { homeRegion, replicaRegions, placementVersion, allRegions };
+  };
+  try {
+    const [moving, leaving] = await createLedgers(cells, 2, 'follower-rebind');
+    created.push(moving.id, leaving.id);
+    const fraCreated = await json<{ id: string; homeRegion: string }>(await cells.post(`${endpoint('fra')}${project()}/databases`, {
+      data: { name: name('follower-rebind-fra'), homeRegion: 'fra', replicaRegions: ['gru'] },
+    }), 201);
+    created.push(fraCreated.id);
+    expect(fraCreated.homeRegion, 'a database created in fra is homed there').toBe('fra');
+    const fraLedger = new Ledger(fraCreated.id);
+    await sql(cells, endpoint('fra'), fraLedger.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
+    await fraLedger.write(cells, 'fra', [[100, 'homed-in-fra']]);
+    await fraLedger.compare(cells);
+    await holds(fraLedger.id, 'before its restart');
+
+    await restartAfterKill(partner, false)();
+    const primedPartner = await nodeRequest(partner, `/v1/rollout/prime?source=${gru.name}`, 'POST');
+    expect(primedPartner.status, primedPartner.body).toBe(204);
+    const away = await nodeRequest(gru, `/v1/rollout/drain?target=${partner.name}`, 'POST');
+    expect(away.status, away.body).toBe(204);
+    await writerIs('gru', partner.name);
+    const lapsed = logged(gru, 'Home lease lapsed', fraLedger.id);
+    await restartAfterKill(gru, false)();
+    await expect.poll(() => logged(gru, 'Home lease lapsed', fraLedger.id), { message: 'the restarted journey-1 first sees the fra home lease without its node lease' })
+      .toBeGreaterThan(lapsed);
+
+    await fraLedger.write(cells, 'fra', [[101, 'after-the-restart']]);
+    await holds(fraLedger.id, 'after fra wrote past its restart');
+
+    await moving.write(cells, 'gru', [[100, 'before-the-move']]);
+    await holds(moving.id, 'from its gru home before the move');
+    const moved = await json<{ homeRegion: string }>(await cells.post(`${endpoint('gru')}${database(moving.id)}/move-home`, { data: { homeRegion: 'fra' }, timeout: 120_000 }));
+    expect(moved.homeRegion).toBe('fra');
+    await moving.write(cells, 'fra', [[101, 'after-the-move']]);
+    await holds(moving.id, 'from its new fra home');
+    await moving.compare(cells);
+
+    await holds(leaving.id, 'from its gru home before it leaves gru');
+    await expect.poll(async () => {
+      let response = await cells.patch(`${endpoint('gru')}${database(leaving.id)}`, { data: { regions: ['fra'] } });
+      if (response.status() === 421) response = await cells.patch(`https://${response.headers()['x-terrabase-database-home']}.api.terrascale.tech${database(leaving.id)}`, { data: { regions: ['fra'] } });
+      if (response.status() === 503) {
+        expect((await response.json()).error.code).toBe('replica_not_ready');
+        return [];
+      }
+      expect(response.status(), await response.text()).toBe(200);
+      return (await response.json()).regions;
+    }, { message: 'the database leaves gru for fra once fra holds it', timeout: 60_000, intervals: [1000] }).toEqual(['fra']);
+    await expect.poll(async () => (await nodeRequest(gru, `${await route(leaving.id)}/held`)).status, { message: 'journey-1 drops the replica gru no longer holds' }).toBe(404);
+
+    const primed = await nodeRequest(gru, `/v1/rollout/prime?source=${partner.name}`, 'POST');
+    expect(primed.status, `journey-1 catches every replica it follows up: ${primed.body}`).toBe(204);
+    const back = await nodeRequest(partner, `/v1/rollout/drain?target=${gru.name}`, 'POST');
+    expect(back.status, back.body).toBe(204);
+    await writerIs('gru', gru.name);
+    for (const id of [moving.id, leaving.id]) {
+      expect(await placement(gru, id), 'journey-1 recorded the fra writer\'s placement, not one it derived from its own').toEqual(await placement(await writerOf(id), id));
+    }
+    expect((await placement(gru, leaving.id)).replicaRegions, 'the placement that left gru names no gru replica').not.toContain('gru');
+    for (const id of [...created]) {
+      await removeDatabase(cells, id);
+      created.splice(created.indexOf(id), 1);
+    }
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    await cleanUp(failure, async () => {
+      try {
+        const owner = await kv.get<Record<string, unknown> & { node: string; epoch: number }>(owners, 'gru');
+        if (owner?.value.node !== gru.name) {
+          await kv.put(owners, 'gru', { ...owner!.value, node: gru.name, epoch: 1, previous: null, activated: false, transfer: null }, owner!.seq);
+          await writerIs('gru', gru.name);
+        }
+        for (const id of created) await removeDatabase(cells, id);
+      } finally {
+        kv.close();
+      }
     });
   }
 });
