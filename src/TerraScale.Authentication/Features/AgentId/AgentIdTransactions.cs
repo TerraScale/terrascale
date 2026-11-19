@@ -27,6 +27,15 @@ public sealed record AgentIdPendingBody(string Status, string TransactionId, str
 
 public sealed record AgentIdSignIn(AgentRecord Agent, UserRecord Owner, string Kid);
 
+public sealed record AgentIdFence(Versioned<AgentKeyRecord> Key, Versioned<AgentRecord> Agent, Versioned<UserRecord> Owner)
+{
+    public const string Item = "ts-auth:agentid-fence";
+
+    public IReadOnlyList<Change> Asserts => [Change.Assert(this.Key), Change.Assert(this.Agent), Change.Assert(this.Owner)];
+
+    public AgentIdSignIn SignIn => new(this.Agent.Value, this.Owner.Value, this.Key.Value.Kid);
+}
+
 public sealed class AgentIdTransactions(AuthData data, AgentAssertions assertions, AttemptLimiter limiter, AuthOptions options, TimeProvider clock, ILogger<AgentIdTransactions> logger)
 {
     public const int ProofsPerAgentMinute = 30;
@@ -156,13 +165,12 @@ public sealed class AgentIdTransactions(AuthData data, AgentAssertions assertion
             : null;
     }
 
-    public async Task<AgentIdSignIn?> LiveAsync(string agentId, string ownerId, string kid, bool fence, CancellationToken cancellationToken)
+    public async Task<AgentIdFence?> LiveAsync(string agentId, string ownerId, string kid, CancellationToken cancellationToken)
     {
         using var home = HomeReads.Begin();
         return await this.ReadLiveAsync(agentId, ownerId, kid, cancellationToken).ConfigureAwait(false) is ({ } key, { } agent, { } owner)
-            && (!fence || await data.SaveAsync([Change.Assert(key), Change.Assert(owner)], cancellationToken).ConfigureAwait(false))
-                ? new(agent.Value, owner.Value, kid)
-                : null;
+            ? new(key, agent, owner)
+            : null;
     }
 
     public async Task<int> PruneAsync(int batchSize, CancellationToken cancellationToken)

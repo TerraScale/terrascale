@@ -51,7 +51,7 @@ public sealed class AgentAssertions(AuthData data, TimeProvider clock)
         var validated = await Handler.ValidateTokenAsync(unverified, new TokenValidationParameters
         {
             IssuerSigningKey = key is null ? Decoy : new JsonWebKey(key.Value.PublicJwk) { KeyId = kid },
-            TryAllIssuerSigningKeys = false,
+            TryAllIssuerSigningKeys = key is null,
             ValidAlgorithms = [SecurityAlgorithms.EcdsaSha256],
             ValidIssuer = key?.Value.AgentId ?? kid,
             ValidAudience = audience,

@@ -116,8 +116,8 @@ transaction gets a proof only from an agent that signs a `client_id` it did not 
 ## Revocation
 
 The agent, the key that signed the proof and the owner are checked when the proof arrives, again when the code is
-issued (in the same write that uses the transaction), again when the code is redeemed (with their versions asserted
-in a save before the tokens are issued), and on every UserInfo call. The code and the encrypted access token carry
+issued (in the same write that uses the transaction), again when the code is redeemed (their row versions asserted
+in the same save that consumes the code), and on every UserInfo call. The code and the encrypted access token carry
 that key's id, so another active key of the same agent does not keep a sign-in alive. A revoked or expired agent, a
 revoked proof key, or an owner who was disabled, deleted or signed out everywhere since the agent was created
 cannot complete a sign-in, and UserInfo refuses its tokens with `401 invalid_token`. ID tokens already issued stay

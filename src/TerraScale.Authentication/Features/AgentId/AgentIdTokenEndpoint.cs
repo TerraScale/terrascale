@@ -23,7 +23,7 @@ public sealed class AgentIdTokenEndpoint(AgentIdTransactions transactions, Attem
         Post(AgentIdIssuer.TokenPath);
         Name("agentid_token");
         Summary("Sign in as agent: token endpoint");
-        Description("application/x-www-form-urlencoded grant_type=authorization_code with code, redirect_uri, code_verifier and client_id; the client is public and sends no secret. The code lives 60 seconds and is redeemed once; a second redemption answers invalid_grant. The agent, the key that proved the sign-in and the owner are checked again, and their versions are asserted in a save before the tokens are issued: a revoked or expired agent, a revoked proof key, or an owner disabled or signed out everywhere answers invalid_grant. The answer has id_token (ES256, signed by the agent issuer's keys in {origin}/agents/.well-known/jwks.json, aud the client_id), an encrypted access_token for the userinfo endpoint only, token_type Bearer, expires_in 300 and scope; never a refresh token. Every POST charges the caller address's shared token budget (as /terrascale/oauth/token), and each client_id 600 and each agent 60 redemptions a minute; more answer 429 rate_limited with Retry-After. Storage that does not answer answers 503 temporarily_unavailable.");
+        Description("application/x-www-form-urlencoded grant_type=authorization_code with code, redirect_uri, code_verifier and client_id; the client is public and sends no secret. The code lives 60 seconds and is redeemed once; a second redemption answers invalid_grant. The agent, the key that proved the sign-in and the owner are checked again, and their row versions are asserted in the same save that consumes the code, so a revocation that commits first fails the redemption with invalid_grant: a revoked or expired agent, a revoked proof key, or an owner disabled or signed out everywhere answers invalid_grant. The answer has id_token (ES256, signed by the agent issuer's keys in {origin}/agents/.well-known/jwks.json, aud the client_id), an encrypted access_token for the userinfo endpoint only, token_type Bearer, expires_in 300 and scope; never a refresh token. Every POST charges the caller address's shared token budget (as /terrascale/oauth/token), and each client_id 600 and each agent 60 redemptions a minute; more answer 429 rate_limited with Retry-After. Storage that does not answer answers 503 temporarily_unavailable.");
         Tags("Sign in as agent");
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(TokenRequestForm)));
         Produces<TokenBody>();
@@ -75,8 +75,12 @@ public sealed class AgentIdTokenEndpoint(AgentIdTransactions transactions, Attem
             return HostedAuth.TooMany(wait);
         }
 
-        return await transactions.LiveAsync(agentId, ownerId, kid, fence: true, cancellationToken) is { } live
-            ? Results.SignIn(AgentIdIssuer.Principal(options, clientId, live, principal.GetScopes()), null, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme)
-            : OidcResults.Forbid(Errors.InvalidGrant, "The agent can no longer sign in.");
+        if (await transactions.LiveAsync(agentId, ownerId, kid, cancellationToken) is not { } live)
+        {
+            return OidcResults.Forbid(Errors.InvalidGrant, "The agent can no longer sign in.");
+        }
+
+        this.HttpContext.Items[AgentIdFence.Item] = live;
+        return Results.SignIn(AgentIdIssuer.Principal(options, clientId, live.SignIn, principal.GetScopes()), null, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
     }
 }

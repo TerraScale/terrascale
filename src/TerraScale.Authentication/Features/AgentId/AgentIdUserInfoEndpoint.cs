@@ -42,14 +42,14 @@ public abstract class AgentIdUserInfoEndpoint(AgentIdTransactions transactions) 
         var principal = (await this.HttpContext.AuthenticateAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme)).Principal;
         if (principal?.GetClaim(AgentIdIssuer.AgentClaim) is not { } agentId || principal.GetClaim(AgentIdIssuer.OwnerClaim) is not { } ownerId
             || principal.GetClaim(AgentIdIssuer.KeyClaim) is not { } kid || principal.GetClaim(Claims.Subject) is not { } subject
-            || await transactions.LiveAsync(agentId, ownerId, kid, fence: false, cancellationToken) is not { } live)
+            || await transactions.LiveAsync(agentId, ownerId, kid, cancellationToken) is not { } live)
         {
             return Results.Challenge(OidcResults.Error(Errors.InvalidToken, "The access token no longer identifies an agent that can sign in."),
                 [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
         }
 
         var profile = principal.HasScope(Scopes.Profile);
-        return Results.Json(new AgentIdUserInfoBody(subject, "agent", profile ? live.Agent.Name : null, profile ? principal.GetClaim(AgentIdIssuer.OwnerSubjectClaim) : null),
+        return Results.Json(new AgentIdUserInfoBody(subject, "agent", profile ? live.Agent.Value.Name : null, profile ? principal.GetClaim(AgentIdIssuer.OwnerSubjectClaim) : null),
             AgentIdJson.Default.AgentIdUserInfoBody);
     }
 }

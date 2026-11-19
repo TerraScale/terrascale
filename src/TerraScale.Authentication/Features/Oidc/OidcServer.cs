@@ -542,6 +542,17 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
             approvedAuthorizationId = approvalId;
         }
 
+        if (tenant == AgentIdIssuer.Slug)
+        {
+            if (context.Transaction.GetHttpRequest()?.HttpContext.Items[AgentIdFence.Item] is not AgentIdFence fence)
+            {
+                context.Reject(Errors.InvalidGrant, "The agent can no longer sign in.");
+                return;
+            }
+
+            operations.AddRange(fence.Asserts);
+        }
+
         if (inherited.Length + (addsBinding ? 1 : 0) > Credentials.MaxLineage)
         {
             context.Reject(Errors.InvalidGrant, "This sign-in reached its rotation limit. Sign in again to continue.");
