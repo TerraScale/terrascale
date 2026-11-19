@@ -59,19 +59,27 @@ export class TsAuthAgentsClient {
   /** @param {TsAuthHttp} http */
   constructor(http) { this.#http = http; }
 
+  /** @returns {Promise<{signer: AgentSigner, publicJwk: JsonWebKey}>} */
+  async createKey() {
+    const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
+    const { crv, kty, x, y } = await crypto.subtle.exportKey("jwk", pair.publicKey);
+    if (crv !== "P-256" || kty !== "EC" || typeof x !== "string" || typeof y !== "string")
+      throw new TypeError("WebCrypto did not return a P-256 public key.");
+    return { signer: new AgentSigner(pair.privateKey), publicJwk: { crv, kty, x, y } };
+  }
+
   /**
    * @param {{project: string, name: string, scopes: readonly string[], allowSelfSubject?: boolean, signal?: AbortSignal}} options
    * @returns {Promise<TerraScaleResult<{userCode: string, verificationUri: string, verificationUriComplete: string, fingerprint: string, wait: () => Promise<TerraScaleResult<AgentIdentity>>}>>}
    */
   async enroll({ project, name, scopes, allowSelfSubject = false, signal }) {
     const path = `v1/${requireId(project, "project")}/agent-enrollments`;
-    const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
-    const signer = new AgentSigner(pair.privateKey);
-    const { crv, kty, x, y } = await crypto.subtle.exportKey("jwk", pair.publicKey);
+    const { signer, publicJwk } = await this.createKey();
+    const { crv, kty, x, y } = publicJwk;
     const fingerprint = base64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify({ crv, kty, x, y }))))).slice(0, 16);
     /** @type {TerraScaleResult<Enrollment>} */
     const started = await this.#http.request({ method: "POST", path, routeName: "tsauth.oidc.agent_enroll", signal,
-      body: { name, requested_scopes: scopes, allow_self_subject: allowSelfSubject, public_jwk: { crv, kty, x, y } } });
+      body: { name, requested_scopes: scopes, allow_self_subject: allowSelfSubject, public_jwk: publicJwk } });
     if (!started.ok) return started;
     const enrollment = started.value;
     const verificationUri = `${this.#http.config.apiBaseUrl}/ui/${project}/agent-enrollments`;

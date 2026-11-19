@@ -716,3 +716,24 @@ Project management provides `createAgent`, `listAgents`, `listUserAgents`, `getA
 `revokeAgent`, `addAgentKey`, `revokeAgentKey`, `getAgentPolicy` and `setAgentPolicy` through `auth.projects`.
 Reads require a viewer sign-in or an unrestricted project key with `auth:read`. Mutations require
 an administrator sign-in or an unrestricted project key with `auth:write`.
+
+
+To rotate an agent key, create a replacement signer, register its public JWK, obtain a token with
+its returned key ID, then revoke the original key:
+
+```js
+const replacement = await auth.agents.createKey();
+const added = await auth.projects.addAgentKey(credential, project, identity.value.agentId, {
+  public_jwk: replacement.publicJwk,
+});
+if (!added.ok) throw new Error(added.error.code);
+const rotated = await auth.agents.getToken({
+  project, agentId: identity.value.agentId, kid: added.value.kid, key: replacement.signer,
+});
+if (!rotated.ok) throw new Error(rotated.error.code);
+const revoked = await auth.projects.revokeAgentKey(credential, project, identity.value.agentId, identity.value.kid);
+if (!revoked.ok) throw new Error(revoked.error.code);
+```
+
+Keep the replacement signer for later calls. Only its public JWK is sent to ts-auth. The same
+factory supplies the signer and public JWK for agents provisioned through `createAgent`.

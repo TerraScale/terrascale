@@ -9,7 +9,7 @@ import (
 )
 
 var commandSyntax = map[string]string{
-	"agent enroll": "agent enroll --project <id> --name <name> --scope <scope>... [--allow-self-subject] [--allow-self-subject]",
+	"agent enroll": "agent enroll --project <id> --name <name> --scope <scope>... [--allow-self-subject]",
 	"agent token":  "agent token --project <id> --agent <id> [--scope <scope>] [--subject owner|agent]",
 	"agent list":   "agent list --project <id> [--after <cursor>] [--limit <1..100>]", "agent revoke": "agent revoke --project <id> --agent <id>",
 	"agent policy get": "agent policy get --project <id>", "agent policy set": "agent policy set --project <id> [--scope <scope>...]",

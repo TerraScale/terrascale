@@ -29,6 +29,13 @@ export async function sdkAgentEnrollment(page: Page, audit: Audit, project: stri
   expect(() => KeyObject.from(enrolled.value.key as unknown as Parameters<typeof KeyObject.from>[0])).toThrow();
   await expect(crypto.subtle.exportKey('jwk', enrolled.value.key as unknown as CryptoKey)).rejects.toThrow();
   expect(JSON.stringify(enrolled.value.key)).toBe('{}');
+  const replacement = await client.agents.createKey();
+  expect(replacement.publicJwk.kty).toBe('EC');
+  expect(replacement.publicJwk.crv).toBe('P-256');
+  expect(replacement.publicJwk.d).toBeUndefined();
+  expect(() => KeyObject.from(replacement.signer as unknown as Parameters<typeof KeyObject.from>[0])).toThrow();
+  await expect(crypto.subtle.exportKey('jwk', replacement.signer as unknown as CryptoKey)).rejects.toThrow();
+  expect(JSON.stringify(replacement.signer)).toBe('{}');
   for (const subject of ['owner', 'agent'] as const) {
     const token = await client.agents.getToken({ ...enrolled.value, project, subject });
     expect(token.ok).toBe(true);
