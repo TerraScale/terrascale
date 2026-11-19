@@ -9,18 +9,21 @@ namespace TerraScale.Dashboard.Features.Data
     [McpServerToolType]
     public sealed class DataMcpTools(IHttpContextAccessor http, DataService data, SavedQueryService saved)
     {
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "execute_sql", ReadOnly = false, Destructive = true, OpenWorld = false, Idempotent = false, UseStructuredContent = true), Description("Execute one SQL statement, including writes and schema changes. Writes require project write access. SQL is limited to 16 KiB; bound parameters are unsupported. Use run_sql for read-only queries.")]
         public Task<DatabaseSqlResult> Sql(string databaseId, string sql, string? organizationId = null, string? projectId = null)
         {
             return data.SqlAsync(Scope(organizationId, projectId), databaseId, sql, true, Cancellation);
         }
 
+        [McpAccess(McpAccess.Read)]
         [McpServerTool(Name = "get_database_schema", Title = "Get database schema", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List the database's tables and their declared columns and types, including empty tables. Returns at most 100 tables; truncated indicates more tables exist. Requires read access.")]
         public Task<SqlCatalog> Schema(string databaseId, string? organizationId = null, string? projectId = null)
         {
             return data.CatalogAsync(Scope(organizationId, projectId), databaseId, Cancellation);
         }
 
+        [McpAccess(McpAccess.Read)]
         [McpServerTool(Name = "check_sql", Title = "Check SQL", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Check SQL input limits without running it: blank input, size, statement boundaries, parameters and transaction commands. Does not validate SQL syntax, tables or permissions.")]
         public SqlAnalysis CheckSql(string databaseId, string sql, string? organizationId = null, string? projectId = null)
         {
@@ -28,6 +31,7 @@ namespace TerraScale.Dashboard.Features.Data
             return SqlValidation.Analyze(sql);
         }
 
+        [McpAccess(McpAccess.Read)]
         [McpServerTool(Name = "run_sql", Title = "Run SQL", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Run one read-only SQL query against the database's tables. SQL is limited to 16 KiB; bound parameters are unsupported.")]
         public async Task<McpSqlResponse> RunSql(string databaseId, string sql, string? organizationId = null, string? projectId = null)
         {
@@ -35,6 +39,7 @@ namespace TerraScale.Dashboard.Features.Data
             return new(new(result.Columns, result.Rows));
         }
 
+        [McpAccess(McpAccess.Read)]
         [McpServerTool(Name = "list_saved_queries", Title = "List saved queries", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List the SQL queries saved in a project.")]
         public async Task<McpSavedQueries> SavedQueries(string? organizationId = null, string? projectId = null,
             [Description(CursorPaging.Description)] int limit = 100, string after = "")
@@ -45,12 +50,14 @@ namespace TerraScale.Dashboard.Features.Data
             return new(page.Items, page.NextCursor, page.HasMore, page.Limit);
         }
 
+        [McpAccess(McpAccess.Write)]
         [McpServerTool(Name = "save_query", Title = "Save query", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Save a read-only SQL query for everyone in the project. Requires write access.")]
         public async Task<McpSavedQuery> SaveQuery(string name, string sql, string? organizationId = null, string? projectId = null)
         {
             return SavedQueryOutput(await saved.SaveAsync(Scope(organizationId, projectId), "", name, sql, Cancellation));
         }
 
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "delete_saved_query", Title = "Delete saved query", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Return step_up_required with the resource and confirmationUrl. MCP leaves the resource intact; finish deletion in the signed-in dashboard, which applies its authorization and confirmation requirements.")]
         public McpStepUpRequired DeleteSavedQuery(string queryId, string? organizationId = null, string? projectId = null, string databaseId = "")
         {

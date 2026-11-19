@@ -12,6 +12,7 @@ namespace TerraScale.Dashboard.Features.Organizations
         private const string OrganizationDescription = "Organization ID to act on. Defaults to the caller's current dashboard organization.";
         private const string ProjectDescription = "Project ID to act on. Defaults to the current project, or the organization's default project when organizationId is given.";
 
+        [McpAccess(McpAccess.Write)]
         [McpServerTool(Name = "rename_organization", Title = "Rename organization", Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Rename an organization. Requires the owner or admin role.")]
         public Task<OrganizationDone> RenameOrganization([Description("New name: 1-128 characters including a letter or digit.")] string name,
             [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null)
@@ -20,6 +21,7 @@ namespace TerraScale.Dashboard.Features.Organizations
         { await operations.RenameAsync(Scope(organizationId, projectId), name, Cancellation); return new OrganizationDone(true); });
         }
 
+        [McpAccess(McpAccess.Write)]
         [McpServerTool(Name = "create_project", Title = "Create project", Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Create a project in an organization. Requires the owner or admin role and, for business organizations, active billing.")]
         public Task<OrganizationProjectResult> CreateProject([Description("Project name: 1-128 characters including a letter or digit.")] string name,
             [Description("Serving region codes the project uses, such as GRU. At least one, each once, in the order given. The first is the default region of a new database.")] string[] regions,
@@ -32,6 +34,7 @@ namespace TerraScale.Dashboard.Features.Organizations
         });
         }
 
+        [McpAccess(McpAccess.Write)]
         [McpServerTool(Name = "update_project", Title = "Update project", Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Rename the project projectId selects and optionally replace its regions. Requires the owner or admin role.")]
         public Task<OrganizationDone> UpdateProject([Description("Project name: 1-128 characters including a letter or digit.")] string name,
             [Description("Serving region codes that replace the project's regions, such as GRU. At least one when sent, each once, in the order given. The first is the default region of a new database. Omit to keep the current regions.")] string[]? regions = null,
@@ -41,6 +44,7 @@ namespace TerraScale.Dashboard.Features.Organizations
         { await operations.UpdateProjectAsync(Scope(organizationId, projectId), name, regions, Cancellation); return new OrganizationDone(true); });
         }
 
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "request_organization_deletion", Title = "Request organization deletion", Idempotent = true, Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Request deletion of a business organization. Requires the owner role and confirmName equal to the organization name. Always returns step_up_required: deletion is confirmed with fresh credentials on the dashboard's danger zone page, never through unattended MCP.")]
         public Task<OrganizationDone> RequestDeletion([Description("The organization's exact name, confirming the deletion request.")] string confirmName,
             [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null)
@@ -62,6 +66,7 @@ namespace TerraScale.Dashboard.Features.Organizations
         });
         }
 
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "leave_organization", Title = "Leave organization", Destructive = true, OpenWorld = true, UseStructuredContent = true), Description("Leave a business organization the caller does not own. The dashboard selection moves to another organization.")]
         public Task<OrganizationDone> LeaveOrganization([Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null)
         {
@@ -69,6 +74,7 @@ namespace TerraScale.Dashboard.Features.Organizations
         { await lifecycle.LeaveAsync(Scope(organizationId, projectId), Cancellation); return new OrganizationDone(true); });
         }
 
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "update_member_role", Title = "Update member role", Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Change a member's role to viewer, member or admin. Requires the owner or admin role.")]
         public Task<OrganizationDone> UpdateMemberRole([Description("Member user ID from list_members.")] string userId,
             [Description("viewer (read only), member (read and write data) or admin (manages members, projects and keys).")] string role,
@@ -86,6 +92,7 @@ namespace TerraScale.Dashboard.Features.Organizations
         });
         }
 
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "remove_member", Title = "Remove member", Destructive = true, OpenWorld = true, UseStructuredContent = true), Description("Remove a member's user access to an organization and its projects and revoke their dashboard sessions. Organization and project service keys remain active; rotate or revoke any keys known to them at /api-keys. Requires the owner or admin role.")]
         public Task<OrganizationDone> RemoveMember([Description("Member user ID from list_members.")] string userId,
             [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null)
@@ -93,6 +100,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             return Member("remove", userId, organizationId, projectId);
         }
 
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "request_ownership_transfer", Title = "Request ownership transfer", Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Nominate an active member as the next owner. The member must confirm with confirm_ownership_transfer within the provider's transfer expiry. Requires the owner role. Always returns step_up_required: the nomination is confirmed with fresh credentials on the dashboard's danger zone page, never through unattended MCP.")]
         public Task<OrganizationDone> RequestOwnershipTransfer([Description("Member user ID from list_members.")] string userId,
             [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null)
@@ -119,12 +127,14 @@ namespace TerraScale.Dashboard.Features.Organizations
             return new("Confirm this in the dashboard: " + WorkspaceUrl.For(context, "/organization?tab=danger"), 403, "step_up_required");
         }
 
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "confirm_ownership_transfer", Title = "Confirm ownership transfer", Destructive = true, OpenWorld = true, UseStructuredContent = true), Description("Accept a pending ownership transfer nominated to the caller. The previous owner becomes an admin.")]
         public Task<OrganizationDone> ConfirmOwnershipTransfer([Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null)
         {
             return Member("confirm", "", organizationId, projectId);
         }
 
+        [McpAccess(McpAccess.Read)]
         [McpServerTool(Name = "list_members", Title = "List members", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("List an organization's active members with their roles, optionally filtered by name, email, or role.")]
         public Task<OrganizationMemberList> ListMembers([Description("Case-insensitive filter on member name or email.")] string search = "",
             [Description("Only members with this role: owner, admin, member, or viewer.")] string role = "",
@@ -153,6 +163,7 @@ namespace TerraScale.Dashboard.Features.Organizations
         });
         }
 
+        [McpAccess(McpAccess.Read)]
         [McpServerTool(Name = "list_invitations", Title = "List invitations", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("List an organization's invitations with their status and expiry, ordered by immutable ID.")]
         public Task<OrganizationInvitationList> ListInvitations([Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null,
             [Description(CursorPaging.Description)] int limit = 100, string after = "")
@@ -167,6 +178,7 @@ namespace TerraScale.Dashboard.Features.Organizations
         });
         }
 
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "invite_member", Title = "Invite member", Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Invite an email address to an organization and return a one-time invitation link. Requires the owner or admin role and plan member capacity.")]
         public Task<OrganizationIssuedInvitation> InviteMember([Description("Email address to invite.")] string email,
             [Description("viewer (read only), member (read and write data) or admin (manages members, projects and keys). Defaults to member.")] string role = "member",
@@ -184,6 +196,7 @@ namespace TerraScale.Dashboard.Features.Organizations
         });
         }
 
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "resend_invitation", Title = "Resend invitation", Destructive = true, OpenWorld = true, UseStructuredContent = true), Description("Replace a pending invitation's link. The previous link stops working. Requires the owner or admin role; the provider supplies the new expiry and invitation ID.")]
         public Task<OrganizationIssuedInvitation> ResendInvitation([Description("Invitation ID from list_invitations.")] string invitationId,
             [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null)
@@ -192,6 +205,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             Issued(await invitations.ResendAsync(Scope(organizationId, projectId), invitationId, Cancellation)));
         }
 
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "revoke_invitation", Title = "Revoke invitation", Destructive = true, OpenWorld = true, UseStructuredContent = true), Description("Cancel a pending invitation so its link no longer works. Requires the owner or admin role.")]
         public Task<OrganizationDone> RevokeInvitation([Description("Invitation ID from list_invitations.")] string invitationId,
             [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null)
@@ -200,6 +214,7 @@ namespace TerraScale.Dashboard.Features.Organizations
         { await invitations.RevokeAsync(Scope(organizationId, projectId), invitationId, Cancellation); return new OrganizationDone(true); });
         }
 
+        [McpAccess(McpAccess.Read)]
         [McpServerTool(Name = "get_invitation", Title = "Get invitation", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Show the organization, role, and expiry of a pending invitation from its token or link, and whether the caller can respond.")]
         public Task<OrganizationInvitationPreview> GetInvitation([Description("Invitation token or the full invitation link.")] string token)
         {
@@ -212,6 +227,7 @@ namespace TerraScale.Dashboard.Features.Organizations
         });
         }
 
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "respond_to_invitation", Title = "Respond to invitation", Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Accept or decline an invitation addressed to the caller's email. Accepting selects the invited organization or project.")]
         public Task<OrganizationInvitationResponse> RespondToInvitation([Description("Invitation token or the full invitation link.")] string token,
             [Description("accept or decline.")] string action)
@@ -224,6 +240,7 @@ namespace TerraScale.Dashboard.Features.Organizations
         });
         }
 
+        [McpAccess(McpAccess.Read)]
         [McpServerTool(Name = "list_audit_events", Title = "List audit events", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("List the audit history of a project, newest first, with the same filters and pagination as the audit page and export.")]
         public Task<OrganizationAuditEvents> ListAuditEvents(
             [Description("Case-insensitive text matched against actor, action, target, source, and severity.")] string search = "",

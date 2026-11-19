@@ -8,6 +8,7 @@ namespace TerraScale.Dashboard.Features.Notifications
     [McpServerToolType]
     public sealed class NotificationMcpTools(IHttpContextAccessor http, AccountService accounts)
     {
+        [McpAccess(McpAccess.Read)]
         [McpServerTool(Name = "list_notifications", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true), Description("Read notifications visible in your selected organization and project.")]
         public async Task<NotificationToolList> Notifications(
             [Description("Use unread (case-insensitive) for unread notifications; empty, all and other values select all visible notifications.")] string status = "",
@@ -26,12 +27,14 @@ namespace TerraScale.Dashboard.Features.Notifications
                 inbox.Total, inbox.Matching, inbox.Page, inbox.PageCount);
         }
 
+        [McpAccess(McpAccess.Write)]
         [McpServerTool(Name = "mark_notification_read", UseStructuredContent = true, Idempotent = true, Destructive = false, OpenWorld = false), Description("Mark one visible notification as read.")]
         public async Task<NotificationsMarked> ReadNotification(string notificationId, string? organizationId = null, string? projectId = null)
         {
             return new(await NotificationCommands.MarkAsync(accounts, Scope(organizationId, projectId), notificationId, Cancellation));
         }
 
+        [McpAccess(McpAccess.Write)]
         [McpServerTool(Name = "mark_all_notifications_read", UseStructuredContent = true, Idempotent = true, Destructive = false, OpenWorld = false), Description("Mark all notifications in the current scope as read.")]
         public async Task<NotificationsMarked> ReadAllNotifications(string? organizationId = null, string? projectId = null)
         {

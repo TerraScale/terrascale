@@ -36,6 +36,9 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 11, Level = LogLevel.Warning, Message = "MCP tool {Tool} failed at the billing provider ({ErrorType})")]
         internal static partial void MCPToolFailedAtTheBilling(this ILogger logger, object? tool, object? errorType);
 
+        [LoggerMessage(EventId = 52, Level = LogLevel.Information, Message = "MCP agent call {Tool} by agent {AgentId} for owner {OwnerId}: {Outcome}")]
+        internal static partial void MCPAgentToolCall(this ILogger logger, object? tool, object? agentId, object? ownerId, object? outcome);
+
         [LoggerMessage(EventId = 12, Level = LogLevel.Warning, Message = "MCP unfinished registration cleanup is unavailable ({ErrorType}); retrying on a later pass.")]
         internal static partial void MCPUnfinishedRegistrationCleanupIsUnavailable(this ILogger logger, object? errorType);
 

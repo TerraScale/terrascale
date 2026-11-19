@@ -2,6 +2,7 @@ using TerraScale.Dashboard.Platform.Observability;
 using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Http.Features;
 using System.Globalization;
+using System.Collections.Frozen;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -24,41 +25,54 @@ namespace TerraScale.Dashboard.Platform.Mcp
     {
         internal const string ContextKey = "TerraScale.Dashboard/mcp-context";
 
-        // Only immutable tool metadata is shared. Each invocation constructs its target
-        // from that request's services; no host, principal or tool instance is retained.
-        private static readonly Lazy<McpServerTool[]> CachedTools = new(CreateTools, LazyThreadSafetyMode.ExecutionAndPublication);
+        private sealed record ToolCatalog(McpServerTool[] Tools, FrozenDictionary<string, McpAccess> Access);
 
-        private static McpServerTool[] CreateTools()
+        private static readonly Lazy<ToolCatalog> Catalog = new(CreateCatalog, LazyThreadSafetyMode.ExecutionAndPublication);
+
+        private static readonly Type[] ToolTypes =
+        [
+            typeof(DashboardMcpTools),
+            typeof(TerraScale.Dashboard.Features.Databases.DatabaseMcpTools),
+            typeof(TerraScale.Dashboard.Features.Data.DataMcpTools),
+            typeof(TerraScale.Dashboard.Features.ApiKeys.ApiKeyMcpTools),
+            typeof(TerraScale.Dashboard.Features.Backups.BackupMcpTools),
+            typeof(TerraScale.Dashboard.Features.Functions.FunctionMcpTools),
+            typeof(TerraScale.Dashboard.Features.Rules.RulesMcpTools),
+            typeof(TerraScale.Dashboard.Features.FileStorage.FileStorageMcpTools),
+            typeof(TerraScale.Dashboard.Features.Home.HomeMcpTools),
+            typeof(TerraScale.Dashboard.Features.Notifications.NotificationMcpTools),
+            typeof(TerraScale.Dashboard.Features.Profile.ProfileMcpTools),
+            typeof(TerraScale.Dashboard.Features.Usage.UsageMcpTools),
+            typeof(TerraScale.Dashboard.Features.Settings.SettingsMcpTools),
+            typeof(TerraScale.Dashboard.Features.Billing.BillingMcpTools),
+            typeof(TerraScale.Dashboard.Features.Onboarding.OnboardingMcpTools),
+            typeof(TerraScale.Dashboard.Features.AuthenticationManagement.AuthenticationMcpTools),
+            typeof(TerraScale.Dashboard.Features.Organizations.OrganizationMcpTools),
+        ];
+
+        private static ToolCatalog CreateCatalog()
         {
             var serializer = new JsonSerializerOptions(McpJsonUtilities.DefaultOptions);
             serializer.TypeInfoResolverChain.Insert(0, TerraScale.Dashboard.Features.Databases.DatabaseConflictJson.Default);
             serializer.TypeInfoResolverChain.Insert(0, FunctionMcpJson.Default);
             serializer.TypeInfoResolverChain.Insert(0, TerraScale.Dashboard.Features.Rules.RulesMcpJson.Default);
-            Type[] toolTypes =
-            [
-                typeof(DashboardMcpTools),
-                typeof(TerraScale.Dashboard.Features.Databases.DatabaseMcpTools),
-                typeof(TerraScale.Dashboard.Features.Data.DataMcpTools),
-                typeof(TerraScale.Dashboard.Features.ApiKeys.ApiKeyMcpTools),
-                typeof(TerraScale.Dashboard.Features.Backups.BackupMcpTools),
-                typeof(TerraScale.Dashboard.Features.Functions.FunctionMcpTools),
-                typeof(TerraScale.Dashboard.Features.Rules.RulesMcpTools),
-                typeof(TerraScale.Dashboard.Features.FileStorage.FileStorageMcpTools),
-                typeof(TerraScale.Dashboard.Features.Home.HomeMcpTools),
-                typeof(TerraScale.Dashboard.Features.Notifications.NotificationMcpTools),
-                typeof(TerraScale.Dashboard.Features.Profile.ProfileMcpTools),
-                typeof(TerraScale.Dashboard.Features.Usage.UsageMcpTools),
-                typeof(TerraScale.Dashboard.Features.Settings.SettingsMcpTools),
-                typeof(TerraScale.Dashboard.Features.Billing.BillingMcpTools),
-                typeof(TerraScale.Dashboard.Features.Onboarding.OnboardingMcpTools),
-                typeof(TerraScale.Dashboard.Features.AuthenticationManagement.AuthenticationMcpTools),
-                typeof(TerraScale.Dashboard.Features.Organizations.OrganizationMcpTools),
-            ];
-            return [.. toolTypes.SelectMany(toolType => toolType.GetMethods()
-                .Where(method => method.IsDefined(typeof(McpServerToolAttribute)))
-                .Select(method => McpServerTool.Create(method, request => ActivatorUtilities.CreateInstance(
-                    request.Services ?? throw new InvalidOperationException("MCP request services are unavailable."), toolType),
-                    options: new() { SerializerOptions = serializer, SchemaCreateOptions = new() { TransformSchemaNode = NullableRequirements } })))];
+            List<McpServerTool> tools = [];
+            Dictionary<string, McpAccess> access = new(StringComparer.Ordinal);
+            foreach (var toolType in ToolTypes)
+            {
+                foreach (var method in toolType.GetMethods().Where(method => method.IsDefined(typeof(McpServerToolAttribute))))
+                {
+                    var marking = method.GetCustomAttribute<McpAccessAttribute>()
+                        ?? throw new InvalidOperationException($"MCP tool {toolType.Name}.{method.Name} has no {nameof(McpAccess)} marking.");
+                    var tool = McpServerTool.Create(method, request => ActivatorUtilities.CreateInstance(
+                        request.Services ?? throw new InvalidOperationException("MCP request services are unavailable."), toolType),
+                        options: new() { SerializerOptions = serializer, SchemaCreateOptions = new() { TransformSchemaNode = NullableRequirements } });
+                    tools.Add(tool);
+                    access.Add(tool.ProtocolTool.Name, marking.Access);
+                }
+            }
+
+            return new([.. tools], access.ToFrozenDictionary(StringComparer.Ordinal));
         }
 
         private static JsonNode NullableRequirements(AIJsonSchemaCreateContext context, JsonNode schema)
@@ -103,6 +117,8 @@ namespace TerraScale.Dashboard.Platform.Mcp
         {
             services.AddHttpContextAccessor();
             services.AddSingleton<McpApiKeyTools>();
+            services.AddMemoryCache();
+            services.AddSingleton<McpAgents>();
             services.AddMcpServer(options =>
             {
                 options.ServerInfo = new() { Name = "terrascale-dashboard", Title = "TerraScale Dashboard", Version = "1.0.0" };
@@ -133,6 +149,19 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 .AddCallToolFilter(next => async (request, cancellationToken) =>
                 {
                     var http = request.Services?.GetService<IHttpContextAccessor>()?.HttpContext;
+                    if (http?.Items[McpAgents.ContextKey] is McpAgent agent)
+                    {
+                        var name = request.Params?.Name;
+                        var refusal = McpAgents.Refuse(agent, name is not null && Catalog.Value.Access.TryGetValue(name, out var access) ? access : null);
+                        var tool = LoggedTool(name);
+                        var outcome = refusal is null ? "allowed" : "refused";
+                        Log(request.Services).MCPAgentToolCall(tool, agent.AgentId, agent.OwnerId, outcome);
+                        if (refusal is not null)
+                        {
+                            return Failure(refusal);
+                        }
+                    }
+
                     if (ArgumentProblem(request.Params) is { } problem)
                     {
                         return Failure(problem);
@@ -182,11 +211,11 @@ namespace TerraScale.Dashboard.Platform.Mcp
                     catch (McpProtocolException error) when (error.ErrorCode is McpErrorCode.InvalidParams or McpErrorCode.MethodNotFound or McpErrorCode.ParseError) { throw; }
                     catch (Exception error) { ServiceSloTelemetry.MarkFailure(error, http); throw; }
                 }))
-                .WithTools(CachedTools.Value);
+                .WithTools(Catalog.Value.Tools);
         }
 
         private static readonly Lazy<Dictionary<string, JsonElement>> InputSchemas =
-            new(() => CachedTools.Value.ToDictionary(tool => tool.ProtocolTool.Name, tool => tool.ProtocolTool.InputSchema));
+            new(() => Catalog.Value.Tools.ToDictionary(tool => tool.ProtocolTool.Name, tool => tool.ProtocolTool.InputSchema));
 
         // Argument binding fails after the filters with the SDK's generic "An error occurred invoking"; name the field instead.
         private static string? ArgumentProblem(CallToolRequestParams? call)
@@ -258,7 +287,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
 
         private static string LoggedTool(string? name)
         {
-            return CachedTools.Value.Any(tool => tool.ProtocolTool.Name == name) ? name! : "[unknown]";
+            return Catalog.Value.Tools.Any(tool => tool.ProtocolTool.Name == name) ? name! : "[unknown]";
         }
 
         public static void MapDashboardMcp(this WebApplication app)
@@ -297,6 +326,17 @@ namespace TerraScale.Dashboard.Platform.Mcp
                         return;
                     }
                     context.Items[ContextKey] = principal;
+                }
+                else if (McpAgents.IsAgentToken(header.Parameter))
+                {
+                    if (await context.RequestServices.GetRequiredService<McpAgents>().SignInAsync(header.Parameter, context.RequestAborted) is not ({ } agent, { } owner))
+                    {
+                        context.Response.Headers.WWWAuthenticate = $"Bearer realm=\"TerraScale MCP\", resource_metadata=\"{McpOAuth.ResourceMetadataUrl(context)}\", error=\"invalid_token\"";
+                        context.Response.StatusCode = 401;
+                        return;
+                    }
+                    context.Items[ContextKey] = owner;
+                    context.Items[McpAgents.ContextKey] = agent;
                 }
                 else
                 {

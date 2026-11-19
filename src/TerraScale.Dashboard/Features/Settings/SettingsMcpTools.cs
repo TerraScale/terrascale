@@ -7,12 +7,14 @@ namespace TerraScale.Dashboard.Features.Settings
     [McpServerToolType]
     public sealed class SettingsMcpTools(IHttpContextAccessor http, SettingsService settings)
     {
+        [McpAccess(McpAccess.Read)]
         [McpServerTool(Name = "get_project_settings", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true), Description("Read provider audit retention and the selected project's deletion eligibility. Requires organization management.")]
         public Task<ProjectSettings> Read(string? organizationId = null, string? projectId = null)
         {
             return settings.ReadAsync(Scope(organizationId, projectId), Cancellation);
         }
 
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "set_audit_retention", Idempotent = true, UseStructuredContent = true, Destructive = false, OpenWorld = false), Description("Set the provider's organization audit retention from 1 to 90 days. Requires an owner or admin role.")]
         public async Task<SettingsSaved> SetRetention(int days, string? organizationId = null, string? projectId = null)
         {
@@ -20,6 +22,7 @@ namespace TerraScale.Dashboard.Features.Settings
             return new(true);
         }
 
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "delete_project", UseStructuredContent = true, Destructive = true, OpenWorld = false), Description("Return step_up_required with the resource and confirmationUrl. MCP leaves the resource intact; finish deletion in the signed-in dashboard, which applies its authorization and confirmation requirements.")]
         public McpStepUpRequired Delete(string confirmName, string? organizationId = null, string? projectId = null)
         {

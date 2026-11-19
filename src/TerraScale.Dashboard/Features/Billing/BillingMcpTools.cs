@@ -12,6 +12,7 @@ namespace TerraScale.Dashboard.Features.Billing
     [McpServerToolType]
     public sealed class BillingMcpTools(IHttpContextAccessor http, StripeBilling billing, TimeProvider time, ILogger<BillingMcpTools> logger)
     {
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "cancel_checkout", Title = "Cancel plan checkout", OpenWorld = true, Destructive = false, UseStructuredContent = true), Description("Cancel the organization's checkout in progress without changing its plan. Owner only.")]
         public Task<CheckoutCanceled> CancelCheckout(string? organizationId = null, string? projectId = null)
         {
@@ -36,6 +37,7 @@ namespace TerraScale.Dashboard.Features.Billing
             throw new AccountAccessException($"{paid.Name} is billed {string.Join(" or ", paid.CheckoutIntervals)}: pass one of those or omit it.", 400);
         }
 
+        [McpAccess(McpAccess.Read)]
         [McpServerTool(Name = "preview_plan_change", Title = "Preview plan change", ReadOnly = true, Idempotent = true, OpenWorld = true, Destructive = false, UseStructuredContent = true), Description("Estimate the charge and effective date of changing a subscribed organization's plan, without changing it. Owner only.")]
         public Task<BillingPlanPreview> PreviewPlanChange(
             [Description("Plan key from list_plans, such as starter or pro. change_plan and preview_plan_change also accept free for Personal workspaces.")] string plan,
@@ -45,6 +47,7 @@ namespace TerraScale.Dashboard.Features.Billing
             return Invoke(() => billing.PreviewPlanChangeAsync(Scope(organizationId, projectId), plan, Interval(plan, interval), Cancellation));
         }
 
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "change_plan", Title = "Change plan", OpenWorld = true, Idempotent = true, Destructive = false, UseStructuredContent = true), Description("Change a subscribed organization's plan. Upgrades apply now (charging a prorated amount); downgrades and switching a Personal workspace to free are scheduled for renewal and can be undone with undo_plan_change. Owner only. Always returns step_up_required: a plan change is confirmed with fresh credentials on the dashboard's billing page, never through unattended MCP.")]
         public Task<PlanChanged> ChangePlan(
             [Description("Plan key from list_plans, such as starter or pro. change_plan and preview_plan_change also accept free for Personal workspaces.")] string plan,
@@ -67,6 +70,7 @@ namespace TerraScale.Dashboard.Features.Billing
         });
         }
 
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "undo_plan_change", Title = "Undo scheduled plan change", OpenWorld = true, Idempotent = true, Destructive = false, UseStructuredContent = true), Description("Cancel a plan change scheduled for renewal so the current plan continues. Owner only. Always returns step_up_required: the undo is confirmed with fresh credentials on the dashboard's billing page, never through unattended MCP.")]
         public Task<PlanChanged> UndoPlanChange(string? organizationId = null, string? projectId = null)
         {
@@ -91,18 +95,21 @@ namespace TerraScale.Dashboard.Features.Billing
             return new("Confirm this in the dashboard: " + WorkspaceUrl.For(context, "/organization?tab=billing"), 403, "step_up_required");
         }
 
+        [McpAccess(McpAccess.Read)]
         [McpServerTool(Name = "list_plans", Title = "List plans", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = true, Idempotent = true), Description("List the paid plans an organization can subscribe to, with prices in cents, limits, and which plan is current.")]
         public Task<BillingMcpPlans> Plans(string? organizationId = null, string? projectId = null)
         {
             return billing.McpPlansAsync(Scope(organizationId, projectId), Cancellation);
         }
 
+        [McpAccess(McpAccess.Read)]
         [McpServerTool(Name = "get_billing", Title = "Get billing", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = true, Idempotent = true), Description("Show an organization's plan, billing interval and status, renewal date, scheduled or pending plan changes, checkout state, and (for the owner) payment method summary.")]
         public Task<BillingMcpSummary> Billing(string? organizationId = null, string? projectId = null)
         {
             return billing.McpSummaryAsync(Scope(organizationId, projectId), Cancellation);
         }
 
+        [McpAccess(McpAccess.Read)]
         [McpServerTool(Name = "list_invoices", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("List organization invoices from Stripe newest first, ten per page, filtered by status or issued date.")]
         public async Task<BillingInvoiceList> Invoices(
             [Description("paid, open, void, or empty for all statuses.")] string status = "",
@@ -114,6 +121,7 @@ namespace TerraScale.Dashboard.Features.Billing
             return InvoiceHistory.Page(invoices, status, issued, page, time.GetUtcNow());
         }
 
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "create_checkout", Title = "Start plan checkout", OpenWorld = true, Destructive = false, UseStructuredContent = true), Description("Start a checkout that subscribes an organization without a subscription to a paid plan. Returns the URL the owner must open in a browser to pay; this tool never completes a payment. Owner only.")]
         public async Task<CheckoutStarted> Checkout(
             [Description("Plan key from list_plans, such as starter or pro. change_plan and preview_plan_change also accept free for Personal workspaces.")] string plan,
@@ -128,6 +136,7 @@ namespace TerraScale.Dashboard.Features.Billing
             return new(url);
         }
 
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "get_billing_portal_url", Title = "Open billing portal", OpenWorld = true, Destructive = false, UseStructuredContent = true), Description("Create a billing portal session where the owner updates payment methods and downloads invoices. Returns the URL to open in a browser. Owner only.")]
         public async Task<BillingMcpPortal> Portal(string? organizationId = null, string? projectId = null)
         {

@@ -9,6 +9,7 @@ namespace TerraScale.Dashboard.Features.Onboarding
     [McpServerToolType]
     public sealed class OnboardingMcpTools(IHttpContextAccessor http, AccountService accounts, OnboardingService onboarding)
     {
+        [McpAccess(McpAccess.Read)]
         [McpServerTool(Name = "get_onboarding", Title = "Get onboarding", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true),
          Description("Show your account setup progress: the current step, every step's state, and the plans the payment step offers, Free first.")]
         public async Task<OnboardingStatus> Status()
@@ -20,6 +21,7 @@ namespace TerraScale.Dashboard.Features.Onboarding
                 [.. plans.Select(plan => new OnboardingOfferedPlan(plan.Key, plan.Name, plan.PriceCents, plan.AnnualPriceCents, plan.BillingIntervals, plan.Price + " " + plan.PriceUnit, plan.Allowances.MonthlyEgressBytes, plan.TrialDays))]);
         }
 
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "save_onboarding_step", Title = "Save onboarding step", OpenWorld = true, Destructive = false, UseStructuredContent = true),
          Description("Complete one account setup step. account-information takes displayName; payment-method takes plan (free continues without payment; a paid plan and interval start a checkout the user must finish in a browser at checkoutUrl); project takes name and region and finishes setup.")]
         public async Task<OnboardingSaved> Save(
