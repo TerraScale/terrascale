@@ -19,6 +19,9 @@ public interface IDatabaseStore
     ValueTask<IStorageTransaction> BeginPromotionTransactionAsync(
         CancellationToken cancellationToken, [CallerFilePath] string file = "", [CallerLineNumber] int line = 0);
 
+    ValueTask<IStorageTransaction> BeginInspectionTransactionAsync(
+        CancellationToken cancellationToken, [CallerFilePath] string file = "", [CallerLineNumber] int line = 0);
+
     ValueTask<IStorageTransaction> BeginDurableTransactionAsync(
         CancellationToken cancellationToken, [CallerFilePath] string file = "", [CallerLineNumber] int line = 0);
 

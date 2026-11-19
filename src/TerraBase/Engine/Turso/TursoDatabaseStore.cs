@@ -177,6 +177,10 @@ internal sealed partial class TursoDatabaseStore(
         CancellationToken cancellationToken, [CallerFilePath] string file = "", [CallerLineNumber] int line = 0) =>
         await BeginAsync(write: true, durable: false, cancellationToken, "a home promotion", promotion: true, file: file, line: line).ConfigureAwait(false);
 
+    public async ValueTask<IStorageTransaction> BeginInspectionTransactionAsync(
+        CancellationToken cancellationToken, [CallerFilePath] string file = "", [CallerLineNumber] int line = 0) =>
+        await BeginAsync(write: false, durable: false, cancellationToken, inspection: true, file: file, line: line).ConfigureAwait(false);
+
     internal ValueTask<TursoStorageTransaction> BeginMaintenanceTransactionAsync(CancellationToken cancellationToken, bool synced = true) =>
     IsSystem ? BeginAsync(write: true, durable: synced, cancellationToken, "storage fault bookkeeping", maintenance: true)
         : throw new InvalidOperationException("fault bookkeeping requires a system store");
@@ -345,7 +349,7 @@ internal sealed partial class TursoDatabaseStore(
 
     private async ValueTask<TursoStorageTransaction> BeginAsync(
         bool write, bool durable, CancellationToken cancellationToken, string writer = "a write transaction", bool maintenance = false, bool promotion = false,
-        string? file = null, int line = 0)
+        bool inspection = false, string? file = null, int line = 0)
     {
         if (Ledger is { } ledger && !IsSystem)
         {
@@ -359,7 +363,7 @@ internal sealed partial class TursoDatabaseStore(
         {
             ThrowIfRefused(maintenance);
         }
-        if (!write && !maintenance && LeasedId is { } leased)
+        if (!write && !maintenance && !inspection && LeasedId is { } leased)
         {
             Leases!.ThrowIfUnserved(leased);
         }

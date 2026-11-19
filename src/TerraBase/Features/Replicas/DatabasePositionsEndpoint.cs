@@ -60,7 +60,7 @@ internal sealed class DatabasePositionsEndpoint(TerraBaseOptions options, IStora
             return null;
         }
 
-        await using var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+        await using var transaction = await store.BeginInspectionTransactionAsync(cancellationToken).ConfigureAwait(false);
         var schema = await transaction.ExecuteStatementAsync(CopySchema.Tables, cancellationToken).ConfigureAwait(false);
         return new DatabaseCopyPosition(revision.ToString(), CopySchema.HoldsUserTables(schema));
     }
