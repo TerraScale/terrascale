@@ -217,6 +217,38 @@ public static partial class OpenApiSetup
                     });
                 }
 
+                if (operation.OperationId is "list_agents" or "list_user_agents")
+                {
+                    if (operation.OperationId == "list_agents")
+                    {
+                        (operation.Parameters ??= []).Add(new OpenApiParameter
+                        {
+                            Name = "owner",
+                            In = ParameterLocation.Query,
+                            Required = false,
+                            Description = "Only agents owned by this user id; an id with no agents in the project answers an empty page.",
+                            Schema = new OpenApiSchema { Type = JsonSchemaType.String, Pattern = "^[0-7][0-9A-HJKMNP-TV-Z]{25}$" },
+                        });
+                    }
+
+                    (operation.Parameters ??= []).Add(new OpenApiParameter
+                    {
+                        Name = "limit",
+                        In = ParameterLocation.Query,
+                        Required = false,
+                        Description = "Agents per page, default 50.",
+                        Schema = new OpenApiSchema { Type = JsonSchemaType.Integer, Minimum = "1", Maximum = "100" },
+                    });
+                    operation.Parameters.Add(new OpenApiParameter
+                    {
+                        Name = "after",
+                        In = ParameterLocation.Query,
+                        Required = false,
+                        Description = "The previous page's next cursor; omit to start.",
+                        Schema = new OpenApiSchema { Type = JsonSchemaType.String, Pattern = "^[0-7][0-9A-HJKMNP-TV-Z]{25}$" },
+                    });
+                }
+
                 if (operation.OperationId == "export_project_users")
                 {
                     (operation.Parameters ??= []).Add(new OpenApiParameter

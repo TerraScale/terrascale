@@ -178,6 +178,7 @@ public static class App
         builder.Services.AddSingleton<EmailChanges>();
         builder.Services.AddSingleton<ApiKeys>();
         builder.Services.AddSingleton<UserApiKeys>();
+        builder.Services.AddSingleton<AgentLifecycleEvents>();
         builder.Services.AddSingleton<AgentDirectory>();
         builder.Services.AddSingleton<PlatformGrants>();
         builder.Services.AddSingleton<CustomTokens>();

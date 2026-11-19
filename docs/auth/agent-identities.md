@@ -31,7 +31,9 @@ no policy, prevents new agents. Changing the list does not change existing agent
 | Revoke the agent | `DELETE /v1/{project}/agents/{agent}` | admin or `auth:write` |
 
 Project keys must be unrestricted project secret keys, as on every project management route. Lists use the cursor paging of the other project lists: `limit` 1 to 100 (default 50) and `after` set to the
-previous page's `next`.
+previous page's `next`. `?owner=` only filters the project's agents: a well-formed id of a user with no agents there,
+or of no user in the project, answers an empty page. `GET /v1/{project}/users/{user}/agents` answers `404` for a user
+that is not in the project.
 
 Create:
 
@@ -79,8 +81,9 @@ There is no secret in any answer. `last_used_at` stays `null` until agents can s
   present. Any other member is `400 invalid_jwk`.
 - A JWK with a private member (`d`, `p`, `q`, `dp`, `dq`, `qi`, `oth` or `k`) is `400 private_key_material` and is
   never stored or logged.
-- ts-auth stores only `{"crv","kty","x","y"}` and its RFC 7638 SHA-256 thumbprint. A thumbprint is unique in a
-  project, revoked keys included: a key that was ever registered there is `409 agent_key_in_use`.
+- ts-auth stores only `{"crv","kty","x","y"}` and its RFC 7638 SHA-256 thumbprint. A thumbprint is unique among the
+  key rows a project keeps, explicitly revoked keys included: such a key is `409 agent_key_in_use`. Deleting the owner
+  deletes their agents' key rows, which frees those thumbprints.
 - An agent has at most 2 active keys (`409 agent_key_limit`). Rotate by adding the new key, switching the agent over,
   then revoking the old one. Revoking a key keeps it listed with `revoked_at`; revoking it again is `204`.
 - Adding a key to an agent that is not active or has expired is `409 agent_inactive`.
@@ -130,5 +133,6 @@ events.
 - Creation counts live agents and rewrites the owner's row version in the same save, so two creations that both
   read 24 live agents cannot both commit; it also asserts the agent policy version.
 - Adding a key counts active keys and rewrites the agent's row version in the same save, so two additions that both
-  read one active key cannot both commit. Revoking a key or the agent also rewrites the agent's row version, so a
+  read one active key cannot both commit. It also asserts the owner's row version, so a sign-out everywhere or disable that commits
+  after the owner check makes the addition fail instead of adding a key to an unusable agent. Revoking a key or the agent also rewrites the agent's row version, so a
   key cannot be added to an agent that is being revoked.

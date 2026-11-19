@@ -5,7 +5,6 @@ using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.RateLimiting;
-using TerraScale.Authentication.Features.Webhooks;
 using TerraScale.Authentication.Storage;
 
 namespace TerraScale.Authentication.Features.Agents;
@@ -30,7 +29,7 @@ public sealed record AgentBody(string Id, string ProjectId, string OwnerUserId, 
     IReadOnlyList<AgentKeyBody> Keys, DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt, DateTimeOffset? RevokedAt, DateTimeOffset? LastUsedAt);
 public sealed record AgentPageBody(IReadOnlyList<AgentBody> Items, string? Next);
 
-public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, WebhookOutbox outbox, AttemptLimiter limiter, TimeProvider clock)
+public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, AgentLifecycleEvents events, AttemptLimiter limiter, TimeProvider clock)
 {
     public const int MaxLiveAgentsPerUser = 25;
 
@@ -57,10 +56,11 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, We
     public async Task<AgentBody> CreateAsync(string project, string userId, string actor, CreateAgentRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+        var now = clock.GetUtcNow();
         var name = PlatformDirectory.Name(request.Name);
         var policy = await data.ReadAsync((db, token) => db.AgentPolicies.Where(row => row.ProjectId == project).WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
         if (name is not { Length: <= 64 } || request.AllowedScopes is not { } scopes || !MachineClients.ValidScopes(scopes) || policy is null
-            || scopes.Except(policy.Value.AllowedScopes, StringComparer.Ordinal).Any() || request.ExpiresAt <= clock.GetUtcNow())
+            || scopes.Except(policy.Value.AllowedScopes, StringComparer.Ordinal).Any() || request.ExpiresAt <= now)
         {
             throw new ApiException(400, "invalid_request", "Supply a name of 1 to 64 characters, 1 to 64 unique scopes from the project's agent policy, a public_jwk and an optional future expiry.");
         }
@@ -73,7 +73,6 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, We
         }
 
         var stamp = user.Value.AuthStamp ?? throw new InvalidDataException("The user has no authentication stamp.");
-        var now = clock.GetUtcNow();
         var live = await data.ReadAsync((db, token) => db.Agents.CountAsync(row => row.ProjectId == project && row.OwnerUserId == userId && row.Status == AgentStatus.Active
             && (row.ExpiresAt == null || row.ExpiresAt > now) && row.OwnerAuthEpoch == user.Value.AuthEpoch && row.OwnerAuthStamp == stamp, token), cancellationToken).ConfigureAwait(false);
         if (live >= MaxLiveAgentsPerUser)
@@ -90,7 +89,7 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, We
         var stored = new AgentKeyRecord(project, AuthIds.New(), agent.Id, key.Jwk, key.Thumbprint, now, null);
         await this.SaveAsync(project, actor, "agent.created", agent.Id, key.Thumbprint,
             [Change.Insert(agent), Change.Insert(stored), Change.Assert(policy), Change.Update(user, user.Value),
-                Change.Insert(outbox.NewEvent(project, "agent.created", userId, agentId: agent.Id, agentKeyId: stored.Kid))], cancellationToken).ConfigureAwait(false);
+                events.Created(project, userId, agent.Id, stored.Kid)], cancellationToken).ConfigureAwait(false);
         return Body(agent, [stored], new(user.Value.Id, user.Value.AuthEpoch, stamp, false));
     }
 
@@ -117,9 +116,9 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, We
         var agent = await data.ReadAsync((db, token) => db.Agents.Where(row => row.ProjectId == project && row.Id == agentId).WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false)
             ?? throw PlatformDirectory.NotFound();
         var owner = await data.ReadAsync((db, token) => db.Users.Where(row => row.InstanceId == project && row.Id == agent.Value.OwnerUserId)
-            .Select(row => new AgentOwner(row.Id, row.AuthEpoch, row.AuthStamp, row.Disabled)).SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
+            .WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
         var now = clock.GetUtcNow();
-        if (Status(agent.Value, owner) != AgentStatus.Active || agent.Value.ExpiresAt <= now)
+        if (owner is null || Status(agent.Value, Owner(owner.Value)) != AgentStatus.Active || agent.Value.ExpiresAt <= now)
         {
             throw new ApiException(409, "agent_inactive", "The agent is revoked or expired, or its owner signed out everywhere or was disabled.");
         }
@@ -132,8 +131,7 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, We
 
         var stored = new AgentKeyRecord(project, AuthIds.New(), agentId, key.Jwk, key.Thumbprint, now, null);
         await this.SaveAsync(project, actor, "agent.key_added", stored.Kid, key.Thumbprint,
-            [Change.Insert(stored), Change.Update(agent, agent.Value),
-                Change.Insert(outbox.NewEvent(project, "agent.key_added", agent.Value.OwnerUserId, agentId: agentId, agentKeyId: stored.Kid))], cancellationToken).ConfigureAwait(false);
+            [Change.Insert(stored), Change.Update(agent, agent.Value), Change.Assert(owner), events.KeyAdded(project, agent.Value.OwnerUserId, agentId, stored.Kid)], cancellationToken).ConfigureAwait(false);
         return KeyBody(stored);
     }
 
@@ -155,7 +153,7 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, We
 
         await this.SaveAsync(project, actor, "agent.key_revoked", kid, null,
             [Change.Update(key, key.Value with { RevokedAt = clock.GetUtcNow() }), Change.Update(agent, agent.Value),
-                Change.Insert(outbox.NewEvent(project, "agent.key_revoked", agent.Value.OwnerUserId, agentId: agentId, agentKeyId: kid))], cancellationToken).ConfigureAwait(false);
+                events.KeyRevoked(project, agent.Value.OwnerUserId, agentId, kid)], cancellationToken).ConfigureAwait(false);
     }
 
     public async Task RevokeAsync(string project, string agentId, string actor, CancellationToken cancellationToken)
@@ -178,7 +176,7 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, We
         await this.SaveAsync(project, actor, "agent.revoked", agentId, null,
             [Change.Update(agent, agent.Value with { Status = AgentStatus.Revoked, RevokedAt = now }),
                 .. keys.Select(key => Change.Update(key, key.Value with { RevokedAt = now })),
-                Change.Insert(outbox.NewEvent(project, "agent.revoked", agent.Value.OwnerUserId, agentId: agentId))], cancellationToken).ConfigureAwait(false);
+                events.Revoked(project, agent.Value.OwnerUserId, agentId)], cancellationToken).ConfigureAwait(false);
     }
 
     public static string Status(AgentRecord agent, AgentOwner? owner)
@@ -187,6 +185,8 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, We
         return agent.Status == AgentStatus.Active && owner is { Disabled: false } && owner.AuthEpoch == agent.OwnerAuthEpoch && owner.AuthStamp == agent.OwnerAuthStamp
             ? AgentStatus.Active : AgentStatus.Revoked;
     }
+
+    private static AgentOwner Owner(UserRecord user) => new(user.Id, user.AuthEpoch, user.AuthStamp, user.Disabled);
 
     private async Task<IReadOnlyList<AgentBody>> BodiesAsync(string project, IReadOnlyList<AgentRecord> agents, CancellationToken cancellationToken)
     {
@@ -229,7 +229,7 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, We
     }
 }
 
-[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
+[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow, AllowDuplicateProperties = false)]
 [JsonSerializable(typeof(AgentPolicyBody))]
 [JsonSerializable(typeof(CreateAgentRequest))]
 [JsonSerializable(typeof(AddAgentKeyRequest))]
