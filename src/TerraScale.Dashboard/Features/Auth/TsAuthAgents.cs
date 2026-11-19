@@ -24,7 +24,7 @@ public sealed partial class TsAuthGateway
         ProjectAsync(async () => { await Client().Projects.RevokeAgentAsync(Bearer(session), Id(projectId), Id(agent), cancellationToken); return true; });
 
     public Task RevokeAgentKeyAsync(SessionRecord session, string projectId, string agent, string kid, CancellationToken cancellationToken) =>
-        ProjectAsync(async () => { await Client().Projects.RevokeAgentKeyAsync(Bearer(session), Id(projectId), Id(agent), kid, cancellationToken); return true; });
+        ProjectAsync(async () => { await Client().Projects.RevokeAgentKeyAsync(Bearer(session), Id(projectId), Id(agent), Id(kid), cancellationToken); return true; });
 
     public Task<TsAuthAgentPolicy> GetAgentPolicyAsync(SessionRecord session, string projectId, CancellationToken cancellationToken) =>
         ProjectAsync(() => Client().Projects.GetAgentPolicyAsync(Bearer(session), Id(projectId), cancellationToken));

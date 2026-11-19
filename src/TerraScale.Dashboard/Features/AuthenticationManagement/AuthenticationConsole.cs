@@ -72,7 +72,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                 switch (parts)
                 {
                     case ["agents", "policy"]:
-                        await projects.UpdateAgentPolicyAsync(session, project, new(RestrictionList(form["allowed_scopes"])), cancel);
+                        await projects.UpdateAgentPolicyAsync(session, project, new(Lines(form["allowed_scopes"])), cancel);
                         break;
                     case ["agents", var agent, "revoke"]:
                         await projects.RevokeAgentAsync(session, project, agent, cancel);
@@ -262,7 +262,10 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                 return await PageViewAsync(http, context, projects, key, error, status);
             }
 
-            return HttpRedirects.SeeOther("/auth/" + key + "?saved=1" + (key == "agents" && http.Request.Query["agent"].ToString() is { Length: > 0 } agent ? "&agent=" + Uri.EscapeDataString(agent) : ""));
+            var query = key == "agents"
+                ? AuthenticationPage.Query(http.Request.Query["agent"].ToString(), http.Request.Query["owner"].ToString(), http.Request.Query["after"].ToString())
+                : QueryString.Empty;
+            return HttpRedirects.SeeOther("/auth/" + key + query.Add("saved", "1").ToString());
         }
 
         // At least one first factor stays on; ts-auth enforces the same rule.

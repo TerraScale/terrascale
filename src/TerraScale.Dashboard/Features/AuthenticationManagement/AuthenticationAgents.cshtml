@@ -8,7 +8,7 @@
     string Prefix(string value) => value[..Math.Min(12, value.Length)];
     string Detail(string id) => "/auth/agents?agent=" + Uri.EscapeDataString(id);
     string Owner(string id) => "/auth/users?user=" + Uri.EscapeDataString(id);
-    string Path(string path) => "/api/v1/auth-management/agents/" + path + (selected is null ? "" : "?agent=" + Uri.EscapeDataString(selected.Id));
+    string Path(string path) => "/api/v1/auth-management/agents/" + path + Model.AgentQuery.ToString();
     void Status(TsAuthAgent agent) {
         <span class="@(agent.Status == "active" ? "ts-badge ts-badge-success" : "ts-badge ts-badge-neutral")">@agent.Status</span>
     }
@@ -42,9 +42,9 @@
 @if (selected.Keys.Count == 0) { <div class="ts-empty" role="status"><p class="ts-empty-title">No keys.</p></div> }
 else {
 <div class="ts-table-wrap" tabindex="0" role="region" aria-label="Agent keys"><table class="ts-table ts-table-stacked"><thead><tr><th scope="col">Key ID</th><th scope="col">Thumbprint</th><th scope="col">Created</th><th scope="col">Revoked</th><th scope="col"><span class="ts-sr-only">Actions</span></th></tr></thead><tbody>
-@for (var index = 0; index < selected.Keys.Count; index++) { var key = selected.Keys[index];
+@foreach (var key in selected.Keys) {
 <tr><td class="ts-mono" data-label="Key ID">@Prefix(key.Kid)</td><td class="ts-mono" data-label="Thumbprint">@Prefix(key.Thumbprint)</td><td data-label="Created">@Date(key.CreatedAt)</td><td data-label="Revoked">@Date(key.RevokedAt, "Active")</td><td class="ts-table-actions">
-@if (manage && selected.Status == "active" && key.RevokedAt is null) { <button type="button" class="ts-btn ts-btn-danger ts-btn-sm" command="show-modal" commandfor="@("revoke-agent-key-" + index)">Revoke key</button> }
+@if (manage && selected.Status == "active" && key.RevokedAt is null) { <button type="button" class="ts-btn ts-btn-danger ts-btn-sm" command="show-modal" commandfor="@("revoke-agent-key-" + key.Kid)">Revoke key</button> }
 </td></tr>
 }
 </tbody></table></div>
@@ -52,13 +52,12 @@ else {
 </section>
 @if (manage && selected.Status == "active") {
 Dialog("revoke-agent", "Revoke " + selected.Name + "?", "It can no longer get tokens. Tokens it already holds expire within 10 minutes.", Uri.EscapeDataString(selected.Id) + "/revoke", "Revoke agent");
-@for (var index = 0; index < selected.Keys.Count; index++) { var key = selected.Keys[index]; if (key.RevokedAt is null) {
-Dialog("revoke-agent-key-" + index, "Revoke this key?", "The agent can still sign in with its other key, if it has one.", Uri.EscapeDataString(selected.Id) + "/keys/" + Uri.EscapeDataString(key.Kid) + "/revoke", "Revoke key");
+@foreach (var key in selected.Keys) { if (key.RevokedAt is null) {
+Dialog("revoke-agent-key-" + key.Kid, "Revoke this key?", "The agent can still sign in with its other key, if it has one.", Uri.EscapeDataString(selected.Id) + "/keys/" + Uri.EscapeDataString(key.Kid) + "/revoke", "Revoke key");
 } }
 }
 } else {
-<section class="ts-card ts-card-boxed ts-card-flush" aria-labelledby="auth-agents-title">
-<header class="ts-card-head"><h2 class="ts-card-title" id="auth-agents-title">Agents</h2></header>
+<section class="ts-card ts-card-boxed ts-card-flush ts-idp-settings" aria-labelledby="authentication-page-title">
 <div class="ts-card-body"><p>AI agents that act for your users. Each agent signs in with its own key; revoke it here to stop it at once.</p>
 <form class="ts-filters" method="get" action="/auth/agents"><div class="ts-field"><label class="ts-label" for="agent-owner">Owner user ID</label><input class="ts-input ts-mono" id="agent-owner" name="owner" value="@Model.AgentOwner" pattern="[0-9A-HJKMNP-TV-Z]{26}" placeholder="01…" data-on:change="el.form.requestSubmit()" /></div></form></div>
 @if (Model.Agents is null) { <div class="ts-empty" role="status"><p class="ts-empty-title">Agents are unavailable.</p></div> }

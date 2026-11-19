@@ -22,7 +22,7 @@ public sealed partial class TsAuthProjectsClient
         DeleteAsync(accessToken, projectId, "/agents/" + Id(agent), cancellationToken);
 
     public Task RevokeAgentKeyAsync(string accessToken, string projectId, string agent, string kid, CancellationToken cancellationToken) =>
-        DeleteAsync(accessToken, projectId, "/agents/" + Id(agent) + "/keys/" + Uri.EscapeDataString(kid), cancellationToken);
+        DeleteAsync(accessToken, projectId, "/agents/" + Id(agent) + "/keys/" + Id(kid), cancellationToken);
 
     public Task<TsAuthAgentPolicy> GetAgentPolicyAsync(string accessToken, string projectId, CancellationToken cancellationToken) =>
         SendAsync(HttpMethod.Get, accessToken, projectId, "/agent-policy", TsAuthAgentsJson.Default.TsAuthAgentPolicy, HttpStatusCode.OK, cancellationToken);
