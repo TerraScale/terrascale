@@ -126,7 +126,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             return await projects.UpdateSettingsAsync(context.Session, context.Project!.Id, new(methods, branding), Cancellation);
         }
 
-        [McpAccess(McpAccess.Write)]
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "auth_set_provider", Title = "Configure a social sign-in provider", Idempotent = true, UseStructuredContent = true, Destructive = false, OpenWorld = false),
          Description("Configure or update social sign-in: provider is google, github, apple, microsoft, gitlab, linkedin, slack, discord, facebook, x, oidc or oauth2. All take clientId (Apple: the Services ID) and clientSecret (Apple: the .p8 private key text), which is required the first time and kept when omitted. Apple also takes 10-character teamId and keyId; oidc takes an https issuer; microsoft takes tenant common, organizations or consumers; oauth2 takes HTTPS authorize, token and userinfo URLs, scopes and dotted id, email and email_verified claim paths in oauth2. Register the provider's callback_url from auth_get_overview at the provider. The secret is never returned. Requires the admin project role.")]
         public async Task<TsAuthProjectSettings> SetProvider(string provider, string clientId, string? clientSecret = null, string? issuer = null, string? teamId = null,

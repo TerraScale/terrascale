@@ -75,7 +75,7 @@ no marking.
 Destructive tools are refused to every agent with "Agents can't do this. Ask the account owner to do it in the
 TerraScale dashboard.": deleting databases, projects, files, functions, saved queries, users or OAuth applications;
 revoking API keys, tokens, sessions or invitations; creating or rotating credentials (API keys, scoped keys, OAuth
-applications); plan, checkout and billing changes, including creating an organization; member, role, invitation and
+applications) and configuring social sign-in providers; plan, checkout and billing changes, including creating an organization; member, role, invitation and
 ownership changes; IP allowlists, backup policies, audit retention and database TTLs; database rule deployments; and
 `execute_sql`. A write tool called with only `mcp:read` is refused too. An agent token never carries a platform role or
 two-factor state, so organizations that require two-factor authentication stay unavailable to it.
