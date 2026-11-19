@@ -1,7 +1,6 @@
 import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign, type KeyObject } from 'node:crypto';
 import type { APIRequestContext, Page } from '@playwright/test';
 import { Audit, auditedContext, expect, test } from '../support/audit';
-import { keyId } from '../support/api-key';
 import { authStorage, signInToken } from '../support/auth-management';
 import { hostedReady } from '../support/hosted';
 import { createProjectOwner } from '../support/project-owner';
@@ -55,21 +54,23 @@ async function openRequest(page: Page, audit: Audit, agent: Agent, label: string
 test('an agent enrolls itself and its owner approves it with a fresh verification', async ({ browser, request }, info) => {
   const account = await createProjectOwner(browser, info);
   const { page, current } = account;
-  const root = auth + '/v1/' + current.projectId;
   const run = randomBytes(4).toString('hex');
-  await page.goto('/api-keys?create=key');
-  const csrf = await page.locator('#create-key input[name="_csrf"]').inputValue();
-  const keys: string[] = [];
+  const ownerToken = await signInToken(page.request, 'agent-enroll-owner');
+  const owned = { Authorization: 'Bearer ' + ownerToken };
+  const projects = `${auth}/v1/terrascale/organizations/${current.organizationId}/projects`;
+  const projectName = 'Agent enrollment ' + run;
+  const createdProject = await page.request.post(projects, { headers: owned, data: { name: projectName } });
+  expect(createdProject.status()).toBe(201);
+  const projectId = (await createdProject.json()).id as string;
+  const root = auth + '/v1/' + projectId;
   const browserContext = await auditedContext(browser, { viewport: desktop, storageState: { cookies: [], origins: [] } });
   const otherContext = await auditedContext(browser, { viewport: desktop, storageState: { cookies: [], origins: [] } });
-  let otherUserId = '';
   try {
+    const keys: string[] = [];
     for (const level of ['read', 'write']) {
-      const created = await page.request.post('/api/v1/dashboard/credentials/key', {
-        headers: { Accept: 'application/json' }, form: { _csrf: csrf, name: `enroll-${run}-${level}`, scopes: `auth:${level}` },
-      });
+      const created = await page.request.post(`${projects}/${projectId}/api-keys`, { headers: owned, data: { name: `enroll ${level}`, scopes: [`auth:${level}`] } });
       expect(created.status()).toBe(201);
-      const key = (await created.json()).secret as string;
+      const key = (await created.json()).key as string;
       saveSecret(`agent-enroll-${level}`, key);
       keys.push(key);
     }
@@ -82,19 +83,13 @@ test('an agent enrolls itself and its owner approves it with a fresh verificatio
     const owner = await page.request.post(root + '/users', { headers: write, data: { email, password } });
     expect(owner.status()).toBe(201);
     const user = (await owner.json()).id as string;
-    const ownerToken = await signInToken(page.request, 'agent-enroll-owner');
-    const project = await page.request.get(`${auth}/v1/terrascale/organizations/${current.organizationId}/projects/${current.projectId}`, {
-      headers: { Authorization: 'Bearer ' + ownerToken },
-    });
-    expect(project.status()).toBe(200);
-    const projectName = (await project.json()).name as string;
 
     const refused = await request.post(root + '/agent-enrollments', {
       data: { name: 'Invoice agent', requested_scopes: ['invoices:read'], public_jwk: { ...agentKey().jwk, d: 'AAAA' } },
     });
     expect((await refused.json()).error.code).toBe('private_key_material');
     const agent = await Agent.start(request, root, { name: 'Invoice agent', requested_scopes: ['invoices:read', 'reports:read'], allow_self_subject: true });
-    expect(agent.enrollment).toMatchObject({ verification_uri: `${auth}/ui/${current.projectId}/agent-enrollments`, expires_in: 600, interval: 5 });
+    expect(agent.enrollment).toMatchObject({ verification_uri: `${auth}/ui/${projectId}/agent-enrollments`, expires_in: 600, interval: 5 });
     expect(agent.enrollment.user_code).toMatch(/^[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}$/);
     expect(agent.enrollment.verification_uri_complete).toBe(`${agent.enrollment.verification_uri}?user_code=${agent.enrollment.user_code}`);
 
@@ -111,11 +106,11 @@ test('an agent enrolls itself and its owner approves it with a fresh verificatio
     const browserPage = await browserContext.newPage();
     const audit = new Audit(browserPage, info);
     await browserPage.goto(agent.enrollment.verification_uri_complete);
-    await browserPage.waitForURL((url) => url.pathname === `/ui/${current.projectId}/sign-in`);
+    await browserPage.waitForURL((url) => url.pathname === `/ui/${projectId}/sign-in`);
     await hostedReady(browserPage);
     await browserPage.locator('#sign-in-email').fill(email);
     await browserPage.getByRole('button', { name: 'Use a password instead' }).click();
-    await browserPage.waitForURL((url) => url.pathname === `/ui/${current.projectId}/sign-in/password`);
+    await browserPage.waitForURL((url) => url.pathname === `/ui/${projectId}/sign-in/password`);
     await hostedReady(browserPage);
     await enterSecret(browserPage.locator('#sign-in-password'), password);
     await browserPage.getByRole('button', { name: 'Sign in', exact: true }).click();
@@ -132,32 +127,32 @@ test('an agent enrolls itself and its owner approves it with a fresh verificatio
     const otherEmail = `agent-other-${run}@example.com`;
     const otherUser = await page.request.post(root + '/users', { headers: write, data: { email: otherEmail, password } });
     expect(otherUser.status()).toBe(201);
-    otherUserId = (await otherUser.json()).id as string;
+    const otherUserId = (await otherUser.json()).id as string;
     const otherCreated = await page.request.post(`${root}/users/${otherUserId}/agents`, {
       headers: write, data: { name: 'Other agent', allowed_scopes: ['invoices:read'], public_jwk: agentKey().jwk },
     });
     expect(otherCreated.status()).toBe(201);
     const otherAgent = (await otherCreated.json()).id as string;
-    expect((await otherContext.request.post(`${auth}/ui/${current.projectId}/sign-in/password`, {
+    expect((await otherContext.request.post(`${auth}/ui/${projectId}/sign-in/password`, {
       headers: { Origin: auth }, form: { email: otherEmail, password },
     })).status()).toBe(200);
-    const crossSite = await browserContext.request.post(`${auth}/ui/${current.projectId}/agent-enrollments`, {
+    const crossSite = await browserContext.request.post(`${auth}/ui/${projectId}/agent-enrollments`, {
       headers: { Origin: dash }, form: { user_code: agent.enrollment.user_code, decision: 'approve' },
     });
     expect(crossSite.status()).toBe(403);
     const confirmation = await browserPage.locator('input[name=confirmation]').inputValue();
-    const forgedConfirmation = await browserContext.request.post(`${auth}/ui/${current.projectId}/agent-enrollments`, {
+    const forgedConfirmation = await browserContext.request.post(`${auth}/ui/${projectId}/agent-enrollments`, {
       headers: { Origin: auth }, form: { user_code: agent.enrollment.user_code, decision: 'approve', confirmation: 'forged' }, maxRedirects: 0,
     });
     expect(forgedConfirmation.status()).toBe(409);
     expect(await forgedConfirmation.text()).toContain('The request changed. Check it again before you approve.');
-    const otherAccount = await otherContext.request.post(`${auth}/ui/${current.projectId}/agent-enrollments`, {
+    const otherAccount = await otherContext.request.post(`${auth}/ui/${projectId}/agent-enrollments`, {
       headers: { Origin: auth }, form: { user_code: agent.enrollment.user_code, decision: 'approve', confirmation }, maxRedirects: 0,
     });
     expect(otherAccount.status()).toBe(409);
     expect(await otherAccount.text()).toContain('The request changed. Check it again before you approve.');
     await browserPage.getByRole('button', { name: 'Approve', exact: true }).click();
-    await browserPage.waitForURL((url) => url.pathname.startsWith(`/ui/${current.projectId}/step-up/`));
+    await browserPage.waitForURL((url) => url.pathname.startsWith(`/ui/${projectId}/step-up/`));
     await hostedReady(browserPage);
     await expect(browserPage.getByRole('heading', { level: 1 })).toHaveText('Approve an AI agent');
     await audit.check('agent approval verification');
@@ -198,11 +193,11 @@ test('an agent enrolls itself and its owner approves it with a fresh verificatio
       expect((await stale.poll()).body.error?.code).toBe('authorization_pending');
       const aged = Date.now() - 20 * 60_000;
       await authStorage('UPDATE agent_enrollments SET created_at = ?, expires_at = ? WHERE project_id = ? AND id = ?',
-        [new Date(aged).toISOString(), new Date(aged + 600_000).toISOString(), current.projectId, stale.enrollment.enrollment_id]);
+        [new Date(aged).toISOString(), new Date(aged + 600_000).toISOString(), projectId, stale.enrollment.enrollment_id]);
       audit.expectStatus(new RegExp(`/agent-enrollments\\?user_code=${stale.enrollment.user_code}$`), 400);
       await browserPage.goto(stale.enrollment.verification_uri_complete);
       await expect(browserPage.locator('#agent-enrollment-error')).toHaveText('That code is wrong or expired. Start again from the agent.');
-      const lateDecision = await browserContext.request.post(`${auth}/ui/${current.projectId}/agent-enrollments`, {
+      const lateDecision = await browserContext.request.post(`${auth}/ui/${projectId}/agent-enrollments`, {
         headers: { Origin: auth }, form: { user_code: stale.enrollment.user_code, decision: 'deny' },
       });
       expect(lateDecision.status()).toBe(400);
@@ -224,16 +219,10 @@ test('an agent enrolls itself and its owner approves it with a fresh verificatio
     expect(revoked.status).toBe('revoked');
 
     await audit.finish();
-    for (const id of [user, otherUserId]) expect((await page.request.delete(`${root}/users/${id}`, { headers: write })).status()).toBe(204);
   } finally {
     await browserContext.close();
     await otherContext.close();
-    for (const key of keys) {
-      const revoked = await page.request.post('/api/v1/dashboard/credentials/revoke', {
-        headers: { Accept: 'application/json' }, form: { _csrf: csrf, keyId: keyId(key) },
-      });
-      expect(revoked.status()).toBe(204);
-    }
+    expect((await page.request.delete(`${projects}/${projectId}`, { headers: owned })).status()).toBe(204);
     await account.close();
   }
 });
