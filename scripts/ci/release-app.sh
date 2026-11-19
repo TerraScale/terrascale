@@ -43,22 +43,23 @@ select_release() {
   fi
   echo "SELECTED $repository@$digest: release tag verified" | tee -a "$summary"
 }
-select_bounded() {
-  local repository=$1 status
-  if timeout --kill-after=5 120 bash -euo pipefail -c "select_release \"\$1\"" _ "$repository"; then
-    return 0
-  else
-    status=$?
-    printf '::error::Release selection failed or exceeded its two-minute deadline for %s (exit %s)\n' "$repository" "$status" | tee -a "$summary" >&2
-    return "$status"
-  fi
-}
 bash "$(dirname "$0")/fetch-ts-orch.sh" "$work"
 export -f select_release
 export digest summary
+while IFS= read -r repository; do
+  [[ $repository == */terrascale-stg/* ]] || continue
+  if timeout --kill-after=5 120 bash -euo pipefail -c "select_release \"\$1\"" _ "$repository"; then
+    continue
+  else
+    status=$?
+    printf '::error::Staging selection failed or exceeded its two-minute deadline for %s (exit %s)\n' "$repository" "$status" | tee -a "$summary" >&2
+    exit "$status"
+  fi
+done <<< "$repositories"
 pids=()
 while IFS= read -r repository; do
-  select_bounded "$repository" &
+  [[ $repository != */terrascale-stg/* ]] || continue
+  select_release "$repository" &
   pids+=("$!")
 done <<< "$repositories"
 result=0

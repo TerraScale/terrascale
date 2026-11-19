@@ -7,7 +7,8 @@ node is a cell of its own, named `local`, in any environment:
   interface outside Development. In a cluster, metrics also binds the node's internal peer address.
 - No peer discovery.
 - Outside Development, `TERRABASE_AUTH_ISSUER` and `TERRABASE_AUTH_AUDIENCE` name the ts-auth of the node's environment
-  (production: `https://auth.terrascale.tech/terrascale` and `https://api.terrascale.tech`). Without them the node refuses to
+  (production: `https://auth.terrascale.tech/terrascale` and `https://api.terrascale.tech`; staging:
+  `https://stg.auth.terrascale.tech/terrascale` and `https://stg.api.terrascale.tech`). Without them the node refuses to
   start; it never falls back to production's pair.
 - Continuous backup is still required outside Development: the Tigris bucket variables and `TERRABASE_MASTER_KEY`
   ([backup.md](backup.md)). The catalog opens only after the node reads its anchor from that bucket: with an unreachable bucket the node is live but never seeds the platform databases.

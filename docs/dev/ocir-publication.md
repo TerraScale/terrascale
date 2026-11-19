@@ -2,7 +2,8 @@
 
 GitHub Actions publishes the same Linux arm64 manifest to GHCR and to
 `us-sanjose-1.ocir.io`, `eu-frankfurt-1.ocir.io` and
-`sa-saopaulo-1.ocir.io` during the registry migration.
+`sa-saopaulo-1.ocir.io` during the registry migration. Staging also receives
+the same digest at `us-sanjose-1.ocir.io/<namespace>/terrascale-stg/<pkg>`.
 The production OCIR repository is `<namespace>/terrascale/<pkg>`, where the package is
 `terrabase`, `ts-auth` or `terrascale-dashboard`. `OCIR_NAMESPACE` is the
 repository variable identifying the OCI tenancy's registry namespace.
@@ -23,8 +24,8 @@ attachment, checks its subject and artifact type, downloads its layer and
 compares the bytes with the original signed bundle.
 
 Before regional publication, each publisher job exercises the same commands
-against the three production repositories in its local registry service, using
-its actual image and GitHub-signed bundles. This proves the registry transfer without
+against four repositories in its local registry service, using its actual
+image and GitHub-signed bundles. This proves the registry transfer without
 requiring OCI credentials on a development machine.
 
 The existing PR lint job runs a cheaper transport proof with a public arm64
@@ -39,16 +40,23 @@ signs a separate selection with predicate type
 `https://terrascale.tech/attestations/release-selection/v1` and the service and
 revision fields. `cosign attest-blob` signs the exact raw child manifest into
 a bundle file after its SHA-256 is checked against the image digest. ORAS
-attaches those same bundle bytes in all three OCIR destinations and GHCR.
+attaches those same bundle bytes in all four OCIR destinations and GHCR.
 All selection attachments must verify
 before any regional `:release` pointer moves. GHCR publication and its release
 pointer continue during migration.
 
-For TerraBase, auth and dashboard, `release-app.sh` selects every production
-`:release` tag at once. Each region's tag write and read-back share a
-two-minute deadline; an error or expiry reports that repository and fails
-selection. TerraBase requires an explicit `workflow_dispatch` release
-selection; build-only publication does not move a release tag.
+For TerraBase, auth and dashboard, `release-app.sh` selects staging's tag
+synchronously and reads it back to verify the selected digest before any
+production tag moves. Both staging operations share a two-minute deadline;
+an error or expiry reports the staging repository and stops selection.
+Staging does not participate in the separate production rollout wait.
+TerraBase requires an explicit `workflow_dispatch` release selection;
+build-only publication cannot supply its missing staging release tag.
+On a fresh staging cell, TerraBase must become ready before auth is created,
+and auth must become ready before dashboard is created. Both applications
+depend on TerraBase for readiness. A failed first rollout otherwise rolls
+back to absence and retains its signed floor, requiring a newer signed run
+or attempt after its cause is repaired.
 Production pointers move together to the same digest, followed by the retained GHCR pointer. The separate
 `Wait for rollout` step observes all three production regions with one
 `release wait`, using its existing timeout. The orchestrator owns rollout order.
