@@ -46,13 +46,17 @@ public sealed class LiveAgents(AuthData data, TimeProvider clock)
     }
 }
 
-public sealed class AgentExchange(KeyRing ring, LiveAgents live, AuthData data, AuthOptions options, TimeProvider clock, ILogger<AgentExchange> logger)
+public sealed class AgentExchange(KeyRing ring, LiveAgents live, AuthOptions options, TimeProvider clock, ILogger<AgentExchange> logger)
 {
     public const string GrantType = "urn:terrascale:params:oauth:grant-type:agent-exchange";
 
     public const string SubjectTokenType = "urn:ietf:params:oauth:token-type:access_token";
 
     internal const string SubjectExpiry = "ts-auth:agent-subject-expiry";
+
+    internal const string Fence = "ts-auth:agent-fence";
+
+    internal const string FenceBroken = "ts-auth:agent-fence-broken";
 
     private const int MaxTokenLength = 8 * 1024;
 
@@ -90,11 +94,6 @@ public sealed class AgentExchange(KeyRing ring, LiveAgents live, AuthData data, 
             return this.Refuse(agentId, "agent, key or owner not active");
         }
 
-        if (!await data.SaveAsync([Change.Assert(current.Agent), Change.Assert(current.Owner)], cancellationToken).ConfigureAwait(false))
-        {
-            return this.Refuse(agentId, "agent or owner changed during the exchange");
-        }
-
         var lifetime = TimeSpan.FromSeconds(Math.Floor(Math.Min(OidcIssuer.TokenLifetime.TotalSeconds, (expires - clock.GetUtcNow()).TotalSeconds)));
         if (lifetime <= TimeSpan.Zero)
         {
@@ -102,6 +101,7 @@ public sealed class AgentExchange(KeyRing ring, LiveAgents live, AuthData data, 
         }
 
         context.Items[SubjectExpiry] = expires;
+        context.Items[Fence] = current;
         logger.ZLogInformation($"Agent token exchanged for agent {agentId} of owner {ownerId}");
         return OidcResults.SignIn(options, current.Owner.Value with { MultiFactor = false, MfaMethod = null, SessionId = null }, current.Agent.Value.CreatedAt, [],
             OidcIssuer.SignInAudiences(options),

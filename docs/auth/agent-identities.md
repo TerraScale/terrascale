@@ -341,8 +341,9 @@ grant_type=urn:terrascale:params:oauth:grant-type:agent-exchange&subject_token=<
   change since).
 - Every refusal of the subject token or the agent is `400 invalid_grant` with the same description.
 
-ts-auth reads the agent and its owner from the home region and asserts both rows' versions in a save before it issues
-the token, so a revocation, sign-out everywhere or disable that commits first makes the exchange fail. The answer is a
+ts-auth reads the agent and its owner from the home region, and the save that stores the new token's entry asserts
+both rows' versions. When either changed in between (a revocation, sign-out everywhere or disable committed), the
+entry is stored revoked and the answer is `400 invalid_grant`, so no token minted after such a change leaves ts-auth. The answer is a
 token response with `access_token`, `token_type: Bearer` and `expires_in`: 300 seconds, or less. The signed `exp` is
 capped at the subject token's `exp` when the token is generated, and a subject token that expired by then is refused,
 so the owner token never outlives it. There is no refresh token, no ID token and no scope. The access token is the

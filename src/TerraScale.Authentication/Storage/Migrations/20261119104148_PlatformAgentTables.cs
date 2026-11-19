@@ -5,51 +5,13 @@
 namespace TerraScale.Authentication.Storage.Migrations
 {
     /// <inheritdoc />
-    public partial class PlatformAgents : Migration
+    public partial class PlatformAgentTables : Migration
     {
-        private static readonly (string Table, string Columns)[] Tables =
-        [
-            ("agents", "project_id, id, owner_user_id, name, status, allowed_scopes, allow_self_subject, created_at, expires_at, revoked_at, last_used_at, owner_auth_epoch, owner_auth_stamp, version"),
-            ("agent_keys", "project_id, kid, agent_id, public_jwk, thumbprint, created_at, revoked_at, version"),
-            ("agent_assertions", "project_id, agent_id, jti, keep_until, version"),
-            ("agent_enrollments", "project_id, id, user_code_hash, name, requested_scopes, allow_self_subject, public_jwk, thumbprint, status, created_at, expires_at, user_id, agent_id, kid, last_poll_at, last_proof_issued_at, version"),
-        ];
-
         /// <inheritdoc />
-        protected override void Up(MigrationBuilder migrationBuilder) => Rebuild(migrationBuilder, projectKeys: false);
-
-        /// <inheritdoc />
-        protected override void Down(MigrationBuilder migrationBuilder) => Rebuild(migrationBuilder, projectKeys: true);
-
-        private static void Rebuild(MigrationBuilder migrationBuilder, bool projectKeys)
-        {
-            foreach (var (table, columns) in Tables)
-            {
-                migrationBuilder.Sql($"CREATE TABLE {table}_rebuild ({columns});");
-                migrationBuilder.Sql($"INSERT INTO {table}_rebuild ({columns}) SELECT {columns} FROM {table};");
-            }
-
-            foreach (var (table, _) in Enumerable.Reverse(Tables))
-            {
-                migrationBuilder.DropTable(name: table);
-            }
-
-            Create(migrationBuilder, projectKeys);
-            foreach (var (table, columns) in Tables)
-            {
-                migrationBuilder.Sql($"INSERT INTO {table} ({columns}) SELECT {columns} FROM {table}_rebuild;");
-            }
-
-            foreach (var (table, _) in Enumerable.Reverse(Tables))
-            {
-                migrationBuilder.Sql($"DROP TABLE {table}_rebuild;");
-            }
-        }
-
-        private static void Create(MigrationBuilder migrationBuilder, bool projectKeys)
+        protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.CreateTable(
-                name: "agents",
+                name: "agents_rebuilt",
                 columns: table => new
                 {
                     project_id = table.Column<string>(type: "TEXT", nullable: false),
@@ -72,16 +34,6 @@ namespace TerraScale.Authentication.Storage.Migrations
                     table.PrimaryKey("PK_agents", x => new { x.project_id, x.id });
                     table.CheckConstraint("ck_agents_expiry", "expires_at IS NULL OR expires_at > created_at");
                     table.CheckConstraint("ck_agents_status", "status IN ('active', 'revoked') AND (status = 'revoked') = (revoked_at IS NOT NULL)");
-                    if (projectKeys)
-                    {
-                        table.ForeignKey(
-                            name: "FK_agents_projects_project_id",
-                            column: x => x.project_id,
-                            principalTable: "projects",
-                            principalColumn: "id",
-                            onDelete: ReferentialAction.Cascade);
-                    }
-
                     table.ForeignKey(
                         name: "FK_agents_users_owner_user_id",
                         column: x => x.owner_user_id,
@@ -91,7 +43,7 @@ namespace TerraScale.Authentication.Storage.Migrations
                 });
 
             migrationBuilder.CreateTable(
-                name: "agent_keys",
+                name: "agent_keys_rebuilt",
                 columns: table => new
                 {
                     project_id = table.Column<string>(type: "TEXT", nullable: false),
@@ -109,13 +61,13 @@ namespace TerraScale.Authentication.Storage.Migrations
                     table.ForeignKey(
                         name: "FK_agent_keys_agents_project_id_agent_id",
                         columns: x => new { x.project_id, x.agent_id },
-                        principalTable: "agents",
+                        principalTable: "agents_rebuilt",
                         principalColumns: new[] { "project_id", "id" },
                         onDelete: ReferentialAction.Cascade);
                 });
 
             migrationBuilder.CreateTable(
-                name: "agent_assertions",
+                name: "agent_assertions_rebuilt",
                 columns: table => new
                 {
                     project_id = table.Column<string>(type: "TEXT", nullable: false),
@@ -130,13 +82,13 @@ namespace TerraScale.Authentication.Storage.Migrations
                     table.ForeignKey(
                         name: "FK_agent_assertions_agents_project_id_agent_id",
                         columns: x => new { x.project_id, x.agent_id },
-                        principalTable: "agents",
+                        principalTable: "agents_rebuilt",
                         principalColumns: new[] { "project_id", "id" },
                         onDelete: ReferentialAction.Cascade);
                 });
 
             migrationBuilder.CreateTable(
-                name: "agent_enrollments",
+                name: "agent_enrollments_rebuilt",
                 columns: table => new
                 {
                     project_id = table.Column<string>(type: "TEXT", nullable: false),
@@ -165,19 +117,9 @@ namespace TerraScale.Authentication.Storage.Migrations
                     table.ForeignKey(
                         name: "FK_agent_enrollments_agents_project_id_agent_id",
                         columns: x => new { x.project_id, x.agent_id },
-                        principalTable: "agents",
+                        principalTable: "agents_rebuilt",
                         principalColumns: new[] { "project_id", "id" },
                         onDelete: ReferentialAction.Cascade);
-                    if (projectKeys)
-                    {
-                        table.ForeignKey(
-                            name: "FK_agent_enrollments_projects_project_id",
-                            column: x => x.project_id,
-                            principalTable: "projects",
-                            principalColumn: "id",
-                            onDelete: ReferentialAction.Cascade);
-                    }
-
                     table.ForeignKey(
                         name: "FK_agent_enrollments_users_user_id",
                         column: x => x.user_id,
@@ -185,53 +127,15 @@ namespace TerraScale.Authentication.Storage.Migrations
                         principalColumn: "id",
                         onDelete: ReferentialAction.Cascade);
                 });
+        }
 
-            migrationBuilder.CreateIndex(
-                name: "IX_agents_owner_user_id",
-                table: "agents",
-                column: "owner_user_id");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_agents_project_id_owner_user_id",
-                table: "agents",
-                columns: new[] { "project_id", "owner_user_id" });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_agent_keys_project_id_agent_id",
-                table: "agent_keys",
-                columns: new[] { "project_id", "agent_id" });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_agent_keys_project_id_thumbprint",
-                table: "agent_keys",
-                columns: new[] { "project_id", "thumbprint" },
-                unique: true);
-
-            migrationBuilder.CreateIndex(
-                name: "IX_agent_assertions_keep_until",
-                table: "agent_assertions",
-                column: "keep_until");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_agent_enrollments_expires_at",
-                table: "agent_enrollments",
-                column: "expires_at");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_agent_enrollments_project_id_agent_id",
-                table: "agent_enrollments",
-                columns: new[] { "project_id", "agent_id" });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_agent_enrollments_project_id_user_code_hash",
-                table: "agent_enrollments",
-                columns: new[] { "project_id", "user_code_hash" },
-                unique: true);
-
-            migrationBuilder.CreateIndex(
-                name: "IX_agent_enrollments_user_id",
-                table: "agent_enrollments",
-                column: "user_id");
+        /// <inheritdoc />
+        protected override void Down(MigrationBuilder migrationBuilder)
+        {
+            migrationBuilder.DropTable(name: "agent_enrollments_rebuilt");
+            migrationBuilder.DropTable(name: "agent_assertions_rebuilt");
+            migrationBuilder.DropTable(name: "agent_keys_rebuilt");
+            migrationBuilder.DropTable(name: "agents_rebuilt");
         }
     }
 }

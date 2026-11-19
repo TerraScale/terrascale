@@ -84,6 +84,12 @@ transaction.
   ([platform bootstrap](platform-bootstrap.md)), registers the configured OIDC clients and provisions the first
   signing key. Concurrent replicas are safe: the provider's migrations lock applies each migration once, and the seed
   is create-only, so the losers read the winner's rows. A fresh, empty database comes up fully working.
+- After the migrations, startup finishes the agent table rebuild while `agents_rebuilt` exists (`AgentTableRebuild`):
+  the `PlatformAgentTables` migration creates the four `*_rebuilt` tables without the `projects` foreign keys; each
+  replica copies the old rows once in batches of 500, one transaction each, parents first and restartable; then one
+  transaction re-checks that `agents_rebuilt` still exists, replaces the rows written meanwhile (by `version`), drops the
+  old tables children first, renames the new ones and creates their indexes. A replica that finds no `agents_rebuilt`
+  does nothing.
 - `AuthSchema.Ready` completes once that bootstrap has succeeded. Every hosted worker (the sign-in mail outbox,
   closures, deletion cleanup, session pruning) and the readiness loop wait for it before their first pass, so nothing
   touches a table before it exists and `/readyz` stays `not_ready` until then. A failed bootstrap logs a warning naming

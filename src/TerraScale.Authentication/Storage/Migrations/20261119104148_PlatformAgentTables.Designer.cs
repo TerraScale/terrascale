@@ -11,8 +11,8 @@ using TerraScale.Authentication.Storage;
 namespace TerraScale.Authentication.Storage.Migrations
 {
     [DbContext(typeof(AuthDbContext))]
-    [Migration("20261119092833_PlatformAgents")]
-    partial class PlatformAgents
+    [Migration("20261119104148_PlatformAgentTables")]
+    partial class PlatformAgentTables
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)

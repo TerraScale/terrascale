@@ -47,3 +47,17 @@ public sealed class LimitAgentOwnerToken(TimeProvider clock) : IOpenIddictServer
         return ValueTask.CompletedTask;
     }
 }
+
+public sealed class RefuseUnfencedAgentToken : IOpenIddictServerHandler<GenerateTokenContext>
+{
+    public ValueTask HandleAsync(GenerateTokenContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        if (context.Transaction.GetHttpRequest()?.HttpContext.Items[AgentExchange.FenceBroken] is true)
+        {
+            context.Reject(Errors.InvalidGrant, "The subject token is not a live delegated agent token of the TerraScale platform.");
+        }
+
+        return ValueTask.CompletedTask;
+    }
+}
