@@ -35,6 +35,7 @@ const hostedPages: readonly RegExp[] = [
   /^\/ui\/terrascale\/reset$/,
   /^\/ui\/terrascale\/security$/,
   /^\/ui\/terrascale\/step-up\/[^/]+$/,
+  /^\/ui\/[0-9A-HJKMNP-TV-Z]{26}\/(agent-enrollments|step-up\/[^/]+)$/,
 ];
 
 const excludedPages: readonly { path: RegExp; reason: string }[] = [

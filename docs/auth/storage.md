@@ -43,6 +43,7 @@ The database enforces the invariants the code relies on:
 | An agent's assertion `jti` is used once | `agent_assertions` primary key `(project_id, agent_id, jti)`, kept 10 minutes past the assertion's accepted window |
 | One registration per agent public key in a project | `agent_keys` unique `(project_id, thumbprint)`, revoked keys included |
 | Agents and agent keys go with their owner or project | `agents.owner_user_id`, `agents.project_id`, `agent_keys (project_id, agent_id)` and `agent_assertions (project_id, agent_id)` cascade deletes ([agent identities](agent-identities.md)) |
+| One live user code per project; an enrollment goes with its project, approver and agent | `agent_enrollments` unique `(project_id, user_code_hash)`; `project_id`, `user_id` and `(project_id, agent_id)` cascade deletes ([agent identities](agent-identities.md#enrollment)) |
 | Roles, statuses and counters stay in range | check constraints (`ck_*`) |
 
 A unique, primary-key or foreign-key violation and a stale `version` are conflicts: `AuthData.SaveAsync` answers

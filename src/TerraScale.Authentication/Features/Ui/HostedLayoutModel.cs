@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using TerraScale.Authentication.Features.Email;
+using TerraScale.Authentication.Features.ProjectTenants;
 
 namespace TerraScale.Authentication.Features.Ui;
 
@@ -50,6 +51,13 @@ public sealed partial record HostedLayoutModel
         this.BackgroundColor = ValidColor(backgroundColor);
         this.TextColor = ValidColor(textColor);
         this.Palette = HostedPalette.Css(this.AccentColor, this.BackgroundColor, this.TextColor);
+    }
+
+    public static HostedLayoutModel Themed(string title, string nonce, HostedTheme theme, string tenant, string? locale)
+    {
+        ArgumentNullException.ThrowIfNull(theme);
+        return new(title, nonce, theme.ThemeColor, theme.LogoUrl, theme.Name, theme.TitleSize, theme.FooterLinks?.Select(link => (link.Label, link.Url)).ToArray(),
+            theme.DefaultTheme, tenant, theme.BackgroundColor, theme.TextColor, locale);
     }
 
     /// <summary>Page title, shown as <c>{title} · {name}</c>.</summary>

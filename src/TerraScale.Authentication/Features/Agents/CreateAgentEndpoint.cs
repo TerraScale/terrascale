@@ -17,6 +17,6 @@ public sealed class CreateAgentEndpoint(TenantDirectory tenants, PlatformAuthent
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(AgentJson.Default.CreateAgentRequest, cancellationToken);
-        return Results.Json(await agents.CreateAsync(project, this.RouteId("user"), caller.Id, request, cancellationToken), AgentJson.Default.AgentBody, statusCode: 201);
+        return Results.Json(await agents.CreateAsync(project, this.RouteId("user"), caller.Id, request, static _ => [], null, cancellationToken), AgentJson.Default.AgentBody, statusCode: 201);
     }
 }

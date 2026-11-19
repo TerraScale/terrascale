@@ -14,7 +14,7 @@ public sealed class RevokeAgentEndpoint(TenantDirectory tenants, PlatformAuthent
     protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
-        await agents.RevokeAsync(project, this.RouteId("agent"), caller.Id, cancellationToken);
+        await agents.RevokeAsync(project, this.RouteId("agent"), null, caller.Id, cancellationToken);
         return Results.NoContent();
     }
 }

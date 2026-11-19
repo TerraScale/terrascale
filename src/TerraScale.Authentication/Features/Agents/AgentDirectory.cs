@@ -53,9 +53,11 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
         return new(scopes);
     }
 
-    public async Task<AgentBody> CreateAsync(string project, string userId, string actor, CreateAgentRequest request, CancellationToken cancellationToken)
+    public async Task<AgentBody> CreateAsync(string project, string userId, string actor, CreateAgentRequest request, Func<AgentKeyRecord, IReadOnlyList<Change>> bound,
+        DateTimeOffset? deadline, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(bound);
         var now = clock.GetUtcNow();
         var name = PlatformDirectory.Name(request.Name);
         var policy = await data.ReadAsync((db, token) => db.AgentPolicies.Where(row => row.ProjectId == project).WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
@@ -89,7 +91,7 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
         var stored = new AgentKeyRecord(project, AuthIds.New(), agent.Id, key.Jwk, key.Thumbprint, now, null);
         await this.SaveAsync(project, actor, "agent.created", agent.Id, key.Thumbprint,
             [Change.Insert(agent), Change.Insert(stored), Change.Assert(policy), Change.Update(user, user.Value),
-                events.Created(project, userId, agent.Id, stored.Kid)], cancellationToken).ConfigureAwait(false);
+                events.Created(project, userId, agent.Id, stored.Kid), .. bound(stored)], cancellationToken, deadline).ConfigureAwait(false);
         return Body(agent, [stored], new(user.Value.Id, user.Value.AuthEpoch, stamp, false));
     }
 
@@ -156,10 +158,10 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
                 events.KeyRevoked(project, agent.Value.OwnerUserId, agentId, kid)], cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task RevokeAsync(string project, string agentId, string actor, CancellationToken cancellationToken)
+    public async Task RevokeAsync(string project, string agentId, string? owner, string actor, CancellationToken cancellationToken)
     {
         var (agent, keys) = await data.ReadAsync(async (db, token) => (
-            await db.Agents.Where(row => row.ProjectId == project && row.Id == agentId).WithVersion().SingleOrDefaultAsync(token).ConfigureAwait(false),
+            await db.Agents.Where(row => row.ProjectId == project && row.Id == agentId && (owner == null || row.OwnerUserId == owner)).WithVersion().SingleOrDefaultAsync(token).ConfigureAwait(false),
             await db.AgentKeys.Where(row => row.ProjectId == project && row.AgentId == agentId && row.RevokedAt == null).WithVersion().ToListAsync(token).ConfigureAwait(false)),
             cancellationToken).ConfigureAwait(false);
         if (agent is null)
@@ -212,9 +214,15 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
 
     private static AgentKeyBody KeyBody(AgentKeyRecord key) => new(key.Kid, key.Thumbprint, key.CreatedAt, key.RevokedAt);
 
-    private async Task SaveAsync(string project, string actor, string action, string target, string? thumbprint, IReadOnlyList<Change> changes, CancellationToken cancellationToken)
+    private async Task SaveAsync(string project, string actor, string action, string target, string? thumbprint, IReadOnlyList<Change> changes, CancellationToken cancellationToken,
+        DateTimeOffset? deadline = null)
     {
         var owner = await platform.ProjectAsync(project, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+        if (deadline <= clock.GetUtcNow())
+        {
+            throw new ApiException(409, "approval_expired", "The approval deadline passed before the agent could be stored.");
+        }
+
         if (await data.SaveAsync([.. changes, platform.Audit(owner.Value.OrganizationId, actor, action, target)], cancellationToken).ConfigureAwait(false))
         {
             return;

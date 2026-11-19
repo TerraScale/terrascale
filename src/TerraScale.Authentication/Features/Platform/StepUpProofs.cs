@@ -63,6 +63,8 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
 
     public const string Header = "X-TerraScale-Step-Up-Proof";
 
+    public const string ApproveAgent = "approve_agent";
+
     public const string DeletionAuthorizationHeader = "X-TerraScale-Deletion-Authorization";
 
     public async Task<UserRecord> ConsumeHeaderAsync(UserRecord caller, HttpRequest request, string purpose, string? organizationId, CancellationToken cancellationToken)
@@ -81,7 +83,7 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
     {
         ArgumentNullException.ThrowIfNull(caller);
         ArgumentNullException.ThrowIfNull(request);
-        if (!Pair(request.Purpose, request.Audience)
+        if (!Pair(request.Purpose, request.Audience) || request.Purpose == ApproveAgent
             || Bound(request.Purpose) != (request.OrganizationId is not null)
             || request.OrganizationId is not null && !ValidBinding(request.Purpose, request.OrganizationId)
             || !Uri.TryCreate(request.ReturnUri, UriKind.Absolute, out var callback)
@@ -91,6 +93,14 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
             throw new ApiException(400, "invalid_request", "Use a supported purpose/audience and the registered dashboard origin's /auth/step-up/callback.");
         }
 
+        return await this.IssueAsync(caller, request.Purpose, request.Audience, callback, request.OrganizationId, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal Task<StepUpBody> RequestAgentApprovalAsync(UserRecord caller, string enrollmentId, string returnPath, CancellationToken cancellationToken) =>
+        this.IssueAsync(caller, ApproveAgent, "ts-auth", new Uri(options.PublicOrigin, returnPath), enrollmentId, cancellationToken);
+
+    private async Task<StepUpBody> IssueAsync(UserRecord caller, string purpose, string audience, Uri returnUri, string? binding, CancellationToken cancellationToken)
+    {
         if (!await limiter.TryAcquireAsync(caller.InstanceId, "step-up-issuance", caller.Id, MaxRequests, RequestWindow, cancellationToken).ConfigureAwait(false))
         {
             throw new ApiException(429, "rate_limited", "Too many verification requests; retry after fifteen minutes.");
@@ -99,13 +109,13 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
         var id = AuthIds.New();
         var secret = id + "." + Tokens.RandomToken(43);
         var record = new StepUpRecord(caller.InstanceId, id, caller.Id, caller.AuthEpoch, caller.AuthStamp, Tokens.Sha256Hex(secret),
-            request.Purpose, request.Audience, callback.AbsoluteUri, clock.GetUtcNow().AddMinutes(5), OrganizationId: request.OrganizationId);
+            purpose, audience, returnUri.AbsoluteUri, clock.GetUtcNow().AddMinutes(5), OrganizationId: binding);
         if (!await data.SaveAsync([Change.Assert(caller), Change.Insert(record)], cancellationToken).ConfigureAwait(false))
         {
             throw Required();
         }
 
-        return new StepUpBody(secret, new Uri(options.PublicOrigin, "/ui/terrascale/step-up/" + id).AbsoluteUri, record.ExpiresAt);
+        return new StepUpBody(secret, new Uri(options.PublicOrigin, $"/ui/{caller.InstanceId}/step-up/{id}").AbsoluteUri, record.ExpiresAt);
     }
 
     internal async Task<(StepUpRecord Record, string Version)?> ReadAsync(UserRecord caller, string id, CancellationToken cancellationToken)
@@ -267,7 +277,7 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
     private static bool Pair(string purpose, string audience) => audience switch
     {
         "ts-dashboard" => purpose is "delete_account" or "create_pat",
-        "ts-auth" => purpose is "delete_account" or "delete_organization" or "start_ownership_transfer" or "change_plan" or "delete_passkey" or "rotate_api_key" or "create_oauth_client" or "update_oauth_client" or "rotate_oauth_client" or "change_email" or "add_passkey" or "create_webhook_endpoint" or "rotate_webhook_secret" or "start_impersonation",
+        "ts-auth" => purpose is "delete_account" or "delete_organization" or "start_ownership_transfer" or "change_plan" or "delete_passkey" or ApproveAgent or "rotate_api_key" or "create_oauth_client" or "update_oauth_client" or "rotate_oauth_client" or "change_email" or "add_passkey" or "create_webhook_endpoint" or "rotate_webhook_secret" or "start_impersonation",
         _ => false,
     };
     private static bool ValidBinding(string purpose, string binding) =>
@@ -275,7 +285,7 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
             ? binding.Split(':') is [var project, var target] && PlatformDirectory.IsId(project) && PlatformDirectory.IsId(target)
             : PlatformDirectory.IsId(binding);
 
-    private static bool Bound(string purpose) => purpose is "start_impersonation" or "delete_organization" or "start_ownership_transfer" or "change_plan";
+    private static bool Bound(string purpose) => purpose is "start_impersonation" or "delete_organization" or "start_ownership_transfer" or "change_plan" or ApproveAgent;
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow, RespectRequiredConstructorParameters = true)]

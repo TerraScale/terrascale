@@ -1424,6 +1424,109 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.ToTable("agent_assertions", (string)null);
                 });
 
+            modelBuilder.Entity("TerraScale.Authentication.Features.Agents.AgentEnrollmentRecord", b =>
+                {
+                    b.Property<string>("ProjectId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AgentId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("agent_id");
+
+                    b.Property<bool>("AllowSelfSubject")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("allow_self_subject");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("expires_at");
+
+                    b.Property<string>("Kid")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("kid");
+
+                    b.Property<DateTime?>("LastPollAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_poll_at");
+
+                    b.Property<long?>("LastProofIssuedAt")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("last_proof_issued_at");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name");
+
+                    b.Property<string>("PublicJwk")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("public_jwk");
+
+                    b.Property<string>("RequestedScopes")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("requested_scopes");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(9)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("status");
+
+                    b.Property<string>("Thumbprint")
+                        .IsRequired()
+                        .HasMaxLength(43)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("thumbprint");
+
+                    b.Property<string>("UserCodeHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_code_hash");
+
+                    b.Property<string>("UserId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("user_id");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("ProjectId", "Id");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("ProjectId", "AgentId");
+
+                    b.HasIndex("ProjectId", "UserCodeHash")
+                        .IsUnique();
+
+                    b.ToTable("agent_enrollments", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_agent_enrollments_expiry", "expires_at > created_at");
+
+                            t.HasCheckConstraint("ck_agent_enrollments_status", "status IN ('pending', 'approved', 'denied', 'collected') AND (status = 'pending') = (user_id IS NULL) AND (status IN ('approved', 'collected')) = (agent_id IS NOT NULL AND kid IS NOT NULL)");
+                        });
+                });
+
             modelBuilder.Entity("TerraScale.Authentication.Features.Agents.AgentKeyRecord", b =>
                 {
                     b.Property<string>("ProjectId")
@@ -3716,6 +3819,25 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasForeignKey("ProjectId", "AgentId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.Agents.AgentEnrollmentRecord", b =>
+                {
+                    b.HasOne("TerraScale.Authentication.Contracts.ProjectRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TerraScale.Authentication.Contracts.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("TerraScale.Authentication.Features.Agents.AgentRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId", "AgentId")
+                        .OnDelete(DeleteBehavior.Cascade);
                 });
 
             modelBuilder.Entity("TerraScale.Authentication.Features.Agents.AgentKeyRecord", b =>

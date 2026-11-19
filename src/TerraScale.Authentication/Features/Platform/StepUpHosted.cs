@@ -3,6 +3,8 @@ using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
+using TerraScale.Authentication.Features.Oidc;
+using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.Ui;
@@ -20,11 +22,12 @@ internal static class StepUpHosted
         var hosted = services.GetRequiredService<HostedAuth>();
         var mfa = services.GetRequiredService<TotpCredentials>();
         var passcodes = services.GetRequiredService<Passcodes>();
-        if (SignInFlow.WrongSlug(context) || SignInFlow.Tenant(context) != "terrascale"
+        if (SignInFlow.WrongSlug(context)
             || post && await SignInFlow.ReadAsync(context, services.GetRequiredService<AuthOptions>(), cancellationToken) is null
             || await SecurityFlow.LiveAsync(context, services.GetRequiredService<Sessions>(), cancellationToken) is not { } live
             || context.GetRouteValue("id") is not string id || !PlatformDirectory.IsId(id)
-            || await proofs.ReadAsync(live.User, id, cancellationToken) is not { } current)
+            || await proofs.ReadAsync(live.User, id, cancellationToken) is not { } current
+            || Tenancy.IsProject(SignInFlow.Tenant(context)) != (current.Record.Purpose == StepUpProofs.ApproveAgent))
         {
             throw StepUpProofs.Required();
         }
@@ -124,6 +127,8 @@ internal static class StepUpHosted
         var page = StepUpPage.Create(new StepUpPageModel(id, user.Email, record.Purpose, record.PrimaryVerified, user.PasswordHash is not null, record.MailRequested, notice, nonce, locale)
         {
             ReturnUri = record.Approved ? record.ReturnUri : null,
+            Tenant = SignInFlow.Tenant(context),
+            Theme = HostedTheme.Of(context),
         });
         page.StatusCode = context.Response.StatusCode;
         if (record.PrimaryVerified && passwordReservation is not null)
