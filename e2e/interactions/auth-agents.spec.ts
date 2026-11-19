@@ -2,8 +2,9 @@ import { createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes, si
 import { expect, test } from '../support/audit';
 import { keyId } from '../support/api-key';
 import { signInToken } from '../support/auth-management';
+import { exchangeAgentToken } from '../support/agents';
 import { createProjectOwner } from '../support/project-owner';
-import { auth } from '../support/stack';
+import { auth, onLocalStack } from '../support/stack';
 import { saveSecret } from '../support/state';
 
 type Jwk = { kty: string; crv: string; x: string; y: string; d?: string };
@@ -157,6 +158,9 @@ test('project agents hold their own public keys, stay within their limits and ca
     expect(verify('sha256', Buffer.from(signedPart), { key: createPublicKey({ key: signingKey, format: 'jwk' }), dsaEncoding: 'ieee-p1363' },
       Buffer.from(signaturePart, 'base64url'))).toBe(true);
     expect((await page.request.get(issuer + '/oauth/userinfo', { headers: { Authorization: 'Bearer ' + delegatedBody.access_token } })).status()).toBe(401);
+    await onLocalStack(async () => {
+      expect(await exchangeAgentToken(page.request, delegatedBody.access_token)).toEqual({ status: 400, body: expect.objectContaining({ error: 'invalid_grant' }) });
+    });
     expect((await (await page.request.get(`${root}/agents/${agent.id}`, { headers: read })).json() as Agent).last_used_at).not.toBeNull();
 
     await refused(delegatedAssertion);

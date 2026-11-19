@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Features.Agents;
@@ -13,6 +14,8 @@ public abstract class AgentEnrollmentEndpoint(PlatformAuthentication authenticat
         throw new InvalidOperationException("Agent enrollment endpoints are anonymous.");
 
     protected abstract Task<IResult> HandleAnonymousAsync(CancellationToken cancellationToken);
+
+    protected string TenantId() => this.HttpContext.GetRouteValue("project") is OidcIssuer.Slug ? OidcIssuer.InstanceId : this.RouteId("project");
 
     protected void DescribeEnrollment(string operation, string summary, string description, Type request, int status, Type response, bool conflict)
     {

@@ -23,6 +23,17 @@ winner. Restarts preserve account credentials, role revocations and existing ide
 incomplete existing topology fail closed and are never overwritten. Restore inconsistent records from an approved
 recovery copy; startup is not a privilege-restoration operation.
 
+## Platform tenant row
+
+Agents and agent enrollments of TerraScale accounts live under the platform tenant `terrascale`, and their
+`project_id` foreign keys need a project row. Every startup also creates, create-only, a hidden organization and project
+that both have the id `terrascale` and the name `TerraScale accounts`, with no memberships and no project roles. The
+model's query filters on `organizations` and `projects` (`PlatformTenant.CustomerOrganization` and
+`CustomerProject`) leave both rows out of every read, so they appear in no listing, lookup, API key, grant, deletion or
+the dashboard's project lists, which read ts-auth's; `terrascale` is also not a ULID, so every organization and project
+route answers `404` before reading. Only the bootstrap reads them,
+with the filter ignored, and the agent tables' foreign keys reference the project row.
+
 The intended topology gives both databases gru as home and sjc/fra replicas.
 Regional serving and discovery/JWKS access to local replicas require deployment verification. Security decisions and conditional writes still use gru's TerraBase authority,
 with no failover, to preserve the existing uniqueness, revocation and single-use behavior. An unavailable gru authority

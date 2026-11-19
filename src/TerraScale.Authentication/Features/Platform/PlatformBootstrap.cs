@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Storage;
@@ -22,7 +23,13 @@ public sealed class PlatformBootstrap(AuthData data, Users users, PlatformDirect
             ?? await users.CreateAsync(instance, ownerEmail, cancellationToken).ConfigureAwait(false)
             ?? await users.FindByEmailAsync(instance, ownerEmail, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException("Platform bootstrap owner could not be read after creation.");
+        await this.EnsureOrganizationAsync(owner, cancellationToken).ConfigureAwait(false);
+        await this.EnsureTenantAsync(owner, cancellationToken).ConfigureAwait(false);
+    }
 
+    private async Task EnsureOrganizationAsync(UserRecord owner, CancellationToken cancellationToken)
+    {
+        var instance = PlatformDirectory.Instance;
         for (var attempt = 0; attempt < 4; attempt++)
         {
             var existing = await directory.OrganizationAsync(OrganizationId, cancellationToken).ConfigureAwait(false);
@@ -61,4 +68,30 @@ public sealed class PlatformBootstrap(AuthData data, Users users, PlatformDirect
 
         throw new InvalidOperationException("Platform bootstrap could not commit its identity records.");
     }
+
+    private async Task EnsureTenantAsync(UserRecord owner, CancellationToken cancellationToken)
+    {
+        if (await this.TenantExistsAsync(cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        var now = clock.GetUtcNow();
+        var organization = new OrganizationRecord(PlatformTenant.Id, PlatformDirectory.Instance, PlatformTenant.Name, owner.Id, now, Owners: 0, Projects: 1);
+        var project = new ProjectRecord(PlatformTenant.Id, PlatformDirectory.Instance, PlatformTenant.Id, PlatformTenant.Name, owner.Id, now);
+        if (!await data.SaveAsync([Change.Insert(organization), Change.Insert(project)], cancellationToken).ConfigureAwait(false)
+            && !await this.TenantExistsAsync(cancellationToken).ConfigureAwait(false))
+        {
+            throw new InvalidOperationException("Platform bootstrap could not commit the platform tenant row.");
+        }
+    }
+
+    private async Task<bool> TenantExistsAsync(CancellationToken cancellationToken) =>
+        await data.ReadAsync((db, token) => db.Projects.IgnoreQueryFilters().Where(project => project.Id == PlatformTenant.Id)
+            .Select(project => project.OrganizationId).SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false) switch
+        {
+            null => false,
+            PlatformTenant.Id => true,
+            _ => throw new InvalidOperationException("The platform tenant project id belongs to another organization."),
+        };
 }
