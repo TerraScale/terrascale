@@ -1,3 +1,4 @@
+using TerraScale.Dashboard.Platform.TsAuth;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Platform.Datastar;
@@ -12,6 +13,7 @@ namespace TerraScale.Dashboard.Features.Profile
             : project.Role is "viewer" or "member" or "admin" ? project.Role : null;
         public int ScopeRoleCount => (Shell.Context.Role.Length > 0 ? 1 : 0) + (SelectedProjectRole is not null ? 1 : 0);
         public string DialogId { get; init; } = "";
+        public IReadOnlyList<TsAuthAgent>? Agents { get; init; }
         public string DraftEmail { get; init; } = "";
         public bool EmailCodeEntry { get; init; }
         public string? PendingEmail { get; init; }
