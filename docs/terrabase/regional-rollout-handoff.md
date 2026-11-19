@@ -222,7 +222,10 @@ the mark. A prime answers `204`, or the same 503 body with phase `prime` and pee
 `replica_unavailable` as soon as one replica's next open or pull attempt fails, or
 `prime_incomplete`, whose details add `behind`, the number of replicas still behind,
 or `prime_failed`, whose details add `error`, the type of the exception the error log carries.
-Caller cancellation propagates. Retirement probe failures log the exception type
+An unexpected exception answers `500 internal_error`. On this and every other
+endpoint served only on the internal listener, to a caller the internal listener
+admitted, its message names the exception type and the method that threw it, at
+most 200 characters; the error log keeps the full exception. Caller cancellation propagates. Retirement probe failures log the exception type
 at debug level and retain the pending step.
 
 Target activation has a ten-second deadline. Each activation attempt is bounded
