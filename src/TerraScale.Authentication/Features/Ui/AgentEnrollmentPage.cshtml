@@ -42,10 +42,7 @@ else
 <p>Key fingerprint <code>@Model.Fingerprint</code></p>
 <form method="post" action="@Model.Action">
 <input type="hidden" name="user_code" value="@Model.UserCode">
-@foreach (var scope in Model.Scopes)
-{
-<input type="hidden" name="scopes" value="@scope">
-}
+<input type="hidden" name="confirmation" value="@Model.Confirmation">
 <div class="actions">
 @if (Model.Scopes.Count > 0)
 {

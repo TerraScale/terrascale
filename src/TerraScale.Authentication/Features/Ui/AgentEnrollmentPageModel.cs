@@ -28,6 +28,8 @@ public sealed record AgentEnrollmentPageModel(string Tenant, AgentEnrollmentStep
 
     public string? Fingerprint { get; init; }
 
+    public string? Confirmation { get; init; }
+
     public string ProjectName => this.Theme.Name ?? this.Tenant;
 
     public string Action => "/ui/" + this.Tenant + "/agent-enrollments";

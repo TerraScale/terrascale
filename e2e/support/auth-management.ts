@@ -425,7 +425,7 @@ export async function closeAuthManagement(page: Page, management: AuthManagement
 }
 
 
-async function authStorage(sql: string, args: unknown[]): Promise<void> {
+export async function authStorage(sql: string, args: unknown[]): Promise<void> {
   const peer = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
   const session = connect('http://127.0.0.1:8081');
   const stream = session.request({ ':method': 'POST', ':path': '/v1/projects/00000000000000000000000002/databases/ts-auth/sql/execute',

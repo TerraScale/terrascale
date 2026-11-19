@@ -1,4 +1,6 @@
+using System.Buffers.Text;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
@@ -62,6 +64,8 @@ public sealed class AgentEnrollments(AuthData data, PlatformDirectory platform, 
 
     private const string Alphabet = "BCDFGHJKLMNPQRSTVWXZ";
 
+    private readonly byte[] confirmationKey = HKDF.DeriveKey(HashAlgorithmName.SHA256, options.MasterKey, 32, info: "ts-auth agent enrollment confirmation"u8.ToArray());
+
     public static string PagePath(string project) => $"/ui/{project}/agent-enrollments";
 
     public static string? Normalize(string? text)
@@ -83,8 +87,8 @@ public sealed class AgentEnrollments(AuthData data, PlatformDirectory platform, 
 
         var key = AgentJwk.Parse(request.PublicJwk);
         _ = await platform.ProjectAsync(project, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
-        if ((await limiter.AcquireAsync(project, "agent-enrollment-ip", limiter.Fold(ip), StartsPerIp, LookupWindow, cancellationToken).ConfigureAwait(false)
-            ?? await limiter.AcquireAsync(project, "agent-enrollment", project, StartsPerProject, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false)) is { } wait)
+        if ((await limiter.AcquireDurableAsync(project, "agent-enrollment-ip", limiter.Fold(ip), StartsPerIp, LookupWindow, cancellationToken).ConfigureAwait(false)
+            ?? await limiter.AcquireDurableAsync(project, "agent-enrollment", project, StartsPerProject, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false)) is { } wait)
         {
             throw ApiException.RateLimited("Too many agent enrollments started.", wait);
         }
@@ -116,19 +120,26 @@ public sealed class AgentEnrollments(AuthData data, PlatformDirectory platform, 
         return new(enrollment, Display(code), [.. pending.RequestedScopes.Intersect(policy.AllowedScopes, StringComparer.Ordinal)]);
     }
 
-    public async Task<AgentDecision> ApproveAsync(LiveApprover approver, AgentEnrollmentView view, IReadOnlyList<string> confirmedScopes, string? stepUpProof,
-        CancellationToken cancellationToken)
+    public string Confirmation(AgentEnrollmentView view, string userId)
+    {
+        ArgumentNullException.ThrowIfNull(view);
+        var enrollment = view.Enrollment.Value;
+        string[] bound = [enrollment.ProjectId, enrollment.Id, userId, .. view.Scopes.Order(StringComparer.Ordinal)];
+        return Base64Url.EncodeToString(HMACSHA256.HashData(this.confirmationKey, Encoding.UTF8.GetBytes(string.Join('\n', bound))));
+    }
+
+    public async Task<AgentDecision> ApproveAsync(LiveApprover approver, AgentEnrollmentView view, string confirmation, string? stepUpProof, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(approver);
         ArgumentNullException.ThrowIfNull(view);
-        ArgumentNullException.ThrowIfNull(confirmedScopes);
+        ArgumentNullException.ThrowIfNull(confirmation);
         var enrollment = view.Enrollment.Value;
         if (view.Scopes.Count == 0)
         {
             return new AgentDecisionRefused(NothingAllowed);
         }
 
-        if (!view.Scopes.ToHashSet(StringComparer.Ordinal).SetEquals(confirmedScopes))
+        if (!Tokens.FixedTimeEquals(this.Confirmation(view, approver.User.Id), confirmation))
         {
             return new AgentDecisionRefused("The request changed. Check it again before you approve.");
         }

@@ -131,12 +131,15 @@ Codes and races:
   `expired_token` writes nothing. Of two concurrent decisions one wins and the other answers that the request
   changed; a poll that loses to a decision answers `slow_down`. After approval the agent has another 600 seconds to
   collect its id.
-- Approval is bound to what the page showed: the form carries the scopes it listed, and a different allowed set
-  (the agent policy changed) shows the page again for a fresh decision. The approval save also asserts the agent
+- Approval is bound to what the page showed: the form carries an HMAC (keyed from the master key) over the project,
+  the enrollment, the signed-in user and the allowed scopes it listed. A form rendered for another account, or a
+  different allowed set (the agent policy changed), shows the page again for a fresh decision; the step-up proof must
+  belong to the same signed-in user. The approval save also asserts the agent
   policy, the approver's user row and live session, and is refused when the enrollment, the step-up proof or the
   session expired before it is submitted.
-- Each code lookup is charged to a stored per-user budget before the code is read; when that storage fails the lookup
-  is refused, never admitted from a replica's memory.
+- Each code lookup is charged to the stored hosted IP budgets (and the IPv6 /48 site budget) and a stored per-user
+  budget before the code is read, and each start to its stored per-IP and per-project budgets; when that storage fails
+  the request is refused, never admitted from a replica's memory.
 - The session pruner deletes enrollments on a later sweep once they have been expired for 600 seconds.
 
 ## Your agents

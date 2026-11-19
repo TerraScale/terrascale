@@ -42,7 +42,7 @@ internal static class AgentEnrollmentHosted
             return AgentEnrollmentPageModel.Render(context, new(tenant, AgentEnrollmentStep.Enter));
         }
 
-        if ((await services.GetRequiredService<HostedAuth>().LimitIpAsync(SignInFlow.Ip(context), mails: false, cancellationToken)
+        if ((await services.GetRequiredService<HostedAuth>().LimitIpDurablyAsync(SignInFlow.Ip(context), cancellationToken)
             ?? await services.GetRequiredService<AttemptLimiter>().AcquireDurableAsync(tenant, "agent-enrollment-code-user", live.User.Id, AgentEnrollments.LookupsPerUser,
                 AgentEnrollments.LookupWindow, cancellationToken)) is { } wait)
         {
@@ -63,11 +63,12 @@ internal static class AgentEnrollmentHosted
             Scopes = view.Scopes,
             SelfSubject = view.Enrollment.Value.AllowSelfSubject,
             Fingerprint = view.Enrollment.Value.Thumbprint[..16],
+            Confirmation = enrollments.Confirmation(view, live.User.Id),
         };
         var approver = new LiveApprover(live.Session, live.Version, live.User);
         AgentDecision? outcome = form?["decision"].ToString() switch
         {
-            "approve" => await enrollments.ApproveAsync(approver, view, [.. form["scopes"].OfType<string>()], context.Request.Cookies[StepUpCookie], cancellationToken),
+            "approve" => await enrollments.ApproveAsync(approver, view, form["confirmation"].ToString(), context.Request.Cookies[StepUpCookie], cancellationToken),
             "deny" => await enrollments.DenyAsync(approver, view, cancellationToken),
             _ => null,
         };
