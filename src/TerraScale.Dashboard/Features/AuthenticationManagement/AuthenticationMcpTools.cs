@@ -109,7 +109,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             return "Deleted OAuth application " + clientId + ".";
         }
 
-        [McpAccess(McpAccess.Write)]
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "auth_update_settings", Title = "Update sign-in methods and branding", Idempotent = true, UseStructuredContent = true, Destructive = false, OpenWorld = false),
          Description("Set the hosted pages' sign-in methods (passcode, password, signUp; passcode or password stays on) and, when any branding argument is given, their branding (name up to 64 characters, https logoUrl, #rrggbb themeColor; an empty string clears a value). Omitted arguments keep their current value. Requires the admin project role.")]
         public async Task<TsAuthProjectSettings> UpdateSettings(bool? passcode = null, bool? password = null, string? signUpMode = null,

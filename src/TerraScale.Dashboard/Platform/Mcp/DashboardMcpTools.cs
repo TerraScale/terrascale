@@ -30,7 +30,8 @@ namespace TerraScale.Dashboard.Platform.Mcp
         public async Task<DashboardMcpContext> Context()
         {
             var session = Account().Session;
-            var completion = await http.HttpContext!.RequestServices.GetRequiredService<StripeBilling>().ResumeOrganizationAsync(session, http.HttpContext);
+            var completion = http.HttpContext!.Items[McpAgents.ContextKey] is McpAgent ? new OrganizationCheckoutCompletion()
+                : await http.HttpContext.RequestServices.GetRequiredService<StripeBilling>().ResumeOrganizationAsync(session, http.HttpContext);
             var context = await accounts.GetContextAsync(session, Cancellation);
             return new(new(context.UserId, context.Account.Name, context.Account.Email, null),
                 new(context.Account.ActiveOrganizationId, context.Account.ActiveProjectId),

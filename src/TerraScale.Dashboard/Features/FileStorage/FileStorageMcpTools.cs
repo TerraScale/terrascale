@@ -15,14 +15,14 @@ namespace TerraScale.Dashboard.Features.FileStorage
             return Request(() => files.ListAsync(Scope(organizationId, projectId), bucketId, after, bucketAfter, Cancellation));
         }
 
-        [McpAccess(McpAccess.Write)]
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "create_file_bucket", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Create a project file bucket with owner, public and trusted-role rules. Owner is a JSON Pointer into immutable file metadata. Requires project data write access.")]
         public Task<McpFileStorageSaved> CreateBucket(string name, TerraBaseFileRules rules, string? organizationId = null, string? projectId = null)
         {
             return Save(() => files.CreateBucketAsync(Scope(organizationId, projectId), name, rules, Cancellation));
         }
 
-        [McpAccess(McpAccess.Write)]
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "set_file_bucket_rules", Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Replace a bucket's read and write rules. The owner pointer is immutable. Public read permits anonymous access; public write permits anonymous writes. Requires project data write access.")]
         public Task<McpFileStorageSaved> SetRules(string bucketId, TerraBaseFileRules rules, string? organizationId = null, string? projectId = null)
         {

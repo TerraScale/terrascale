@@ -117,7 +117,6 @@ namespace TerraScale.Dashboard.Platform.Mcp
         {
             services.AddHttpContextAccessor();
             services.AddSingleton<McpApiKeyTools>();
-            services.AddMemoryCache();
             services.AddSingleton<McpAgents>();
             services.AddMcpServer(options =>
             {

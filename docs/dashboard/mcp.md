@@ -60,9 +60,9 @@ The dashboard verifies the token against the platform issuer's keys: ES256, `typ
 `https://auth.terrascale.tech/terrascale`, no `aud`, not expired, `token_use` and `actor_type` `agent`, and delegated
 (`act.sub` equal to `agent_id`, no `owner_sub`). A self-subject token, a project's agent token and anything else
 answers `401` with `error="invalid_token"`. It then exchanges the token with ts-auth for an owner token
-([agent token exchange](../auth/agent-identities.md#agent-token-exchange)) and runs the request as the owner. The
-owner token is reused only for the same agent token and is checked by ts-auth on every request, so revoking the agent,
-signing out everywhere or disabling the owner refuses the next MCP call.
+([agent token exchange](../auth/agent-identities.md#agent-token-exchange)) on every MCP request, runs that request as
+the owner and keeps the owner token for that request only. So revoking the agent, signing out everywhere or disabling
+the owner refuses the next MCP call, and an MCP call fails when the exchange is unavailable.
 
 Every tool is marked read, write or destructive in code (`[McpAccess]`); the server does not start when a tool has
 no marking.
@@ -75,9 +75,11 @@ no marking.
 Destructive tools are refused to every agent with "Agents can't do this. Ask the account owner to do it in the
 TerraScale dashboard.": deleting databases, projects, files, functions, saved queries, users or OAuth applications;
 revoking API keys, tokens, sessions or invitations; creating or rotating credentials (API keys, scoped keys, OAuth
-applications) and configuring social sign-in providers; plan, checkout and billing changes, including creating an organization; member, role, invitation and
-ownership changes; IP allowlists, backup policies, audit retention and database TTLs; database rule deployments; and
-`execute_sql`. A write tool called with only `mcp:read` is refused too. An agent token never carries a platform role or
+applications) and configuring social sign-in providers; project sign-in settings; deploying or invoking functions and
+setting function secrets; creating file buckets or changing their rules; every billing tool, reads included (plans,
+billing details, invoices, plan change previews, checkouts, plan changes, including creating an organization); member, role,
+invitation and ownership changes; IP allowlists, backup policies, audit retention and database TTLs; database rule
+deployments; and `execute_sql`. `get_context` never resumes a pending checkout for an agent. A write tool called with only `mcp:read` is refused too. An agent token never carries a platform role or
 two-factor state, so organizations that require two-factor authentication stay unavailable to it.
 
 Every agent call is logged with the tool, `agent_id`, owner and whether it was allowed. The owner lists and revokes

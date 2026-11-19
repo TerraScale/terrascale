@@ -1,17 +1,15 @@
 using System.Diagnostics;
-using Microsoft.Extensions.Caching.Memory;
 using TerraScale.Dashboard.Features.Auth;
 
 namespace TerraScale.Dashboard.Platform.Mcp;
 
 public sealed record McpAgent(string AgentId, string OwnerId, bool Write);
 
-public sealed class McpAgents(TsAuthGateway auth, AccountService accounts, AccountStore store, IMemoryCache owners, TimeProvider time)
+public sealed class McpAgents(TsAuthGateway auth, AccountService accounts, AccountStore store)
 {
     internal const string ContextKey = "TerraScale.Dashboard/mcp-agent";
     internal const string Refusal = "Agents can't do this. Ask the account owner to do it in the TerraScale dashboard.";
     internal const string ReadOnlyRefusal = "This agent token has only mcp:read. Ask for a token with mcp:write to make changes.";
-    private static readonly TimeSpan ReuseMargin = TimeSpan.FromSeconds(30);
 
     public static bool IsAgentToken(string bearer)
     {
@@ -36,19 +34,9 @@ public sealed class McpAgents(TsAuthGateway auth, AccountService accounts, Accou
             return null;
         }
 
-        var key = (nameof(McpAgents), delegation.AgentId, delegation.TokenId);
-        if (!owners.TryGetValue(key, out AgentOwnerToken? owner) || owner is null)
+        if (await auth.ExchangeAgentTokenAsync(token, delegation, cancellationToken) is not { } owner)
         {
-            owner = await auth.ExchangeAgentTokenAsync(token, delegation, cancellationToken);
-            if (owner is null)
-            {
-                return null;
-            }
-
-            if (owner.ExpiresAt - ReuseMargin > time.GetUtcNow())
-            {
-                owners.Set(key, owner, owner.ExpiresAt - ReuseMargin);
-            }
+            return null;
         }
 
         if (await store.FindAsync(delegation.OwnerId, cancellationToken) is not { Erased: false } stored)
@@ -63,7 +51,6 @@ public sealed class McpAgents(TsAuthGateway auth, AccountService accounts, Accou
         }
         catch (AccountAccessException error) when (error.StatusCode == StatusCodes.Status401Unauthorized)
         {
-            owners.Remove(key);
             return null;
         }
     }

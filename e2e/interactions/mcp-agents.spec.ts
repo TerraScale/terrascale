@@ -1,5 +1,5 @@
 import type { APIRequestContext } from '@playwright/test';
-import { Agent, assertion, platformTokenEndpoint } from '../support/agents';
+import { Agent, agentKey, assertion, platformTokenEndpoint } from '../support/agents';
 import { expect, test } from '../support/audit';
 import { hostedReady } from '../support/hosted';
 import { mcpTool } from '../support/mcp';
@@ -60,7 +60,10 @@ test('a TerraScale account agent calls MCP read and write tools, is refused dest
     expect(context.organizations.map((organization: { id: string }) => organization.id)).toContain(current.organizationId);
     expect(await mcpTool(request, writer, 'update_profile', { name: 'MCP agent owner renamed' })).toEqual({ saved: true });
     expect((await mcpTool(request, writer, 'get_profile', {})).name).toBe('MCP agent owner renamed');
-    for (const destructive of ['delete_project', 'revoke_api_key', 'change_plan', 'create_api_key', 'execute_sql']) {
+    for (const destructive of [
+      'delete_project', 'revoke_api_key', 'change_plan', 'create_api_key', 'execute_sql', 'deploy_function', 'invoke_function',
+      'set_function_secret', 'create_file_bucket', 'set_file_bucket_rules', 'auth_update_settings', 'get_billing', 'list_plans',
+    ]) {
       await mcpTool(request, writer, destructive, {}, refusal);
     }
 
@@ -70,6 +73,26 @@ test('a TerraScale account agent calls MCP read and write tools, is refused dest
 
     const self = await agentToken(request, agent, agentId, kid, 'mcp:read', 'agent');
     expect(await mcpStatus(request, self)).toEqual({ status: 401, challenge: expect.stringContaining('error="invalid_token"') });
+
+    const root = auth + '/v1/' + current.projectId;
+    const keyed = { Authorization: 'Bearer ' + current.apiKey };
+    expect((await request.put(root + '/agent-policy', { headers: keyed, data: { allowed_scopes: ['mcp:read'] } })).status()).toBe(200);
+    const projectUser = await request.post(root + '/users', { headers: keyed, data: { email: `mcp-project-agent-${current.runId}@example.com` } });
+    expect(projectUser.status()).toBe(201);
+    const projectKey = agentKey();
+    const projectAgent = await request.post(`${root}/users/${(await projectUser.json()).id}/agents`, {
+      headers: keyed, data: { name: 'Project agent', allowed_scopes: ['mcp:read'], public_jwk: projectKey.jwk },
+    });
+    expect(projectAgent.status()).toBe(201);
+    const { id: projectAgentId, keys: [{ kid: projectKid }] } = await projectAgent.json() as { id: string; keys: { kid: string }[] };
+    const projectEndpoint = `${auth}/${current.projectId}/oauth/token`;
+    const projectGrant = await request.post(projectEndpoint, {
+      form: { grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: assertion(projectKey.privateKey, projectKid, projectAgentId, projectEndpoint), scope: 'mcp:read' },
+    });
+    expect(projectGrant.status()).toBe(200);
+    const projectToken = (await projectGrant.json()).access_token as string;
+    saveSecret('mcp-project-agent-token', projectToken);
+    expect(await mcpStatus(request, projectToken)).toEqual({ status: 401, challenge: expect.stringContaining('error="invalid_token"') });
 
     await page.goto('/profile?tab=agents');
     const row = page.locator('#profile-agents tbody tr').filter({ hasText: 'MCP agent' });

@@ -37,7 +37,7 @@ namespace TerraScale.Dashboard.Features.Billing
             throw new AccountAccessException($"{paid.Name} is billed {string.Join(" or ", paid.CheckoutIntervals)}: pass one of those or omit it.", 400);
         }
 
-        [McpAccess(McpAccess.Read)]
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "preview_plan_change", Title = "Preview plan change", ReadOnly = true, Idempotent = true, OpenWorld = true, Destructive = false, UseStructuredContent = true), Description("Estimate the charge and effective date of changing a subscribed organization's plan, without changing it. Owner only.")]
         public Task<BillingPlanPreview> PreviewPlanChange(
             [Description("Plan key from list_plans, such as starter or pro. change_plan and preview_plan_change also accept free for Personal workspaces.")] string plan,
@@ -95,21 +95,21 @@ namespace TerraScale.Dashboard.Features.Billing
             return new("Confirm this in the dashboard: " + WorkspaceUrl.For(context, "/organization?tab=billing"), 403, "step_up_required");
         }
 
-        [McpAccess(McpAccess.Read)]
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "list_plans", Title = "List plans", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = true, Idempotent = true), Description("List the paid plans an organization can subscribe to, with prices in cents, limits, and which plan is current.")]
         public Task<BillingMcpPlans> Plans(string? organizationId = null, string? projectId = null)
         {
             return billing.McpPlansAsync(Scope(organizationId, projectId), Cancellation);
         }
 
-        [McpAccess(McpAccess.Read)]
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "get_billing", Title = "Get billing", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = true, Idempotent = true), Description("Show an organization's plan, billing interval and status, renewal date, scheduled or pending plan changes, checkout state, and (for the owner) payment method summary.")]
         public Task<BillingMcpSummary> Billing(string? organizationId = null, string? projectId = null)
         {
             return billing.McpSummaryAsync(Scope(organizationId, projectId), Cancellation);
         }
 
-        [McpAccess(McpAccess.Read)]
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "list_invoices", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("List organization invoices from Stripe newest first, ten per page, filtered by status or issued date.")]
         public async Task<BillingInvoiceList> Invoices(
             [Description("paid, open, void, or empty for all statuses.")] string status = "",

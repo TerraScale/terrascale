@@ -61,7 +61,7 @@ namespace TerraScale.Dashboard.Features.Functions
         [McpServerTool(Name = "get_functions_reference", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read the complete JavaScript Functions runtime contract, limits and working examples before deploying or invoking. Includes get_function_stats for aggregate metrics and list_function_logs for invocation details. Requires no data permission.")]
         public McpFunctionReference Reference() => new(FunctionReference.Text);
 
-        [McpAccess(McpAccess.Write)]
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "deploy_function", ReadOnly = false, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Call get_functions_reference first. Create or replace a JavaScript handler(event) in this database, with an optional five-field UTC cron. Omit cron to remove the schedule. Returns name, cron, updated_at and invoke_url, or a structured validation error retaining the runner message and available line/column. Requires SQL write access.")]
         public async Task<CallToolResult> Deploy(string databaseId, string name, string source, string? cron = null, string? organizationId = null, string? projectId = null)
         {
@@ -82,7 +82,7 @@ namespace TerraScale.Dashboard.Features.Functions
             }
         }
 
-        [McpAccess(McpAccess.Write)]
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "invoke_function", ReadOnly = false, Destructive = false, OpenWorld = false, Idempotent = false, UseStructuredContent = true), Description("Call get_functions_reference first. Run a deployed function once with body as a JSON value (default null). Returns status, content_type, parsed JSON or text body, and the newest invocation log if you have SQL write access; otherwise log is null with log_note. Concurrent calls or cron may produce a newer log. Requires SQL read only; the function itself may write SQL. The optional query object maps strings to strings in event.query, matching HTTPS query parameters.")]
         public async Task<McpFunctionRun> Invoke(string databaseId, string name, JsonElement? body = null, IReadOnlyDictionary<string, string>? query = null, string? organizationId = null, string? projectId = null)
         {
@@ -98,7 +98,7 @@ namespace TerraScale.Dashboard.Features.Functions
             return FunctionMcpOutput.Secrets(await functions.SecretsAsync(context, DatabaseService.Database(context, databaseId), name, Cancellation));
         }
 
-        [McpAccess(McpAccess.Write)]
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "set_function_secret", ReadOnly = false, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Set or replace one function secret; the handler reads it as event.secrets[secret] from the next invocation, without redeploying. secret matches ^[A-Z_][A-Z0-9_]{0,63}$, value is at most 4 KiB, at most 50 secrets per function. Returns name and updated_at only, never the value. Requires SQL write access.")]
         public async Task<CallToolResult> SetSecret(string databaseId, string name, string secret, string value, string? organizationId = null, string? projectId = null)
         {
