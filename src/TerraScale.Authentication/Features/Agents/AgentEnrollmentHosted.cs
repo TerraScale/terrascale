@@ -17,7 +17,7 @@ internal static class AgentEnrollmentHosted
     internal static async Task<IResult> HandleAsync(HttpContext context, bool post, CancellationToken cancellationToken)
     {
         var services = context.RequestServices;
-        if (SignInFlow.WrongSlug(context) || !Tenancy.IsProject(SignInFlow.Tenant(context)))
+        if (SignInFlow.WrongSlug(context))
         {
             return Results.NotFound();
         }

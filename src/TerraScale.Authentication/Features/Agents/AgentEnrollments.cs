@@ -86,7 +86,7 @@ public sealed class AgentEnrollments(AuthData data, PlatformDirectory platform, 
         }
 
         var key = AgentJwk.Parse(request.PublicJwk);
-        _ = await platform.ProjectAsync(project, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+        var tenant = Tenancy.IsProject(project) ? await platform.ProjectAsync(project, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound() : null;
         if ((await limiter.AcquireDurableAsync(project, "agent-enrollment-ip", limiter.Fold(ip), StartsPerIp, LookupWindow, cancellationToken).ConfigureAwait(false)
             ?? await limiter.AcquireDurableAsync(project, "agent-enrollment", project, StartsPerProject, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false)) is { } wait)
         {
@@ -97,7 +97,7 @@ public sealed class AgentEnrollments(AuthData data, PlatformDirectory platform, 
         var now = clock.GetUtcNow();
         var enrollment = new AgentEnrollmentRecord(project, AuthIds.New(), Tokens.Sha256Hex(code), name, scopes, request.AllowSelfSubject, key.Jwk, key.Thumbprint,
             AgentEnrollmentStatus.Pending, now, now + Lifetime);
-        if (!await data.SaveAsync([Change.Insert(enrollment)], cancellationToken).ConfigureAwait(false))
+        if (!await data.SaveAsync([Change.Insert(enrollment), .. tenant is null ? [] : new[] { Change.Assert(tenant) }], cancellationToken).ConfigureAwait(false))
         {
             throw new ApiException(409, "version_conflict", "The enrollment could not be stored; start it again.");
         }

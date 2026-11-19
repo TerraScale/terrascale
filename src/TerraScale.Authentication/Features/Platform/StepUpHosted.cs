@@ -27,7 +27,7 @@ internal static class StepUpHosted
             || await SecurityFlow.LiveAsync(context, services.GetRequiredService<Sessions>(), cancellationToken) is not { } live
             || context.GetRouteValue("id") is not string id || !PlatformDirectory.IsId(id)
             || await proofs.ReadAsync(live.User, id, cancellationToken) is not { } current
-            || Tenancy.IsProject(SignInFlow.Tenant(context)) != (current.Record.Purpose == StepUpProofs.ApproveAgent))
+            || Tenancy.IsProject(SignInFlow.Tenant(context)) && current.Record.Purpose != StepUpProofs.ApproveAgent)
         {
             throw StepUpProofs.Required();
         }

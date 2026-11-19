@@ -148,6 +148,7 @@ public static class OidcIssuer
                     // The bound GitHub Actions workload only (GitHubActionsBinding creates its client).
                     .AllowCustomFlow(GitHubActionsGrant.GrantType)
                     .AllowCustomFlow(GuestSignIn.GrantType)
+                    .AllowCustomFlow(AgentExchange.GrantType)
                     .RequireProofKeyForCodeExchange()
                     .RegisterScopes(Scopes.Email, Scopes.Profile, Scopes.OfflineAccess)
                     // Each client's scope permissions still bound what it may request; there is no scope store.
@@ -197,6 +198,15 @@ public static class OidcIssuer
                         .SetType(OpenIddictServerHandlerType.Custom))
                     .AddEventHandler<GenerateTokenContext>(handler => handler.UseScopedHandler<LimitImpersonationToken>()
                         .SetOrder(OpenIddictServerHandlers.Protection.CreateTokenEntry.Descriptor.Order - 2)
+                        .SetType(OpenIddictServerHandlerType.Custom))
+                    .AddEventHandler<ValidateTokenContext>(handler => handler.UseSingletonHandler<ValidateAgentOwnerToken>()
+                        .SetOrder(OpenIddictServerHandlers.Protection.ValidateTokenEntry.Descriptor.Order + 2)
+                        .SetType(OpenIddictServerHandlerType.Custom))
+                    .AddEventHandler<GenerateTokenContext>(handler => handler.UseSingletonHandler<LimitAgentOwnerToken>()
+                        .SetOrder(OpenIddictServerHandlers.Protection.CreateTokenEntry.Descriptor.Order - 3)
+                        .SetType(OpenIddictServerHandlerType.Custom))
+                    .AddEventHandler<GenerateTokenContext>(handler => handler.UseSingletonHandler<RefuseUnfencedAgentToken>()
+                        .SetOrder(OpenIddictServerHandlers.Protection.CreateTokenEntry.Descriptor.Order + 1)
                         .SetType(OpenIddictServerHandlerType.Custom))
                     .AddEventHandler<ExtractTokenRequestContext>(handler => handler.UseSingletonHandler<RouteGuestGrant>()
                         .SetOrder(OpenIddictServerAspNetCoreHandlers.ExtractBasicAuthenticationCredentials<ExtractTokenRequestContext>.Descriptor.Order + 1_000)
