@@ -30,6 +30,7 @@ namespace TerraBase.Features.Replicas;
 [JsonSerializable(typeof(RegionalCatalogSnapshot))]
 [JsonSerializable(typeof(HomeLease))]
 [JsonSerializable(typeof(HeldRevisionAnswer))]
+[JsonSerializable(typeof(DatabasePositionsAnswer))]
 [JsonSerializable(typeof(KeptCopy))]
 [JsonSerializable(typeof(ReplicaHeldNotice))]
 [JsonSerializable(typeof(HomeSessionCall))]

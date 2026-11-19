@@ -3,7 +3,10 @@ using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using TerraBase.Configuration;
+using TerraBase.Engine;
+using TerraBase.Engine.Revisions;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -19,7 +22,7 @@ internal sealed record class LeaseUnchanged(HomeLease Lease) : HomeLeaseRepairOu
 internal sealed record class LeaseRepairRefused(string Code, string Reason) : HomeLeaseRepairOutcome;
 
 internal sealed class HomeLeaseRepair(
-    TerraBaseOptions options, IReplicaCatalog catalog, HomeLeases leases, RegionalOwners owners, RegionalHandoff handoff,
+    TerraBaseOptions options, IReplicaCatalog catalog, HomeLeases leases, RegionalOwners owners, RegionalHandoff handoff, IDatabaseRevisions revisions,
     InternalCredential credential, IMeterFactory meters, ILogger<HomeLeaseRepair> logger) : IDisposable
 {
     private static readonly TimeSpan PeerTimeout = TimeSpan.FromSeconds(5);
@@ -85,7 +88,7 @@ internal sealed class HomeLeaseRepair(
                 return new LeaseRepairRefused("writer_unknown", $"region {region} has no confirmed writer");
             }
 
-            if (await PlacementAsync(peer, database, cancellationToken).ConfigureAwait(false) is not ReplicaCatalogEntry entry
+            if (await AskAsync(peer, database, "placement", ReplicasJsonContext.Default.ReplicaCatalogEntry, entry => entry, cancellationToken).ConfigureAwait(false) is not ReplicaCatalogEntry entry
                 || entry.HomeRegion != placement.Home || entry.PlacementVersion != placement.Version)
             {
                 return new LeaseRepairRefused("placement_disagrees", $"the writer of {region} does not record home {placement.Home} at placement version {placement.Version}");
@@ -99,7 +102,7 @@ internal sealed class HomeLeaseRepair(
                 return new LeaseRepairRefused("lease_node_unknown", $"the lease names {other.Node}, which is not in the peers file");
             }
 
-            var confirmed = await PlacementAsync(named, database, cancellationToken).ConfigureAwait(false) switch
+            var confirmed = await AskAsync(named, database, "placement", ReplicasJsonContext.Default.ReplicaCatalogEntry, entry => entry, cancellationToken).ConfigureAwait(false) switch
             {
                 ErrorDetail { Code: "not_writer" } => true,
                 ReplicaCatalogEntry entry => other.Epoch < placement.Version && (entry.PlacementVersion < placement.Version || entry.HomeRegion != named.Region),
@@ -110,6 +113,11 @@ internal sealed class HomeLeaseRepair(
                 return new LeaseRepairRefused("lease_node_disagrees", other.Epoch < placement.Version
                     ? $"{other.Node} did not confirm that it is not the home or records an older placement"
                     : $"{other.Node} did not confirm that it is not its region's writer");
+            }
+
+            if (other.Epoch >= placement.Version && await UncoveredAsync(named, database, cancellationToken).ConfigureAwait(false) is { } uncovered)
+            {
+                return new LeaseRepairRefused("unproven", uncovered);
             }
         }
 
@@ -136,16 +144,40 @@ internal sealed class HomeLeaseRepair(
         _ => throw new UnreachableException(),
     };
 
-    private async Task<PeerAnswer> PlacementAsync(ServingNode node, TenantContext database, CancellationToken cancellationToken)
+    private async Task<string?> UncoveredAsync(ServingNode named, TenantContext database, CancellationToken cancellationToken)
+    {
+        if (await revisions.CurrentRevisionAsync(database, cancellationToken).ConfigureAwait(false) is not { } primary)
+        {
+            return "this node holds no primary file of the database";
+        }
+
+        if (await AskAsync(named, database, "positions", ReplicasJsonContext.Default.DatabasePositionsAnswer, answer => answer, cancellationToken).ConfigureAwait(false)
+            is not DatabasePositionsAnswer { Primary: var heldPrimary, Replica: var heldReplica })
+        {
+            return $"{named.Name} did not answer the positions of the database it holds";
+        }
+
+        return Uncovered(primary, named.Name, "primary file", heldPrimary) ?? Uncovered(primary, named.Name, "replica", heldReplica);
+    }
+
+    private static string? Uncovered(DatabaseRevision primary, string node, string kind, string? held) =>
+        held is null ? null
+        : !DatabaseRevision.TryParse(held, out var position) ? $"{node} answered an unreadable {kind} position"
+        : position.Incarnation != primary.Incarnation || DatabaseRevision.Compare(primary, position) < 0
+            ? $"this node's primary file at {primary} does not cover the {kind} {node} holds at {position}"
+        : null;
+
+    private async Task<PeerAnswer> AskAsync<T>(
+        ServingNode node, TenantContext database, string suffix, JsonTypeInfo<T> answer, Func<T, PeerAnswer> wrap, CancellationToken cancellationToken)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(PeerTimeout);
         try
         {
-            using var response = await _http.GetAsync(new Uri(node.InternalListener(options.InternalPort), ReplicaRoutes.DatabasePath(database, "placement")), timeout.Token)
+            using var response = await _http.GetAsync(new Uri(node.InternalListener(options.InternalPort), ReplicaRoutes.DatabasePath(database, suffix)), timeout.Token)
                 .ConfigureAwait(false);
             return response.IsSuccessStatusCode
-                ? await response.Content.ReadFromJsonAsync(ReplicasJsonContext.Default.ReplicaCatalogEntry, timeout.Token).ConfigureAwait(false) is { } entry ? entry : new Unreached()
+                ? await response.Content.ReadFromJsonAsync(answer, timeout.Token).ConfigureAwait(false) is { } read ? wrap(read) : new Unreached()
                 : await response.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.ErrorBody, timeout.Token).ConfigureAwait(false) is { Error: var error } ? error : new Unreached();
         }
         catch (Exception error) when (error is HttpRequestException or JsonException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
@@ -156,5 +188,5 @@ internal sealed class HomeLeaseRepair(
 
     private sealed record Unreached;
 
-    private readonly union PeerAnswer(ReplicaCatalogEntry, ErrorDetail, Unreached);
+    private readonly union PeerAnswer(ReplicaCatalogEntry, DatabasePositionsAnswer, ErrorDetail, Unreached);
 }

@@ -17,9 +17,11 @@ internal sealed class RepairHomeLeaseEndpoint(HomeLeaseRepair repair) : Endpoint
         Summary("Re-stamps a home lease that keeps this home writer from serving to this node");
         Description("Internal peer listener only, behind the peer credential or an admin caller key; 404 elsewhere. Version 1. Call it on the writer of the "
             + "database's home region. It changes only the home lease, never table data, and refuses with 409 and a code unless every regional writer "
-            + "records the same home and placement version, the node the lease names answers that it is not its region's writer or records an older "
-            + "placement, and this node's applied-position proof passes. The lease must be older than the placement version, or name another node of "
-            + "this region at the placement version, which moves it to the next epoch. A lease this node already holds at the placement version answers unchanged.");
+            + "records the same home and placement version and this node's applied-position proof passes. A missing lease, or one older than the "
+            + "placement version, moves to this node at the placement version when the node it names answers that it is not its region's writer or "
+            + "records an older placement or another home. A lease at the placement version that names another node of this region moves to this node "
+            + "at the next epoch only when that node itself answers that it is not its region's writer and this node's primary file covers the primary "
+            + "file and replica positions that node holds. A lease this node already holds at the placement version answers unchanged.");
         Tags("Administration");
         Produces<HomeLeaseRepairBody>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);

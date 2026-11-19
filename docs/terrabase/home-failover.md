@@ -118,6 +118,12 @@ nothing, unless all of these hold:
   `placement_disagrees`);
 - the node the lease names answers that it is not its region's writer, or, for a lease below the placement version,
   records an older placement or another home (`lease_node_unknown`, `lease_node_disagrees`);
+- for a lease at the placement version, this node has a primary file of the database, and it covers (same incarnation,
+  at or past) the primary file and replica positions the named node answers from
+  `GET /v1/sync/organizations/{organization}/projects/{project}/databases/{database}/positions`; a missing primary
+  file, a missing or unreadable answer, another incarnation or a position ahead refuses (`unproven`). An earlier
+  build's claimant may have imported a replica of the old home as its primary file, so its own positions are the
+  acknowledged data this node must hold;
 - this node's applied-position proof for the database passes (`unproven`);
 - the lease did not change while it checked (`lease_changed`).
 
@@ -286,7 +292,9 @@ target's replica as its primary file; a file already at that path is preserved t
 A node on an earlier build still claims a home automatically when its lease lapses for about 15 s. A node on this build
 never deletes its file because of such a claim: the claim carries no `adopted`, so the old home keeps its file in place
 and fenced. The claimant serves the database when it is its region's writer; otherwise the database is unserved
-(`A lease that names a node that cannot serve`) until the home writer's repair moves the lease to it. Release order:
+(`A lease that names a node that cannot serve`) until the home writer's repair moves the lease to it, which it does
+only when the writer's primary file covers every position the claimant holds (`Repairing a stale home lease`); a
+writer without that proof keeps it unserved. Release order:
 
 1. Upgrade every non-writer node first.
 2. Upgrade each region's writer only after its planned drain has finished and every lease of the region's databases
