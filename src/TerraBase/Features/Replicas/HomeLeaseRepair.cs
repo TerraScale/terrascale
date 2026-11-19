@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Net.Http.Json;
@@ -71,12 +72,12 @@ internal sealed class HomeLeaseRepair(
             return new LeaseUnchanged(own);
         }
 
-        if (read.Lease is { } newer && newer.Epoch >= placement.Version)
+        var nodes = await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false);
+        if (read.Lease is { } newer && newer.Epoch >= placement.Version && !NamesRegionPeer(newer, placement.Version, nodes))
         {
             return new LeaseRepairRefused("lease_newer", $"the lease names {newer.Node} at epoch {newer.Epoch}, not older than placement version {placement.Version}");
         }
 
-        var nodes = await new PeersFile(options).ListAsync(cancellationToken).ConfigureAwait(false);
         foreach (var region in nodes.Select(node => node.Region).Where(region => region != options.Region).Distinct(StringComparer.Ordinal))
         {
             if (owners.Confirmed(region) is not { Activated: true, Node: var writer } || nodes.FirstOrDefault(node => node.Name == writer) is not { } peer)
@@ -91,22 +92,24 @@ internal sealed class HomeLeaseRepair(
             }
         }
 
-        if (read.Lease is { } stale && stale.Node != options.MachineId)
+        if (read.Lease is { } other && other.Node != options.MachineId)
         {
-            if (nodes.FirstOrDefault(node => node.Name == stale.Node) is not { } named)
+            if (nodes.FirstOrDefault(node => node.Name == other.Node) is not { } named)
             {
-                return new LeaseRepairRefused("lease_node_unknown", $"the lease names {stale.Node}, which is not in the peers file");
+                return new LeaseRepairRefused("lease_node_unknown", $"the lease names {other.Node}, which is not in the peers file");
             }
 
             var confirmed = await PlacementAsync(named, database, cancellationToken).ConfigureAwait(false) switch
             {
                 ErrorDetail { Code: "not_writer" } => true,
-                ReplicaCatalogEntry entry => entry.PlacementVersion < placement.Version || entry.HomeRegion != named.Region,
+                ReplicaCatalogEntry entry => other.Epoch < placement.Version && (entry.PlacementVersion < placement.Version || entry.HomeRegion != named.Region),
                 _ => false,
             };
             if (!confirmed)
             {
-                return new LeaseRepairRefused("lease_node_disagrees", $"{stale.Node} did not confirm that it is not the home or records an older placement");
+                return new LeaseRepairRefused("lease_node_disagrees", other.Epoch < placement.Version
+                    ? $"{other.Node} did not confirm that it is not the home or records an older placement"
+                    : $"{other.Node} did not confirm that it is not its region's writer");
             }
         }
 
@@ -119,6 +122,10 @@ internal sealed class HomeLeaseRepair(
             ? new LeaseRestamped(read.Lease, lease)
             : new LeaseRepairRefused("lease_changed", "the lease, the writer role, a fence or a home move changed while the repair checked; run it again");
     }
+
+    private bool NamesRegionPeer(HomeLease lease, long version, ImmutableArray<ServingNode> nodes) =>
+        lease.Epoch == version && lease.Home == options.Region && lease.Node != options.MachineId
+        && nodes.Any(node => node.Name == lease.Node && node.Region == options.Region);
 
     private static string Blocked(string blocker) => blocker switch
     {

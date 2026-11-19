@@ -48,7 +48,8 @@ internal sealed partial class HomeLeases
                 return null;
             }
 
-            var lease = new HomeLease(database.OrganizationId, database.ProjectId!, id, options.Region, options.MachineId, placement.Version, _session, read.Lease?.Adopted);
+            var lease = new HomeLease(database.OrganizationId, database.ProjectId!, id, options.Region, options.MachineId,
+                Math.Max((read.Lease?.Epoch ?? 0) + 1, placement.Version), _session, read.Lease?.Adopted);
             var revision = current is { } entry
                 ? await kv.UpdateAsync(HomeKey(id), Encode(lease), entry.Revision, cancellationToken: cancellationToken).ConfigureAwait(false)
                 : await kv.CreateAsync(HomeKey(id), Encode(lease), cancellationToken: cancellationToken).ConfigureAwait(false);

@@ -101,16 +101,23 @@ An operator repairs a lease that keeps the home writer from serving its database
 `POST /admin/organizations/{organization}/projects/{project}/databases/{database}/home-lease` on the internal listener
 of the home region's writer (peer credential or an `admin` caller key):
 `ssh <home writer host> 'bash -s' -- ORGANIZATION PROJECT DATABASE < scripts/terrabase/home-lease-repair.sh`.
-It changes only `home.<databaseId>`, never table data, and rewrites it with one compare-and-set to this node at epoch
-= the placement version. It answers 409 with a code, writing nothing, unless all of these hold:
+It changes only `home.<databaseId>`, never table data, and rewrites it with one compare-and-set to this node. A lease
+older than the placement version, or missing, moves to epoch = the placement version. A lease at the placement version
+that names another node of this region (an earlier build's claim, `not_writer`) moves to the next epoch, and every
+region follows the lease to that placement version, as after a regional activation. A node that is not its region's
+writer commits no write to a database with replicas whatever its lease names, because its write gate needs the region's
+writer role, and the repair checks again that this node is the writer, not handing off, right before its
+compare-and-set, so no two nodes ever write the database. It answers 409 with a code, writing
+nothing, unless all of these hold:
 
 - this node is its region's writer and the catalog homes the database here with replicas (`not_writer`, `not_home`,
   `not_leased`);
-- the lease is older than the placement version, or missing (`lease_newer`);
+- the lease is older than the placement version, or missing, or at the placement version naming another node of this
+  region; a lease above the placement version, or at it naming a node of another region, stays (`lease_newer`);
 - the confirmed writer of every other region records the same home and placement version (`writer_unknown`,
   `placement_disagrees`);
-- the node the lease names answers that it is not its region's writer, or records an older placement or another home
-  (`lease_node_unknown`, `lease_node_disagrees`);
+- the node the lease names answers that it is not its region's writer, or, for a lease below the placement version,
+  records an older placement or another home (`lease_node_unknown`, `lease_node_disagrees`);
 - this node's applied-position proof for the database passes (`unproven`);
 - the lease did not change while it checked (`lease_changed`).
 
@@ -279,7 +286,7 @@ target's replica as its primary file; a file already at that path is preserved t
 A node on an earlier build still claims a home automatically when its lease lapses for about 15 s. A node on this build
 never deletes its file because of such a claim: the claim carries no `adopted`, so the old home keeps its file in place
 and fenced. The claimant serves the database when it is its region's writer; otherwise the database is unserved
-(`A lease that names a node that cannot serve`). Release order:
+(`A lease that names a node that cannot serve`) until the home writer's repair moves the lease to it. Release order:
 
 1. Upgrade every non-writer node first.
 2. Upgrade each region's writer only after its planned drain has finished and every lease of the region's databases
@@ -327,8 +334,10 @@ and fenced. The claimant serves the database when it is its region's writer; oth
 
 - `durability` is accepted on SQL REST only; the WebSocket frame field and `SET terrascale.durability` follow.
 - A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
-- A database whose lease names a node that cannot serve it, or whose home's node and disk are lost for good, stays
-  unserved: this build has no path that serves it again.
+- A database whose lease names a node of another region at or above the placement version, whose lease is above the
+  placement version, or whose home's node and disk are lost for good, stays unserved: this build has no path that serves
+  it again. A stale lease and a lease naming a non-writer of the home region are repaired (`Repairing a stale home
+  lease`).
 - Kept copies are never removed automatically, including those of a database a user deleted; each one is disk the
   operator reclaims. A regional drain back to a former writer sets aside that node's earlier primary files.
 - The activation check cannot compare a replica whose follower could not reach its source within the 1 s it gives each

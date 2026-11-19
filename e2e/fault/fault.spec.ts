@@ -1840,3 +1840,47 @@ test('a home lease of another region below the placement version cannot serve: t
   }
   await removeDatabase(cells, ledger.id);
 });
+
+test('a home lease that names a non-writer of the home region at the placement version is unserved until the repair moves it to the writer at the next epoch', async ({ cells, request }) => {
+  const token = await writerToken(request);
+  const kv = await Kv.open();
+  const gru = node('journey-1');
+  await writerIs('gru', gru.name);
+  await writerIs('fra', 'journey-2');
+  const [ledger] = await createLedgers(cells, 1, 'not-writer-lease');
+  try {
+    const stored = await homeLease(kv, ledger.id);
+    const repair = () => nodeRequest(gru, `/admin/organizations/${stored.value.organizationId}/projects/${stored.value.projectId}/databases/${ledger.id}/home-lease`, 'POST');
+    expect(stored.value).toMatchObject({ home: 'gru', node: gru.name });
+    await kv.put(homes, `home.${ledger.id}`, { ...stored.value, node: 'journey-2' }, stored.seq);
+    await expect.poll(async () => ((await nodeStatus(gru)).unserved ?? []).find(entry => entry.databaseId === ledger.id),
+      { message: 'journey-1 lists the database as unserved by a lease naming fra\'s writer', timeout: 45_000 })
+      .toMatchObject({ region: 'gru', node: 'journey-2', epoch: stored.value.epoch, cause: 'not_writer' });
+    const foreign = await repair();
+    expect(foreign.status, foreign.body).toBe(409);
+    expect(JSON.parse(foreign.body).error.code, 'a lease at the placement version naming a node of another region stays refused').toBe('lease_newer');
+    const claimed = await homeLease(kv, ledger.id);
+    await kv.put(homes, `home.${ledger.id}`, { ...claimed.value, node: 'journey-3' }, claimed.seq);
+    await expect.poll(async () => ((await nodeStatus(gru)).unserved ?? []).find(entry => entry.databaseId === ledger.id),
+      { message: 'journey-1 lists the database as unserved by a lease naming its region\'s non-writer', timeout: 45_000 })
+      .toMatchObject({ region: 'gru', node: 'journey-3', epoch: stored.value.epoch, cause: 'not_writer' });
+    let row = 940;
+    await expect.poll(async () => ledger.refusal(gru, token, [[row++, 'while-not-writer']]), { message: 'journey-1 refuses writes while the lease names journey-3', timeout: 45_000 })
+      .toEqual({ status: 409, code: 'serialization_conflict' });
+    const repaired = await repair();
+    expect(repaired.status, repaired.body).toBe(200);
+    expect(JSON.parse(repaired.body)).toMatchObject({
+      outcome: 'restamped', node: gru.name, epoch: stored.value.epoch + 1, previousNode: 'journey-3', previousEpoch: stored.value.epoch,
+    });
+    expect((await homeLease(kv, ledger.id)).value).toMatchObject({ home: 'gru', node: gru.name, epoch: stored.value.epoch + 1 });
+    await ledger.write(cells, 'gru', [[960, 'after-not-writer-repair']]);
+    await ledger.compare(cells);
+    const again = await repair();
+    expect(JSON.parse(again.body), 'a second repair finds the lease held and changes nothing').toMatchObject({ outcome: 'unchanged', node: gru.name, epoch: stored.value.epoch + 1 });
+    await expect.poll(async () => ((await nodeStatus(gru)).unserved ?? []).some(entry => entry.databaseId === ledger.id),
+      { message: 'the database is served again', timeout: 45_000 }).toBe(false);
+  } finally {
+    kv.close();
+  }
+  await removeDatabase(cells, ledger.id);
+});
