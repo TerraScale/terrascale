@@ -5,7 +5,7 @@ provenance=${2:?provenance bundle}
 sbom=${3:?SBOM bundle}
 package=${source##*/}
 package=${package%@*}
-for destination in sjc/terrascale fra/terrascale gru/terrascale sjc/terrascale-stg; do
+for destination in sjc/terrascale fra/terrascale gru/terrascale; do
   bash "$(dirname "$0")/publish-image.sh" "$source" \
     "http://localhost:5000/$destination/$package:proof" "$provenance" "$sbom"
 done

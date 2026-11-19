@@ -3,7 +3,7 @@
 Production shapes use the shared `ts-terrabase-shapes-prod` R2 bucket in
 account `6cd3f3639e928077593d9b470765efeb`, signing region `auto`, and
 `https://shapes-ts-terrabase-shapes-prod.terrascale.tech/`. Another environment
-(staging) sets its own bucket and CDN host together with `TERRABASE_SHAPES_BUCKET`
+sets its own bucket and CDN host together with `TERRABASE_SHAPES_BUCKET`
 and `TERRABASE_SHAPES_CDN_HOST`; unset, a node uses production's pair. The account
 and signing region are code constants.
 

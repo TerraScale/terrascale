@@ -47,7 +47,7 @@ The production image always uses ts-orch's persistent service contract.
 ## OCI production
 Production needs `TS_DASHBOARD_TERRABASE_URL` (TerraBase's private listener, `http://127.0.0.1:8081`) and
 listens on `ASPNETCORE_URLS` (`http://127.0.0.1:8085` in the ts-orch service spec); the loopback TLS edge sends `X-Forwarded-Proto` and `X-Forwarded-For`.
-`TS_DASHBOARD_AUTH_ORIGIN` names the ts-auth of the dashboard's environment (`https://stg.auth.terrascale.tech` in staging); unset, it is production's `https://auth.terrascale.tech`.
+`TS_DASHBOARD_AUTH_ORIGIN` names the ts-auth of the dashboard's environment; unset, it is production's `https://auth.terrascale.tech`.
 Every ts-auth call, `/readyz` dependency check, sign-out form target, step-up and MFA link, and connect snippet uses it.
 Each secret may instead arrive as a file named by `<NAME>_FILE` (ts-orch delivers OCI Vault secrets that way).
 
