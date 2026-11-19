@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Features.Agents;
 using TerraScale.Authentication.Features.UserApiKeys;
 using System.Net;
 using TerraScale.Authentication.Features.AttackProtection;
@@ -177,6 +178,7 @@ public static class App
         builder.Services.AddSingleton<EmailChanges>();
         builder.Services.AddSingleton<ApiKeys>();
         builder.Services.AddSingleton<UserApiKeys>();
+        builder.Services.AddSingleton<AgentDirectory>();
         builder.Services.AddSingleton<PlatformGrants>();
         builder.Services.AddSingleton<CustomTokens>();
         // Singletons keep factory clients (discovery and key caches), so a rotating handler could never be collected:
