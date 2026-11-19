@@ -82,9 +82,9 @@ public sealed class OidcApplicationStore(AuthData data, Credentials credentials,
     /// </summary>
     public async ValueTask<OidcApplication?> FindByClientIdAsync(string identifier, CancellationToken cancellationToken)
     {
-        if (this.Tenant == AgentIdIssuer.Slug)
+        if (this.Tenant == AgentIdIssuer.Slug && AgentIdIssuer.OpenClient(identifier) is { } open)
         {
-            return AgentIdIssuer.OpenClient(identifier);
+            return open;
         }
 
         if (!TerraScaleIds.IsValid(identifier))
@@ -107,6 +107,13 @@ public sealed class OidcApplicationStore(AuthData data, Credentials credentials,
     private async ValueTask<OidcApplication?> ReadAsync(string identifier, CancellationToken cancellationToken)
     {
         var tenant = this.Tenant;
+        if (tenant == AgentIdIssuer.Slug)
+        {
+            var registration = await services.GetRequiredService<AgentIdClients>().FindAsync(identifier, cancellationToken).ConfigureAwait(false);
+            http.HttpContext?.Items[new AgentIdRegistration.RequestCopy(identifier)] = registration;
+            return registration?.Application;
+        }
+
         var application = await data.ReadAsync((db, token) => db.OidcApplications.SingleOrDefaultAsync(row => row.InstanceId == tenant && row.Id == identifier, token),
             cancellationToken).ConfigureAwait(false);
         if (application is null)

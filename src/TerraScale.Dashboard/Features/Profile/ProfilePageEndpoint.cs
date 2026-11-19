@@ -35,6 +35,8 @@ namespace TerraScale.Dashboard.Features.Profile
                 "language-saved" => tab == "profile" ? "Language preference saved." : "",
                 "token-revoked" => tab == "access-tokens" ? "Access token revoked." : "",
                 "agent-revoked" => tab == "agents" ? "Agent revoked." : "",
+                "agent-email-shared" => tab == "agents" ? "Email sharing on." : "",
+                "agent-email-private" => tab == "agents" ? "Email sharing off." : "",
                 "session-revoked" => tab == "sessions" ? "Session revoked." : "",
                 "code-sent" => tab == "profile" ? $"We emailed a code to {context.Account.Email}. It expires in 30 minutes." : "",
                 _ => ""

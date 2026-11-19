@@ -451,7 +451,7 @@ public sealed class ApiKeyApplicationManager(
     public override async ValueTask<bool> ValidateRedirectUriAsync(OidcApplication application, [StringSyntax(StringSyntaxAttribute.Uri)] string uri, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(application);
-        return application.InstanceId == AgentIdIssuer.Slug
+        return application.InstanceId == AgentIdIssuer.Slug && application.ClientType == ClientTypes.Public
             ? AgentIdIssuer.AllowsRedirect(application.ClientId!, uri)
             : await base.ValidateRedirectUriAsync(application, uri, cancellationToken).ConfigureAwait(false);
     }

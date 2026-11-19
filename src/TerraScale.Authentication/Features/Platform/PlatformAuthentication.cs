@@ -64,7 +64,7 @@ public sealed class PlatformAuthentication(KeyRing ring, TotpCredentials mfa, IO
         await Task.WhenAll(userRead, liveRead, agentRead ?? Task.CompletedTask).ConfigureAwait(false);
         return await liveRead.ConfigureAwait(false) is { } entry && await userRead.ConfigureAwait(false) is { } user
             && (agentRead is null || await agentRead.ConfigureAwait(false) is not null)
-            ? user with { AuthenticationBindings = entry.Bindings, SessionId = Claim(claims, "ts_auth_session") }
+            ? user with { AuthenticationBindings = entry.Bindings, SessionId = Claim(claims, "ts_auth_session"), ActingAgentId = Claim(claims, LiveAgents.Claim) }
             : null;
     }
 

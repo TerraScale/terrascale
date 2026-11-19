@@ -167,6 +167,7 @@ namespace TerraScale.Dashboard
                 EndpointRegistration.Create<CreateProfileAccessTokenEndpoint>(),
                 EndpointRegistration.Create<RevokeProfileAccessTokenEndpoint>(),
                 EndpointRegistration.Create<RevokeProfileAgentEndpoint>(),
+                EndpointRegistration.Create<ShareProfileAgentEmailEndpoint>(),
                 EndpointRegistration.Create<DashboardIdentityEndpoint>(),
                 EndpointRegistration.Create<SwitchOrganizationEndpoint>(),
                 EndpointRegistration.Create<SwitchProjectEndpoint>(),

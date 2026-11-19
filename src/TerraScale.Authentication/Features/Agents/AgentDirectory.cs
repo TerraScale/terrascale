@@ -17,7 +17,7 @@ public static class AgentStatus
 }
 
 public sealed record AgentRecord(string ProjectId, string Id, string OwnerUserId, string Name, string Status, IReadOnlyList<string> AllowedScopes,
-    bool AllowSelfSubject, DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt, DateTimeOffset? RevokedAt, DateTimeOffset? LastUsedAt, long OwnerAuthEpoch, string OwnerAuthStamp);
+    bool AllowSelfSubject, DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt, DateTimeOffset? RevokedAt, DateTimeOffset? LastUsedAt, long OwnerAuthEpoch, string OwnerAuthStamp, bool ShareOwnerEmail = false);
 public sealed record AgentKeyRecord(string ProjectId, string Kid, string AgentId, string PublicJwk, string Thumbprint, DateTimeOffset CreatedAt, DateTimeOffset? RevokedAt);
 public sealed record AgentPolicyRecord(string ProjectId, IReadOnlyList<string> AllowedScopes);
 public sealed record AgentOwner(string Id, long AuthEpoch, string? AuthStamp, bool Disabled);
@@ -27,7 +27,8 @@ public sealed record CreateAgentRequest(string? Name, IReadOnlyList<string>? All
 public sealed record AddAgentKeyRequest(JsonElement? PublicJwk);
 public sealed record AgentKeyBody(string Kid, string Thumbprint, DateTimeOffset CreatedAt, DateTimeOffset? RevokedAt);
 public sealed record AgentBody(string Id, string ProjectId, string OwnerUserId, string Name, string Status, IReadOnlyList<string> AllowedScopes, bool AllowSelfSubject,
-    IReadOnlyList<AgentKeyBody> Keys, DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt, DateTimeOffset? RevokedAt, DateTimeOffset? LastUsedAt);
+    IReadOnlyList<AgentKeyBody> Keys, DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt, DateTimeOffset? RevokedAt, DateTimeOffset? LastUsedAt, bool ShareOwnerEmail);
+public sealed record AgentSharingRequest(bool? ShareOwnerEmail);
 public sealed record AgentPageBody(IReadOnlyList<AgentBody> Items, string? Next);
 
 public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, AgentLifecycleEvents events, AttemptLimiter limiter, TimeProvider clock, ILogger<AgentDirectory> logger)
@@ -188,6 +189,21 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
                 .. Event(project, () => events.Revoked(project, agent.Value.OwnerUserId, agentId))], cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<AgentBody> ShareOwnerEmailAsync(string project, string agentId, string owner, bool share, CancellationToken cancellationToken)
+    {
+        using var home = HomeReads.Begin();
+        var agent = await data.ReadAsync((db, token) => db.Agents.Where(row => row.ProjectId == project && row.Id == agentId && row.OwnerUserId == owner).WithVersion()
+            .SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+        var shared = agent.Value with { ShareOwnerEmail = share };
+        if (agent.Value.ShareOwnerEmail != share)
+        {
+            await this.SaveAsync(project, owner, share ? "agent.owner_email_shared" : "agent.owner_email_unshared", agentId, null, [Change.Update(agent, shared)], cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        return (await this.BodiesAsync(project, [shared], cancellationToken).ConfigureAwait(false))[0];
+    }
+
     public static string Status(AgentRecord agent, AgentOwner? owner)
     {
         ArgumentNullException.ThrowIfNull(agent);
@@ -219,7 +235,7 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
 
     private static AgentBody Body(AgentRecord agent, IEnumerable<AgentKeyRecord> keys, AgentOwner? owner) =>
         new(agent.Id, agent.ProjectId, agent.OwnerUserId, agent.Name, Status(agent, owner), agent.AllowedScopes, agent.AllowSelfSubject,
-            [.. keys.Select(KeyBody)], agent.CreatedAt, agent.ExpiresAt, agent.RevokedAt, agent.LastUsedAt);
+            [.. keys.Select(KeyBody)], agent.CreatedAt, agent.ExpiresAt, agent.RevokedAt, agent.LastUsedAt, agent.ShareOwnerEmail);
 
     private static AgentKeyBody KeyBody(AgentKeyRecord key) => new(key.Kid, key.Thumbprint, key.CreatedAt, key.RevokedAt);
 
@@ -260,5 +276,6 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
 [JsonSerializable(typeof(AgentKeyBody))]
 [JsonSerializable(typeof(AgentBody))]
 [JsonSerializable(typeof(AgentPageBody))]
+[JsonSerializable(typeof(AgentSharingRequest))]
 [JsonSerializable(typeof(AgentTokenBody))]
 internal sealed partial class AgentJson : JsonSerializerContext;

@@ -1,41 +1,13 @@
-import type { APIRequestContext } from '@playwright/test';
 import { Agent, approvePlatformAgent, signInProof } from '../support/agents';
 import { expect, test } from '../support/audit';
 import { signInToken } from '../support/auth-management';
 import { hostedReady } from '../support/hosted';
 import { createProjectOwner } from '../support/project-owner';
-import { RelyingParty, type SignInStart } from '../support/relying-party';
+import { RelyingParty, authorizeStatus, completed, pending, prove, type Pending } from '../support/relying-party';
 import { auth } from '../support/stack';
 
 const issuer = auth + '/agents';
 const json = { Accept: 'application/json' };
-
-type Pending = { status: string; transaction_id: string; proof_url: string; client_id: string; client_name: string; expires_at: string };
-
-async function pending(request: APIRequestContext, started: SignInStart): Promise<Pending> {
-  const response = await request.get(started.url, { headers: json, maxRedirects: 0 });
-  expect(response.status()).toBe(200);
-  const body = await response.json() as Pending;
-  expect(response.headers().link).toBe(`<${body.proof_url}>; rel="agent-proof"`);
-  return body;
-}
-
-async function authorizeStatus(request: APIRequestContext, started: SignInStart, overrides: Record<string, string>): Promise<{ status: number; location?: string }> {
-  const url = new URL(started.url);
-  for (const [name, value] of Object.entries(overrides)) url.searchParams.set(name, value);
-  const response = await request.get(url.href, { headers: json, maxRedirects: 0 });
-  return { status: response.status(), location: response.headers().location };
-}
-
-async function prove(request: APIRequestContext, url: string, proof: string): Promise<number> {
-  return (await request.post(url, { data: { proof } })).status();
-}
-
-async function completed(request: APIRequestContext, rp: RelyingParty, started: SignInStart): Promise<string> {
-  const response = await request.get(started.url, { headers: json, maxRedirects: 0 });
-  expect(response.status()).toBe(302);
-  return rp.callback(response.headers().location, started);
-}
 
 test('an app signs in a TerraScale account\'s agent with the public Sign in as agent provider', async ({ browser, request }, info) => {
   const account = await createProjectOwner(browser, info);
@@ -57,9 +29,9 @@ test('an app signs in a TerraScale account\'s agent with the public Sign in as a
       issuer, authorization_endpoint: issuer + '/oauth/authorize', token_endpoint: issuer + '/oauth/token', userinfo_endpoint: issuer + '/oauth/userinfo',
       jwks_uri: issuer + '/.well-known/jwks.json', response_types_supported: ['code'], grant_types_supported: ['authorization_code'],
       code_challenge_methods_supported: ['S256'], subject_types_supported: ['pairwise'], id_token_signing_alg_values_supported: ['ES256'],
-      token_endpoint_auth_methods_supported: ['none'],
     });
-    expect([...metadata.scopes_supported as string[]].sort()).toEqual(['openid', 'profile']);
+    expect([...metadata.token_endpoint_auth_methods_supported as string[]].sort()).toEqual(['client_secret_basic', 'client_secret_post', 'none']);
+    expect([...metadata.scopes_supported as string[]].sort()).toEqual(['openid', 'owner_email', 'profile']);
     expect(metadata.end_session_endpoint).toBeUndefined();
 
     const probe = await rp.start();

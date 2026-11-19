@@ -15,12 +15,17 @@ The provider is its own issuer, apart from the platform issuer (`/terrascale`) a
 | UserInfo | `https://auth.terrascale.tech/agents/oauth/userinfo` (GET or form POST) |
 | JWKS | `https://auth.terrascale.tech/agents/.well-known/jwks.json` |
 | Flow | Authorization code with PKCE (`S256`) only; no implicit, hybrid, refresh or other grant |
-| Scopes | `openid` (required) and `profile` |
+| Scopes | `openid` (required), `profile`, and `owner_email` for registered clients |
 | Signing | ES256 with the issuer's own keys, created on first use and stored encrypted under the master key |
 
 ## Set up your app
 
-There is nothing to register. The `client_id` is the canonical https origin of your app, for example
+An app is either an open client, with nothing to register, or a registered client with a secret. Only a registered
+client may ask for the owner's email.
+
+### Open clients
+
+The `client_id` is the canonical https origin of your app, for example
 `https://app.example.com`: lowercase ASCII host (punycode, `xn--…`, for an international name), no userinfo, path,
 trailing slash or default port. The client is public: it has no secret and authenticates with PKCE. The
 `redirect_uri` can be any https URL on exactly that origin (not a subdomain, not another port); anything else is
@@ -46,7 +51,61 @@ Every OIDC client library works with these settings:
   OIDC provider; Supabase: a third-party OIDC provider your app completes with its own code exchange and
   `signInWithIdToken`; Auth0: an enterprise OpenID Connect connection on the front channel) with the discovery URL
   above, your origin as client ID, scopes `openid profile` and PKCE on. A service that requires a client secret
-  needs a registered client (see Coming next).
+  needs a registered client.
+
+### Registered clients
+
+A TerraScale account registers a confidential client with a platform sign-in access token:
+
+```http
+POST /v1/terrascale/agentid-clients
+Authorization: Bearer <platform sign-in access token>
+X-TerraScale-Step-Up-Proof: <create_oauth_client proof>
+Content-Type: application/json
+
+{"name":"Example app","redirect_uris":["https://app.example.com/auth/callback"]}
+```
+
+```http
+HTTP/1.1 201 Created
+Location: /v1/terrascale/agentid-clients/01JD6Z8V4M8Q2W3E4R5T6Y7U8K
+
+{"client_id":"01JD6Z8V4M8Q2W3E4R5T6Y7U8K","name":"Example app","redirect_uris":["https://app.example.com/auth/callback"],
+ "created_at":"2026-11-19T12:00:00+00:00","client_secret":"<shown once>"}
+```
+
+`name` is 1 to 64 characters and is what the agent and the waiting page see as `client_name`. `redirect_uris` holds 1
+to 10 distinct absolute https URLs in canonical form (lowercase scheme and host, no default port, userinfo or
+fragment); the authorization request's `redirect_uri` must equal one of them exactly. The `client_id` is a ULID. The
+`client_secret` is answered once; ts-auth keeps only its SHA-256 digest and compares digests in constant time. An
+account has at most 10 clients (`409 client_limit`).
+
+| Operation | Route | Step-up proof |
+| --- | --- | --- |
+| Register | `POST /v1/terrascale/agentid-clients` | `create_oauth_client` |
+| List (no secrets) | `GET /v1/terrascale/agentid-clients` | none |
+| Rotate the secret | `POST /v1/terrascale/agentid-clients/{client_id}/secret/rotate` with optional `{"grace_seconds": 0-86400}` | `rotate_oauth_client` |
+| Delete | `DELETE /v1/terrascale/agentid-clients/{client_id}` | `delete_oauth_client` |
+
+The proof goes in `X-TerraScale-Step-Up-Proof` ([step-up proofs](step-up-proof.md)). Rotation answers the new
+`client_secret` once and `previous_secret_expires_at`: the previous secret keeps working for `grace_seconds` (default
+3600), then is refused like any wrong secret; rotating again inside the grace replaces the previous secret, and
+`grace_seconds: 0` ends it at once. A deleted client's next authorization request, redemption and secret are refused, and UserInfo refuses its access
+tokens with `401 invalid_token`. Redemption asserts the client registration, its owner and the secret version it
+was checked against in the same save that consumes the code: a rotation without grace or a deletion that commits
+first fails the redemption and leaves the code unused. Creation, rotation and deletion spend their step-up proof in
+the same save as the change, so a sign-out everywhere that commits first refuses them with `409`.
+Only the account itself manages its clients: another account's client is `404`, and a token an agent acts with is
+`403 owner_required`. A disabled or deleted account's clients stop working with it.
+
+| Setting | Value |
+| --- | --- |
+| Issuer or discovery URL | `https://auth.terrascale.tech/agents` |
+| Client ID | the registered `client_id` |
+| Client secret | the registered `client_secret`, sent with `client_secret_basic` or `client_secret_post` |
+| Scopes | `openid profile owner_email`, or any subset with `openid` |
+| PKCE | `S256`, required |
+| Response type | `code` |
 
 Verify the ID token as usual: signature against the JWKS (ES256), `iss` exactly the issuer, `aud` your client ID,
 `exp`, and `nonce` when you sent one.
@@ -63,15 +122,40 @@ ID token claims:
 | `nonce` | when sent | the authorization request's `nonce` |
 | `name` | `profile` | the agent's name, chosen by its owner and the same for every client ID |
 | `owner_sub` | `profile` | the accountable TerraScale account, pairwise for your client ID |
+| `owner_email`, `owner_email_verified` | `owner_email`, registered clients, while the owner shares it | the owner's TerraScale email and whether it is verified |
 
-Claims that are not granted are left out, never `null`. Nothing reveals the agent's or the owner's TerraScale ids or
-email. Two apps cannot link their subjects: each pairwise value is an HMAC under a key derived from the master key,
+Claims that are not granted are left out, never `null`. Nothing reveals the agent's or the owner's TerraScale ids, and
+only `owner_email` reveals the owner's email. Two apps cannot link their subjects: each pairwise value is an HMAC under a key derived from the master key,
 over the client ID and the id. `name` is profile data, not an identifier: apps that both ask for `profile` see the same
-name and can use it to correlate an agent across them.
+name and can use it to correlate an agent across them. Likewise `owner_email` is the same for every client: two
+registered clients that both receive it can correlate the owner's account across them, whatever their pairwise
+subjects say.
 
-UserInfo answers the same `sub`, `actor_type`, `name` and `owner_sub` (as granted) for the access token, and reads
-the agent again on every call. The access token is encrypted and is only good at this UserInfo endpoint; no other
+UserInfo answers the same `sub`, `actor_type`, `name`, `owner_sub`, `owner_email` and `owner_email_verified` (as
+granted and shared) for the access token, and reads the agent and its owner again on every call. The access token is encrypted and is only good at this UserInfo endpoint; no other
 TerraScale issuer or API accepts it, and this issuer accepts no token of another issuer.
+
+### Owner email
+
+The `owner_email` scope is for registered clients only: an open client that asks for it is answered `invalid_scope`
+at its `redirect_uri`. A registered client granted it gets `owner_email` and `owner_email_verified` only while the
+agent's owner shares their email for that agent; otherwise both are left out, with no error. Sharing is off for every
+agent until its owner turns it on, per agent, in the dashboard (Profile › Agents, "Share my email with apps") or with
+a platform sign-in access token of the account itself (a token an agent acts with is `403 owner_required`):
+
+```http
+PATCH /v1/terrascale/me/agents/{agent}
+Content-Type: application/json
+
+{"share_owner_email": true}
+```
+
+The answer is the agent, with `share_owner_email`; `GET /v1/terrascale/me/agents` lists it too. Consent is the
+owner's and covers every registered client the agent signs in to, whichever account registered it; the agent itself
+chooses which client it signs a proof for. ID tokens carry the email as of the redemption, which reads the flag in
+the same save that consumes the code; UserInfo reads it from the home region on every call, in the same query as the client registration and its
+owner, and answers with
+`Cache-Control: no-store`, so turning sharing off hides the email from UserInfo at once, and ID tokens already issued keep it until they expire (5 minutes).
 
 ## How an agent completes the sign-in
 
@@ -132,6 +216,10 @@ the caller address's shared token budget, as `/terrascale/oauth/token` does. Ove
 
 ## Storage
 
+Registered clients live in `agentid_clients`: the id, the owning account (deleted with it), the name, the redirect
+URIs and the SHA-256 digests of the current and previous secret, with the previous one's expiry.
+
+
 Transactions live in `agentid_transactions` ([storage](storage.md)): a random id, and a unique `request_hash`, the
 SHA-256 of the authorization request's parameters, so the same request finds the same transaction. A proof records
 the agent, owner and key in the same write as the used `jti` (`agent_assertions`), asserting the key and owner
@@ -139,10 +227,3 @@ versions, after rechecking the transaction's deadline and the proof's accepted w
 rechecks the deadline on a fresh read and sets `completed_at` in a write that asserts the transaction, key and owner
 versions, so it happens once, before the deadline, and never after a revocation that won. Rows are pruned an hour
 after they expire; a request repeated later opens a new transaction with a new id and proof URL.
-
-## Coming next
-
-Registered clients: a TerraScale account creates a confidential client with a name and 1 to 10 https redirect URIs
-(`POST /v1/terrascale/agentid-clients`, client secret shown once, with list, rotate and delete routes), which may
-also request the `owner_email` scope. Owners choose per agent whether apps may see their email
-(`PATCH /v1/terrascale/me/agents/{agent}` with `{"share_owner_email": bool}`, off by default).

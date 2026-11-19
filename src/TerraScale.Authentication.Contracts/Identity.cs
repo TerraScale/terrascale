@@ -63,6 +63,9 @@ public sealed record UserRecord(string Id, string InstanceId, string Email, long
     public string? SessionId { get; init; }
 
     [JsonIgnore]
+    public string? ActingAgentId { get; init; }
+
+    [JsonIgnore]
     public string? Version { get; init; }
 }
 

@@ -1,0 +1,14 @@
+using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.Platform;
+
+namespace TerraScale.Authentication.Features.AgentId;
+
+public abstract class AgentIdClientEndpoint(PlatformAuthentication authentication) : PlatformEndpoint(authentication)
+{
+    protected const string Root = "/v1/terrascale/agentid-clients";
+
+    protected sealed override Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken) =>
+        this.HandleOwnerAsync(AgentIdClients.Owner(caller), cancellationToken);
+
+    protected abstract Task<IResult> HandleOwnerAsync(UserRecord owner, CancellationToken cancellationToken);
+}

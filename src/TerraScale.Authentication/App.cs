@@ -184,6 +184,7 @@ public static class App
         builder.Services.AddSingleton<AgentAssertions>();
         builder.Services.AddSingleton<AgentTokens>();
         builder.Services.AddSingleton<AgentIdTransactions>();
+        builder.Services.AddSingleton<AgentIdClients>();
         builder.Services.AddSingleton<LiveAgents>();
         builder.Services.AddSingleton<AgentExchange>();
         builder.Services.AddSingleton<AgentEnrollments>();
@@ -350,7 +351,8 @@ public static class App
             context.Response.OnStarting(() =>
             {
                 BrowserSecurity.ApplyResponseHeaders(context.Response, options.PublicOrigin.Scheme == Uri.UriSchemeHttps);
-                if (context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName is UserInfoEndpoint.RouteName or UserInfoEndpoint.PostRouteName)
+                if (context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName is UserInfoEndpoint.RouteName or UserInfoEndpoint.PostRouteName
+                    or AgentIdUserInfoEndpoint.RouteName or AgentIdUserInfoEndpoint.PostRouteName)
                 {
                     // Registered before authentication; survives protocol failures and the error envelope's Clear().
                     context.Response.Headers.CacheControl = "no-store";
