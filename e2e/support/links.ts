@@ -18,6 +18,7 @@ const journeyPages: readonly PagePattern[] = [
   { path: /^\/storage$/, query: { bucket: /^[0-9A-HJKMNP-TV-Z]{26}$/, tab: /^(settings)?$/ } },
   { path: /^\/account-deleted$/ },
   { path: /^\/profile$/, query: { tab: /^access-tokens$/, status: /^token-revoked$/ } },
+  { path: /^\/profile$/, query: { tab: /^agents$/, status: /^agent-revoked$/ } },
   { path: /^\/profile$/, query: { tab: /^profile$/, status: /^profile-saved$/ } },
   { path: /^\/organization$/, query: { tab: /^billing$/, payment: /^success$/ } },
   { path: /^\/organization$/, query: { tab: /^members$/, invitation: /^accepted$/ } },

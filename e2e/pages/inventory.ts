@@ -156,6 +156,7 @@ const profileTabs: [string, Identity][] = [
   ['security', title('Passkeys', 2)],
   ['sessions', title('Active sessions', 2)],
   ['access-tokens', title('Personal access tokens', 2)],
+  ['agents', title('Agents', 2)],
   ['danger', title('Delete account', 2)],
 ];
 
@@ -682,6 +683,8 @@ export const dashboardStates: readonly PageState[] = [
           await expect(row.locator('td').nth(1)).not.toHaveText('');
         } else if (tab === 'access-tokens') {
           await expect(page.getByText('No access tokens', { exact: true })).toBeVisible();
+        } else if (tab === 'agents') {
+          await expect(page.getByText("No agents yet. Run an agent's enrollment and approve it here.", { exact: true })).toBeVisible();
         } else if (tab === 'danger') {
           await expect(page.locator('label[for="delete-account-email"]')).toContainText(journey.email);
         }

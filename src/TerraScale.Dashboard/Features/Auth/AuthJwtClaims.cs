@@ -10,7 +10,7 @@ namespace TerraScale.Dashboard.Features.Auth
     {
         internal const string OrganizationPickerClaim = "ts_org_picker";
 
-        public static JsonElement Read(string? token, string issuer, string audience, TsAuthJwkSet keys, DateTimeOffset now,
+        public static JsonElement Read(string? token, string issuer, string? audience, TsAuthJwkSet keys, DateTimeOffset now,
             string? requiredType = null, int maxLength = 65536)
         {
             try
@@ -50,7 +50,7 @@ namespace TerraScale.Dashboard.Features.Auth
 
                 using var json = JsonDocument.Parse(Decode(parts[1]));
                 var claims = json.RootElement;
-                if (claims.GetProperty("iss").GetString() != issuer || !Audience(claims.GetProperty("aud"), audience) ||
+                if (claims.GetProperty("iss").GetString() != issuer || !Audience(claims, audience) ||
                     claims.GetProperty("exp").GetInt64() <= now.ToUnixTimeSeconds() ||
                     (claims.TryGetProperty("nbf", out var nbf) && nbf.GetInt64() > now.ToUnixTimeSeconds()) ||
                     (claims.TryGetProperty("iat", out var iat) && iat.GetInt64() > now.AddMinutes(1).ToUnixTimeSeconds()))
@@ -64,8 +64,14 @@ namespace TerraScale.Dashboard.Features.Auth
             { throw new SignInRejectedException(); }
         }
 
-        private static bool Audience(JsonElement claim, string audience)
+        private static bool Audience(JsonElement claims, string? audience)
         {
+            if (audience is null)
+            {
+                return !claims.TryGetProperty("aud", out _);
+            }
+
+            var claim = claims.GetProperty("aud");
             return claim.ValueKind switch
             {
                 JsonValueKind.String => claim.GetString() == audience,

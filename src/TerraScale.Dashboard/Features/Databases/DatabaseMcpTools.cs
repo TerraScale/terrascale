@@ -10,6 +10,7 @@ namespace TerraScale.Dashboard.Features.Databases
     [McpServerToolType]
     public sealed class DatabaseMcpTools(IHttpContextAccessor http, DatabaseService databases, BackupService backups, WholeDatabaseRecovery recovery, DatabaseConflicts conflicts)
     {
+        [McpAccess(McpAccess.Read)]
         [McpServerTool(Name = "list_databases", Title = "List databases", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List the databases in a project with their status and region.")]
         public async Task<McpDatabaseList> ListDatabases(string? organizationId = null, string? projectId = null,
             [Description(CursorPaging.Description)] int limit = 100, string after = "")
@@ -22,6 +23,7 @@ namespace TerraScale.Dashboard.Features.Databases
             return new(await Task.WhenAll(page.Items.Select(DatabaseOutput)), page.NextCursor, page.HasMore, page.Limit);
         }
 
+        [McpAccess(McpAccess.Read)]
         [McpServerTool(Name = "list_conflicts", Title = "List conflicts", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read recent multi-region write conflicts, newest first, from terrascale.conflicts. Filter by exact table name and ISO 8601 since (inclusive)/until (exclusive). Limit 1–100; pass nextBefore as before for the next page. Superseded columns belong to confirmed transactions; reverted transactions applied no changes.")]
         public Task<DatabaseConflictList> ListConflicts(string databaseId, string table = "", string since = "", string until = "", int limit = 50,
             string before = "", string? organizationId = null, string? projectId = null)
@@ -29,6 +31,7 @@ namespace TerraScale.Dashboard.Features.Databases
             return conflicts.ListAsync(Scope(organizationId, projectId), databaseId, table, since, until, limit, before, Cancellation);
         }
 
+        [McpAccess(McpAccess.Read)]
         [McpServerTool(Name = "get_database", Title = "Get database", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Show one database's status, regions and backup state.")]
         public async Task<McpDatabaseDetail> GetDatabase(string databaseId, string? organizationId = null, string? projectId = null)
         {
@@ -60,6 +63,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 unavailable, backupsEnabled, context.CanManage, db.Status == "ready" && context.CanManage && context.Organization!.CanProvision(context.UserId), db.ExpiresAt);
         }
 
+        [McpAccess(McpAccess.Write)]
         [McpServerTool(Name = "create_database", Title = "Create database", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Create a database in its home region with an optional TTL in hours (one minute to 365 days).")]
         public async Task<McpDatabase> CreateDatabase(string name, string? region = null, string? organizationId = null, string? projectId = null, decimal? ttlHours = null)
         {
@@ -68,6 +72,7 @@ namespace TerraScale.Dashboard.Features.Databases
             return await DatabaseOutput(await databases.CreateAsync(context, name, string.IsNullOrEmpty(region) ? context.Project!.Region : region, Cancellation, ttlHours));
         }
 
+        [McpAccess(McpAccess.Write)]
         [McpServerTool(Name = "fork_database", Title = "Fork database", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Fork a database now into a ready copy, or at an ISO 8601 pointInTime to start a restore and return the running operation at once instead of waiting for the copy; poll get_restore_status for the new database. Optional TTL in hours. A point-in-time fork requires management access and consumes one database slot.")]
         public async Task<object> ForkDatabase(string databaseId, string name, string? organizationId = null, string? projectId = null, string? pointInTime = null, decimal? ttlHours = null)
         {
@@ -80,6 +85,7 @@ namespace TerraScale.Dashboard.Features.Databases
             return await DatabaseOutput(await databases.BranchAsync(context, databaseId, name, Cancellation, ttlHours));
         }
 
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "set_database_ttl", Title = "Set database TTL", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Set expiry from now using ttlHours (one minute to 365 days), or clear expiry with clear=true.")]
         public async Task<McpDatabase> SetDatabaseTtl(string databaseId, decimal? ttlHours = null, bool clear = false, string? organizationId = null, string? projectId = null)
         {
@@ -90,6 +96,7 @@ namespace TerraScale.Dashboard.Features.Databases
             return await DatabaseOutput(await databases.SetTtlAsync(Scope(organizationId, projectId), databaseId, ttlHours, Cancellation));
         }
 
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "delete_database", Title = "Delete database", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Return step_up_required with the resource and confirmationUrl. MCP leaves the resource intact; finish deletion in the signed-in dashboard, which applies its authorization and confirmation requirements.")]
         public McpStepUpRequired DeleteDatabase(string databaseId, string confirmName = "", string? organizationId = null, string? projectId = null, string? confirmation = null)
         {

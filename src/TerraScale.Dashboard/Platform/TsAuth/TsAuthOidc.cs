@@ -130,6 +130,18 @@ namespace TerraScale.Dashboard.Platform.TsAuth
                 TsAuthIntegrationJsonContext.Default.TsAuthTokenResponse, cancellationToken);
         }
 
+        public Task<TsAuthTokenResponse> ExchangeAgentTokenAsync(string clientId, string clientSecret, string agentToken, CancellationToken cancellationToken)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(agentToken);
+            return client.SendOAuthFormAsync(TokenRoute(),
+                [
+                    new KeyValuePair<string, string>("grant_type", "urn:terrascale:params:oauth:grant-type:agent-exchange"),
+                    new("subject_token", agentToken),
+                    new("subject_token_type", "urn:ietf:params:oauth:token-type:access_token"),
+                ],
+                TsAuthCredentials.Basic(clientId, clientSecret), TsAuthIntegrationJsonContext.Default.TsAuthTokenResponse, cancellationToken);
+        }
+
         private static string InstanceRoute(string relative)
         {
             return "/terrascale" + relative;

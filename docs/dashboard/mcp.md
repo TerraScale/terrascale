@@ -2,7 +2,7 @@
 
 The dashboard owns the platform MCP endpoint. It calls ts-auth for identity and access, TerraBase for SQL databases and recovery, and Stripe for billing facts. It stores its own state in [SQL tables](state-storage.md).
 
-Use the [public MCP guide](https://docs.terrascale.tech/guides/mcp) for connection instructions. Authentication uses the supported OAuth flow or a personal access token. Keep credentials on the server and out of prompts, tool results and logs.
+Use the [public MCP guide](https://docs.terrascale.tech/guides/mcp) for connection instructions. Authentication uses the supported OAuth flow, a personal access token or an [agent token](#agent-access). Keep credentials on the server and out of prompts, tool results and logs.
 
 ## Discovery and authorization
 
@@ -41,3 +41,46 @@ Lists and queries use their returned continuation and bounds. A page can be inco
 Billing tools follow the same financial and authorization safeguards as the dashboard. Stripe remains the authority for subscription and payment facts; see [Stripe billing](stripe.md). MCP annotations are discovery metadata rather than promises of idempotency or broader permissions.
 
 A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+
+## Agent access
+
+An AI agent can use the MCP server with its own short-lived token instead of an API key or a personal access token.
+It acts for the TerraScale account that approved it, within that account's own permissions, and never deletes
+anything or touches billing.
+
+1. Enroll the agent through the HTTP flow of [TerraScale account agents](../auth/agent-identities.md#terrascale-accounts):
+   `POST https://auth.terrascale.tech/v1/terrascale/agent-enrollments` with `requested_scopes` `mcp:read` and,
+   to make changes, `mcp:write`. The account owner approves it at the returned `verification_uri_complete` with a
+   fresh verification.
+2. The agent gets a token from `POST https://auth.terrascale.tech/terrascale/oauth/token` with the JWT bearer grant.
+   It lasts at most 5 minutes.
+3. The agent calls the MCP server with `Authorization: Bearer <agent token>`.
+
+The dashboard verifies the token against the platform issuer's keys: ES256, `typ` `at+jwt`, issuer
+`https://auth.terrascale.tech/terrascale`, no `aud`, not expired, `token_use` and `actor_type` `agent`, and delegated
+(`act.sub` equal to `agent_id`, no `owner_sub`). A self-subject token, a project's agent token and anything else
+answers `401` with `error="invalid_token"`. It then exchanges the token with ts-auth for an owner token
+([agent token exchange](../auth/agent-identities.md#agent-token-exchange)) on every MCP request, runs that request as
+the owner and keeps the owner token for that request only. So revoking the agent, signing out everywhere or disabling
+the owner refuses the next MCP call, and an MCP call fails when the exchange is unavailable.
+
+Every tool is marked read, write or destructive in code (`[McpAccess]`); the server does not start when a tool has
+no marking.
+
+| Agent scope | Tools it may call |
+| --- | --- |
+| `mcp:read` | read tools |
+| `mcp:write` | read and write tools |
+
+Destructive tools are refused to every agent with "Agents can't do this. Ask the account owner to do it in the
+TerraScale dashboard.": deleting databases, projects, files, functions, saved queries, users or OAuth applications;
+revoking API keys, tokens, sessions or invitations; creating or rotating credentials (API keys, scoped keys, OAuth
+applications) and configuring social sign-in providers; project sign-in settings; deploying or invoking functions and
+setting function secrets; creating file buckets or changing their rules; every billing tool, reads included (plans,
+billing details, invoices, plan change previews, checkouts, plan changes, including creating an organization); member, role,
+invitation and ownership changes; IP allowlists, backup policies, audit retention and database TTLs; database rule
+deployments; and `execute_sql`. `get_context` never resumes a pending checkout for an agent. A write tool called with only `mcp:read` is refused too. An agent token never carries a platform role or
+two-factor state, so organizations that require two-factor authentication stay unavailable to it.
+
+Every agent call is logged with the tool, `agent_id`, owner and whether it was allowed. The owner lists and revokes
+their agents in Profile › Agents (`/profile?tab=agents`).

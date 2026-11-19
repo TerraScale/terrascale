@@ -25,23 +25,27 @@ namespace TerraScale.Dashboard.Platform.Mcp
 
         private CancellationToken Cancellation => http.HttpContext?.RequestAborted ?? default;
 
+        [McpAccess(McpAccess.Read)]
         [McpServerTool(Name = "get_context", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true), Description("Get your account, accessible organizations and current project selection.")]
         public async Task<DashboardMcpContext> Context()
         {
             var session = Account().Session;
-            var completion = await http.HttpContext!.RequestServices.GetRequiredService<StripeBilling>().ResumeOrganizationAsync(session, http.HttpContext);
+            var completion = http.HttpContext!.Items[McpAgents.ContextKey] is McpAgent ? new OrganizationCheckoutCompletion()
+                : await http.HttpContext.RequestServices.GetRequiredService<StripeBilling>().ResumeOrganizationAsync(session, http.HttpContext);
             var context = await accounts.GetContextAsync(session, Cancellation);
             return new(new(context.UserId, context.Account.Name, context.Account.Email, null),
                 new(context.Account.ActiveOrganizationId, context.Account.ActiveProjectId),
                 [.. context.Organizations.Select(org => OrganizationSummary(context with { Organization = org, Project = null }))], completion.Notice);
         }
 
+        [McpAccess(McpAccess.Read)]
         [McpServerTool(Name = "get_organization", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true), Description("Read the selected organization's details and projects.")]
         public async Task<DashboardMcpOrganizationDetails> Organization(string? organizationId = null, string? projectId = null)
         {
             return OrganizationDetails(await AccountScope.RefreshAsync(accounts, Scope(organizationId, projectId), Cancellation));
         }
 
+        [McpAccess(McpAccess.Write)]
         [McpServerTool(Name = "select_organization", UseStructuredContent = true, Idempotent = true, Destructive = false, OpenWorld = false), Description("Select an accessible organization workspace, including one reached through a project grant.")]
         public async Task<DashboardMcpSelection> SelectOrganization(string organizationId)
         {
@@ -52,6 +56,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
             return new(account.ActiveOrganizationId, account.ActiveProjectId);
         }
 
+        [McpAccess(McpAccess.Write)]
         [McpServerTool(Name = "select_project", UseStructuredContent = true, Idempotent = true, Destructive = false, OpenWorld = false), Description("Select a project you can access in the dashboard.")]
         public async Task<DashboardMcpSelection> SelectProject(string projectId)
         {
@@ -68,6 +73,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
 
         public sealed record OrganizationCheckoutResult(string Status, string CheckoutUrl);
 
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "create_organization", UseStructuredContent = true, Destructive = false, OpenWorld = false), Description("Start checkout for a business organization. Creates no organization until payment is confirmed. Open the checkout URL; the organization appears on your next full dashboard page navigation or organization-list MCP call after paying.")]
         public async Task<OrganizationCheckoutResult> CreateOrganization(string name, string plan = "starter", string interval = "monthly")
         {

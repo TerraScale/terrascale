@@ -33,6 +33,19 @@ public sealed partial class TsAuthProjectsClient
             TsAuthCredentials.Bearer(accessToken), HttpStatusCode.OK, MaxRequestBytes, cancellationToken);
 }
 
+public sealed partial class TsAuthPlatformClient
+{
+    public Task<TsAuthPlatformPage<TsAuthAgent>> ListAccountAgentsAsync(string accessToken, string? after, CancellationToken cancellationToken) =>
+        client.SendAuthenticatedJsonAsync(HttpMethod.Get, "/v1/terrascale/me/agents" + PageQuery(50, after),
+            null, TsAuthIntegrationJsonContext.Default.TsAuthPlatformName, TsAuthAgentsJson.Default.TsAuthPlatformPageTsAuthAgent,
+            TsAuthCredentials.Bearer(accessToken), HttpStatusCode.OK, 16 * 1024, cancellationToken);
+
+    public Task RevokeAccountAgentAsync(string accessToken, string agent, CancellationToken cancellationToken) =>
+        client.SendAuthenticatedForStatusAsync(HttpMethod.Delete, "/v1/terrascale/me/agents/" + Id(agent),
+            null, TsAuthIntegrationJsonContext.Default.TsAuthPlatformName,
+            TsAuthCredentials.Bearer(accessToken), HttpStatusCode.NoContent, 16 * 1024, cancellationToken);
+}
+
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower, RespectRequiredConstructorParameters = true)]
 [JsonSerializable(typeof(TsAuthAgent))]
 [JsonSerializable(typeof(TsAuthPlatformPage<TsAuthAgent>))]

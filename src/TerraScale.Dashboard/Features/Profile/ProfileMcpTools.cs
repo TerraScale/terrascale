@@ -9,6 +9,7 @@ namespace TerraScale.Dashboard.Features.Profile
     [McpServerToolType]
     public sealed class ProfileMcpTools(IHttpContextAccessor http, AccountService accounts, AccessTokens tokens, ITsAuthMfa mfa)
     {
+        [McpAccess(McpAccess.Read)]
         [McpServerTool(Name = "get_profile", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true), Description("Read your profile and stored language preference.")]
         public async Task<DashboardMcpProfile> Profile(string? organizationId = null, string? projectId = null)
         {
@@ -50,6 +51,7 @@ namespace TerraScale.Dashboard.Features.Profile
                 PlatformDatabases.IsPlatform(context.Organization?.Id) ? "viewer" : context.Project?.Role, context.CanWriteProjectData);
         }
 
+        [McpAccess(McpAccess.Write)]
         [McpServerTool(Name = "update_profile", UseStructuredContent = true, Idempotent = true, Destructive = false, OpenWorld = false), Description("Update your display name and optional phone number. Omit a field to keep it.")]
         public async Task<DashboardMcpSaved> UpdateProfile(
             [Description("Display name, 1–128 characters.")] string? name = null,
@@ -59,6 +61,7 @@ namespace TerraScale.Dashboard.Features.Profile
             return new(true);
         }
 
+        [McpAccess(McpAccess.Write)]
         [McpServerTool(Name = "set_language", UseStructuredContent = true, Idempotent = true, Destructive = false, OpenWorld = false), Description("Save your account language preference (en or pt-BR). The dashboard currently displays in English.")]
         public async Task<DashboardMcpSaved> Language(string locale)
         {
@@ -71,12 +74,14 @@ namespace TerraScale.Dashboard.Features.Profile
             return new(true);
         }
 
+        [McpAccess(McpAccess.Read)]
         [McpServerTool(Name = "list_access_tokens", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true), Description("List live personal access token metadata without secrets.")]
         public async Task<DashboardMcpAccessTokens> ListAccessTokens()
         {
             return new(await tokens.ListAsync(Account(), Cancellation));
         }
 
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "revoke_access_token", UseStructuredContent = true, Destructive = true, OpenWorld = false), Description("Revoke one of your personal access tokens immediately.")]
         public async Task<DashboardMcpRevoked> RevokeAccessToken(string tokenId) { await tokens.RevokeAsync(Account(), tokenId, Cancellation); return new(true); }
 

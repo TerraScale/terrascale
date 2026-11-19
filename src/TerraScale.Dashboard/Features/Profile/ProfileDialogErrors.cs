@@ -20,9 +20,10 @@ public static class ProfileDialogErrors
         }
 
         var tokens = tab == "access-tokens" ? await http.RequestServices.GetRequiredService<IProfileTokens>().ListAsync(context, http.RequestAborted) : null;
+        var agents = tab == "agents" ? await http.RequestServices.GetRequiredService<ITsAuthPlatform>().ListAccountAgentsAsync(context.Session, http.RequestAborted) : null;
         var view = ProfileView.Create(new(ShellModel.For(http, context, "Profile"), tab, Error: message,
             Tokens: tokens, Sessions: await sessions.ListAsync(http, context.Session))
-        { DialogId = dialog });
+        { DialogId = dialog, Agents = agents });
         view.StatusCode = status;
         return view;
     }

@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Text.Json.Serialization;
 using ModelContextProtocol.Server;
 using TerraScale.Dashboard.Features.Organizations.Projects;
+using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Organizations
@@ -9,6 +10,7 @@ namespace TerraScale.Dashboard.Features.Organizations
     // Extend the registered organization tool type without exposing organization directory tools to project grants.
     public sealed partial class OrganizationMcpTools
     {
+        [McpAccess(McpAccess.Read)]
         [McpServerTool(Name = "list_project_members", Title = "List explicit project grants", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true),
             Description("List one page of explicit grants for the exact project. Any current project viewer, member or admin may read. Organization-implied access is omitted; this is not a complete effective member roster.")]
         public Task<ProjectGrantMcpPage> ListProjectMembers(
@@ -23,6 +25,7 @@ namespace TerraScale.Dashboard.Features.Organizations
         });
         }
 
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "set_project_member_role", Title = "Set explicit project grant", ReadOnly = false, Idempotent = true, Destructive = true, OpenWorld = true, UseStructuredContent = true),
             Description("Grant or change explicit viewer/member/admin access to the exact project. Requires current effective project admin. New grants require an existing organization member; existing collaborator grants may be changed. Does not invite users or change organization membership.")]
         public Task<ProjectGrantMcpResult> SetProjectMemberRole([Description("Canonical user ULID, not an email address.")] string userId,
@@ -37,6 +40,7 @@ namespace TerraScale.Dashboard.Features.Organizations
         });
         }
 
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "remove_project_member", Title = "Remove explicit project grant", ReadOnly = false, Idempotent = false, Destructive = true, OpenWorld = true, UseStructuredContent = true),
             Description("Remove only this user's explicit grant to the exact project. Requires current effective project admin. Organization-implied access and independent service keys remain; removal does not imply total session or token revocation.")]
         public Task<ProjectGrantMcpRemoved> RemoveProjectMember([Description("Canonical user ULID whose explicit grant will be removed.")] string userId,

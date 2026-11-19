@@ -7,6 +7,7 @@ namespace TerraScale.Dashboard.Features.Home
     [McpServerToolType]
     public sealed class HomeMcpTools(IHttpContextAccessor http, AccountService accounts, IHomeMeasurements measurements)
     {
+        [McpAccess(McpAccess.Read)]
         [McpServerTool(Name = "get_overview", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true), Description("Read the selected project's measured operations and region health.")]
         public async Task<HomeMcpOverview> Overview(
             [Description("1h, 24h, 7d, or 30d. Defaults to 7d; other values are rejected.")] string range = "7d",

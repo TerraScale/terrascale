@@ -20,6 +20,7 @@ namespace TerraScale.Dashboard.Features.Rules
 
         internal static readonly IReadOnlySet<string> Writes = new HashSet<string>(StringComparer.Ordinal) { "deploy_database_rules", "restore_database_rules_version" };
 
+        [McpAccess(McpAccess.Read)]
         [McpServerTool(Name = "get_database_rules", Title = "Get database rules", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read a database's current rules JSON {\"tables\":{\"<table>\":{\"read\",\"create\",\"update\",\"delete\",\"columns\",\"writable\",\"validate\",\"set\"}}}, its version, and the problems today's schema causes. version and rules are null when none are deployed, which denies every end-user request. Pass version to deploy_database_rules. Requires databases:read.")]
         public async Task<McpRules> GetRules(string databaseId, string? organizationId = null, string? projectId = null)
         {
@@ -27,6 +28,7 @@ namespace TerraScale.Dashboard.Features.Rules
             return Output(await RulesBackend.CurrentAsync(target.Client, target.ProjectId, target.Database));
         }
 
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "deploy_database_rules", Title = "Deploy database rules", ReadOnly = false, Destructive = true, OpenWorld = false, Idempotent = false, UseStructuredContent = true), Description("Replace a database's whole rules set with rules, a JSON object {\"tables\":{...}} as get_database_rules returns it. Pass the version get_database_rules returned, or null when none is deployed; a stale version is refused, so read again and redeploy. Every condition is checked against the current schema: returns deployed true with the new version and warnings, or deployed false with every problem by table and field. Test drafts with test_database_rules first. Requires databases:write.")]
         public async Task<McpRulesDeploy> DeployRules(string databaseId, JsonElement rules, string? version = null, string? organizationId = null, string? projectId = null)
         {
@@ -34,6 +36,7 @@ namespace TerraScale.Dashboard.Features.Rules
             return await DeployAsync(() => RulesBackend.DeployAsync(target.Client, target.ProjectId, target.Database, version, rules));
         }
 
+        [McpAccess(McpAccess.Read)]
         [McpServerTool(Name = "test_database_rules", Title = "Test database rules", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Simulate one end-user request against the deployed rules, or against a draft rules object, without reading or writing rows. operation is read, create, update or delete; auth is {\"uid\",\"claims\",\"org_id\",\"org_role\",\"is_anonymous\"}; row is the stored row and new the create body or update patch. Returns allowed, decidedBy, the deciding clause, every evaluated condition, the readable columns and the draft's problems. Requires databases:read.")]
         public async Task<TerraBaseRulesTestResult> TestRules(string databaseId, string operation, string table, JsonElement auth, JsonElement? row = null, JsonElement? @new = null,
             JsonElement? rules = null, string? organizationId = null, string? projectId = null)
@@ -43,6 +46,7 @@ namespace TerraScale.Dashboard.Features.Rules
             return await RulesBackend.TestAsync(target.Client, target.ProjectId, target.Database, body);
         }
 
+        [McpAccess(McpAccess.Read)]
         [McpServerTool(Name = "list_database_rules_versions", Title = "List database rules versions", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List a database's kept rules versions, newest first, with when and by whom each was deployed. The newest is the current version. Pass an older version to restore_database_rules_version. Requires databases:read.")]
         public async Task<McpRulesVersions> ListRulesVersions(string databaseId, string? organizationId = null, string? projectId = null)
         {
@@ -50,6 +54,7 @@ namespace TerraScale.Dashboard.Features.Rules
             return new(await RulesBackend.VersionsAsync(target.Client, target.ProjectId, target.Database));
         }
 
+        [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "restore_database_rules_version", Title = "Restore database rules version", ReadOnly = false, Destructive = true, OpenWorld = false, Idempotent = false, UseStructuredContent = true), Description("Deploy an earlier rules version again as a new version. Pass currentVersion from get_database_rules; a stale one is refused. The old rules are checked against today's schema like any deploy: returns deployed true with the new version, or deployed false with every problem. Requires databases:write.")]
         public async Task<McpRulesDeploy> RestoreRulesVersion(string databaseId, string version, string currentVersion, string? organizationId = null, string? projectId = null)
         {

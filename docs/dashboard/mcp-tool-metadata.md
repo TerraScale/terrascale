@@ -1,7 +1,8 @@
 # MCP tool metadata and host isolation
 
 Dashboard MCP schemas are built once per process from the same explicit seventeen
-attributed tool types. A private `Lazy<McpServerTool[]>` uses
+attributed tool types. A private `Lazy<ToolCatalog>` (the tools and each tool's
+`[McpAccess]` marking; an unmarked tool fails the build of the catalog at startup) uses
 `ExecutionAndPublication` so concurrently starting hosts share one schema build.
 The original `MethodInfo` goes to MCP 2.2's `McpServerTool.Create`; the SDK still
 owns descriptions, defaults, annotations, input/output schemas and structured
