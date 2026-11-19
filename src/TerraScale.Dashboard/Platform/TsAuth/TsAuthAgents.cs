@@ -6,7 +6,8 @@ namespace TerraScale.Dashboard.Platform.TsAuth;
 public sealed record TsAuthAgentKey(string Kid, string Thumbprint, DateTimeOffset CreatedAt, DateTimeOffset? RevokedAt);
 public sealed record TsAuthAgent(string Id, string ProjectId, string OwnerUserId, string Name, string Status,
     IReadOnlyList<string> AllowedScopes, bool AllowSelfSubject, IReadOnlyList<TsAuthAgentKey> Keys,
-    DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt, DateTimeOffset? RevokedAt, DateTimeOffset? LastUsedAt);
+    DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt, DateTimeOffset? RevokedAt, DateTimeOffset? LastUsedAt, bool ShareOwnerEmail = false);
+public sealed record TsAuthAgentSharing(bool ShareOwnerEmail);
 public sealed record TsAuthAgentPolicy(IReadOnlyList<string> AllowedScopes);
 
 public sealed partial class TsAuthProjectsClient
@@ -44,10 +45,16 @@ public sealed partial class TsAuthPlatformClient
         client.SendAuthenticatedForStatusAsync(HttpMethod.Delete, "/v1/terrascale/me/agents/" + Id(agent),
             null, TsAuthIntegrationJsonContext.Default.TsAuthPlatformName,
             TsAuthCredentials.Bearer(accessToken), HttpStatusCode.NoContent, 16 * 1024, cancellationToken);
+
+    public Task<TsAuthAgent> ShareAccountAgentOwnerEmailAsync(string accessToken, string agent, bool share, CancellationToken cancellationToken) =>
+        client.SendAuthenticatedJsonAsync(HttpMethod.Patch, "/v1/terrascale/me/agents/" + Id(agent), new TsAuthAgentSharing(share),
+            TsAuthAgentsJson.Default.TsAuthAgentSharing, TsAuthAgentsJson.Default.TsAuthAgent,
+            TsAuthCredentials.Bearer(accessToken), HttpStatusCode.OK, 16 * 1024, cancellationToken);
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower, RespectRequiredConstructorParameters = true)]
 [JsonSerializable(typeof(TsAuthAgent))]
 [JsonSerializable(typeof(TsAuthPlatformPage<TsAuthAgent>))]
 [JsonSerializable(typeof(TsAuthAgentPolicy))]
+[JsonSerializable(typeof(TsAuthAgentSharing))]
 internal sealed partial class TsAuthAgentsJson : JsonSerializerContext;
