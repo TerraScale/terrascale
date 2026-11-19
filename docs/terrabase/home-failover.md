@@ -118,12 +118,14 @@ nothing, unless all of these hold:
   `placement_disagrees`);
 - the node the lease names answers that it is not its region's writer, or, for a lease below the placement version,
   records an older placement or another home (`lease_node_unknown`, `lease_node_disagrees`);
-- for a lease at the placement version, this node has a primary file of the database, and it covers (same incarnation,
-  at or past) the primary file and replica positions the named node answers from
-  `GET /v1/sync/organizations/{organization}/projects/{project}/databases/{database}/positions`; a missing primary
-  file, a missing or unreadable answer, another incarnation or a position ahead refuses (`unproven`). An earlier
-  build's claimant may have imported a replica of the old home as its primary file, so its own positions are the
-  acknowledged data this node must hold;
+- for a lease at the placement version, this node has a primary file of the database, and every copy the named node
+  answers from `GET /v1/sync/organizations/{organization}/projects/{project}/databases/{database}/positions` (its
+  primary file and its replica, each with its revision and whether it holds a user table) is covered: a copy of the same
+  incarnation is at or behind this node's primary file, and a copy of another incarnation holds no user table, the same
+  rule as the activation check. A missing primary file, a missing or unreadable answer, a copy ahead, or a copy of
+  another incarnation with a user table refuses (`unproven`). An earlier build's claimant may have imported a replica
+  of the old home as its primary file, so its copies are the acknowledged data this node must hold, while a node that
+  only ever forwarded writes holds an empty file of its own incarnation;
 - this node's applied-position proof for the database passes (`unproven`);
 - the lease did not change while it checked (`lease_changed`).
 

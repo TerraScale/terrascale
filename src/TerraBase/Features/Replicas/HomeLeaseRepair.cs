@@ -160,12 +160,22 @@ internal sealed class HomeLeaseRepair(
         return Uncovered(primary, named.Name, "primary file", heldPrimary) ?? Uncovered(primary, named.Name, "replica", heldReplica);
     }
 
-    private static string? Uncovered(DatabaseRevision primary, string node, string kind, string? held) =>
-        held is null ? null
-        : !DatabaseRevision.TryParse(held, out var position) ? $"{node} answered an unreadable {kind} position"
-        : position.Incarnation != primary.Incarnation || DatabaseRevision.Compare(primary, position) < 0
-            ? $"this node's primary file at {primary} does not cover the {kind} {node} holds at {position}"
-        : null;
+    private static string? Uncovered(DatabaseRevision primary, string node, string kind, DatabaseCopyPosition? held)
+    {
+        if (held is null)
+        {
+            return null;
+        }
+
+        if (!DatabaseRevision.TryParse(held.Revision, out var position))
+        {
+            return $"{node} answered an unreadable {kind} position";
+        }
+
+        return position.Incarnation == primary.Incarnation
+            ? DatabaseRevision.Compare(primary, position) < 0 ? $"this node's primary file at {primary} is behind the {kind} {node} holds at {position}" : null
+            : held.UserTables ? $"the {kind} {node} holds at {position} is another incarnation than this node's primary file at {primary} and holds a user table" : null;
+    }
 
     private async Task<PeerAnswer> AskAsync<T>(
         ServingNode node, TenantContext database, string suffix, JsonTypeInfo<T> answer, Func<T, PeerAnswer> wrap, CancellationToken cancellationToken)

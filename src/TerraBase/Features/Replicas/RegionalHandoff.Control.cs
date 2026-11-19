@@ -43,9 +43,6 @@ internal sealed partial class RegionalHandoff
     private static readonly TimeSpan DrainBudget = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan CatchUpBudget = TimeSpan.FromSeconds(1);
     private const int CatchUpParallelism = 16;
-    private const string ReplicaTablesSql = "SELECT tbl_name FROM sqlite_schema";
-    private const int MaxSchemaRows = 10_000;
-    private const long MaxSchemaBytes = 4L * 1024 * 1024;
     private static readonly TimeSpan ActivationBudget = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan AttemptBudget = TimeSpan.FromSeconds(2);
 
@@ -505,8 +502,7 @@ internal sealed partial class RegionalHandoff
             return true;
         }
 
-        var schema = await reader.ExecuteAsync(new SqlStatement(ReplicaTablesSql, [], new Dictionary<string, object?>(), MaxSchemaRows, MaxSchemaBytes, AttemptBudget), token).ConfigureAwait(false);
-        return schema.Truncated || schema.Rows.Any(row => row[0] is not string table || !TerraBaseSqlNames.IsInternalTable(table));
+        return CopySchema.HoldsUserTables(await reader.ExecuteAsync(CopySchema.Tables, token).ConfigureAwait(false));
     }
 
     private async Task<int> CatchUpAsync(IReadOnlyList<TenantContext> unheld, CancellationToken token)

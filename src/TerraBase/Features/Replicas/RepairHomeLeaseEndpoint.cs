@@ -20,8 +20,8 @@ internal sealed class RepairHomeLeaseEndpoint(HomeLeaseRepair repair) : Endpoint
             + "records the same home and placement version and this node's applied-position proof passes. A missing lease, or one older than the "
             + "placement version, moves to this node at the placement version when the node it names answers that it is not its region's writer or "
             + "records an older placement or another home. A lease at the placement version that names another node of this region moves to this node "
-            + "at the next epoch only when that node itself answers that it is not its region's writer and this node's primary file covers the primary "
-            + "file and replica positions that node holds. A lease this node already holds at the placement version answers unchanged.");
+            + "at the next epoch only when that node itself answers that it is not its region's writer and this node's primary file covers every copy "
+            + "that node holds: a copy of the same incarnation at or behind it, a copy of another incarnation with no user table. A lease this node already holds at the placement version answers unchanged.");
         Tags("Administration");
         Produces<HomeLeaseRepairBody>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
