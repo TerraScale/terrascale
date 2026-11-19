@@ -48,7 +48,7 @@ export -f select_release
 export digest summary
 while IFS= read -r repository; do
   [[ $repository == */terrascale-stg/* ]] || continue
-  if timeout --foreground --kill-after=5 120 bash -c "select_release \"\$1\"" _ "$repository"; then
+  if timeout --kill-after=5 120 bash -euo pipefail -c "select_release \"\$1\"" _ "$repository"; then
     continue
   else
     status=$?
