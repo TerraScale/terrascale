@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.AgentId;
 using TerraScale.Authentication.Features.Agents;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
@@ -81,6 +82,11 @@ public sealed class OidcApplicationStore(AuthData data, Credentials credentials,
     /// </summary>
     public async ValueTask<OidcApplication?> FindByClientIdAsync(string identifier, CancellationToken cancellationToken)
     {
+        if (this.Tenant == AgentIdIssuer.Slug)
+        {
+            return AgentIdIssuer.OpenClient(identifier);
+        }
+
         if (!TerraScaleIds.IsValid(identifier))
         {
             return null;

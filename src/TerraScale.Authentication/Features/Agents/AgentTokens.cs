@@ -21,11 +21,9 @@ using static OpenIddict.Server.OpenIddictServerEvents;
 
 namespace TerraScale.Authentication.Features.Agents;
 
-public sealed record AgentAssertionRecord(string ProjectId, string AgentId, string Jti, DateTimeOffset KeepUntil);
-
 public sealed record AgentTokenBody(string AccessToken, string TokenType, long ExpiresIn, string Scope);
 
-public sealed class AgentTokens(AuthData data, KeyRing ring, AttemptLimiter limiter, AuthOptions options, TimeProvider clock, ILogger<AgentTokens> logger)
+public sealed class AgentTokens(AuthData data, AgentAssertions assertions, KeyRing ring, AttemptLimiter limiter, AuthOptions options, TimeProvider clock, ILogger<AgentTokens> logger)
 {
     public const string GrantType = "urn:ietf:params:oauth:grant-type:jwt-bearer";
 
@@ -35,21 +33,9 @@ public sealed class AgentTokens(AuthData data, KeyRing ring, AttemptLimiter limi
 
     public const int OwnerMinuteBudget = 600;
 
-    public const int MaxAssertionLength = 8192;
-
-    public const int MaxJtiLength = 128;
-
     public static readonly TimeSpan Lifetime = OidcIssuer.TokenLifetime;
 
-    public static readonly TimeSpan MaxAssertionLifetime = TimeSpan.FromMinutes(5);
-
-    public static readonly TimeSpan ClockSkew = TimeSpan.FromSeconds(30);
-
     public static readonly TimeSpan LastUsedInterval = TimeSpan.FromMinutes(1);
-
-    public static readonly TimeSpan ReplayRetention = TimeSpan.FromMinutes(10);
-
-    private const long MaxUnixSeconds = 253402300799;
 
     private const string RequestedSubject = "requested_subject";
 
@@ -57,8 +43,6 @@ public sealed class AgentTokens(AuthData data, KeyRing ring, AttemptLimiter limi
 
     private static readonly FrozenSet<string> Accepted = new[] { Parameters.GrantType, Parameters.Assertion, Parameters.Scope, RequestedSubject }
         .ToFrozenSet(StringComparer.Ordinal);
-
-    private static readonly string[] ForbiddenHeaders = ["jwk", "jku", "x5u", "x5c", "crit"];
 
     private static readonly JsonWebTokenHandler Handler = new();
 
@@ -69,7 +53,7 @@ public sealed class AgentTokens(AuthData data, KeyRing ring, AttemptLimiter limi
         ArgumentNullException.ThrowIfNull(request);
         var subject = request.GetParameter(RequestedSubject)?.GetRawValue();
         if (request.GetParameters().Any(parameter => !Accepted.Contains(parameter.Key))
-            || request.GetParameter(Parameters.Assertion)?.GetRawValue() is not string { Length: > 0 and <= MaxAssertionLength } assertion
+            || request.GetParameter(Parameters.Assertion)?.GetRawValue() is not string { Length: > 0 and <= AgentAssertions.MaxLength } assertion
             || !TryScopes(request.GetParameter(Parameters.Scope)?.GetRawValue(), out var scopes)
             || subject is not (null or "owner" or "agent"))
         {
@@ -79,68 +63,17 @@ public sealed class AgentTokens(AuthData data, KeyRing ring, AttemptLimiter limi
         return await this.IssueAsync(project, assertion, scopes, subject is "agent", cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<int> PruneAsync(int batchSize, CancellationToken cancellationToken)
-    {
-        var now = clock.GetUtcNow();
-        return await data.InBatchesAsync(batchSize, (db, token) => db.AgentAssertions.Where(row => row.KeepUntil <= now)
-            .OrderBy(row => row.KeepUntil).Take(batchSize).ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false);
-    }
-
     private async Task<IResult> IssueAsync(string project, string assertion, IReadOnlyList<string>? requested, bool self, CancellationToken cancellationToken)
     {
-        if (!Handler.CanReadToken(assertion) || Read(assertion) is not { IsEncrypted: false, Alg: SecurityAlgorithms.EcdsaSha256, Kid: { } kid } unverified
-            || !TerraScaleIds.IsValid(kid) || ForbiddenHeaders.Any(name => unverified.TryGetHeaderValue<object>(name, out _)))
+        var (verified, refusedAgent, reason) = await assertions.VerifyAsync(project, assertion, TokenEndpoint(options, project), cancellationToken).ConfigureAwait(false);
+        if (verified is null)
         {
-            return this.Refuse(project, null, "malformed assertion or header");
+            return this.Refuse(project, refusedAgent, reason);
         }
 
-        var (key, agent, owner) = await data.ReadAsync(async (db, token) =>
-        {
-            var key = await db.AgentKeys.Where(row => row.ProjectId == project && row.Kid == kid).WithVersion().SingleOrDefaultAsync(token).ConfigureAwait(false);
-            var agent = key is null ? null
-                : await db.Agents.Where(row => row.ProjectId == project && row.Id == key.Value.AgentId).WithVersion().SingleOrDefaultAsync(token).ConfigureAwait(false);
-            var owner = agent is null ? null
-                : await db.Users.Where(row => row.InstanceId == project && row.Id == agent.Value.OwnerUserId).WithVersion().SingleOrDefaultAsync(token).ConfigureAwait(false);
-            return (key, agent, owner);
-        }, cancellationToken).ConfigureAwait(false);
-        if (key is null || agent is null)
-        {
-            return this.Refuse(project, null, "unknown key");
-        }
-
+        var (key, agent, owner) = (verified.Key, verified.Agent, verified.Owner);
         var agentId = agent.Value.Id;
-        var validated = await Handler.ValidateTokenAsync(unverified, new TokenValidationParameters
-        {
-            IssuerSigningKey = new JsonWebKey(key.Value.PublicJwk) { KeyId = kid },
-            TryAllIssuerSigningKeys = false,
-            ValidAlgorithms = [SecurityAlgorithms.EcdsaSha256],
-            ValidIssuer = agentId,
-            ValidAudience = TokenEndpoint(options, project),
-            IgnoreTrailingSlashWhenValidatingAudience = false,
-            RequireSignedTokens = true,
-            RequireExpirationTime = true,
-            ValidateLifetime = true,
-            ClockSkew = ClockSkew,
-        }).ConfigureAwait(false);
-        if (!validated.IsValid || unverified.Subject != agentId || unverified.Audiences.Count() != 1
-            || unverified.Id is not { Length: > 0 and <= MaxJtiLength } jti || jti.Any(char.IsControl))
-        {
-            return this.Refuse(project, agentId, "signature or claims");
-        }
-
         var now = clock.GetUtcNow();
-        if (Times(unverified) is not var (iat, exp) || iat is < 0 or > MaxUnixSeconds || exp is < 0 or > MaxUnixSeconds || iat >= exp || exp - iat > (long)MaxAssertionLifetime.TotalSeconds
-            || DateTimeOffset.FromUnixTimeSeconds(iat) > now + ClockSkew)
-        {
-            return this.Refuse(project, agentId, "assertion times");
-        }
-
-        if (owner is null || key.Value.RevokedAt is not null || agent.Value.ExpiresAt <= now
-            || AgentDirectory.Status(agent.Value, new AgentOwner(owner.Value.Id, owner.Value.AuthEpoch, owner.Value.AuthStamp, owner.Value.Disabled)) != AgentStatus.Active)
-        {
-            return this.Refuse(project, agentId, "agent, key or owner not active");
-        }
-
         var scopes = requested ?? agent.Value.AllowedScopes;
         if (scopes.Except(agent.Value.AllowedScopes, StringComparer.Ordinal).Any() || self && !agent.Value.AllowSelfSubject)
         {
@@ -159,14 +92,13 @@ public sealed class AgentTokens(AuthData data, KeyRing ring, AttemptLimiter limi
         var expiresAt = DateTimeOffset.FromUnixTimeSeconds(Math.Min((issuedAt + Lifetime).ToUnixTimeSeconds(), agent.Value.ExpiresAt?.ToUnixTimeSeconds() ?? long.MaxValue));
         var body = new AgentTokenBody(await this.SignAsync(project, agent.Value, scope, self, issuedAt, expiresAt, cancellationToken).ConfigureAwait(false), "Bearer",
             (long)(expiresAt - issuedAt).TotalSeconds, scope);
-        var acceptedUntil = DateTimeOffset.FromUnixTimeSeconds(exp) + ClockSkew;
         var gate = clock.GetUtcNow();
-        if (gate > acceptedUntil || expiresAt <= gate)
+        if (gate > verified.AcceptedUntil || expiresAt <= gate)
         {
             return this.Refuse(project, agentId, "assertion or agent expired during issuance");
         }
 
-        List<Change> changes = [Change.Insert(new AgentAssertionRecord(project, agentId, jti, acceptedUntil + ReplayRetention)), Change.Assert(key), Change.Assert(owner)];
+        List<Change> changes = [verified.Replay, Change.Assert(key), Change.Assert(owner)];
         if (agent.Value.LastUsedAt is not { } used || used <= now - LastUsedInterval)
         {
             changes.Add(Change.Update(agent, agent.Value with { LastUsedAt = now }));
@@ -217,33 +149,6 @@ public sealed class AgentTokens(AuthData data, KeyRing ring, AttemptLimiter limi
             {
                 signer.Dispose();
             }
-        }
-    }
-
-    private static (long Iat, long Exp)? Times(JsonWebToken assertion)
-    {
-        try
-        {
-            using var payload = JsonDocument.Parse(Base64UrlEncoder.DecodeBytes(assertion.EncodedPayload), new JsonDocumentOptions { AllowDuplicateProperties = false });
-            return payload.RootElement.TryGetProperty(JwtRegisteredClaimNames.Iat, out var iat) && iat.ValueKind == JsonValueKind.Number && iat.TryGetInt64(out var issued)
-                && payload.RootElement.TryGetProperty(JwtRegisteredClaimNames.Exp, out var exp) && exp.ValueKind == JsonValueKind.Number && exp.TryGetInt64(out var expires)
-                ? (issued, expires) : null;
-        }
-        catch (Exception error) when (error is JsonException or FormatException)
-        {
-            return null;
-        }
-    }
-
-    private static JsonWebToken? Read(string assertion)
-    {
-        try
-        {
-            return Handler.ReadJsonWebToken(assertion);
-        }
-        catch (ArgumentException)
-        {
-            return null;
         }
     }
 

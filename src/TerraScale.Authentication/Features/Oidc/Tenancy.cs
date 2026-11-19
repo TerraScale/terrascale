@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.AgentId;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Storage;
 using TerraScale.DotNet;
@@ -38,7 +39,7 @@ public static class Tenancy
     public static string Current(HttpContext? context) => context?.Items[ItemKey] as string ?? OidcIssuer.InstanceId;
 
     /// <summary>Whether <paramref name="tenant"/> is a project's.</summary>
-    public static bool IsProject(string tenant) => tenant != OidcIssuer.InstanceId;
+    public static bool IsProject(string tenant) => tenant is not (OidcIssuer.InstanceId or AgentIdIssuer.Slug);
 
     /// <summary>The hosted session cookie of a tenant, so a project sign-in never replaces the platform's.</summary>
     public static string SessionCookie(string tenant) =>
@@ -60,6 +61,11 @@ public static class Tenancy
         {
             // Endpoint matching ignores case, as routing does; the issuer stays the canonical slug.
             return OidcIssuer.Slug;
+        }
+
+        if (string.Equals(tenant, AgentIdIssuer.Slug, StringComparison.OrdinalIgnoreCase))
+        {
+            return AgentIdIssuer.Routes.Contains(rest?.TrimEnd('/'), StringComparer.OrdinalIgnoreCase) ? AgentIdIssuer.Slug : null;
         }
 
         var page = segments is [_, "ui", ..];

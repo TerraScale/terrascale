@@ -1,8 +1,10 @@
 import { createHash, generateKeyPairSync, randomUUID, sign, type KeyObject } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { APIRequestContext } from '@playwright/test';
+import type { APIRequestContext, Page } from '@playwright/test';
 import { expect } from './audit';
+import { hostedReady } from './hosted';
+import { enterSecret } from './secret';
 import { auth, stateDir } from './stack';
 
 export const platformTokenEndpoint = auth + '/terrascale/oauth/token';
@@ -44,6 +46,28 @@ export function proof(privateKey: KeyObject, audience: string, issuedAt = Math.f
 export function assertion(privateKey: KeyObject, kid: string, agent: string, audience: string): string {
   const now = Math.floor(Date.now() / 1000);
   return signed(privateKey, { alg: 'ES256', typ: 'JWT', kid }, { iss: agent, sub: agent, aud: audience, iat: now, exp: now + 60, jti: randomUUID() });
+}
+
+export function signInProof(privateKey: KeyObject, kid: string, agent: string, proofUrl: string, claimed: { txn: string; client_id: string }): string {
+  const now = Math.floor(Date.now() / 1000);
+  return signed(privateKey, { alg: 'ES256', typ: 'JWT', kid }, { iss: agent, sub: agent, aud: proofUrl, iat: now, exp: now + 60, jti: randomUUID(), ...claimed });
+}
+
+export async function approvePlatformAgent(page: Page, agent: Agent, password: string): Promise<{ agentId: string; kid: string }> {
+  await page.goto(agent.enrollment.verification_uri_complete);
+  await hostedReady(page);
+  await page.getByRole('button', { name: 'Approve', exact: true }).click();
+  await page.waitForURL((url) => url.pathname.startsWith('/ui/terrascale/step-up/'));
+  await hostedReady(page);
+  await enterSecret(page.locator('input[type=password]'), password);
+  await page.getByRole('button', { name: 'Verify and continue' }).click();
+  await page.waitForURL(agent.enrollment.verification_uri_complete);
+  await hostedReady(page);
+  await page.getByRole('button', { name: 'Approve', exact: true }).click();
+  await expect(page.locator('.alert[data-state=success]')).toHaveText('Agent approved. You can close this page.');
+  const approved = await agent.poll();
+  expect(approved.status).toBe(200);
+  return { agentId: approved.body.agent_id!, kid: approved.body.kid! };
 }
 
 export function claims(token: string): Record<string, unknown> {

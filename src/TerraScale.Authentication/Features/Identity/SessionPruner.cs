@@ -1,4 +1,5 @@
 using ZLogger;
+using TerraScale.Authentication.Features.AgentId;
 using TerraScale.Authentication.Features.Agents;
 using TerraScale.Authentication.Features.AttackProtection;
 using TerraScale.Authentication.Features.Oidc;
@@ -12,7 +13,7 @@ namespace TerraScale.Authentication.Features.Identity;
 /// Deletes dead sessions and spent code records every ten minutes on every replica. Deletes are version-conditional,
 /// so concurrent passes are safe; a failed pass is retried at the next tick, and dead records grant nothing while they wait.
 /// </summary>
-public sealed class SessionPruner(AuthSchema schema, Sessions sessions, Passcodes passcodes, Challenges challenges, StepUpProofs proofs, AgentEnrollments enrollments, OidcTokenStore oidcTokens, OidcAuthorizationStore oidcAuthorizations, ILogger<SessionPruner> logger, AccountProtection protection, AgentTokens agents) : BackgroundService
+public sealed class SessionPruner(AuthSchema schema, Sessions sessions, Passcodes passcodes, Challenges challenges, StepUpProofs proofs, AgentEnrollments enrollments, OidcTokenStore oidcTokens, OidcAuthorizationStore oidcAuthorizations, ILogger<SessionPruner> logger, AccountProtection protection, AgentAssertions agents, AgentIdTransactions agentSignIns) : BackgroundService
 {
     internal const int BatchSize = 500;
 
@@ -34,6 +35,7 @@ public sealed class SessionPruner(AuthSchema schema, Sessions sessions, Passcode
             await this.PruneAsync("OIDC tokens", oidcTokens.PruneAsync, stoppingToken).ConfigureAwait(false);
             await this.PruneAsync("OIDC authorizations", oidcAuthorizations.PruneAsync, stoppingToken).ConfigureAwait(false);
             await this.PruneAsync("agent assertions", agents.PruneAsync, stoppingToken).ConfigureAwait(false);
+            await this.PruneAsync("agent sign-in transactions", agentSignIns.PruneAsync, stoppingToken).ConfigureAwait(false);
         }
     }
 
