@@ -7,6 +7,10 @@ case "$service" in
   *) echo "Unknown application service" >&2; exit 2 ;;
 esac
 [[ $image =~ ^ghcr\.io/terrascale/${package}@sha256:[0-9a-f]{64}$ ]] || { echo "Expected the existing ${package} package pinned by sha256" >&2; exit 2; }
+if [[ $service == terrabase && ${GITHUB_EVENT_NAME:?} != workflow_dispatch ]]; then
+  echo 'TerraBase release selection requires workflow_dispatch' >&2
+  exit 2
+fi
 work=${RUNNER_TEMP:?}/ts-orch
 summary=${GITHUB_STEP_SUMMARY:-/dev/null}
 jq -cn --arg service "$service" --arg revision "${GITHUB_SHA:?}" \
@@ -40,7 +44,18 @@ select_release() {
   echo "SELECTED $repository@$digest: release tag verified" | tee -a "$summary"
 }
 bash "$(dirname "$0")/fetch-ts-orch.sh" "$work"
-echo 'STAGING: not part of app releases yet; staging selection and wait go here once staging serves' | tee -a "$summary"
+export -f select_release
+export digest summary
+while IFS= read -r repository; do
+  [[ $repository == */terrascale-stg/* ]] || continue
+  if timeout --kill-after=5 120 bash -euo pipefail -c "select_release \"\$1\"" _ "$repository"; then
+    continue
+  else
+    status=$?
+    printf '::error::Staging selection failed or exceeded its two-minute deadline for %s (exit %s)\n' "$repository" "$status" | tee -a "$summary" >&2
+    exit "$status"
+  fi
+done <<< "$repositories"
 pids=()
 while IFS= read -r repository; do
   [[ $repository != */terrascale-stg/* ]] || continue

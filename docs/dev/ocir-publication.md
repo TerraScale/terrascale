@@ -45,11 +45,18 @@ All selection attachments must verify
 before any regional `:release` pointer moves. GHCR publication and its release
 pointer continue during migration.
 
-For TerraBase, auth and dashboard, staging tag selection and staging waits
-are excluded until C28/C7 restore staging. Existing staging release pointers
-remain unchanged, including when present in OCIR. The `STAGING:` message in
-`release-app.sh` marks the single insertion point for future staging selection
-and waiting. Staging image and bundle publication are unchanged.
+For TerraBase, auth and dashboard, `release-app.sh` selects staging's tag
+synchronously and reads it back to verify the selected digest before any
+production tag moves. Both staging operations share a two-minute deadline;
+an error or expiry reports the staging repository and stops selection.
+Staging does not participate in the separate production rollout wait.
+TerraBase requires an explicit `workflow_dispatch` release selection;
+build-only publication cannot supply its missing staging release tag.
+On a fresh staging cell, TerraBase must become ready before auth is created,
+and auth must become ready before dashboard is created. Both applications
+depend on TerraBase for readiness. A failed first rollout otherwise rolls
+back to absence and retains its signed floor, requiring a newer signed run
+or attempt after its cause is repaired.
 Production pointers move together to the same digest, followed by the retained GHCR pointer. The separate
 `Wait for rollout` step observes all three production regions with one
 `release wait`, using its existing timeout. The orchestrator owns rollout order.
