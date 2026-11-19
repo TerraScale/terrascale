@@ -9,6 +9,7 @@ Use the [quickstart](/getting-started/) to establish one working application con
 - [SDK reference](/guides/sdks)
 - [Authentication capabilities](/guides/authentication-capabilities): current sign-in methods, protocol scope and unavailable flows.
 - [Authentication](/guides/authentication): API keys, access tokens, IP allowlists, revocation and two-factor sign-in.
+- [Agent identities](/guides/agent-identities): owner-approved agents for your users, TerraScale MCP and OpenID Connect sign-in.
 - [Connect with psql and Postgres drivers](/guides/postgres-clients): host, credentials, dialect and transactions for psql, node-postgres, psycopg, pgx and Npgsql.
 - [SQL over HTTP](/guides/sql-http): run SQL statements with any HTTP client.
 - [Use Drizzle ORM](/guides/orm-drizzle): run Drizzle's SQLite dialect over the JavaScript SDK.
