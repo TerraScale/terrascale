@@ -288,7 +288,7 @@ tenant `terrascale` and use the same rules and code as project agents, with thes
 | Enrollment | `POST /v1/{project}/agent-enrollments` | `POST /v1/terrascale/agent-enrollments`; the approval page is `https://auth.terrascale.tech/ui/terrascale/agent-enrollments`, signed in with the TerraScale account, with the same step-up (`approve_agent`) |
 | Collecting the result | `POST /v1/{project}/agent-enrollments/{id}/token` | `POST /v1/terrascale/agent-enrollments/{id}/token` |
 | Token | `POST /{project}/oauth/token`, project issuer | `POST /terrascale/oauth/token`; issuer `https://auth.terrascale.tech/terrascale`, keys at `/terrascale/.well-known/jwks.json` |
-| Your agents | `/v1/{project}/me/agents` with the hosted session cookie | `GET /v1/terrascale/me/agents` and `DELETE /v1/terrascale/me/agents/{agent}` with a platform sign-in access token |
+| Your agents | `/v1/{project}/me/agents` with the hosted session cookie | `GET /v1/terrascale/me/agents`, `DELETE /v1/terrascale/me/agents/{agent}` and `PATCH /v1/terrascale/me/agents/{agent}` (`share_owner_email`, see [Sign in as agent](agentid-provider.md#owner-email)) with a platform sign-in access token |
 | Management API | `/v1/{project}/agents`, `/v1/{project}/users/{user}/agents` | None: an account agent is created only by enrollment and managed only by its owner |
 | Audit and events | An audit entry in the project's organization and lifecycle events | A ts-auth log line per change (`Platform agent audit: <action> <target> by <actor>`); no lifecycle events |
 
