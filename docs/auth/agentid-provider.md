@@ -153,7 +153,8 @@ Content-Type: application/json
 The answer is the agent, with `share_owner_email`; `GET /v1/terrascale/me/agents` lists it too. Consent is the
 owner's and covers every registered client the agent signs in to, whichever account registered it; the agent itself
 chooses which client it signs a proof for. ID tokens carry the email as of the redemption, which reads the flag in
-the same save that consumes the code; UserInfo reads it from the home region on every call and answers with
+the same save that consumes the code; UserInfo reads it from the home region on every call, in the same query as the client registration and its
+owner, and answers with
 `Cache-Control: no-store`, so turning sharing off hides the email from UserInfo at once, and ID tokens already issued keep it until they expire (5 minutes).
 
 ## How an agent completes the sign-in

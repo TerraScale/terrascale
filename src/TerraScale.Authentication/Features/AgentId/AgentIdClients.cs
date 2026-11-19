@@ -27,6 +27,8 @@ public sealed record AgentIdRegistration(Versioned<AgentIdClientRecord> Client, 
     public readonly record struct RequestCopy(string ClientId);
 }
 
+public sealed record AgentIdOwnerEmail(bool Shared, string Email, bool EmailVerified);
+
 public sealed record CreateAgentIdClientRequest(string? Name, IReadOnlyList<string>? RedirectUris);
 
 public sealed record RotateAgentIdClientRequest(int? GraceSeconds);
@@ -110,6 +112,18 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
                 .SingleOrDefaultAsync(token).ConfigureAwait(false));
         }, cancellationToken).ConfigureAwait(false);
         return client is not null && owner is { Value.Disabled: false } ? new(client, owner, Describe(client.Value, clock.GetUtcNow())) : null;
+    }
+
+    public async Task<AgentIdOwnerEmail?> OwnerEmailAsync(string clientId, string agentId, string ownerId, CancellationToken cancellationToken)
+    {
+        const string tenant = PlatformTenant.Id;
+        using var home = HomeReads.Begin();
+        return await data.ReadAsync((db, token) => (
+            from client in db.AgentIdClients
+            where client.Id == clientId && db.Users.Any(user => user.InstanceId == tenant && user.Id == client.OwnerUserId && !user.Disabled)
+            from agent in db.Agents.Where(agent => agent.ProjectId == tenant && agent.Id == agentId && agent.OwnerUserId == ownerId)
+            from owner in db.Users.Where(owner => owner.InstanceId == tenant && owner.Id == ownerId)
+            select new AgentIdOwnerEmail(agent.ShareOwnerEmail, owner.Email, owner.EmailVerified)).SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
     }
 
     public static UserRecord Owner(UserRecord caller)

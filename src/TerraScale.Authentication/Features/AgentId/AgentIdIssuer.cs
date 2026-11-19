@@ -95,11 +95,8 @@ public static class AgentIdIssuer
         }
         : null;
 
-    public static bool SharesOwnerEmail(string clientId, IEnumerable<string> granted, AgentRecord agent)
-    {
-        ArgumentNullException.ThrowIfNull(agent);
-        return !IsOpenClient(clientId) && granted.Contains(OwnerEmailScope, StringComparer.Ordinal) && agent.ShareOwnerEmail;
-    }
+    public static bool SharesOwnerEmail(string clientId, IEnumerable<string> granted, bool shared) =>
+        shared && !IsOpenClient(clientId) && granted.Contains(OwnerEmailScope, StringComparer.Ordinal);
 
     public static string Pairwise(AuthOptions options, string kind, string clientId, string id)
     {
@@ -114,7 +111,7 @@ public static class AgentIdIssuer
         var (agent, ownerId) = (signIn.Agent, signIn.Owner.Id);
         List<string> granted = [.. scopes.Intersect(SupportedScopes, StringComparer.Ordinal)];
         var profile = granted.Contains(Scopes.Profile);
-        var email = redemption && SharesOwnerEmail(clientId, granted, signIn.Agent);
+        var email = redemption && SharesOwnerEmail(clientId, granted, signIn.Agent.ShareOwnerEmail);
         var identity = new ClaimsIdentity(TokenValidationParameters.DefaultAuthenticationType, Claims.Name, Claims.Role)
             .SetClaim(Claims.Subject, Pairwise(options, "agent", clientId, agent.Id))
             .SetClaim(ActorTypeClaim, "agent")
