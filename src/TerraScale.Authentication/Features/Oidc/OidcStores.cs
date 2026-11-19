@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.Agents;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.Identity;
@@ -467,6 +468,18 @@ public sealed class OidcTokenStore(AuthData data, Credentials credentials, IOpen
         if (CredentialLineage.Issued(http.HttpContext) is { Count: > 0 } bindings)
         {
             token.Bindings = bindings;
+        }
+
+        if (http.HttpContext?.Items[AgentExchange.Fence] is LiveAgent fence)
+        {
+            if (await data.SaveAsync([Change.Insert(token), Change.Assert(fence.Agent), Change.Assert(fence.Owner)], cancellationToken).ConfigureAwait(false))
+            {
+                token.StoredReferenceId = token.ReferenceId;
+                return;
+            }
+
+            http.HttpContext.Items[AgentExchange.FenceBroken] = true;
+            token.Status = Statuses.Revoked;
         }
 
         if (!await data.SaveAsync(Change.Insert(token), cancellationToken).ConfigureAwait(false))

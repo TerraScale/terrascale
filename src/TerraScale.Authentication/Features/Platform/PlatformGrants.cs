@@ -8,6 +8,7 @@ using OpenIddict.Abstractions;
 using OpenIddict.Server.AspNetCore;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.Agents;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
@@ -25,7 +26,7 @@ namespace TerraScale.Authentication.Features.Platform;
 /// <c>database</c> and <c>scope</c>; no refresh or identity token comes with them, and no token entry is stored.
 /// </summary>
 public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, TotpCredentials mfa, AttemptLimiter limiter, AuthOptions options, TimeProvider clock,
-    AuthData data, GitHubActionsKeys gitHubActions, ILogger<PlatformGrants> logger)
+    AuthData data, GitHubActionsKeys gitHubActions, LiveAgents agents, ILogger<PlatformGrants> logger)
 {
     /// <summary>The organization a token acts in.</summary>
     public const string OrganizationClaim = "org_id";
@@ -171,7 +172,8 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
             || !long.TryParse(subject.GetClaim(Claims.AuthenticationTime), NumberStyles.None, CultureInfo.InvariantCulture, out var authenticatedAt)
             || authenticatedAt > clock.GetUtcNow().Add(AuthenticationTimeClockSkew).ToUnixTimeSeconds()
             || await mfa.PrimaryUserAsync(PlatformDirectory.Instance, userId, subject.GetClaim(OidcIssuer.EpochClaim), subject.GetClaim(OidcIssuer.StateClaim),
-                subject.GetClaim(OidcIssuer.MfaClaim), cancellationToken) is not { } user)
+                subject.GetClaim(OidcIssuer.MfaClaim), cancellationToken) is not { } user
+            || subject.GetClaim(LiveAgents.Claim) is { } agentId && await agents.ActiveAsync(agentId, userId, cancellationToken) is null)
         {
             return OidcResults.Forbid(Errors.InvalidGrant, "The subject token is not a live sign-in token of this client.");
         }
@@ -434,6 +436,14 @@ public sealed class ApiKeyApplicationManager(
             && string.Equals(await this.Store.GetClientIdAsync(application, cancellationToken).ConfigureAwait(false), identifier, StringComparison.Ordinal)
                 ? application
                 : null;
+    }
+
+    public override async ValueTask<bool> HasPermissionAsync(OidcApplication application, string permission, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(application);
+        return permission == Permissions.Prefixes.GrantType + AgentExchange.GrantType
+            ? application.InstanceId == OidcIssuer.InstanceId && application.ClientId == OidcIssuer.DashboardClientId
+            : await base.HasPermissionAsync(application, permission, cancellationToken).ConfigureAwait(false);
     }
 
     public override async ValueTask<bool> ValidateClientSecretAsync(OidcApplication application, string secret, CancellationToken cancellationToken = default)
