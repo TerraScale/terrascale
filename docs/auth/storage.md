@@ -42,8 +42,8 @@ The database enforces the invariants the code relies on:
 | An organization with projects, or a user who is still a member, cannot be deleted | `projects.organization_id`, `memberships.user_id` and `project_members.user_id` are `RESTRICT` |
 | An agent's assertion `jti` is used once | `agent_assertions` primary key `(project_id, agent_id, jti)`, kept 10 minutes past the assertion's accepted window |
 | One registration per agent public key in a project | `agent_keys` unique `(project_id, thumbprint)`, revoked keys included |
-| Agents and agent keys go with their owner; a project's go with its deletion | `agents.owner_user_id`, `agent_keys (project_id, agent_id)` and `agent_assertions (project_id, agent_id)` cascade deletes; `agents.project_id` holds a project id or the platform tenant `terrascale`, so a project's agents are deleted by its deletion cleanup ([agent identities](agent-identities.md)) |
-| One live user code per tenant; an enrollment goes with its approver and agent | `agent_enrollments` unique `(project_id, user_code_hash)`; `user_id` and `(project_id, agent_id)` cascade deletes; a project's enrollments are deleted by its deletion cleanup ([agent identities](agent-identities.md)) |
+| Agents and agent keys go with their owner or project | `agents.owner_user_id`, `agents.project_id`, `agent_keys (project_id, agent_id)` and `agent_assertions (project_id, agent_id)` cascade deletes ([agent identities](agent-identities.md)) |
+| One live user code per project; an enrollment goes with its project, approver and agent | `agent_enrollments` unique `(project_id, user_code_hash)`; `project_id`, `user_id` and `(project_id, agent_id)` cascade deletes ([agent identities](agent-identities.md#enrollment)) |
 | Roles, statuses and counters stay in range | check constraints (`ck_*`) |
 
 A unique, primary-key or foreign-key violation and a stale `version` are conflicts: `AuthData.SaveAsync` answers
@@ -80,16 +80,10 @@ transaction.
 
   `src/TerraScale.Authentication.EntityFrameworkDesign` is the design host; it is never packed, published or referenced.
 - Every replica runs `Database.MigrateAsync` at startup (`SigningKeyRotation`), then seeds the platform owner, the
-  `TerraScale` organization, its `ts-auth` and `ts-dashboard` projects and the owner's grants
-  ([platform bootstrap](platform-bootstrap.md)), registers the configured OIDC clients and provisions the first
+  `TerraScale` organization, its `ts-auth` and `ts-dashboard` projects, the owner's grants and the hidden platform
+  tenant row ([platform bootstrap](platform-bootstrap.md)), registers the configured OIDC clients and provisions the first
   signing key. Concurrent replicas are safe: the provider's migrations lock applies each migration once, and the seed
   is create-only, so the losers read the winner's rows. A fresh, empty database comes up fully working.
-- After the migrations, startup finishes the agent table rebuild while `agents_rebuilt` exists (`AgentTableRebuild`):
-  the `PlatformAgentTables` migration creates the four `*_rebuilt` tables without the `projects` foreign keys; each
-  replica copies the old rows once in batches of 500, one transaction each, parents first and restartable; then one
-  transaction re-checks that `agents_rebuilt` still exists, replaces the rows written meanwhile (by `version`), drops the
-  old tables children first, renames the new ones and creates their indexes. A replica that finds no `agents_rebuilt`
-  does nothing.
 - `AuthSchema.Ready` completes once that bootstrap has succeeded. Every hosted worker (the sign-in mail outbox,
   closures, deletion cleanup, session pruning) and the readiness loop wait for it before their first pass, so nothing
   touches a table before it exists and `/readyz` stays `not_ready` until then. A failed bootstrap logs a warning naming

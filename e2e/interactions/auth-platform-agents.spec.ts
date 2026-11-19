@@ -115,6 +115,20 @@ test('a TerraScale account enrolls an agent, the dashboard exchanges its token f
       expect(await exchangeAgentToken(request, token)).toEqual(invalidGrant);
     });
     agentId = undefined;
+
+    const organizations = await request.get(root + '/organizations', { headers: owned });
+    expect(organizations.status()).toBe(200);
+    const organizationIds = (await organizations.json()).items.map((item: { id: string }) => item.id);
+    expect(organizationIds).toContain(current.organizationId);
+    expect(organizationIds).not.toContain('terrascale');
+    const projects = await request.get(`${root}/organizations/${current.organizationId}/projects`, { headers: owned });
+    expect(projects.status()).toBe(200);
+    const projectIds = (await projects.json()).items.map((item: { id: string }) => item.id);
+    expect(projectIds).toContain(current.projectId);
+    expect(projectIds).not.toContain('terrascale');
+    expect((await request.get(`${root}/organizations/terrascale/projects`, { headers: owned })).status()).toBe(404);
+    expect((await request.get(`${root}/organizations/terrascale/projects/terrascale`, { headers: owned })).status()).toBe(404);
+    expect((await request.delete(`${root}/organizations/terrascale/projects/terrascale`, { headers: owned })).status()).toBe(404);
     await audit.finish();
   } finally {
     if (agentId) {

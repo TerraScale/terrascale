@@ -15,7 +15,6 @@ public sealed class AuthSchema(IDbContextFactory<AuthDbContext> contexts)
     {
         await using var db = await contexts.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         await db.Database.MigrateAsync(cancellationToken).ConfigureAwait(false);
-        await AgentTableRebuild.RunAsync(db, cancellationToken).ConfigureAwait(false);
     }
 
     internal void MarkSeeded() => this.seeded.TrySetResult();

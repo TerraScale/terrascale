@@ -193,7 +193,7 @@ in every answer already includes the owner check.
 | Signing the owner out everywhere, a password reset or email change, or any other change of the owner's authentication state | The owner check fails: the agent captured the owner's authentication epoch and stamp at creation and they no longer match. The agent answers `status: revoked` with `revoked_at: null`; nothing reactivates it. |
 | Disabling the owner | The owner check fails (disabling also advances the owner's authentication state, so enabling the owner again does not bring the agent back). |
 | Deleting the owner | The owner's agents and their keys are deleted with the user (foreign keys with `ON DELETE CASCADE`), so the agent is `404`. |
-| Deleting the project | The policy is deleted with the project row; the project's deletion cleanup then deletes its agents (with their keys and used assertions) and enrollments. |
+| Deleting the project | The project's agents, keys, enrollments and policy are deleted with it. |
 
 ## Getting a token
 
@@ -377,9 +377,9 @@ used `(project_id, agent_id, jti)` as its primary key. A row is kept until 10 mi
 accepted (`exp` plus the 30 s skew). That margin outlasts the 10 s token request deadline and any clock difference
 between replicas, so no request that accepted the assertion can still be saving when its row is pruned. Session pruning
 deletes those rows every 10 minutes, and the rows go with their agent. An agent's primary key is
-`(project_id, id)`; a key's is `(project_id, kid)` with a foreign key to its agent. `project_id` of `agents` and
-`agent_enrollments` holds a project id or `terrascale`, so it has no foreign key to `projects`; a project's rows go in its
-deletion cleanup, and every query names the tenant.
+`(project_id, id)`; a key's is `(project_id, kid)` with a foreign key to its agent. `project_id` always references
+`projects`: the platform tenant's agents and enrollments reference the hidden `terrascale` project row
+([platform bootstrap](platform-bootstrap.md#platform-tenant-row)), and every query names the tenant.
 
 - Creation counts live agents and rewrites the owner's row version in the same save, so two creations that both
   read 24 live agents cannot both commit; it also asserts the agent policy version.

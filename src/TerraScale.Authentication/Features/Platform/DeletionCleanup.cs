@@ -197,8 +197,6 @@ public sealed class DeletionCleanup(
                 case "organization":
                     return await db.Projects.AnyAsync(row => row.OrganizationId == subject, token).ConfigureAwait(false) ? "project_handoff_required" : null;
                 case "project":
-                    await db.AgentEnrollments.Where(row => row.ProjectId == subject).ExecuteDeleteAsync(token).ConfigureAwait(false);
-                    await db.Agents.Where(row => row.ProjectId == subject).ExecuteDeleteAsync(token).ConfigureAwait(false);
                     return null;
             }
 

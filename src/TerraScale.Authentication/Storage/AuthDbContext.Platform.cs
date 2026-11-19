@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
-using TerraScale.Authentication.Features.AttackProtection;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.AttackProtection;
+using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.Sso;
 using TerraScale.Authentication.Features.Webhooks;
@@ -51,6 +52,7 @@ public sealed partial class AuthDbContext
         {
             organization.ToTable("organizations", table => table.HasCheckConstraint("ck_organizations_counts", "owners >= 0 AND projects >= 0"));
             organization.HasKey(row => row.Id);
+            organization.HasQueryFilter(PlatformTenant.CustomerOrganization);
             organization.Property(row => row.Transfer).HasJson(PlatformStorageJson.Default.OwnershipTransferRecord);
             Versioned(organization);
         });
@@ -69,6 +71,7 @@ public sealed partial class AuthDbContext
         {
             project.ToTable("projects");
             project.HasKey(row => row.Id);
+            project.HasQueryFilter(PlatformTenant.CustomerProject);
             project.HasOne<OrganizationRecord>().WithMany().HasForeignKey(row => row.OrganizationId).OnDelete(DeleteBehavior.Restrict);
             project.Property<string>(NameKeyProperty).IsRequired();
             project.HasIndex(nameof(ProjectRecord.OrganizationId), NameKeyProperty).IsUnique();
