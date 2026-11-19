@@ -141,6 +141,9 @@ Codes and races:
 - Each code lookup is charged to the stored hosted IP budgets (and the IPv6 /48 site budget) and a stored per-user
   budget before the code is read, and each start to its stored per-IP and per-project budgets; when that storage fails
   the request is refused, never admitted from a replica's memory.
+- A project's start asserts the project row's version in the same save as the new enrollment, so a start racing the
+  project's closure or deletion fails (`409 version_conflict`, then `404`) instead of leaving a row behind its deletion
+  cleanup.
 - The session pruner deletes enrollments on a later sweep once they have been expired for 600 seconds.
 
 ## Your agents
@@ -284,7 +287,7 @@ tenant `terrascale` and use the same rules and code as project agents, with thes
 | Enrollment | `POST /v1/{project}/agent-enrollments` | `POST /v1/terrascale/agent-enrollments`; the approval page is `https://auth.terrascale.tech/ui/terrascale/agent-enrollments`, signed in with the TerraScale account, with the same step-up (`approve_agent`) |
 | Collecting the result | `POST /v1/{project}/agent-enrollments/{id}/token` | `POST /v1/terrascale/agent-enrollments/{id}/token` |
 | Token | `POST /{project}/oauth/token`, project issuer | `POST /terrascale/oauth/token`; issuer `https://auth.terrascale.tech/terrascale`, keys at `/terrascale/.well-known/jwks.json` |
-| Your agents | `/v1/{project}/me/agents` with the hosted session cookie | `GET /v1/terrascale/account/agents` and `DELETE /v1/terrascale/account/agents/{agent}` with a platform sign-in access token |
+| Your agents | `/v1/{project}/me/agents` with the hosted session cookie | `GET /v1/terrascale/me/agents` and `DELETE /v1/terrascale/me/agents/{agent}` with a platform sign-in access token |
 | Management API | `/v1/{project}/agents`, `/v1/{project}/users/{user}/agents` | None: an account agent is created only by enrollment and managed only by its owner |
 | Audit and events | An audit entry in the project's organization and lifecycle events | A ts-auth log line per change (`Platform agent audit: <action> <target> by <actor>`); no lifecycle events |
 
@@ -326,7 +329,7 @@ grant_type=urn:terrascale:params:oauth:grant-type:agent-exchange&subject_token=<
 ```
 
 - Client authentication is required (`client_secret_basic` or `client_secret_post`), and only the ts-dashboard client
-  holds the grant. Another client answers `400 unauthorized_client`; a wrong secret `401 invalid_client`.
+  holds the grant. Another client answers `400 unauthorized_client`; missing or wrong client authentication `401 invalid_client`.
 - `subject_token_type` must be `urn:ietf:params:oauth:token-type:access_token`. Any other parameter, or a missing
   `subject_token`, is `400 invalid_request`.
 - The subject token must be signed by the platform key ring (`kid` of `/terrascale/.well-known/jwks.json`), with ES256,
@@ -338,8 +341,11 @@ grant_type=urn:terrascale:params:oauth:grant-type:agent-exchange&subject_token=<
   change since).
 - Every refusal of the subject token or the agent is `400 invalid_grant` with the same description.
 
-The answer is a token response with `access_token`, `token_type: Bearer` and `expires_in`: 300 seconds, or less so the
-token never outlives the subject token. There is no refresh token, no ID token and no scope. The access token is the
+ts-auth reads the agent and its owner from the home region and asserts both rows' versions in a save before it issues
+the token, so a revocation, sign-out everywhere or disable that commits first makes the exchange fail. The answer is a
+token response with `access_token`, `token_type: Bearer` and `expires_in`: 300 seconds, or less. The signed `exp` is
+capped at the subject token's `exp` when the token is generated, and a subject token that expired by then is refused,
+so the owner token never outlives it. There is no refresh token, no ID token and no scope. The access token is the
 owner's platform sign-in access token, with:
 
 | Claim | Value |
@@ -355,12 +361,13 @@ It never carries `ts_auth_mfa` or `platform_role`. So an organization that requi
 it, and an owner who has an authenticator turned on gets no access to the platform API through an agent. It never
 carries scopes either: the dashboard reads the agent's `mcp:read` and `mcp:write` from the agent token it exchanged.
 
-The owner token is checked again on every use. ts-auth's platform API, and the organization and project token
-exchange, read the agent named by `agent_id` on each call and refuse the token once the agent is revoked or expired,
-its last key is revoked, or its owner signed out everywhere, was disabled or deleted. These reads may be served by the
-region's replica, so a revocation takes effect within its replication lag. An organization or project token already
-issued from it stays valid until it expires (60 seconds), and an agent token until its own expiry (at most 5 minutes),
-but neither can be exchanged again.
+The owner token is checked again on every use. ts-auth's platform API, `/terrascale/oauth/userinfo` and the
+organization and project token exchange (every OpenIddict validation of a token carrying `agent_id`) read the agent
+named by `agent_id` from the home region on each call, and refuse the token once the agent is revoked or expired, its
+last key is revoked, or its owner signed out everywhere, was disabled or deleted. So a token issued in the instant
+before a revocation commits is refused on its first use after it. An organization or project token already issued
+from it stays valid until it expires (60 seconds), and an agent token until its own expiry (at most 5 minutes), but
+neither can be exchanged again.
 
 ## Storage
 

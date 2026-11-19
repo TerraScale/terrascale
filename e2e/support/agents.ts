@@ -1,6 +1,25 @@
 import { createHash, generateKeyPairSync, randomUUID, sign, type KeyObject } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { APIRequestContext } from '@playwright/test';
 import { expect } from './audit';
+import { auth, stateDir } from './stack';
+
+export const platformTokenEndpoint = auth + '/terrascale/oauth/token';
+
+const dashboardClient = '01M4EQ2FRJ8S8B29E8TQVWNW4J';
+
+export function dashboardSecret(): string {
+  return readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[5];
+}
+
+export async function exchangeAgentToken(request: APIRequestContext, subject: string, secret = dashboardSecret()): Promise<{ status: number; body: Record<string, unknown> }> {
+  const response = await request.post(platformTokenEndpoint, {
+    headers: { Authorization: 'Basic ' + Buffer.from(`${dashboardClient}:${secret}`).toString('base64') },
+    form: { grant_type: 'urn:terrascale:params:oauth:grant-type:agent-exchange', subject_token: subject, subject_token_type: 'urn:ietf:params:oauth:token-type:access_token' },
+  });
+  return { status: response.status(), body: await response.json() };
+}
 
 export type Jwk = { kty: string; crv: string; x: string; y: string };
 export type Enrollment = { enrollment_id: string; user_code: string; verification_uri: string; verification_uri_complete: string; expires_in: number; interval: number };
