@@ -1,5 +1,6 @@
 using OpenIddict.Abstractions;
 using OpenIddict.Server;
+using TerraScale.Authentication.Features.Agents;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 using static OpenIddict.Server.OpenIddictServerEvents;
 
@@ -15,6 +16,7 @@ public sealed class ProjectDiscoveryMetadata : IOpenIddictServerHandler<HandleCo
         if (context.Transaction.GetProperty<string>(TrustPublicOrigin.TenantProperty) is { } tenant && Tenancy.IsProject(tenant))
         {
             context.GrantTypes.IntersectWith([GrantTypes.AuthorizationCode, GrantTypes.RefreshToken, GrantTypes.ClientCredentials]);
+            context.GrantTypes.Add(AgentTokens.GrantType);
             context.Scopes.IntersectWith([Scopes.OpenId, Scopes.Email, Scopes.Profile, Scopes.OfflineAccess]);
             context.DeviceAuthorizationEndpoint = null;
             context.MtlsDeviceAuthorizationEndpointAlias = null;

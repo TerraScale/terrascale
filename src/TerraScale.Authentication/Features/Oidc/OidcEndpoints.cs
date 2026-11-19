@@ -10,6 +10,7 @@ using OpenIddict.Abstractions;
 using OpenIddict.Server.AspNetCore;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.Agents;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Impersonation;
 using TerraScale.Authentication.Features.Mfa;
@@ -19,6 +20,7 @@ using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.ProjectOrganizations;
 using TerraScale.Authentication.Features.Ui;
 using TerraScale.Authentication.Hosting;
+using TerraScale.Authentication.Storage;
 using TerraScale.DotNet.TerraBase;
 using TerraScale.Endpoints;
 using static OpenIddict.Abstractions.OpenIddictConstants;
@@ -45,6 +47,23 @@ public sealed record TokenBody(
     [property: JsonPropertyName("scope")] string? Scope,
     [property: JsonPropertyName("id_token")] string? IdToken,
     [property: JsonPropertyName("refresh_token")] string? RefreshToken);
+
+public sealed record TokenRequestForm(
+    [property: JsonPropertyName("grant_type")] string GrantType,
+    [property: JsonPropertyName("client_id")] string? ClientId = null,
+    [property: JsonPropertyName("client_secret")] string? ClientSecret = null,
+    [property: JsonPropertyName("code")] string? Code = null,
+    [property: JsonPropertyName("redirect_uri")] string? RedirectUri = null,
+    [property: JsonPropertyName("code_verifier")] string? CodeVerifier = null,
+    [property: JsonPropertyName("refresh_token")] string? RefreshToken = null,
+    [property: JsonPropertyName("device_code")] string? DeviceCode = null,
+    [property: JsonPropertyName("subject_token")] string? SubjectToken = null,
+    [property: JsonPropertyName("subject_token_type")] string? SubjectTokenType = null,
+    [property: JsonPropertyName("scope")] string? Scope = null,
+    [property: JsonPropertyName("resource")] string? Resource = null,
+    [property: JsonPropertyName("ts_refresh_expires_at")] long? RefreshExpiresAt = null,
+    [property: JsonPropertyName("assertion")] string? Assertion = null,
+    [property: JsonPropertyName("requested_subject")] string? RequestedSubject = null);
 
 public sealed record UserInfoBody(
     [property: JsonPropertyName("sub")] string Subject,
@@ -316,7 +335,7 @@ public abstract class AuthorizeEndpoint(Impersonations impersonations, Sessions 
 }
 
 public sealed class TokenEndpoint(Impersonations impersonations, TotpCredentials mfa, PlatformGrants platform, AuthOptions options, IOpenIddictApplicationStore<OidcApplication> applications,
-    Sessions sessions, ProjectAuthSettings settings, TimeProvider clock, IOpenIddictTokenManager tokens) : EndpointWithoutRequest<IResult>
+    Sessions sessions, ProjectAuthSettings settings, TimeProvider clock, IOpenIddictTokenManager tokens, AgentTokens agents) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -324,19 +343,19 @@ public sealed class TokenEndpoint(Impersonations impersonations, TotpCredentials
         Post("/{slug}/oauth/token");
         Name("oauth_token");
         Summary("Token endpoint");
-        Description("application/x-www-form-urlencoded grant_type=authorization_code (code, redirect_uri, code_verifier), grant_type=refresh_token (refresh_token), grant_type=urn:ietf:params:oauth:grant-type:device_code (device_code, client_id; RFC 8628 for the ts CLI, see /{slug}/oauth/device) or, for service clients only, grant_type=client_credentials. Every POST to /terrascale/oauth/token and /terrascale/oauth/device, including invalid client credentials and malformed requests, charges the socket peer's shared minute budget before client authentication: TS_AUTH_RATE_LIMIT (or --rate-limit), default 1000, per IPv4 address or IPv6 /64, with an additional IPv6 /48 budget at four times that capacity. Forwarding is disabled by default. With TS_AUTH_TRUSTED_PROXIES (or --trusted-proxies) configured, exact trusted socket peers have four times the aggregate peer capacity in separate trusted-proxy buckets and also charge a separate resolved-client budget of TS_AUTH_RATE_LIMIT per IPv4 address or IPv6 /64, with an additional resolved-client IPv6 /48 budget at four times that capacity; both apply before authentication. ASP.NET processes only the rightmost X-Forwarded-For hop from these peers. Missing or malformed rightmost addresses retain the proxy address and share its client budget. Other forwarding headers and submitted client identifiers do not select a budget. Exhaustion answers 429 rate_limited with Retry-After in seconds; missing peer addresses or unavailable limiter storage answer 503 temporarily_unavailable. Both are OAuth JSON errors with Cache-Control: no-store. Storage that does not answer within 10 seconds answers 503 temporarily_unavailable with Retry-After; a refresh_token retry after it may answer invalid_grant if the first attempt committed late, so sign in again then. Confidential clients authenticate with client_secret_basic or client_secret_post. Access tokens are ES256 JWTs with typ at+jwt whose aud holds TS_AUTH_ACCESS_TOKEN_AUDIENCES; a user's carry email and email_verified, a service client's have sub = client id and no scopes. Refresh tokens rotate on every use, with one exception: when the ts-dashboard client redeems an authorization code with ts_refresh_expires_at (Unix seconds, after now and at most 365 days and 5 minutes ahead, the 5 minutes absorbing a clock difference between the dashboard and ts-auth), the grant's refresh token expires at that instant and never rotates, so a refresh answers no refresh_token and the client keeps using the one it has, authenticating as the client every time; any other ts_refresh_expires_at from that client answers invalid_request and leaves the code unredeemed. Other clients, other grants and refresh requests ignore the parameter. Other platform refresh tokens have a fixed expiry 14 days after the authorization code is redeemed."
+        Description("application/x-www-form-urlencoded grant_type=authorization_code (code, redirect_uri, code_verifier), grant_type=refresh_token (refresh_token), grant_type=urn:ietf:params:oauth:grant-type:device_code (device_code, client_id; RFC 8628 for the ts CLI, see /{slug}/oauth/device) or, for service clients only, grant_type=client_credentials. Every POST to /terrascale/oauth/token and /terrascale/oauth/device, including invalid client credentials and malformed requests, charges the socket peer's shared minute budget before client authentication: TS_AUTH_RATE_LIMIT (or --rate-limit), default 1000, per IPv4 address or IPv6 /64, with an additional IPv6 /48 budget at four times that capacity. Forwarding is disabled by default. With TS_AUTH_TRUSTED_PROXIES (or --trusted-proxies) configured, exact trusted socket peers have four times the aggregate peer capacity in separate trusted-proxy buckets and also charge a separate resolved-client budget of TS_AUTH_RATE_LIMIT per IPv4 address or IPv6 /64, with an additional resolved-client IPv6 /48 budget at four times that capacity; both apply before authentication. ASP.NET processes only the rightmost X-Forwarded-For hop from these peers. Missing or malformed rightmost addresses retain the proxy address and share its client budget. Other forwarding headers and submitted client identifiers do not select a budget. Exhaustion answers 429 rate_limited with Retry-After in seconds; missing peer addresses or unavailable limiter storage answer 503 temporarily_unavailable. Both are OAuth JSON errors with Cache-Control: no-store. Storage that does not answer within 10 seconds answers 503 temporarily_unavailable with Retry-After; a refresh_token retry after it may answer invalid_grant if the first attempt committed late, so sign in again then. Confidential clients authenticate with client_secret_basic or client_secret_post; public clients (authorization_code with PKCE, device_code) send only client_id, and the agent jwt-bearer grant sends no client authentication at all. Access tokens are ES256 JWTs with typ at+jwt whose aud holds TS_AUTH_ACCESS_TOKEN_AUDIENCES; a user's carry email and email_verified, a service client's have sub = client id and no scopes. Refresh tokens rotate on every use, with one exception: when the ts-dashboard client redeems an authorization code with ts_refresh_expires_at (Unix seconds, after now and at most 365 days and 5 minutes ahead, the 5 minutes absorbing a clock difference between the dashboard and ts-auth), the grant's refresh token expires at that instant and never rotates, so a refresh answers no refresh_token and the client keeps using the one it has, authenticating as the client every time; any other ts_refresh_expires_at from that client answers invalid_request and leaves the code unredeemed. Other clients, other grants and refresh requests ignore the parameter. Other platform refresh tokens have a fixed expiry 14 days after the authorization code is redeemed."
             + " Project refresh tokens initially expire at the original auth_time plus the project's configured session lifetime (5 minutes to 30 days). Rotation never extends an observed expiry, and reducing policy immediately limits code and refresh redemption. Observing policy expiry revokes the whole sign-in, so later policy increases cannot revive its grants. Authorization-code redirect_uri must still satisfy the project's current nonempty allowlist as well as the client registration."
             + " Active MFA users' authorization-code, refresh and exchange grants need the ts_auth_mfa claim of a second-factor sign-in; primary-only ones answer invalid_grant. Pending and disabled factors permit primary authentication; corrupt or unavailable factor state answers 503 temporarily_unavailable. Machine client credentials and API keys are independent of user MFA. User sign-in access and identity tokens carry the server-issued numeric auth_time as Unix seconds; refresh and organization/project exchange preserve its original value. Submitted auth_time parameters are ignored. Exchange requires a nonnegative integer no more than 30 seconds ahead of the exchanging replica; missing, malformed, negative or further-ahead values answer invalid_grant. Machine tokens carry no auth_time. Authentication time alone does not establish MFA completion."
-            + " Project machine apps use client_credentials with their own nonempty allowed scopes, an optional resource from allowed_audiences, and a per-app 5 to 60 minute lifetime (default 15). Their sub is client_id; aud is the selected resource. They have no end-user identity. A machine client has an additional 1000/minute budget. Interactive apps cannot use client_credentials.");
+            + " Project machine apps use client_credentials with their own nonempty allowed scopes, an optional resource from allowed_audiences, and a per-app 5 to 60 minute lifetime (default 15). Their sub is client_id; aud is the selected resource. They have no end-user identity. A machine client has an additional 1000/minute budget. Interactive apps cannot use client_credentials."
+            + " Project agents use grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer (RFC 7523) without client authentication: assertion is an ES256 JWT signed by an active key of an active agent, header kid = the key's kid and no jwk, jku, x5u, x5c or crit member, iss = sub = the agent id, aud = exactly this token endpoint URL, integer iat and exp (no fraction, exponent or string) with exp at most 300 seconds after iat (30 seconds of clock skew) and a jti of at most 128 characters used once per agent. Optional scope is a subset of the agent's allowed_scopes (default all of them) and optional requested_subject is owner (default) or agent (only for an agent with allow_self_subject); any other parameter answers invalid_request. The answer has access_token, token_type Bearer, expires_in 300 (less when the agent's expires_at comes sooner; the token never outlives the agent) and scope, and no refresh or ID token. The token has token_use agent, actor_type agent, agent_id and scope, no aud, and either sub = the owner with act.sub = the agent, or sub = the agent with owner_sub = the owner. Every refusal (unknown or revoked key, bad signature, algorithm, header, issuer, audience or times, replayed jti, revoked or expired agent, owner disabled, deleted or signed out everywhere since the agent was created, scope outside allowed_scopes, self subject not allowed) answers the same 400 invalid_grant. Each agent has 60 tokens a minute and each owner's agents 600, charged only for requests that pass every check but the final save. The token is released only when one save commits the used jti (kept 10 minutes past the assertion's accepted window), the agent's last_used_at when due, and the versions of the key and owner it checked; a revocation, sign-out everywhere or disable committed before that save makes it fail.");
         Tags("OAuth");
-        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
-        Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
+        Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(TokenRequestForm)));
         Produces<TokenBody>();
         Produces<OAuthErrorBody>(StatusCodes.Status400BadRequest);
         Produces<OAuthErrorBody>(StatusCodes.Status401Unauthorized);
         Produces<OAuthErrorBody>(StatusCodes.Status429TooManyRequests);
         Produces<OAuthErrorBody>(StatusCodes.Status503ServiceUnavailable);
-        Metadata(new RequiresSecurity(SecuritySchemes.ClientBasic));
+        Metadata(new RequiresSecurity(SecuritySchemes.ClientBasic, PublicClientAlternative: true));
     }
 
     /// <inheritdoc />
@@ -348,9 +367,10 @@ public sealed class TokenEndpoint(Impersonations impersonations, TotpCredentials
         {
             return await this.GrantAsync(cancellationToken);
         }
-        catch (ApiException error) when (error.Status == StatusCodes.Status503ServiceUnavailable)
+        catch (Exception error) when (AuthData.IsUnavailable(error) && !this.HttpContext.RequestAborted.IsCancellationRequested)
         {
-            return Results.Json(new OAuthErrorBody(Errors.TemporarilyUnavailable, error.Message), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status503ServiceUnavailable);
+            var unavailable = error as ApiException ?? ApiException.Unavailable(error);
+            return Results.Json(new OAuthErrorBody(Errors.TemporarilyUnavailable, unavailable.Message), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status503ServiceUnavailable);
         }
     }
 
@@ -362,9 +382,14 @@ public sealed class TokenEndpoint(Impersonations impersonations, TotpCredentials
         }
 
         var tenant = Tenancy.Current(this.HttpContext);
+        if (Tenancy.IsProject(tenant) && request.GrantType == AgentTokens.GrantType)
+        {
+            return await agents.GrantAsync(tenant, request, cancellationToken);
+        }
+
         if (Tenancy.IsProject(tenant) && !request.IsAuthorizationCodeGrantType() && !request.IsRefreshTokenGrantType() && !request.IsClientCredentialsGrantType())
         {
-            return OidcResults.Forbid(Errors.UnsupportedGrantType, "A project issuer grants authorization_code, refresh_token and machine client_credentials.");
+            return OidcResults.Forbid(Errors.UnsupportedGrantType, "A project issuer grants authorization_code, refresh_token, machine client_credentials and the agent jwt-bearer grant.");
         }
 
         if (request.IsAuthorizationCodeGrantType() && !await OidcResults.AllowsRedirectAsync(settings, tenant, request.RedirectUri, cancellationToken))

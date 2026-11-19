@@ -40,8 +40,9 @@ The database enforces the invariants the code relies on:
 | One SSO connection per organization and domain | `sso_connections` primary key `domain`, unique `organization_id` |
 | Rows of a deleted user, organization or project go with it | foreign keys with `ON DELETE CASCADE`: a user's sessions, MFA and passkey credentials, step-up proofs, email changes and provider links; an organization's memberships, grants, API keys, invitations, audit events and SSO connection; identity links with their connection or membership; a project's grants, API keys, invitations, settings, webhook endpoints and webhook outbox |
 | An organization with projects, or a user who is still a member, cannot be deleted | `projects.organization_id`, `memberships.user_id` and `project_members.user_id` are `RESTRICT` |
+| An agent's assertion `jti` is used once | `agent_assertions` primary key `(project_id, agent_id, jti)`, kept 10 minutes past the assertion's accepted window |
 | One registration per agent public key in a project | `agent_keys` unique `(project_id, thumbprint)`, revoked keys included |
-| Agents and agent keys go with their owner or project | `agents.owner_user_id`, `agents.project_id` and `agent_keys (project_id, agent_id)` cascade deletes ([agent identities](agent-identities.md)) |
+| Agents and agent keys go with their owner or project | `agents.owner_user_id`, `agents.project_id`, `agent_keys (project_id, agent_id)` and `agent_assertions (project_id, agent_id)` cascade deletes ([agent identities](agent-identities.md)) |
 | Roles, statuses and counters stay in range | check constraints (`ck_*`) |
 
 A unique, primary-key or foreign-key violation and a stale `version` are conflicts: `AuthData.SaveAsync` answers

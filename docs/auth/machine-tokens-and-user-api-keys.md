@@ -16,6 +16,8 @@ Tokens are project-issued ES256 JWTs with token_use=machine, sub=client_id, gran
 
 Customer APIs must check token_use alongside signature, issuer, audience and expiry: require machine for machine-only endpoints and user for user-only endpoints. Project OAuth user access tokens and backend-asserted end-user tokens carry token_use=user.
 
+Agent tokens ([agent identities](agent-identities.md#getting-a-token)) carry token_use=agent, actor_type=agent and agent_id. A delegated agent token's sub is the owning user, so an API that only reads sub would treat the agent as that user: check token_use, and on token_use=agent read act.sub as the acting agent and decide what an agent may do on the user's behalf. A self-subject agent token has sub = agent id and owner_sub = the owner. Agent tokens have no aud; never accept them where an audience is required. ts-auth's own user endpoints (userinfo, the platform API) refuse them.
+
 ## User-owned keys
 
 An administrator or unrestricted project key with auth:write defines allowed scopes using PUT /v1/{project}/user-api-key-policy, with {"allowed_scopes":["invoices:read"]}. An empty list prevents new keys. Changing the list does not change existing keys.
