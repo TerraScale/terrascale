@@ -27,10 +27,13 @@ internal sealed record UnservedDatabase(string DatabaseId, string Region, string
 internal sealed record FencedDatabase(string DatabaseId, string Reason, long Epoch, string Detail);
 
 internal sealed record RegionalStatus(string Node, string? Owner, long Epoch, bool Writer, bool Ready, string Session = "",
-    IReadOnlyList<UnservedDatabase>? Unserved = null, IReadOnlyList<KeptCopy>? Kept = null, IReadOnlyList<FencedDatabase>? Fenced = null, string? Unready = null);
+    IReadOnlyList<UnservedDatabase>? Unserved = null, IReadOnlyList<KeptCopy>? Kept = null, IReadOnlyList<FencedDatabase>? Fenced = null, string? Unready = null,
+    IReadOnlyList<string>? PrimedWithout = null);
 internal sealed record RegionalDrain(string Target);
 
 internal readonly union RegionalHandoffResult(Done, Unavailable);
+internal readonly union RegionalPrimeResult(PrimedWithout, Unavailable);
+internal sealed record PrimedWithout(IReadOnlyList<string> Databases);
 internal readonly union RegionalAdmitResult(RegionalAdmission, Unavailable);
 internal sealed record RegionalAdmission(string Transfer);
 internal readonly union DrainReservation(NatsKVEntry<byte[]>, Unavailable);
@@ -43,6 +46,8 @@ internal sealed partial class RegionalHandoff(
     private readonly SemaphoreSlim _changing = new(1, 1);
     private readonly Lock _primeGate = new();
     private PrimeMark? _primeMark;
+    private IReadOnlyList<string> _primedWithout = [];
+    private const int MaxUnservedExemptions = 1_000;
     private readonly HttpClient _http = PeerHttp.Create(credential);
     private readonly Dictionary<string, TenantContext> _promoted = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _prepared = new(StringComparer.Ordinal);
@@ -64,7 +69,7 @@ internal sealed partial class RegionalHandoff(
             unready is null, _session,
             services.GetRequiredService<HomeLeases>().Unserved, services.GetRequiredService<KeptCopies>().List(),
             region is null || region == options.Region ? Fenced : [],
-            unready is { } condition ? Health.ReadinessConditions.Label(condition) : null);
+            unready is { } condition ? Health.ReadinessConditions.Label(condition) : null, Volatile.Read(ref _primedWithout));
     }
 
     private IReadOnlyList<FencedDatabase> Fenced =>
@@ -299,7 +304,7 @@ internal sealed partial class RegionalHandoff(
         _promoted.Clear();
     }
 
-    internal async Task<RegionalHandoffResult> PrimeAsync(string source, CancellationToken cancellationToken)
+    internal async Task<RegionalPrimeResult> PrimeAsync(string source, CancellationToken cancellationToken)
     {
         if (owners.Find(options.Region) is not { Node: var writer, Epoch: var epoch } || writer != source || source == options.MachineId)
         {
@@ -314,12 +319,13 @@ internal sealed partial class RegionalHandoff(
             _primeMark = mark;
         }
 
-        HashSet<string> unserved = [with(StringComparer.Ordinal), .. services.GetRequiredService<HomeLeases>().Unserved.Select(database => database.DatabaseId)];
+        IReadOnlySet<string> unserved = new HashSet<string>(StringComparer.Ordinal);
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         bounded.CancelAfter(DrainBudget);
         try
         {
             await replication.SyncCatalogsAsync(bounded.Token).ConfigureAwait(false);
+            unserved = await UnservedElsewhereAsync(bounded.Token).ConfigureAwait(false);
             if (await replication.CatchUpSinceAsync(mark.Since, unserved, bounded.Token).ConfigureAwait(false) is [_, ..] failing)
             {
                 var (reason, details) = ReplicaFailure.Describe(failing);
@@ -350,11 +356,19 @@ internal sealed partial class RegionalHandoff(
                 _primeMark = null;
             }
         }
-        if (replication.UnservedElsewhere(unserved) is [_, ..] skipped)
+        var skipped = replication.Exempted(unserved);
+        if (skipped is [_, ..])
         {
             LogPrimeSkippedUnserved(logger, source, skipped.Count, string.Join(',', skipped));
         }
-        return new Done();
+        Volatile.Write(ref _primedWithout, skipped);
+        return new PrimedWithout(skipped);
+    }
+
+    private async Task<IReadOnlySet<string>> UnservedElsewhereAsync(CancellationToken cancellationToken)
+    {
+        var confirmed = await services.GetRequiredService<HomeLeases>().ConfirmedUnservedElsewhereAsync(cancellationToken).ConfigureAwait(false);
+        return confirmed.Count <= MaxUnservedExemptions ? confirmed : new HashSet<string>(StringComparer.Ordinal);
     }
 
     private Unavailable PrimeRefused(string source, string reason, string code, Exception? exception = null, params ReadOnlySpan<KeyValuePair<string, string>> details) =>
@@ -411,10 +425,11 @@ internal sealed partial class RegionalHandoff(
 
         var replicas = services.GetRequiredService<IDatabaseReplicas>();
         var replication = services.GetRequiredService<RegionReplication>();
+        var unserved = await UnservedElsewhereAsync(cancellationToken).ConfigureAwait(false);
         foreach (var position in request.Positions)
         {
             var database = Database(position);
-            if (_prepared.GetValueOrDefault(position.Database) == position.Revision)
+            if (_prepared.GetValueOrDefault(position.Database) == position.Revision || UnservedElsewhere(position, unserved, "preparation", request))
             {
                 continue;
             }
@@ -538,7 +553,9 @@ internal sealed partial class RegionalHandoff(
         var replication = services.GetRequiredService<RegionReplication>();
         await replication.SyncCatalogsAsync(cancellationToken).ConfigureAwait(false);
         var replicas = services.GetRequiredService<IDatabaseReplicas>();
-        IReadOnlyList<TenantContext> unapplied = [.. request.Positions
+        var unserved = await UnservedElsewhereAsync(cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<RegionalPosition> owed = [.. request.Positions.Where(position => !UnservedElsewhere(position, unserved, "verification", request))];
+        IReadOnlyList<TenantContext> unapplied = [.. owed
             .Where(position => position.Home != options.Region && !Applied(replicas.HeldRevision(Database(position)), position))
             .Select(Database)];
         if (await replication.CatchUpAsync(unapplied, cancellationToken).ConfigureAwait(false) is [_, ..] failing)
@@ -549,7 +566,7 @@ internal sealed partial class RegionalHandoff(
 
         var revisions = services.GetRequiredService<IDatabaseRevisions>();
         var behind = 0;
-        foreach (var position in request.Positions)
+        foreach (var position in owed)
         {
             var database = Database(position);
             var actual = position.Home == options.Region
@@ -566,6 +583,16 @@ internal sealed partial class RegionalHandoff(
         return await services.GetRequiredService<Health.INodeReadiness>().UnreadyAsync(cancellationToken).ConfigureAwait(false) is { } unready
             ? VerifyRefused(request.Source, "this node is not ready: " + Health.ReadinessConditions.Label(unready), "verify_unready")
             : new Done();
+    }
+
+    private bool UnservedElsewhere(RegionalPosition position, IReadOnlySet<string> unserved, string phase, RegionalPrepare request)
+    {
+        if (position.Home == options.Region || !unserved.Contains(position.Database))
+        {
+            return false;
+        }
+        LogPositionUnserved(logger, phase, position.Database, position.Home, position.Revision, request.Source, request.Epoch);
+        return true;
     }
 
     private static bool Applied(DatabaseRevision? actual, RegionalPosition position) =>
@@ -914,6 +941,9 @@ internal sealed partial class RegionalHandoff(
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Regional handoff failed during {Phase} with peer {Peer}")]
     private static partial void LogHandoffFailed(ILogger logger, Exception exception, string phase, string peer);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Regional {Phase} from {Source} at epoch {Epoch} does not wait for database {Database} at {Revision}: its home in {Home} is unserved")]
+    private static partial void LogPositionUnserved(ILogger logger, string phase, string database, string home, string revision, string source, long epoch);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Regional prime against {Source} completed without {Count} replicas whose home in another region is unserved: {Databases}")]
     private static partial void LogPrimeSkippedUnserved(ILogger logger, string source, int count, string databases);

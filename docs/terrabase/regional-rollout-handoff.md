@@ -215,12 +215,33 @@ it to `preparing` and continues from the quiesce step; without `transfer`, the
 drain admits and reserves itself as before.
 
 `POST /v1/rollout/prime?source=<writer>` on the target catches every replica up to
-the writer, except a replica whose home is in another region and is listed as
-unserved in the node's rollout status (`lapsed`, `not_writer` or `stale_lease`):
-nothing serves that home, and its replica holds no write this region acknowledged.
-The prime still answers `204`, and logs one warning naming the replicas it went
-without. A replica homed in this region, or homed elsewhere on a served home that
-cannot be pulled, still refuses the prime. Each replica records when it last finished a pull with nothing left
+the writer, except a replica whose home is unserved in another region. Such a
+home is one the node's rollout status lists as unserved (`lapsed`, `not_writer` or
+`stale_lease`) and that the prime confirms again after its catalog sync from
+current evidence: the home lease read from the lease store names the same region,
+node and epoch, its node lease is present or absent as the cause says, the
+home region's owner is confirmed, and the database's placement and the lease are
+both outside this region. Anything it cannot confirm counts as served. A prime
+leaves out at most 1,000 such databases; with more it leaves out none. It still
+answers `204`, names the databases it left out in the
+`TerraBase-Primed-Without` header (comma-separated IDs), lists them as
+`primedWithout` in `GET /v1/rollout/status` until the next successful prime, and
+logs one warning. A replica homed in this region, or homed elsewhere on a served
+home that cannot be pulled, still refuses the prime. A drain's preparation and
+verification apply the same confirmed exemption to the source's applied
+positions of those databases, and log each one; every position of a database
+homed in this region is still proven and imported.
+
+A replica of a database homed elsewhere can hold writes this region
+acknowledged: a local SQL write returns only after its sealed transaction is
+stored in this region's push stream, committed to the local replica, and held by
+the in-region partner or applied at the home. Leaving that replica out of a prime
+or a drain drops none of that. The partner drops its hold only after the home
+applies the transaction, the push stream refuses new transactions when full
+rather than discarding stored ones, and the candidate rebuilds its push
+overlay from the whole stream before it writes its preparation certificate. What
+can lag is the new writer's physical replica of that database: it shows those
+writes once its home serves again and the replica's next pull applies. Each replica records when it last finished a pull with nothing left
 pending. A prime waits only for replicas that have not caught up since the first
 prime against the same writer and epoch, so a prime that runs out of its thirty-second
 budget keeps what it pulled and the next one resumes from there. A success clears

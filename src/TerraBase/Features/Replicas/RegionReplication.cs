@@ -171,7 +171,7 @@ internal sealed partial class RegionReplication(
     internal Task<IReadOnlyList<ReplicaFailure>> CatchUpSinceAsync(long mark, IReadOnlySet<string> unserved, CancellationToken cancellationToken) =>
         RefusedAsync([.. Owed(unserved).Where(follower => !follower.CaughtUpSince(mark))], (follower, token) => follower.CatchUpSinceAsync(mark, token), cancellationToken);
 
-    internal IReadOnlyList<string> UnservedElsewhere(IReadOnlySet<string> unserved) =>
+    internal IReadOnlyList<string> Exempted(IReadOnlySet<string> unserved) =>
         [.. _followers.Where(entry => !Owes(entry, unserved)).Select(entry => entry.Key.Database).Order(StringComparer.Ordinal)];
 
     private IEnumerable<Follower> Owed(IReadOnlySet<string> unserved) =>

@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { appendFileSync, closeSync, existsSync, openSync, readFileSync, writeFileSync } from 'node:fs';
@@ -7,6 +7,7 @@ import { request } from 'node:http';
 import { connect } from 'node:http2';
 import { createConnection, type Socket } from 'node:net';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { expect, test, request as apiRequest, type APIRequestContext } from '@playwright/test';
 import { database, json, sql, type Cells } from '../placement/support';
 import { keyId } from '../support/api-key';
@@ -29,7 +30,7 @@ export const node = (name: string) => nodes.find(candidate => candidate.name ===
 
 export type Node = typeof nodes[number];
 type NodeStatus = { node: string; owner: string; epoch: number; writer: boolean; ready: boolean; session: string; unserved?: Unserved[] | null; kept?: KeptCopy[] | null;
-  fenced?: FencedDatabase[] | null; unready?: string | null };
+  fenced?: FencedDatabase[] | null; unready?: string | null; primedWithout?: string[] | null };
 export type Row = [number, string];
 export const regions = ['gru', 'fra'] as const;
 export const endpoint = (region: string) => `https://${region}.api.terrascale.tech`;
@@ -96,7 +97,7 @@ function nodeRequestTimeoutFor(path: string): number {
   return /^\/v1\/rollout\/(drain|prime)\b/.test(path) ? drainBudget + nodeRequestTimeout : nodeRequestTimeout;
 }
 
-export async function nodeRequest(node: { name: string; address: string }, path: string, method = 'GET', payload?: unknown, user?: string): Promise<{ status: number; body: string }> {
+export async function nodeRequest(node: { name: string; address: string }, path: string, method = 'GET', payload?: unknown, user?: string): Promise<{ status: number; body: string; headers: Record<string, string | string[] | undefined> }> {
   const credential = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
   const session = connect(`http://${node.address}:8081`);
   const stream = session.request({
@@ -112,7 +113,7 @@ export async function nodeRequest(node: { name: string; address: string }, path:
     const [headers] = await response;
     let body = '';
     for await (const chunk of stream) body += chunk;
-    return { status: Number(headers[':status']), body };
+    return { status: Number(headers[':status']), body, headers };
   } finally {
     session.destroy();
   }
@@ -592,4 +593,28 @@ export function ulidAt(at: number): string {
 export function faultId(): string {
   const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
   return '01' + Array.from(randomBytes(24), value => alphabet[value % 32]).join('');
+}
+
+export async function refuseConnections(node: Node, peers: Node[]): Promise<() => Promise<void>> {
+  const pid = readFileSync(join(stateDir, 'pids', `${node.service}.pid`), 'utf8').trim();
+  const child = spawn('strace', ['--interruptible=1', '-f', '-p', pid, '-e', 'trace=connect', '-e', 'inject=connect:error=ECONNREFUSED', '-o', '/dev/null'],
+    { stdio: ['ignore', 'ignore', 'pipe'] });
+  const exited = new Promise<void>(resolve => child.once('exit', () => resolve()));
+  let stderr = '';
+  await new Promise<void>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('exit', () => reject(new Error(`refusing ${node.name}'s connections ended before attachment: ${stderr}`)));
+    child.stderr.on('data', chunk => {
+      stderr += chunk.toString();
+      if (stderr.includes(' attached')) resolve();
+    });
+  });
+  for (const peer of peers) {
+    await promisify(execFile)('ss', ['-K', 'dst', peer.address, 'dport', '=', ':8081']);
+  }
+  let stopping: Promise<void> | undefined;
+  return () => stopping ??= (async () => {
+    child.kill('SIGINT');
+    await exited;
+  })();
 }
