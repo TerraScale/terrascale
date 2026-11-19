@@ -80,8 +80,8 @@ transaction.
 
   `src/TerraScale.Authentication.EntityFrameworkDesign` is the design host; it is never packed, published or referenced.
 - Every replica runs `Database.MigrateAsync` at startup (`SigningKeyRotation`), then seeds the platform owner, the
-  `TerraScale` organization, its `ts-auth` and `ts-dashboard` projects, the owner's grants and the hidden platform
-  tenant row ([platform bootstrap](platform-bootstrap.md)), registers the configured OIDC clients and provisions the first
+  `TerraScale` organization, its `ts-auth` and `ts-dashboard` projects and the owner's grants
+  ([platform bootstrap](platform-bootstrap.md)), registers the configured OIDC clients and provisions the first
   signing key. Concurrent replicas are safe: the provider's migrations lock applies each migration once, and the seed
   is create-only, so the losers read the winner's rows. A fresh, empty database comes up fully working.
 - `AuthSchema.Ready` completes once that bootstrap has succeeded. Every hosted worker (the sign-in mail outbox,

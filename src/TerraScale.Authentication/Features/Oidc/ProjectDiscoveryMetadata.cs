@@ -16,13 +16,13 @@ public sealed class ProjectDiscoveryMetadata : IOpenIddictServerHandler<HandleCo
         if (context.Transaction.GetProperty<string>(TrustPublicOrigin.TenantProperty) is { } tenant && Tenancy.IsProject(tenant))
         {
             context.GrantTypes.IntersectWith([GrantTypes.AuthorizationCode, GrantTypes.RefreshToken, GrantTypes.ClientCredentials]);
+            context.GrantTypes.Add(AgentTokens.GrantType);
             context.Scopes.IntersectWith([Scopes.OpenId, Scopes.Email, Scopes.Profile, Scopes.OfflineAccess]);
             context.DeviceAuthorizationEndpoint = null;
             context.MtlsDeviceAuthorizationEndpointAlias = null;
             context.DeviceAuthorizationEndpointAuthenticationMethods.Clear();
         }
 
-        context.GrantTypes.Add(AgentTokens.GrantType);
         return ValueTask.CompletedTask;
     }
 }
