@@ -1,3 +1,6 @@
+/** @typedef {{kid: string, thumbprint: string, created_at: string, revoked_at: string | null}} TsAuthAgentKey */
+/** @typedef {{id: string, project_id: string, owner_user_id: string, name: string, status: "active" | "revoked", allowed_scopes: readonly string[], allow_self_subject: boolean, keys: readonly TsAuthAgentKey[], created_at: string, expires_at: string | null, revoked_at: string | null, last_used_at: string | null}} TsAuthAgent */
+/** @typedef {{name: string, allowed_scopes: readonly string[], allow_self_subject?: boolean, expires_at?: string | null, public_jwk: JsonWebKey}} TsAuthCreateAgent */
 
 /** @typedef {{readonly allowlist: readonly string[], readonly blocklist: readonly string[], readonly block_disposable_emails: boolean, readonly block_email_aliases: boolean}} TsAuthRestrictions */
 /** @typedef {{readonly id: string, readonly email: string, readonly redirect_url: string | null, readonly created_at: string, readonly expires_at: string, readonly status: string}} TsAuthProjectInvitation */
@@ -457,6 +460,142 @@ export class TsAuthProjectsClient {
       path: `v1/${requireId(projectId, "projectId")}/user-api-key-policy`,
       routeName: "tsauth.projects.set_user_api_key_policy",
       projectAccessToken: managementCredential(credential),
+      body: request,
+    });
+  }
+
+  /**
+   * @param {string} credential
+   * @param {string} projectId
+   * @param {string} userId
+   * @param {TsAuthCreateAgent} request
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<TsAuthAgent>>}
+   */
+  createAgent(credential, projectId, userId, request, options = {}) {
+    return this.#http.request({
+      method: "POST", path: `v1/${requireId(projectId, "projectId")}/users/${requireId(userId, "userId")}/agents`,
+      routeName: "tsauth.projects.create_agent", projectAccessToken: managementCredential(credential), signal: options.signal,
+      body: request,
+    });
+  }
+
+  /**
+   * @param {string} credential
+   * @param {string} projectId
+   * @param {string} userId
+   * @param {{signal?: AbortSignal, limit?: number, after?: string}} [options={}]
+   * @returns {Promise<TerraScaleResult<{items: readonly TsAuthAgent[], next: string | null}>>}
+   */
+  listUserAgents(credential, projectId, userId, options = {}) {
+    requireLimit(options.limit);
+    requireCursor(options.after, maximumExportCursorLength);
+    return this.#http.request({
+      method: "GET", path: `v1/${requireId(projectId, "projectId")}/users/${requireId(userId, "userId")}/agents`,
+      routeName: "tsauth.projects.list_user_agents", projectAccessToken: managementCredential(credential), signal: options.signal,
+      query: { limit: options.limit, after: options.after },
+    });
+  }
+
+  /**
+   * @param {string} credential
+   * @param {string} projectId
+   * @param {{signal?: AbortSignal, limit?: number, after?: string, owner?: string}} [options={}]
+   * @returns {Promise<TerraScaleResult<{items: readonly TsAuthAgent[], next: string | null}>>}
+   */
+  listAgents(credential, projectId, options = {}) {
+    requireLimit(options.limit);
+    requireCursor(options.after, maximumExportCursorLength);
+    return this.#http.request({
+      method: "GET", path: `v1/${requireId(projectId, "projectId")}/agents`,
+      routeName: "tsauth.projects.list_agents", projectAccessToken: managementCredential(credential), signal: options.signal,
+      query: { limit: options.limit, after: options.after, owner: options.owner === undefined ? undefined : requireId(options.owner, "owner") },
+    });
+  }
+
+  /**
+   * @param {string} credential
+   * @param {string} projectId
+   * @param {string} agentId
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<TsAuthAgent>>}
+   */
+  getAgent(credential, projectId, agentId, options = {}) {
+    return this.#http.request({
+      method: "GET", path: `v1/${requireId(projectId, "projectId")}/agents/${requireId(agentId, "agentId")}`,
+      routeName: "tsauth.projects.get_agent", projectAccessToken: managementCredential(credential), signal: options.signal,
+    });
+  }
+
+  /**
+   * @param {string} credential
+   * @param {string} projectId
+   * @param {string} agentId
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<void>>}
+   */
+  revokeAgent(credential, projectId, agentId, options = {}) {
+    return this.#http.request({
+      method: "DELETE", path: `v1/${requireId(projectId, "projectId")}/agents/${requireId(agentId, "agentId")}`,
+      routeName: "tsauth.projects.revoke_agent", projectAccessToken: managementCredential(credential), signal: options.signal,
+    });
+  }
+
+  /**
+   * @param {string} credential
+   * @param {string} projectId
+   * @param {string} agentId
+   * @param {{public_jwk: JsonWebKey}} request
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<TsAuthAgentKey>>}
+   */
+  addAgentKey(credential, projectId, agentId, request, options = {}) {
+    return this.#http.request({
+      method: "POST", path: `v1/${requireId(projectId, "projectId")}/agents/${requireId(agentId, "agentId")}/keys`,
+      routeName: "tsauth.projects.add_agent_key", projectAccessToken: managementCredential(credential), signal: options.signal,
+      body: request,
+    });
+  }
+
+  /**
+   * @param {string} credential
+   * @param {string} projectId
+   * @param {string} agentId
+   * @param {string} kid
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<void>>}
+   */
+  revokeAgentKey(credential, projectId, agentId, kid, options = {}) {
+    return this.#http.request({
+      method: "DELETE", path: `v1/${requireId(projectId, "projectId")}/agents/${requireId(agentId, "agentId")}/keys/${requireId(kid, "kid")}`,
+      routeName: "tsauth.projects.revoke_agent_key", projectAccessToken: managementCredential(credential), signal: options.signal,
+    });
+  }
+
+  /**
+   * @param {string} credential
+   * @param {string} projectId
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<{allowed_scopes: readonly string[]}>>}
+   */
+  getAgentPolicy(credential, projectId, options = {}) {
+    return this.#http.request({
+      method: "GET", path: `v1/${requireId(projectId, "projectId")}/agent-policy`,
+      routeName: "tsauth.projects.get_agent_policy", projectAccessToken: managementCredential(credential), signal: options.signal,
+    });
+  }
+
+  /**
+   * @param {string} credential
+   * @param {string} projectId
+   * @param {{allowed_scopes: readonly string[]}} request
+   * @param {TsAuthProjectsRequestOptions} [options={}]
+   * @returns {Promise<TerraScaleResult<{allowed_scopes: readonly string[]}>>}
+   */
+  setAgentPolicy(credential, projectId, request, options = {}) {
+    return this.#http.request({
+      method: "PUT", path: `v1/${requireId(projectId, "projectId")}/agent-policy`,
+      routeName: "tsauth.projects.set_agent_policy", projectAccessToken: managementCredential(credential), signal: options.signal,
       body: request,
     });
   }

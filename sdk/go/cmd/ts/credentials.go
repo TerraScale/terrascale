@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +16,22 @@ type credentials struct {
 	AccessToken  string    `json:"accessToken"`
 	RefreshToken string    `json:"refreshToken"`
 	Expiry       time.Time `json:"expiry"`
+}
+
+var protectCredentialPath = func(path string, directory bool) error {
+	mode := os.FileMode(0o600)
+	if directory {
+		mode = 0o700
+	}
+	return os.Chmod(path, mode)
+}
+
+var verifyCredentialFile = func(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+		return errors.New("Agent credentials must be a regular mode 0600 file")
+	}
+	return nil
 }
 
 func credentialsPath() (string, error) {
@@ -38,6 +55,10 @@ func saveCredentials(path string, t *tsauth.Tokens, write func(*os.File, []byte)
 	if err != nil {
 		return err
 	}
+	return saveSecretCredentials(path, data, write)
+}
+
+func saveSecretCredentials(path string, data []byte, write func(*os.File, []byte) (int, error)) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -49,7 +70,7 @@ func saveCredentials(path string, t *tsauth.Tokens, write func(*os.File, []byte)
 	if !info.IsDir() {
 		return fmt.Errorf("credential directory %s must be a directory, not a symlink", dir)
 	}
-	if err := os.Chmod(dir, 0o700); err != nil {
+	if err := protectCredentialPath(dir, true); err != nil {
 		return err
 	}
 	f, err := os.CreateTemp(dir, ".cli-*")
@@ -58,7 +79,7 @@ func saveCredentials(path string, t *tsauth.Tokens, write func(*os.File, []byte)
 	}
 	defer os.Remove(f.Name())
 	defer f.Close()
-	if err := f.Chmod(0o600); err != nil {
+	if err := protectCredentialPath(f.Name(), false); err != nil {
 		return err
 	}
 	n, err := write(f, data)

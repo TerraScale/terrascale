@@ -685,3 +685,55 @@ An execute outside a confirmed transaction, or behind unanswered transaction con
 A lost read or non-committing statement inside a confirmed open transaction retains the transaction-lost behavior.
 Only a confirmed refusal or a request proven not sent permits a rollback assertion; reconcile an uncertain write
 through another session before deciding whether to repeat it.
+
+### Agent identities
+
+```js
+import { createTsAuthClient, verifyAgentToken } from '@terrascale/sdk/ts-auth';
+
+const auth = createTsAuthClient({ apiBaseUrl: 'https://auth.terrascale.tech', instanceSlug: project });
+const enrollment = await auth.agents.enroll({ project, name: 'Invoice agent', scopes: ['invoices:read'] });
+if (!enrollment.ok) throw new Error(enrollment.error.code);
+console.log(enrollment.value.userCode, enrollment.value.verificationUriComplete, enrollment.value.fingerprint);
+const identity = await enrollment.value.wait();
+if (!identity.ok) throw new Error(identity.error.code);
+const token = await auth.agents.getToken({ project, ...identity.value });
+if (!token.ok) throw new Error(token.error.code);
+const verified = await verifyAgentToken(token.value.access_token, { project });
+if (!verified.ok) throw new Error(verified.error.code);
+console.log(verified.value.agentId, verified.value.actingFor);
+```
+
+The owner approves in the browser. The returned key is an opaque in-memory signer: it holds a
+non-extractable WebCrypto key without exposing the underlying CryptoKey to Node conversion APIs.
+Keep this signer in the agent process. The helpers support the package runtimes, Node 22 and 24,
+and browsers with WebCrypto when the deployment permits requests from the browser origin.
+Tokens are cached in memory and refreshed thirty seconds before expiry. Agent tokens have no audience;
+passing an audience to verification requires that audience and refuses these tokens. Offline verification
+cannot detect revocation until the token expires, within five minutes. See the [agent contract](../../docs/auth/agent-identities.md).
+
+Project management provides `createAgent`, `listAgents`, `listUserAgents`, `getAgent` (including its keys),
+`revokeAgent`, `addAgentKey`, `revokeAgentKey`, `getAgentPolicy` and `setAgentPolicy` through `auth.projects`.
+Reads require a viewer sign-in or an unrestricted project key with `auth:read`. Mutations require
+an administrator sign-in or an unrestricted project key with `auth:write`.
+
+
+To rotate an agent key, create a replacement signer, register its public JWK, obtain a token with
+its returned key ID, then revoke the original key:
+
+```js
+const replacement = await auth.agents.createKey();
+const added = await auth.projects.addAgentKey(credential, project, identity.value.agentId, {
+  public_jwk: replacement.publicJwk,
+});
+if (!added.ok) throw new Error(added.error.code);
+const rotated = await auth.agents.getToken({
+  project, agentId: identity.value.agentId, kid: added.value.kid, key: replacement.signer,
+});
+if (!rotated.ok) throw new Error(rotated.error.code);
+const revoked = await auth.projects.revokeAgentKey(credential, project, identity.value.agentId, identity.value.kid);
+if (!revoked.ok) throw new Error(revoked.error.code);
+```
+
+Keep the replacement signer for later calls. Only its public JWK is sent to ts-auth. The same
+factory supplies the signer and public JWK for agents provisioned through `createAgent`.

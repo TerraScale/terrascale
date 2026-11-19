@@ -3,6 +3,12 @@
   "table": "e2e_{sdk}_{run}",
   "operations": [
     {
+      "id": "auth.agents",
+      "group": "a",
+      "sdks": ["js"],
+      "title": "enroll with hosted owner approval, manage agent policy and keys, issue, verify and revoke an agent token"
+    },
+    {
       "id": "auth.manage_user",
       "group": "a",
       "title": "auth:read lists users and verifies user API keys; auth:write manages users and creates/revokes their keys"

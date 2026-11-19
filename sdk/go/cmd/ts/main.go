@@ -133,6 +133,12 @@ Options go before or after the command and its operands; -- ends options.
                                           triggers a database adds, drops or changes
                                           against base, by default the database
                                           it branched from
+  agent enroll --project <id> --name <n> --scope <s>...
+                                          enroll with browser approval
+  agent token --project <id> --agent <id> print a token for piping
+  agent list|revoke --project <id> [--agent <id>]
+  agent policy get|set --project <id> [--scope <s>...]
+
   keys list                               list the project's API keys
   keys create <name> [<database-ULID>]     create an API key, shown once;
                                           -scope read requests read-only grants;
@@ -190,6 +196,7 @@ func parseOptions(fs *flag.FlagSet, args []string) ([]string, error) {
 
 // commands maps each command to its accepted operand counts.
 var commands = map[string][]int{
+	"agent enroll": {0}, "agent token": {0}, "agent list": {0}, "agent revoke": {0}, "agent policy get": {0}, "agent policy set": {0},
 	"auth login":         {0},
 	"auth logout":        {0},
 	"whoami":             {0},
@@ -297,6 +304,9 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 		return err
 	}
 	if handled, err := requestedHelp(args, out); handled {
+		return err
+	}
+	if handled, err := dispatchAgentCommand(ctx, args, out, prompt); handled {
 		return err
 	}
 	fs := flag.NewFlagSet("ts", flag.ContinueOnError)

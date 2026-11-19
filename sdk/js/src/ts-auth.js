@@ -1,7 +1,9 @@
+import { TsAuthAgentsClient } from "./ts-auth-agents.js";
 import { TsAuthHttp } from "./http.js";
 import { TsAuthProjectsClient } from "./ts-auth-projects.js";
 import { err } from "./result.js";
 import { requireId } from "./ids.js";
+export { verifyAgentToken } from "./ts-auth-agents.js";
 /** @import { TerraScaleResult } from "./result.js" */
 
 /** @typedef {import("./config.js").TsAuthRuntimeConfig} TsAuthRuntimeConfig */
@@ -387,6 +389,8 @@ export class TsAuthOidcClient {
 
 /** The ts-auth client of one instance: its OIDC routes and the project routes. */
 export class TsAuthClient {
+  /** @type {TsAuthAgentsClient} */
+  agents;
   /**
    * @type {TsAuthHttp}
    * @readonly
@@ -417,6 +421,7 @@ export class TsAuthClient {
     this.#http = new TsAuthHttp(config);
     this.oidc = new TsAuthOidcClient(this.#http, slug);
     this.projects = new TsAuthProjectsClient(this.#http);
+    this.agents = new TsAuthAgentsClient(this.#http);
   }
 
   get config() {

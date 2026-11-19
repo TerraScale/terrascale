@@ -5,7 +5,7 @@ import { createTerraBaseClient, createTerraBaseClientFromEnvironment, generateId
 
 import { createTerraScaleProjectIdentityClient } from '../../../sdk/js/src/management.js';
 
-import { createTsAuthClient } from '../../../sdk/js/src/ts-auth.js';
+import { createTsAuthClient, verifyAgentToken } from '../../../sdk/js/src/ts-auth.js';
 
 if (process.env.E2E_SESSION_FAULT) {
   await (await import('./session-fault.mjs')).sessionFault();
@@ -72,6 +72,55 @@ async function status(work) {
 }
 
 const operations = {
+  async 'auth.agents'() {
+    const auth = createTsAuthClient({ apiBaseUrl: 'https://auth.terrascale.tech', instanceSlug: project });
+    const credential = process.env.E2E_AUTH_WRITE_KEY;
+    const readCredential = process.env.E2E_AUTH_READ_KEY;
+    const owner = process.env.E2E_AUTH_USER;
+    check((await auth.projects.setAgentPolicy(credential, project, { allowed_scopes: ['invoices:read'] })).ok, 'set agent policy');
+    const policy = await auth.projects.getAgentPolicy(process.env.E2E_AUTH_READ_KEY, project);
+    check(policy.ok && policy.value.allowed_scopes.includes('invoices:read'), 'get agent policy');
+    const started = await auth.agents.enroll({ project, name: 'SDK runner agent', scopes: ['invoices:read'] });
+    check(started.ok, 'start agent enrollment');
+    check(typeof process.send === 'function', 'SDK runner requires hosted approval coordination');
+    process.send({ type: 'agent-enrollment', enrollment: { userCode: started.value.userCode,
+      verificationUriComplete: started.value.verificationUriComplete, fingerprint: started.value.fingerprint } });
+    const enrolled = await started.value.wait();
+    check(enrolled.ok, 'collect approved agent enrollment');
+    const { agentId, kid, key } = enrolled.value;
+    let currentIdentity = { project, agentId, kid, key };
+    try {
+      const listed = await auth.projects.listAgents(readCredential, project, { owner });
+      check(listed.ok && listed.value.items.some(item => item.id === agentId), 'list agent');
+      const read = await auth.projects.getAgent(readCredential, project, agentId);
+      check(read.ok && read.value.owner_user_id === owner, 'get agent');
+      const owned = await auth.projects.listUserAgents(readCredential, project, owner);
+      check(owned.ok && owned.value.items.some(item => item.id === agentId), 'list owner agents');
+      const rotated = await auth.agents.createKey();
+      const added = await auth.projects.addAgentKey(credential, project, agentId, { public_jwk: rotated.publicJwk });
+      check(added.ok, 'add agent key');
+      const token = await auth.agents.getToken({ project, agentId, kid: added.value.kid, key: rotated.signer });
+      check(token.ok, 'agent token');
+      writeFileSync(join(process.env.E2E_SECRETS, 'user-api-key-js-agent'), token.value.access_token, { mode: 0o600 });
+      const verified = await verifyAgentToken(token.value.access_token, { project });
+      check(verified.ok && verified.value.agentId === agentId && verified.value.ownerId === owner && verified.value.actingFor === 'owner', 'verify agent token');
+      check((await auth.projects.revokeAgentKey(credential, project, agentId, kid)).ok, 'revoke original agent key after switching');
+      const fresh = createTsAuthClient({ apiBaseUrl: 'https://auth.terrascale.tech', instanceSlug: project });
+      const old = await fresh.agents.getToken({ project, agentId, kid, key });
+      check(!old.ok && old.error.code === 'invalid_grant', 'original agent key cannot issue after rotation');
+      const active = await fresh.agents.getToken({ project, agentId, kid: added.value.kid, key: rotated.signer });
+      check(active.ok, 'replacement key issues after original revocation');
+      writeFileSync(join(process.env.E2E_SECRETS, 'user-api-key-js-agent-rotated'), active.value.access_token, { mode: 0o600 });
+      const activeVerified = await verifyAgentToken(active.value.access_token, { project });
+      check(activeVerified.ok && activeVerified.value.agentId === agentId, 'verify replacement token after rotation');
+      currentIdentity = { project, agentId, kid: added.value.kid, key: rotated.signer };
+    } finally {
+      check((await auth.projects.revokeAgent(credential, project, agentId)).ok, 'revoke agent');
+    }
+    const fresh = createTsAuthClient({ apiBaseUrl: 'https://auth.terrascale.tech', instanceSlug: project });
+    const refused = await fresh.agents.getToken(currentIdentity);
+    check(!refused.ok && refused.error.code === 'invalid_grant', 'revoked agent cannot issue a token');
+  },
   async 'auth.manage_user'() {
     const auth = createTsAuthClient({ apiBaseUrl: 'https://auth.terrascale.tech', instanceSlug: 'terrascale' }).projects;
     const read = process.env.E2E_AUTH_READ_KEY;
