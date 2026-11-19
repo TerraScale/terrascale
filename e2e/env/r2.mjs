@@ -3,8 +3,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { port } from './ports.mjs';
 
-const platformBuckets = new Set(['journey-backups', 'journey-shapes', 'ts-terrabase-shapes-prod']);
-const platformObject = /^\/(journey-backups|journey-shapes|ts-terrabase-shapes-prod)\/((?:v1|catalog-anchor)\/[^?]+)$/;
+const platformBuckets = new Set(['journey-backups', 'journey-shapes', 'ts-terrabase-shapes-prod', 'journey-stg-backups', 'journey-stg-shapes']);
+const platformObject = /^\/(journey-backups|journey-shapes|ts-terrabase-shapes-prod|journey-stg-backups|journey-stg-shapes)\/((?:v1|catalog-anchor)\/[^?]+)$/;
 const origin = 'https://dash.terrascale.tech';
 const bucket = /^\/(terrascale-[a-z]+-files)\/(app-files\/[0-9A-Z]{26}\/[0-9A-Z]{26}\/[0-9A-Z]{26}\/[0-9A-Z]{26})$/;
 const listing = /^\/(terrascale-[a-z]+-files)\/?$/;
@@ -194,7 +194,7 @@ createServer((request, response) => {
     response.writeHead(204, { 'access-control-allow-methods': 'PUT', 'access-control-allow-headers': 'content-type, x-amz-checksum-sha256', 'access-control-max-age': '600' });
     return response.end();
   }
-  const platformBucket = /^\/(journey-backups|journey-shapes|ts-terrabase-shapes-prod)\/?$/.exec(rawPath);
+  const platformBucket = /^\/(journey-backups|journey-shapes|ts-terrabase-shapes-prod|journey-stg-backups|journey-stg-shapes)\/?$/.exec(rawPath);
   if (!target && !listed && !platformBucket) return unexpected(request, response, 404, 'NoSuchBucket', 'path outside the files bucket');
   const chunks = [];
   request.on('data', (chunk) => chunks.push(chunk));
