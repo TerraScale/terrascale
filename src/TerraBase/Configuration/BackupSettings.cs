@@ -6,7 +6,7 @@ namespace TerraBase.Configuration;
 
 public sealed class BackupSettings
 {
-    internal static string[] Keys => [.. Required, "master-key", "master-keys", "backup-key-rotation-days", "cloudflare-api-token"];
+    internal static string[] Keys => [.. Required, "master-key", "master-keys", "backup-key-rotation-days"];
 
     private static readonly string[] Required =
     [
@@ -28,8 +28,6 @@ public sealed class BackupSettings
     public required string AccessKeyId { get; init; }
 
     public required string SecretKey { get; init; }
-
-    public string? CloudflareApiToken { get; init; }
 
     public required KeyringSettings Keyring { get; init; }
 
@@ -58,18 +56,9 @@ public sealed class BackupSettings
             throw new TerraBaseConfigurationException($"{string.Join(", ", Required)} and master-key or master-keys must be set together");
         }
 
-        var endpoint = Https(values, "backup-endpoint");
-        var r2 = endpoint.Host.EndsWith(".r2.cloudflarestorage.com", StringComparison.OrdinalIgnoreCase);
-        if (r2 != values.ContainsKey("cloudflare-api-token"))
-        {
-            throw new TerraBaseConfigurationException(r2
-                ? "cloudflare-api-token must be set with an R2 backup-endpoint"
-                : "cloudflare-api-token is used only with an R2 backup-endpoint");
-        }
-
         return new BackupSettings
         {
-            Endpoint = endpoint,
+            Endpoint = Https(values, "backup-endpoint"),
             Region = Token(values, "backup-region"),
             Bucket = IsBucket(values["backup-bucket"])
                 ? values["backup-bucket"]
@@ -77,7 +66,6 @@ public sealed class BackupSettings
             AccessKeyId = Token(values, "backup-access-key-id"),
             SecretKey = Token(values, "backup-secret-key"),
             Keyring = KeyringSettings.Parse(values) ?? throw new TerraBaseConfigurationException("master-key or master-keys is required"),
-            CloudflareApiToken = r2 ? Token(values, "cloudflare-api-token") : null,
             KeyRotationDays = values.TryGetValue("backup-key-rotation-days", out var rotation) ? ParseKeyRotation(rotation) : 90,
         };
     }

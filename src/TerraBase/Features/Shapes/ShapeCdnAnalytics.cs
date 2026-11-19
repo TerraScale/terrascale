@@ -8,7 +8,7 @@ using ZLogger;
 
 namespace TerraBase.Features.Shapes;
 
-internal sealed class ShapeCdnAnalytics(IHttpClientFactory http, string? host, string? token, TimeProvider time, IMeterFactory meters,
+internal sealed class ShapeCdnAnalytics(IHttpClientFactory http, string? host, string? zone, string? token, TimeProvider time, IMeterFactory meters,
     ILogger<ShapeCdnAnalytics> logger) : BackgroundService
 {
     internal static readonly Uri GraphQlUri = new("https://api.cloudflare.com/client/v4/graphql");
@@ -43,7 +43,7 @@ internal sealed class ShapeCdnAnalytics(IHttpClientFactory http, string? host, s
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         CounterSeries.Zero(_requests, "cache_status", "hit", "miss", "other");
-        if (host is null || token is null)
+        if (host is null || zone is null || token is null)
         {
             return;
         }
@@ -70,7 +70,7 @@ internal sealed class ShapeCdnAnalytics(IHttpClientFactory http, string? host, s
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, GraphQlUri)
             {
-                Content = JsonContent.Create(new ShapeCdnAnalyticsRequest(Query, new(ShapeCdnPurge.Zone, host!, Text(start), Text(end))),
+                Content = JsonContent.Create(new ShapeCdnAnalyticsRequest(Query, new(zone!, host!, Text(start), Text(end))),
                     ShapeCdnAnalyticsJsonContext.Default.ShapeCdnAnalyticsRequest),
             };
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -78,13 +78,13 @@ internal sealed class ShapeCdnAnalytics(IHttpClientFactory http, string? host, s
             var body = response.IsSuccessStatusCode
                 ? await response.Content.ReadFromJsonAsync(ShapeCdnAnalyticsJsonContext.Default.ShapeCdnAnalyticsResponse, cancellationToken).ConfigureAwait(false)
                 : null;
-            if (body is not { Errors: null or [], Data.Viewer.Zones: [var zone] })
+            if (body is not { Errors: null or [], Data.Viewer.Zones: [var answered] })
             {
                 logger.ZLogWarning($"Shape CDN analytics answered HTTP {(int)response.StatusCode} without data; the window is read again next time");
                 return false;
             }
 
-            foreach (var group in zone.HttpRequestsAdaptiveGroups)
+            foreach (var group in answered.HttpRequestsAdaptiveGroups)
             {
                 _requests.Add(group.Count, new KeyValuePair<string, object?>("cache_status", Status(group.Dimensions.CacheStatus)));
             }

@@ -19,15 +19,11 @@ internal interface IShapeCdnPurge
     Task<bool> QueueAsync(string url, CancellationToken cancellationToken);
 }
 
-internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Uri? cdn, TimeProvider time, IMeterFactory meters, ILogger<ShapeCdnPurge> logger, SystemCatalog catalog, KeyCustody? custody)
+internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Uri? cdn, Uri? purgeUri, TimeProvider time, IMeterFactory meters, ILogger<ShapeCdnPurge> logger, SystemCatalog catalog, KeyCustody? custody)
     : BackgroundService, IShapeCdnPurge
 {
     internal const string HttpClientName = "cloudflare-api";
     internal const string VerificationClientName = "shape-cdn-verification";
-
-    internal const string Zone = "4cc466e19478c116fae7dc445a6d0911";
-
-    internal static readonly Uri PurgeUri = new($"https://api.cloudflare.com/client/v4/zones/{Zone}/purge_cache");
 
     private const int QueueItems = 2000;
     private const int BatchUrls = 100;
@@ -183,7 +179,7 @@ internal sealed class ShapeCdnPurge(IHttpClientFactory http, string? token, Uri?
             TimeSpan? retryAfter = null;
             try
             {
-                using var request = new HttpRequestMessage(HttpMethod.Post, PurgeUri)
+                using var request = new HttpRequestMessage(HttpMethod.Post, purgeUri)
                 {
                     Content = JsonContent.Create(new ShapeCdnPurgeRequest(urls), ShapeCdnPurgeJsonContext.Default.ShapeCdnPurgeRequest),
                 };

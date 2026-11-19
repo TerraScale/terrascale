@@ -2,10 +2,25 @@
 
 Production shapes use the shared `ts-terrabase-shapes-prod` R2 bucket in
 account `6cd3f3639e928077593d9b470765efeb`, signing region `auto`, and
-`https://shapes-ts-terrabase-shapes-prod.terrascale.tech/`. Another environment
-(staging) sets its own bucket and CDN host together with `TERRABASE_SHAPES_BUCKET`
-and `TERRABASE_SHAPES_CDN_HOST`; unset, a node uses production's pair. The account
-and signing region are code constants.
+`https://shapes-ts-terrabase-shapes-prod.terrascale.tech/`, served by Cloudflare
+zone `4cc466e19478c116fae7dc445a6d0911`. Another environment (staging) sets its own
+bucket, CDN host and the zone serving that host together:
+`TERRABASE_SHAPES_BUCKET`, `TERRABASE_SHAPES_CDN_HOST` and
+`TERRABASE_SHAPES_CDN_ZONE_ID` (32 lowercase hex digits). Purges and CDN analytics
+use only that zone. If all three are unset, a node uses production's set, and only
+with the production `TERRABASE_AUTH_ISSUER` (`https://auth.terrascale.tech/terrascale`).
+Any other issuer must set all three, sharing none of production's values, with a
+CDN host outside production's zone `terrascale.tech`, and the production issuer
+refuses any other set. Cloudflare scopes Cache Purge and Analytics to a whole zone,
+so only a zone of its own keeps a staging token from purging production's cache. The account and signing region are code
+constants.
+
+Staging uses bucket `terrascale-stg-terrabase-shapes` and a CDN host in a zone of its own, and binds
+`stg-1-terrabase-shapes-access-key-id`,
+`stg-1-terrabase-shapes-secret-access-key` and `stg-1-terrabase-shapes-cdn-api-token`
+to the same three `_FILE` variables. Its R2 key is scoped to the staging bucket, and
+its Cloudflare token has Zone Cache Purge and Zone Analytics Read on the staging zone
+only.
 
 | OCI Vault secret | ts-orch file binding |
 | --- | --- |

@@ -258,7 +258,7 @@ public sealed record TerraBaseOptions
             QueryBudget = TimeSpan.FromSeconds(ParseInteger(values, "query-budget-seconds", 1, MaxQueryBudgetSeconds) ?? DefaultQueryBudgetSeconds),
             Backup = BackupSettings.Parse(values),
             FileStorage = FileStorageSettings.Parse(values),
-            ShapeStorage = ShapeStorageSettings.Parse(values),
+            ShapeStorage = ShapeStorageSettings.Parse(values, authIssuer),
             DatabaseKeyring = KeyringSettings.Parse(values),
             NatsUrl = NatsAddress(),
             NatsToken = values.TryGetValue("nats-token", out var natsToken) ? ParseNatsToken(natsToken) : null,
