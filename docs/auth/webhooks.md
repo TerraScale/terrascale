@@ -57,6 +57,7 @@ events occurring after registration. Test events bypass subscription filtering.
 | `user.provider_unlinked` | A social identity is unlinked |
 | `session.created` | A session is issued, including rotation successors |
 | `session.revoked` | A session is explicitly revoked or sessions are revoked through sign-out everywhere |
+| `agent.created`, `agent.revoked`, `agent.key_added`, `agent.key_revoked` | An agent identity or its key changes; `data` adds `agent_id` and `agent_key_id` ([agent identities](agent-identities.md)) |
 | `webhook.endpoint_disabled` | An endpoint has failed continuously for five days |
 | `webhook.test` | An admin sends a test event |
 

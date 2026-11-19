@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Features.Agents;
 using TerraScale.Authentication.Features.UserApiKeys;
 using System.Text.Json.Serialization.Metadata;
 using System.Text.RegularExpressions;
@@ -216,6 +217,38 @@ public static partial class OpenApiSetup
                     });
                 }
 
+                if (operation.OperationId is "list_agents" or "list_user_agents")
+                {
+                    if (operation.OperationId == "list_agents")
+                    {
+                        (operation.Parameters ??= []).Add(new OpenApiParameter
+                        {
+                            Name = "owner",
+                            In = ParameterLocation.Query,
+                            Required = false,
+                            Description = "Only agents owned by this user id; an id with no agents in the project answers an empty page.",
+                            Schema = new OpenApiSchema { Type = JsonSchemaType.String, Pattern = "^[0-7][0-9A-HJKMNP-TV-Z]{25}$" },
+                        });
+                    }
+
+                    (operation.Parameters ??= []).Add(new OpenApiParameter
+                    {
+                        Name = "limit",
+                        In = ParameterLocation.Query,
+                        Required = false,
+                        Description = "Agents per page, default 50.",
+                        Schema = new OpenApiSchema { Type = JsonSchemaType.Integer, Minimum = "1", Maximum = "100" },
+                    });
+                    operation.Parameters.Add(new OpenApiParameter
+                    {
+                        Name = "after",
+                        In = ParameterLocation.Query,
+                        Required = false,
+                        Description = "The previous page's next cursor; omit to start.",
+                        Schema = new OpenApiSchema { Type = JsonSchemaType.String, Pattern = "^[0-7][0-9A-HJKMNP-TV-Z]{25}$" },
+                    });
+                }
+
                 if (operation.OperationId == "export_project_users")
                 {
                     (operation.Parameters ??= []).Add(new OpenApiParameter
@@ -277,7 +310,7 @@ public static partial class OpenApiSetup
     // so renaming a parent property first would hide its entire subtree from that traversal.
     private static void MatchProjectWireSchema(IOpenApiSchema input, JsonTypeInfo type)
     {
-        var wire = ProjectOrganizationsJson.Default.GetTypeInfo(type.Type) ?? ProjectTenantJson.Default.GetTypeInfo(type.Type) ?? UserProfileJson.Default.GetTypeInfo(type.Type) ?? DirectoryExportJson.Default.GetTypeInfo(type.Type) ?? ImpersonationJson.Default.GetTypeInfo(type.Type) ?? UserApiKeyJson.Default.GetTypeInfo(type.Type);
+        var wire = ProjectOrganizationsJson.Default.GetTypeInfo(type.Type) ?? ProjectTenantJson.Default.GetTypeInfo(type.Type) ?? UserProfileJson.Default.GetTypeInfo(type.Type) ?? DirectoryExportJson.Default.GetTypeInfo(type.Type) ?? ImpersonationJson.Default.GetTypeInfo(type.Type) ?? UserApiKeyJson.Default.GetTypeInfo(type.Type) ?? AgentJson.Default.GetTypeInfo(type.Type);
         if (wire is null || (input is OpenApiSchemaReference reference ? reference.Target : input) is not OpenApiSchema schema)
         {
             return;
@@ -335,6 +368,7 @@ public static partial class OpenApiSetup
         ["Projects"] = "Projects of an organization. Each project is also the tenant of its end users.",
         ["Project members"] = "Explicit project roles (viewer, member, admin), for organization members and collaborators.",
         ["User API keys"] = "End-user-owned opaque credentials, project scope policies and backend verification.",
+        ["Agents"] = "AI agents owned by a project user, holding their own public keys, and the project agent scope policy.",
         ["Custom tokens"] = "Short-lived end-user tokens a project backend mints with a project API key, for TerraBase rules.",
         ["API keys"] = "Client credentials owned by an organization or project, exchanged at the token endpoint for short-lived tokens.",
         ["Invitations"] = "Email invitations to an organization role or to one project's role.",

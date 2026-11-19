@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Storage;
@@ -13,7 +14,7 @@ public sealed record WebhookAttemptRecord(string Id, string DeliveryId, string P
 
 public sealed record WebhookEventBody(string Id, string Type, DateTimeOffset Timestamp, WebhookEventData Data);
 
-public sealed record WebhookEventData(string UserId, string? Email, string? Provider, string? SessionId, string? EndpointId, string? ActorId = null, string? Reason = null, string? OrganizationId = null, string? OrganizationRole = null);
+public sealed record WebhookEventData(string UserId, string? Email, string? Provider, string? SessionId, string? EndpointId, string? ActorId = null, string? Reason = null, string? OrganizationId = null, string? OrganizationRole = null, [property: JsonPropertyName("agent_id")] string? AgentId = null, [property: JsonPropertyName("agent_key_id")] string? AgentKeyId = null);
 
 public sealed record WebhookEventPage(IReadOnlyList<WebhookEventBody> Items, string? Next);
 
@@ -25,7 +26,7 @@ public sealed record WebhookDeliveryPage(IReadOnlyList<WebhookDeliveryBody> Item
 public sealed class WebhookHistory(AuthData data, WebhookOutbox outbox, TimeProvider clock)
 {
     public static WebhookEventBody Body(WebhookOutboxRecord row) => new(row.EventId, row.EventType, row.OccurredAt,
-        new(row.UserId, row.Email, row.Provider, row.SessionId, row.EndpointId, row.ActorId, row.Reason, row.OrganizationId, row.OrganizationRole));
+        new(row.UserId, row.Email, row.Provider, row.SessionId, row.EndpointId, row.ActorId, row.Reason, row.OrganizationId, row.OrganizationRole, row.AgentId, row.AgentKeyId));
 
     public async Task<WebhookEventPage> EventsAsync(string projectId, string? after, int limit, CancellationToken cancellationToken)
     {

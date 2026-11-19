@@ -1391,6 +1391,164 @@ namespace TerraScale.Authentication.Storage.Migrations
                         });
                 });
 
+            modelBuilder.Entity("TerraScale.Authentication.Features.Agents.AgentKeyRecord", b =>
+                {
+                    b.Property<string>("ProjectId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("Kid")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("kid");
+
+                    b.Property<string>("AgentId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("agent_id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("PublicJwk")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("public_jwk");
+
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("revoked_at");
+
+                    b.Property<string>("Thumbprint")
+                        .IsRequired()
+                        .HasMaxLength(43)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("thumbprint");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("ProjectId", "Kid");
+
+                    b.HasIndex("ProjectId", "AgentId");
+
+                    b.HasIndex("ProjectId", "Thumbprint")
+                        .IsUnique();
+
+                    b.ToTable("agent_keys", (string)null);
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.Agents.AgentPolicyRecord", b =>
+                {
+                    b.Property<string>("ProjectId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("AllowedScopes")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("allowed_scopes");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("ProjectId");
+
+                    b.ToTable("agent_policies", (string)null);
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.Agents.AgentRecord", b =>
+                {
+                    b.Property<string>("ProjectId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("project_id");
+
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<bool>("AllowSelfSubject")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("allow_self_subject");
+
+                    b.Property<string>("AllowedScopes")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("allowed_scopes");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTime?>("ExpiresAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("expires_at");
+
+                    b.Property<DateTime?>("LastUsedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("last_used_at");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("name");
+
+                    b.Property<long>("OwnerAuthEpoch")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("owner_auth_epoch");
+
+                    b.Property<string>("OwnerAuthStamp")
+                        .IsRequired()
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("owner_auth_stamp");
+
+                    b.Property<string>("OwnerUserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("owner_user_id");
+
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("revoked_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("status");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("ProjectId", "Id");
+
+                    b.HasIndex("OwnerUserId");
+
+                    b.HasIndex("ProjectId", "OwnerUserId");
+
+                    b.ToTable("agents", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_agents_expiry", "expires_at IS NULL OR expires_at > created_at");
+
+                            t.HasCheckConstraint("ck_agents_status", "status IN ('active', 'revoked') AND (status = 'revoked') = (revoked_at IS NOT NULL)");
+                        });
+                });
+
             modelBuilder.Entity("TerraScale.Authentication.Features.AttackProtection.AccountLockRecord", b =>
                 {
                     b.Property<string>("InstanceId")
@@ -3262,6 +3420,14 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("actor_id");
 
+                    b.Property<string>("AgentId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("agent_id");
+
+                    b.Property<string>("AgentKeyId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("agent_key_id");
+
                     b.Property<int>("Attempts")
                         .HasColumnType("INTEGER")
                         .HasColumnName("attempts");
@@ -3506,6 +3672,39 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.HasOne("TerraScale.Authentication.Contracts.UserRecord", null)
                         .WithMany()
                         .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.Agents.AgentKeyRecord", b =>
+                {
+                    b.HasOne("TerraScale.Authentication.Features.Agents.AgentRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId", "AgentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.Agents.AgentPolicyRecord", b =>
+                {
+                    b.HasOne("TerraScale.Authentication.Contracts.ProjectRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.Agents.AgentRecord", b =>
+                {
+                    b.HasOne("TerraScale.Authentication.Contracts.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TerraScale.Authentication.Contracts.ProjectRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

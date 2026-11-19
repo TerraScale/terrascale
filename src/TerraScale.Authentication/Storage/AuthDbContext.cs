@@ -44,6 +44,7 @@ public sealed partial class AuthDbContext(DbContextOptions<AuthDbContext> option
         ConfigureOperations(modelBuilder);
         ConfigureProjectOrganizations(modelBuilder);
         ConfigureUserApiKeys(modelBuilder);
+        ConfigureAgents(modelBuilder);
         foreach (var entity in modelBuilder.Model.GetEntityTypes())
         {
             foreach (var property in entity.GetProperties())

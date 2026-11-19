@@ -18,6 +18,7 @@ The served `/openapi/v1.json` and `/scalar` describe current HTTP operations. Pu
 - [Project MFA and session policies](mfa-sessions.md).
 - [Project sign-in attack protection](attack-protection.md).
 - [Machine tokens and user-owned API keys](machine-tokens-and-user-api-keys.md).
+- [Agent identities](agent-identities.md): agents owned by a project user, with their own public keys.
 - [Custom tokens](custom-tokens.md) a project backend mints for its own users.
 - [Project social sign-in](project-social-sign-in.md).
 - [Extended social providers](social-providers/README.md).
