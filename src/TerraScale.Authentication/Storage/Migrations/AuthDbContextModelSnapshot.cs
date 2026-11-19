@@ -1391,6 +1391,71 @@ namespace TerraScale.Authentication.Storage.Migrations
                         });
                 });
 
+            modelBuilder.Entity("TerraScale.Authentication.Features.AgentId.AgentIdTransactionRecord", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(43)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AgentId")
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("agent_id");
+
+                    b.Property<string>("ClientId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("client_id");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("completed_at");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("expires_at");
+
+                    b.Property<string>("Kid")
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("kid");
+
+                    b.Property<string>("OwnerUserId")
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("owner_user_id");
+
+                    b.Property<DateTime?>("ProvedAt")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("proved_at");
+
+                    b.Property<string>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(26)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("OwnerUserId");
+
+                    b.ToTable("agentid_transactions", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_agentid_transactions_expiry", "expires_at > created_at");
+
+                            t.HasCheckConstraint("ck_agentid_transactions_proof", "(proved_at IS NULL) = (agent_id IS NULL) AND (agent_id IS NULL) = (owner_user_id IS NULL) AND (agent_id IS NULL) = (kid IS NULL) AND (completed_at IS NULL OR proved_at IS NOT NULL)");
+                        });
+                });
+
             modelBuilder.Entity("TerraScale.Authentication.Features.Agents.AgentAssertionRecord", b =>
                 {
                     b.Property<string>("ProjectId")
@@ -3810,6 +3875,14 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("TerraScale.Authentication.Features.AgentId.AgentIdTransactionRecord", b =>
+                {
+                    b.HasOne("TerraScale.Authentication.Contracts.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
+                        .OnDelete(DeleteBehavior.Cascade);
                 });
 
             modelBuilder.Entity("TerraScale.Authentication.Features.Agents.AgentAssertionRecord", b =>

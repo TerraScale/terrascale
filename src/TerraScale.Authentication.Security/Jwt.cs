@@ -37,7 +37,7 @@ public static class Jwt
 
         try
         {
-            return new JsonWebToken(token).Kid is { Length: > 0 } kid ? kid : null;
+            return new JsonWebToken(token) is { IsEncrypted: false, Kid: { Length: > 0 } kid } ? kid : null;
         }
         catch (ArgumentException)
         {

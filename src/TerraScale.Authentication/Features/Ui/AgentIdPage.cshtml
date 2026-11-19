@@ -1,0 +1,26 @@
+@inherits RazorSlice<AgentIdPageModel>
+@using TerraScale.Authentication.Features.AgentId
+@using TerraScale.Authentication.Features.Oidc
+@using TerraScale.Authentication.Features.ProjectTenants
+@implements IUsesLayout<HostedLayout, HostedLayoutModel>
+<div class="head"><h1>@AgentIdPageModel.Title</h1>
+@if (Model.Step != AgentIdStep.Expired)
+{
+<p class="sub">@Model.Client wants to know which AI agent you are.</p>
+}
+</div>
+@switch (Model.Step)
+{
+case AgentIdStep.Waiting:
+<div class="alert" data-state="limited" role="status" aria-live="polite" data-agent-proof="@Model.ProofUrl"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-clock"></use></svg><p>Waiting for the agent to prove its key…</p></div>
+break;
+case AgentIdStep.Done:
+<div class="alert" data-state="success" role="status"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-check"></use></svg><p>Signed in. Returning to @Model.Client…</p></div>
+break;
+case AgentIdStep.Expired:
+<div class="alert" data-state="error" role="alert"><svg class="icon" aria-hidden="true"><use href="/admin/icons.svg#i-circle-alert"></use></svg><p>@AgentIdTransactions.Expired</p></div>
+break;
+}
+@functions {
+    public HostedLayoutModel LayoutModel => HostedLayoutModel.Themed(AgentIdPageModel.Title, Model.Nonce, HostedTheme.Platform, OidcIssuer.Slug, null);
+}

@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.AgentId;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Security;
@@ -314,7 +315,7 @@ public sealed class KeyRing(AuthData data, AuthOptions options, TimeProvider clo
         try
         {
             var record = this.Seal(instanceId, key, now.ToUnixTimeSeconds(), activatesAt);
-            if (instanceId == OidcIssuer.InstanceId)
+            if (instanceId is OidcIssuer.InstanceId or AgentIdIssuer.Slug)
             {
                 if (!await Guard(() => data.SaveAsync(Change.Insert(record), cancellationToken), cancellationToken).ConfigureAwait(false))
                 {

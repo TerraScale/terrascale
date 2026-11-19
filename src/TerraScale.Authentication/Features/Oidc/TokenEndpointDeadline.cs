@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.AgentId;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Features.SignIn;
 using ZLogger;
@@ -29,7 +30,8 @@ public sealed class TokenEndpointDeadline(RequestDelegate next, TimeProvider clo
         var token = HttpMethods.IsPost(context.Request.Method)
             && (context.Request.Path.Equals(TokenPath, StringComparison.OrdinalIgnoreCase)
                 || context.Request.Path.Equals(TokenPath + "/", StringComparison.OrdinalIgnoreCase)
-                || TokenRateLimitMiddleware.IsProjectTokenPath(context.Request.Path));
+                || TokenRateLimitMiddleware.IsProjectTokenPath(context.Request.Path))
+            || AgentIdIssuer.Guarded(context.Request.Path);
         // Hosted pages (sign-in, sign-up, reset, device, step-up) wait on storage the same way; without a deadline a
         // stalled TerraBase held the browser for the client's 30 s request timeout per call.
         var hosted = !token && context.Request.Path.StartsWithSegments("/ui", StringComparison.OrdinalIgnoreCase);

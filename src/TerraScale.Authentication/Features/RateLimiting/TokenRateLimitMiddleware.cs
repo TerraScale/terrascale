@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.AgentId;
 using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.Oidc;
 using static OpenIddict.Abstractions.OpenIddictConstants;
@@ -46,6 +47,7 @@ public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimite
                 || context.Request.Path.Equals(DevicePath, StringComparison.OrdinalIgnoreCase)
                 || context.Request.Path.Equals(DevicePath + "/", StringComparison.OrdinalIgnoreCase)
                 || IsProjectTokenPath(context.Request.Path)
+                || AgentIdIssuer.Guarded(context.Request.Path)
                 || CustomTokenEndpoint.Matches(context.Request.Path)))
         {
             await next(context);

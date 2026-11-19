@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Security.Claims;
 using System.Text.Json;
@@ -8,6 +9,7 @@ using OpenIddict.Abstractions;
 using OpenIddict.Server.AspNetCore;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.AgentId;
 using TerraScale.Authentication.Features.Agents;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
@@ -444,6 +446,14 @@ public sealed class ApiKeyApplicationManager(
         return permission == Permissions.Prefixes.GrantType + AgentExchange.GrantType
             ? application.InstanceId == OidcIssuer.InstanceId && application.ClientId == OidcIssuer.DashboardClientId
             : await base.HasPermissionAsync(application, permission, cancellationToken).ConfigureAwait(false);
+    }
+
+    public override async ValueTask<bool> ValidateRedirectUriAsync(OidcApplication application, [StringSyntax(StringSyntaxAttribute.Uri)] string uri, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(application);
+        return application.InstanceId == AgentIdIssuer.Slug
+            ? AgentIdIssuer.AllowsRedirect(application.ClientId!, uri)
+            : await base.ValidateRedirectUriAsync(application, uri, cancellationToken).ConfigureAwait(false);
     }
 
     public override async ValueTask<bool> ValidateClientSecretAsync(OidcApplication application, string secret, CancellationToken cancellationToken = default)

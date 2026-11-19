@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Features.AgentId;
 using TerraScale.Authentication.Features.Agents;
 using TerraScale.Authentication.Features.UserApiKeys;
 using System.Net;
@@ -180,7 +181,9 @@ public static class App
         builder.Services.AddSingleton<UserApiKeys>();
         builder.Services.AddSingleton<AgentLifecycleEvents>();
         builder.Services.AddSingleton<AgentDirectory>();
+        builder.Services.AddSingleton<AgentAssertions>();
         builder.Services.AddSingleton<AgentTokens>();
+        builder.Services.AddSingleton<AgentIdTransactions>();
         builder.Services.AddSingleton<LiveAgents>();
         builder.Services.AddSingleton<AgentExchange>();
         builder.Services.AddSingleton<AgentEnrollments>();

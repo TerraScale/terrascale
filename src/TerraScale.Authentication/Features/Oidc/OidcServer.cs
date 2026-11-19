@@ -10,6 +10,7 @@ using OpenIddict.Server.AspNetCore;
 using OpenIddict.Server;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.AgentId;
 using TerraScale.Authentication.Features.Agents;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Impersonation;
@@ -220,6 +221,12 @@ public static class OidcIssuer
                     .AddEventHandler<GenerateTokenContext>(handler => handler.UseSingletonHandler<SignWithKeyRing>()
                         .SetOrder(OpenIddictServerHandlers.Protection.AttachSecurityCredentials.Descriptor.Order + 1)
                         .SetType(OpenIddictServerHandlerType.Custom))
+                    .AddEventHandler<GenerateTokenContext>(handler => handler.UseSingletonHandler<EncryptAgentIdAccessTokens>()
+                        .SetOrder(OpenIddictServerHandlers.Protection.AttachSecurityCredentials.Descriptor.Order + 2)
+                        .SetType(OpenIddictServerHandlerType.Custom))
+                    .AddEventHandler<GenerateTokenContext>(handler => handler.UseSingletonHandler<IdentifyAgentIdIdentityTokens>()
+                        .SetOrder(OpenIddictServerHandlers.Protection.GenerateIdentityModelToken.Descriptor.Order - 1)
+                        .SetType(OpenIddictServerHandlerType.Custom))
                     .AddEventHandler<ValidateTokenContext>(handler => handler.UseSingletonHandler<ValidateWithKeyRing>()
                         .SetOrder(OpenIddictServerHandlers.Protection.ResolveTokenValidationParameters.Descriptor.Order + 1)
                         .SetType(OpenIddictServerHandlerType.Custom))
@@ -292,7 +299,7 @@ public static class OidcIssuer
         return services;
     }
 
-    private static byte[] Derive(AuthOptions options, string purpose) =>
+    internal static byte[] Derive(AuthOptions options, string purpose) =>
         HKDF.DeriveKey(HashAlgorithmName.SHA256, options.MasterKey, 32, info: System.Text.Encoding.UTF8.GetBytes(purpose));
 
     // OpenIddict requires an asymmetric signing key at startup and derives the id_token hash algorithm from it. The real
