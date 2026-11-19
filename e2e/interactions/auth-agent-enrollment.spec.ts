@@ -7,6 +7,8 @@ import { createProjectOwner } from '../support/project-owner';
 import { enterSecret } from '../support/secret';
 import { auth, dash, desktop, onLocalStack } from '../support/stack';
 import { saveSecret } from '../support/state';
+import { sdkAgentEnrollment } from '../sdk/agent-identities';
+import { cliAgentEnrollment } from '../sdk/cli-agent-identities';
 
 type Jwk = { kty: string; crv: string; x: string; y: string };
 type Enrollment = { enrollment_id: string; user_code: string; verification_uri: string; verification_uri_complete: string; expires_in: number; interval: number };
@@ -217,6 +219,8 @@ test('an agent enrolls itself and its owner approves it with a fresh verificatio
     expect((await browserContext.request.delete(`${root}/me/agents/${approved.body.agent_id}`, { headers: { Origin: auth } })).status()).toBe(204);
     const revoked = await (await page.request.get(`${root}/agents/${approved.body.agent_id}`, { headers: read })).json();
     expect(revoked.status).toBe('revoked');
+    await sdkAgentEnrollment(browserPage, audit, projectId, keys[1], user, password);
+    await cliAgentEnrollment(browserPage, audit, projectId, keys[1], user, password, keys[0]);
 
     await audit.finish();
   } finally {
