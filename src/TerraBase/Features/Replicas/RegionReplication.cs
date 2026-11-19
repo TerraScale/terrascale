@@ -25,7 +25,8 @@ internal sealed record FollowedReplica(string Organization, string Project, stri
 internal sealed partial class RegionReplication(
     TerraBaseOptions options, IReplicaPeers peers, IReplicaCatalog catalog, IDatabaseReplicas replicas,
     IDatabaseRevisions revisions, IMemoryBudget memory, ReplicaHolds holds, InternalCredential credential, IMeterFactory meters, TimeProvider time, ILogger<RegionReplication> logger,
-    ITransactionCrypto crypto, IOperationAllowance allowance, RegionalOwners owners, RemovedReplicaFaults faults, RemoteDatabases remote, HomeLeaseGate leaseGate) : BackgroundService
+    ITransactionCrypto crypto, IOperationAllowance allowance, RegionalOwners owners, RemovedReplicaFaults faults, RemoteDatabases remote, HomeLeaseGate leaseGate,
+    IHomeMoveCatalog moves) : BackgroundService
 {
     internal static readonly TimeSpan Sweep = TimeSpan.FromSeconds(30);
 
@@ -723,12 +724,30 @@ internal sealed partial class RegionReplication(
                 var changed = await RetryAsync(async () =>
                 {
                     await _owner._pulls.WaitAsync(cancellationToken).ConfigureAwait(false);
-                    try
+                    async Task<bool> PullOnceAsync()
                     {
                         var result = await _owner.Replicas.PullAsync(Database, fromHome, cancellationToken).ConfigureAwait(false);
                         pending = result?.Pending ?? false;
                         pushed = result?.Pushed ?? false;
                         return result?.Changed ?? false;
+                    }
+
+                    try
+                    {
+                        return await PullOnceAsync().ConfigureAwait(false);
+                    }
+                    catch (Exception error) when (error is not OperationCanceledException
+                        && ReplicaFailure.From(Database.DatabaseId!, _home.Region, error).Code == "not_found"
+                        && _verification is not { IsCompleted: false } && _owner.CanRebuild(_home))
+                    {
+                        _owner.Logger.ZLogWarning($"The home of database {Database.DatabaseId:@Database}, {_home.Name:@Home} in region {_home.Region:@HomeRegion}, does not store its replica's position; the replica is bootstrapped again from it");
+                        if (await _owner.Replicas.DeleteAsync(Database, cancellationToken).ConfigureAwait(false))
+                        {
+                            _owner._rebootstraps?.Add(1);
+                        }
+
+                        await _owner.Replicas.OpenAsync(Database, _source, _owner._http, cancellationToken).ConfigureAwait(false);
+                        return await PullOnceAsync().ConfigureAwait(false);
                     }
                     finally
                     {

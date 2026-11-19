@@ -843,14 +843,27 @@ internal sealed partial class HomeLeases(
         }
         else if (recorded is { } placement && (placement.Home != home.Home || placement.Version < home.Epoch) && placement.Version <= home.Epoch)
         {
-            await catalog.UpdatePlacementAsync(database, Moved(placement, home), cancellationToken).ConfigureAwait(false);
-            replication.WakeCatalog(home.Home);
+            await FollowLeaseAsync(database, placement, home, cancellationToken).ConfigureAwait(false);
         }
 
         if (!_nodes.ContainsKey(home.Node))
         {
             Lapsed(home.Node);
         }
+    }
+
+    private async Task FollowLeaseAsync(TenantContext database, DatabasePlacement placement, HomeLease home, CancellationToken cancellationToken)
+    {
+        if (placement.Home != options.Region)
+        {
+            await catalog.UpdatePlacementAsync(database, Moved(placement, home), cancellationToken).ConfigureAwait(false);
+        }
+        else if (home.Home != options.Region && home.Adopted is not null)
+        {
+            await replication.FollowMovedHomeAsync(database, home.Home, home.Epoch, cancellationToken).ConfigureAwait(false);
+        }
+
+        replication.WakeCatalog(home.Home);
     }
 
     private void Lapsed(string node)
@@ -884,6 +897,11 @@ internal sealed partial class HomeLeases(
         if (home.Home == options.Region || !owners.Writer)
         {
             leaseGate.Lease(id, held: false);
+            if (home.Home != options.Region)
+            {
+                await FollowLeaseAsync(database, placement, home, cancellationToken).ConfigureAwait(false);
+            }
+
             return;
         }
 
