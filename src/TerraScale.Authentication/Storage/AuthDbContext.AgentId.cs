@@ -19,9 +19,11 @@ public sealed partial class AuthDbContext
                     + " AND (agent_id IS NULL) = (kid IS NULL) AND (completed_at IS NULL OR proved_at IS NOT NULL)");
             });
             transaction.HasKey(row => row.Id);
+            transaction.HasIndex(row => row.RequestHash).IsUnique();
             transaction.HasIndex(row => row.ExpiresAt);
             transaction.HasOne<UserRecord>().WithMany().HasForeignKey(row => row.OwnerUserId).OnDelete(DeleteBehavior.Cascade);
-            transaction.Property(row => row.Id).HasMaxLength(AgentIdTransactionRecord.IdLength);
+            transaction.Property(row => row.Id).HasMaxLength(26);
+            transaction.Property(row => row.RequestHash).HasMaxLength(AgentIdTransactionRecord.RequestHashLength).IsRequired();
             transaction.Property(row => row.ClientId).HasMaxLength(255).IsRequired();
             transaction.Property(row => row.AgentId).HasMaxLength(26);
             transaction.Property(row => row.OwnerUserId).HasMaxLength(26);

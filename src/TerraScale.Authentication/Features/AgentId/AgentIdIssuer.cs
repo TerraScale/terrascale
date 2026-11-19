@@ -1,6 +1,5 @@
 using System.Buffers.Text;
 using System.Globalization;
-using System.Net;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -34,6 +33,8 @@ public static class AgentIdIssuer
 
     public const string OwnerClaim = "ts_agentid_owner";
 
+    public const string KeyClaim = "ts_agentid_key";
+
     public const string ProofTransactionClaim = "txn";
 
     public const string ProofClientClaim = "client_id";
@@ -53,18 +54,21 @@ public static class AgentIdIssuer
     public static bool Guarded(PathString path) =>
         (path.Value ?? string.Empty).TrimEnd('/') is var trimmed
         && (trimmed.Equals(TokenPath, StringComparison.OrdinalIgnoreCase) || trimmed.Equals(AuthorizePath, StringComparison.OrdinalIgnoreCase)
-            || trimmed.Split('/') is [_, var slug, "v1", "authorize", _, "proof"] && slug.Equals(Slug, StringComparison.OrdinalIgnoreCase));
+            || trimmed.Split('/') is [_, var slug, var version, var authorize, _, var proof]
+                && slug.Equals(Slug, StringComparison.OrdinalIgnoreCase) && version.Equals("v1", StringComparison.OrdinalIgnoreCase)
+                && authorize.Equals("authorize", StringComparison.OrdinalIgnoreCase) && proof.Equals("proof", StringComparison.OrdinalIgnoreCase));
 
     public static bool IsOpenClient(string? clientId) =>
-        clientId is { Length: > 0 and <= 255 } && Uri.TryCreate(clientId, UriKind.Absolute, out var uri)
-        && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp && IsLoopback(uri))
-        && uri.UserInfo.Length == 0 && uri.PathAndQuery == "/" && uri.Fragment.Length == 0
-        && string.Equals(uri.GetLeftPart(UriPartial.Authority), clientId, StringComparison.Ordinal);
+        ClientOrigins.Canonical(clientId) is { } origin && origin.StartsWith(Uri.UriSchemeHttps + "://", StringComparison.Ordinal);
 
     public static bool AllowsRedirect(string clientId, string? redirectUri) =>
         IsOpenClient(clientId) && Uri.TryCreate(redirectUri, UriKind.Absolute, out var redirect)
-        && redirect.Fragment.Length == 0 && redirect.UserInfo.Length == 0
-        && string.Equals(redirect.GetLeftPart(UriPartial.Authority), clientId, StringComparison.Ordinal);
+        && redirect.Scheme == Uri.UriSchemeHttps && redirect.Fragment.Length == 0 && redirect.UserInfo.Length == 0
+        && redirect.HostNameType is UriHostNameType.Dns or UriHostNameType.IPv4 or UriHostNameType.IPv6
+        && string.Equals(Origin(redirect), clientId, StringComparison.Ordinal);
+
+    private static string Origin(Uri uri) => string.Create(CultureInfo.InvariantCulture,
+        $"{uri.Scheme}://{(uri.HostNameType == UriHostNameType.Dns ? uri.IdnHost : uri.Host)}{(uri.IsDefaultPort ? string.Empty : ":" + uri.Port.ToString(CultureInfo.InvariantCulture))}");
 
     public static OidcApplication? OpenClient(string clientId) => IsOpenClient(clientId)
         ? new OidcApplication
@@ -92,9 +96,10 @@ public static class AgentIdIssuer
         return Base64Url.EncodeToString(HMACSHA256.HashData(key, Encoding.UTF8.GetBytes($"{kind}\n{clientId}\n{id}")));
     }
 
-    public static ClaimsPrincipal Principal(AuthOptions options, string clientId, AgentRecord agent, string ownerId, IEnumerable<string> scopes)
+    public static ClaimsPrincipal Principal(AuthOptions options, string clientId, AgentIdSignIn signIn, IEnumerable<string> scopes)
     {
-        ArgumentNullException.ThrowIfNull(agent);
+        ArgumentNullException.ThrowIfNull(signIn);
+        var (agent, ownerId) = (signIn.Agent, signIn.Owner.Id);
         List<string> granted = [.. scopes.Intersect(SupportedScopes, StringComparer.Ordinal)];
         var profile = granted.Contains(Scopes.Profile);
         var identity = new ClaimsIdentity(TokenValidationParameters.DefaultAuthenticationType, Claims.Name, Claims.Role)
@@ -104,16 +109,14 @@ public static class AgentIdIssuer
             .SetClaim(OwnerSubjectClaim, profile ? Pairwise(options, "owner", clientId, ownerId) : null)
             .SetClaim(AgentClaim, agent.Id)
             .SetClaim(OwnerClaim, ownerId)
+            .SetClaim(KeyClaim, signIn.Kid)
             .SetScopes(granted);
         identity.SetDestinations(claim => claim.Type switch
         {
             Claims.Subject or ActorTypeClaim or Claims.Name or OwnerSubjectClaim => [Destinations.AccessToken, Destinations.IdentityToken],
-            AgentClaim or OwnerClaim => [Destinations.AccessToken],
+            AgentClaim or OwnerClaim or KeyClaim => [Destinations.AccessToken],
             _ => [],
         });
         return new ClaimsPrincipal(identity);
     }
-
-    private static bool IsLoopback(Uri uri) =>
-        uri.IsLoopback && (uri.Host == "localhost" || IPAddress.TryParse(uri.Host.Trim('[', ']'), out var address) && IPAddress.IsLoopback(address));
 }

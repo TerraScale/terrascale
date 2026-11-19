@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.JsonWebTokens;
@@ -35,6 +36,8 @@ public sealed class AgentAssertions(AuthData data, TimeProvider clock)
 
     private static readonly JsonWebTokenHandler Handler = new();
 
+    private static readonly JsonWebKey Decoy = JsonWebKeyConverter.ConvertFromECDsaSecurityKey(new ECDsaSecurityKey(ECDsa.Create(ECCurve.NamedCurves.nistP256)));
+
     public async Task<(VerifiedAgentAssertion? Verified, string? AgentId, string Reason)> VerifyAsync(string project, string assertion, string audience, CancellationToken cancellationToken)
     {
         if (assertion.Length > MaxLength || !Handler.CanReadToken(assertion) || Read(assertion) is not { IsEncrypted: false, Alg: SecurityAlgorithms.EcdsaSha256, Kid: { } kid } unverified
@@ -43,27 +46,14 @@ public sealed class AgentAssertions(AuthData data, TimeProvider clock)
             return (null, null, "malformed assertion or header");
         }
 
-        var (key, agent, owner) = await data.ReadAsync(async (db, token) =>
-        {
-            var key = await db.AgentKeys.Where(row => row.ProjectId == project && row.Kid == kid).WithVersion().SingleOrDefaultAsync(token).ConfigureAwait(false);
-            var agent = key is null ? null
-                : await db.Agents.Where(row => row.ProjectId == project && row.Id == key.Value.AgentId).WithVersion().SingleOrDefaultAsync(token).ConfigureAwait(false);
-            var owner = agent is null ? null
-                : await db.Users.Where(row => row.InstanceId == project && row.Id == agent.Value.OwnerUserId).WithVersion().SingleOrDefaultAsync(token).ConfigureAwait(false);
-            return (key, agent, owner);
-        }, cancellationToken).ConfigureAwait(false);
-        if (key is null || agent is null)
-        {
-            return (null, null, "unknown key");
-        }
-
-        var agentId = agent.Value.Id;
+        var key = await data.ReadAsync((db, token) => db.AgentKeys.Where(row => row.ProjectId == project && row.Kid == kid).WithVersion().SingleOrDefaultAsync(token),
+            cancellationToken).ConfigureAwait(false);
         var validated = await Handler.ValidateTokenAsync(unverified, new TokenValidationParameters
         {
-            IssuerSigningKey = new JsonWebKey(key.Value.PublicJwk) { KeyId = kid },
+            IssuerSigningKey = key is null ? Decoy : new JsonWebKey(key.Value.PublicJwk) { KeyId = kid },
             TryAllIssuerSigningKeys = false,
             ValidAlgorithms = [SecurityAlgorithms.EcdsaSha256],
-            ValidIssuer = agentId,
+            ValidIssuer = key?.Value.AgentId ?? kid,
             ValidAudience = audience,
             IgnoreTrailingSlashWhenValidatingAudience = false,
             RequireSignedTokens = true,
@@ -71,10 +61,28 @@ public sealed class AgentAssertions(AuthData data, TimeProvider clock)
             ValidateLifetime = true,
             ClockSkew = ClockSkew,
         }).ConfigureAwait(false);
+        if (key is null)
+        {
+            return (null, null, "unknown key");
+        }
+
+        var agentId = key.Value.AgentId;
         if (!validated.IsValid || unverified.Subject != agentId || unverified.Audiences.Count() != 1
             || unverified.Id is not { Length: > 0 and <= AgentAssertionRecord.MaxJtiLength } jti || jti.Any(char.IsControl))
         {
             return (null, agentId, "signature or claims");
+        }
+
+        var (agent, owner) = await data.ReadAsync(async (db, token) =>
+        {
+            var agent = await db.Agents.Where(row => row.ProjectId == project && row.Id == agentId).WithVersion().SingleOrDefaultAsync(token).ConfigureAwait(false);
+            var owner = agent is null ? null
+                : await db.Users.Where(row => row.InstanceId == project && row.Id == agent.Value.OwnerUserId).WithVersion().SingleOrDefaultAsync(token).ConfigureAwait(false);
+            return (agent, owner);
+        }, cancellationToken).ConfigureAwait(false);
+        if (agent is null)
+        {
+            return (null, agentId, "unknown agent");
         }
 
         var now = clock.GetUtcNow();

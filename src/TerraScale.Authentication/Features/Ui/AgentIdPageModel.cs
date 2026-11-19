@@ -3,7 +3,6 @@ namespace TerraScale.Authentication.Features.Ui;
 public enum AgentIdStep
 {
     Waiting,
-    Done,
     Expired,
 }
 

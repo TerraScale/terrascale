@@ -15,7 +15,8 @@ namespace TerraScale.Authentication.Storage.Migrations
                 name: "agentid_transactions",
                 columns: table => new
                 {
-                    id = table.Column<string>(type: "TEXT", maxLength: 43, nullable: false),
+                    id = table.Column<string>(type: "TEXT", maxLength: 26, nullable: false),
+                    request_hash = table.Column<string>(type: "TEXT", maxLength: 43, nullable: false),
                     client_id = table.Column<string>(type: "TEXT", maxLength: 255, nullable: false),
                     created_at = table.Column<DateTime>(type: "TEXT", nullable: false),
                     expires_at = table.Column<DateTime>(type: "TEXT", nullable: false),
@@ -48,6 +49,12 @@ namespace TerraScale.Authentication.Storage.Migrations
                 name: "IX_agentid_transactions_owner_user_id",
                 table: "agentid_transactions",
                 column: "owner_user_id");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_agentid_transactions_request_hash",
+                table: "agentid_transactions",
+                column: "request_hash",
+                unique: true);
         }
 
         /// <inheritdoc />

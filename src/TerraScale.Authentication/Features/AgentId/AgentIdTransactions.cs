@@ -10,21 +10,22 @@ using TerraScale.Authentication.Features.Agents;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Storage;
+using TerraScale.DotNet;
 using ZLogger;
 
 namespace TerraScale.Authentication.Features.AgentId;
 
-public sealed record AgentIdTransactionRecord(string Id, string ClientId, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, string? AgentId = null,
+public sealed record AgentIdTransactionRecord(string Id, string RequestHash, string ClientId, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, string? AgentId = null,
     string? OwnerUserId = null, string? Kid = null, DateTimeOffset? ProvedAt = null, DateTimeOffset? CompletedAt = null)
 {
-    public const int IdLength = 43;
+    public const int RequestHashLength = 43;
 }
 
 public sealed record AgentIdProofRequest(string? Proof);
 
 public sealed record AgentIdPendingBody(string Status, string TransactionId, string ProofUrl, string ClientId, string ClientName, DateTimeOffset ExpiresAt);
 
-public sealed record AgentIdSignIn(AgentRecord Agent, UserRecord Owner);
+public sealed record AgentIdSignIn(AgentRecord Agent, UserRecord Owner, string Kid);
 
 public sealed class AgentIdTransactions(AuthData data, AgentAssertions assertions, AttemptLimiter limiter, AuthOptions options, TimeProvider clock, ILogger<AgentIdTransactions> logger)
 {
@@ -36,11 +37,13 @@ public sealed class AgentIdTransactions(AuthData data, AgentAssertions assertion
 
     public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(5);
 
+    public static readonly TimeSpan Retention = TimeSpan.FromHours(1);
+
     public const string Expired = "This sign-in expired. Start again from the app.";
 
     private static readonly TimeSpan Window = TimeSpan.FromMinutes(1);
 
-    public static string Id(IEnumerable<KeyValuePair<string, StringValues>> parameters)
+    public static string RequestHash(IEnumerable<KeyValuePair<string, StringValues>> parameters)
     {
         var canonical = new StringBuilder();
         foreach (var (key, values) in parameters.OrderBy(parameter => parameter.Key, StringComparer.Ordinal))
@@ -64,25 +67,25 @@ public sealed class AgentIdTransactions(AuthData data, AgentAssertions assertion
         }
     }
 
-    public async Task<AgentIdTransactionRecord> OpenAsync(string id, string clientId, CancellationToken cancellationToken)
+    public async Task<AgentIdTransactionRecord> OpenAsync(string requestHash, string clientId, CancellationToken cancellationToken)
     {
-        if (await this.FindAsync(id, cancellationToken).ConfigureAwait(false) is { } existing)
+        if (await this.FindByRequestAsync(requestHash, cancellationToken).ConfigureAwait(false) is { } existing)
         {
-            return existing.Value;
+            return existing;
         }
 
         var now = clock.GetUtcNow();
-        var created = new AgentIdTransactionRecord(id, clientId, now, now + Lifetime);
+        var created = new AgentIdTransactionRecord(AuthIds.New(), requestHash, clientId, now, now + Lifetime);
         return await data.SaveAsync(Change.Insert(created), cancellationToken).ConfigureAwait(false)
             ? created
-            : (await this.FindAsync(id, cancellationToken).ConfigureAwait(false))?.Value ?? throw ApiException.Unavailable();
+            : await this.FindByRequestAsync(requestHash, cancellationToken).ConfigureAwait(false) ?? throw ApiException.Unavailable();
     }
 
     public bool IsOpen(AgentIdTransactionRecord transaction) => transaction.CompletedAt is null && transaction.ExpiresAt > clock.GetUtcNow();
 
     public async Task ProveAsync(string id, string? proof, CancellationToken cancellationToken)
     {
-        var current = id.Length == AgentIdTransactionRecord.IdLength ? await this.FindAsync(id, cancellationToken).ConfigureAwait(false) : null;
+        var current = TerraScaleIds.IsValid(id) ? await this.FindAsync(id, cancellationToken).ConfigureAwait(false) : null;
         if (current is not { Value: var transaction } || !this.IsOpen(transaction))
         {
             throw new ApiException(StatusCodes.Status404NotFound, "expired_transaction", Expired);
@@ -111,7 +114,13 @@ public sealed class AgentIdTransactions(AuthData data, AgentAssertions assertion
             throw ApiException.RateLimited("Too many proofs for this agent; retry later.", wait);
         }
 
-        var proved = transaction with { AgentId = agent.Id, OwnerUserId = agent.OwnerUserId, Kid = verified.Key.Value.Kid, ProvedAt = clock.GetUtcNow() };
+        var now = clock.GetUtcNow();
+        if (transaction.ExpiresAt <= now || verified.AcceptedUntil <= now)
+        {
+            throw Refused(agent.Id, "transaction or proof expired before the proof was recorded");
+        }
+
+        var proved = transaction with { AgentId = agent.Id, OwnerUserId = agent.OwnerUserId, Kid = verified.Key.Value.Kid, ProvedAt = now };
         if (!await data.SaveAsync([verified.Replay, Change.Update(current, proved), Change.Assert(verified.Key), Change.Assert(verified.Owner)], cancellationToken).ConfigureAwait(false))
         {
             throw Refused(agent.Id, "proof replayed, or the transaction, key or owner changed");
@@ -132,34 +141,60 @@ public sealed class AgentIdTransactions(AuthData data, AgentAssertions assertion
             return null;
         }
 
-        var tenant = PlatformTenant.Id;
         using var home = HomeReads.Begin();
-        var (current, key, agent, owner) = await data.ReadAsync(async (db, token) => (
-            await db.AgentIdTransactions.Where(row => row.Id == transaction.Id).WithVersion().SingleOrDefaultAsync(token).ConfigureAwait(false),
-            await db.AgentKeys.Where(row => row.ProjectId == tenant && row.Kid == kid && row.AgentId == agentId).WithVersion().SingleOrDefaultAsync(token).ConfigureAwait(false),
-            await db.Agents.Where(row => row.ProjectId == tenant && row.Id == agentId && row.OwnerUserId == ownerId).WithVersion().SingleOrDefaultAsync(token).ConfigureAwait(false),
-            await db.Users.Where(row => row.InstanceId == tenant && row.Id == ownerId).WithVersion().SingleOrDefaultAsync(token).ConfigureAwait(false)), cancellationToken).ConfigureAwait(false);
-        var now = clock.GetUtcNow();
-        if (current is null || current.Value != transaction || key is null || agent is null || owner is null || !AgentAssertions.Active(key.Value, agent.Value, owner.Value, now))
+        var current = await this.FindAsync(transaction.Id, cancellationToken).ConfigureAwait(false);
+        var live = await this.ReadLiveAsync(agentId, ownerId, kid, cancellationToken).ConfigureAwait(false);
+        if (current is null || current.Value != transaction || !this.IsOpen(current.Value) || live is not ({ } key, { } agent, { } owner))
         {
-            logger.ZLogInformation($"Agent sign-in refused at completion for transaction {transaction.Id} and agent {agentId}: transaction changed, or agent, key or owner not active");
+            logger.ZLogInformation($"Agent sign-in refused at completion for transaction {transaction.Id} and agent {agentId}: transaction changed or expired, or agent, key or owner not active");
             return null;
         }
 
-        return await data.SaveAsync([Change.Update(current, transaction with { CompletedAt = now }), Change.Assert(key), Change.Assert(owner)], cancellationToken).ConfigureAwait(false)
-            ? new(agent.Value, owner.Value)
+        return await data.SaveAsync([Change.Update(current, transaction with { CompletedAt = clock.GetUtcNow() }), Change.Assert(key), Change.Assert(owner)], cancellationToken)
+            .ConfigureAwait(false)
+            ? new(agent.Value, owner.Value, kid)
             : null;
+    }
+
+    public async Task<AgentIdSignIn?> LiveAsync(string agentId, string ownerId, string kid, bool fence, CancellationToken cancellationToken)
+    {
+        using var home = HomeReads.Begin();
+        return await this.ReadLiveAsync(agentId, ownerId, kid, cancellationToken).ConfigureAwait(false) is ({ } key, { } agent, { } owner)
+            && (!fence || await data.SaveAsync([Change.Assert(key), Change.Assert(owner)], cancellationToken).ConfigureAwait(false))
+                ? new(agent.Value, owner.Value, kid)
+                : null;
     }
 
     public async Task<int> PruneAsync(int batchSize, CancellationToken cancellationToken)
     {
-        var now = clock.GetUtcNow();
-        return await data.InBatchesAsync(batchSize, (db, token) => db.AgentIdTransactions.Where(row => row.ExpiresAt <= now)
+        var cutoff = clock.GetUtcNow() - Retention;
+        return await data.InBatchesAsync(batchSize, (db, token) => db.AgentIdTransactions.Where(row => row.ExpiresAt <= cutoff)
             .OrderBy(row => row.ExpiresAt).Take(batchSize).ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<(Versioned<AgentKeyRecord> Key, Versioned<AgentRecord> Agent, Versioned<UserRecord> Owner)?> ReadLiveAsync(string agentId, string ownerId, string kid,
+        CancellationToken cancellationToken)
+    {
+        const string tenant = PlatformTenant.Id;
+        if (!TerraScaleIds.IsValid(agentId) || !TerraScaleIds.IsValid(ownerId) || !TerraScaleIds.IsValid(kid))
+        {
+            return null;
+        }
+
+        var (key, agent, owner) = await data.ReadAsync(async (db, token) => (
+            await db.AgentKeys.Where(row => row.ProjectId == tenant && row.Kid == kid && row.AgentId == agentId).WithVersion().SingleOrDefaultAsync(token).ConfigureAwait(false),
+            await db.Agents.Where(row => row.ProjectId == tenant && row.Id == agentId && row.OwnerUserId == ownerId).WithVersion().SingleOrDefaultAsync(token).ConfigureAwait(false),
+            await db.Users.Where(row => row.InstanceId == tenant && row.Id == ownerId).WithVersion().SingleOrDefaultAsync(token).ConfigureAwait(false)), cancellationToken).ConfigureAwait(false);
+        return key is not null && agent is not null && owner is not null && AgentAssertions.Active(key.Value, agent.Value, owner.Value, clock.GetUtcNow())
+            ? (key, agent, owner)
+            : null;
     }
 
     private Task<Versioned<AgentIdTransactionRecord>?> FindAsync(string id, CancellationToken cancellationToken) =>
         data.ReadAsync((db, token) => db.AgentIdTransactions.Where(row => row.Id == id).WithVersion().SingleOrDefaultAsync(token), cancellationToken);
+
+    private Task<AgentIdTransactionRecord?> FindByRequestAsync(string requestHash, CancellationToken cancellationToken) =>
+        data.ReadAsync((db, token) => db.AgentIdTransactions.SingleOrDefaultAsync(row => row.RequestHash == requestHash, token), cancellationToken);
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,

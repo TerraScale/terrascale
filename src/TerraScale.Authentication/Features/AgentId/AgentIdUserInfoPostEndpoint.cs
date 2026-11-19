@@ -1,8 +1,7 @@
-using TerraScale.Authentication.Features.Agents;
 
 namespace TerraScale.Authentication.Features.AgentId;
 
-public sealed class AgentIdUserInfoPostEndpoint(LiveAgents agents) : AgentIdUserInfoEndpoint(agents)
+public sealed class AgentIdUserInfoPostEndpoint(AgentIdTransactions transactions) : AgentIdUserInfoEndpoint(transactions)
 {
     public override void Configure()
     {

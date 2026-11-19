@@ -20,10 +20,12 @@ The provider is its own issuer, apart from the platform issuer (`/terrascale`) a
 
 ## Set up your app
 
-There is nothing to register. The `client_id` is the https origin of your app, for example
-`https://app.example.com` (lowercase, no path, no trailing slash, no default port; `http` only on `localhost`,
-`127.0.0.1` or `[::1]`). The client is public: it has no secret and authenticates with PKCE. The `redirect_uri` can
-be any URL on that same origin; any other origin is refused before anything is shown.
+There is nothing to register. The `client_id` is the canonical https origin of your app, for example
+`https://app.example.com`: lowercase ASCII host (punycode, `xn--…`, for an international name), no userinfo, path,
+trailing slash or default port. The client is public: it has no secret and authenticates with PKCE. The
+`redirect_uri` can be any https URL on exactly that origin (not a subdomain, not another port); anything else is
+refused before anything is shown. A request without the `openid` scope is answered `invalid_scope` at the
+`redirect_uri`.
 
 Every OIDC client library works with these settings:
 
@@ -51,18 +53,21 @@ Verify the ID token as usual: signature against the JWKS (ES256), `iss` exactly 
 
 ## Claims
 
+ID token claims:
+
 | Claim | When | Value |
 | --- | --- | --- |
 | `iss`, `aud`, `iat`, `exp`, `jti` | always | issuer, your client ID, times (ID and access tokens live 5 minutes), token id |
 | `sub` | always | the agent, pairwise: the same for one agent and one client ID, unrelated across client IDs |
 | `actor_type` | always | `agent` |
 | `nonce` | when sent | the authorization request's `nonce` |
-| `name` | `profile` | the agent's name, as its owner approved it |
+| `name` | `profile` | the agent's name, chosen by its owner and the same for every client ID |
 | `owner_sub` | `profile` | the accountable TerraScale account, pairwise for your client ID |
 
 Claims that are not granted are left out, never `null`. Nothing reveals the agent's or the owner's TerraScale ids or
 email. Two apps cannot link their subjects: each pairwise value is an HMAC under a key derived from the master key,
-over the client ID and the id.
+over the client ID and the id. `name` is profile data, not an identifier: apps that both ask for `profile` see the same
+name and can use it to correlate an agent across them.
 
 UserInfo answers the same `sub`, `actor_type`, `name` and `owner_sub` (as granted) for the access token, and reads
 the agent again on every call. The access token is encrypted and is only good at this UserInfo endpoint; no other
@@ -71,7 +76,8 @@ TerraScale issuer or API accepts it, and this issuer accepts no token of another
 ## How an agent completes the sign-in
 
 1. The app sends the agent to the authorization URL. The agent opens it headlessly with
-   `Accept: application/json` (a browser gets the same as an HTML page that reloads every 2 seconds):
+   `Accept: application/json` (a browser gets an HTML page that reloads every 2 seconds and goes to the app once the
+   proof is in):
 
    ```http
    HTTP/1.1 200 OK
@@ -82,8 +88,9 @@ TerraScale issuer or API accepts it, and this issuer accepts no token of another
    ```
 
    The transaction is one-time and lives 5 minutes. The page carries the proof URL in `data-agent-proof` too.
-2. The agent checks that `client_id` is the app it means to sign in to, then posts a proof signed by one of its
-   active keys:
+2. The agent signs only for a sign-in it started itself: it takes the expected app origin and the transaction from
+   its own initiating request, checks that `client_id` and `transaction_id` match them, then posts a proof signed by
+   one of its active keys:
 
    ```http
    POST /agents/v1/authorize/{txn}/proof
@@ -97,20 +104,22 @@ TerraScale issuer or API accepts it, and this issuer accepts no token of another
    once, integer `iat` and `exp` at most 300 seconds after `iat`. The answer is `204`. Any other proof answers the
    same `401 invalid_proof` and reveals nothing; an unknown, expired or used transaction answers
    `404 expired_transaction`.
-3. The agent (or the browser page) requests the same authorization URL again. It redirects once to the
+3. The agent (or the reloading browser page) requests the same authorization URL again. It redirects once to the
    `redirect_uri` with `code`, `state` and `iss`; the app redeems the code at the token endpoint with its
    `code_verifier` within 60 seconds. Requesting the URL after that answers `400 expired_transaction`.
 
 The proof binds the agent's key to one transaction of one client. A proof for another transaction, another client or
-another URL, or a replayed `jti`, is refused. Because the agent names the client it signs for, an app cannot relay
-another app's transaction to an agent and have it accepted unnoticed; an agent should only sign for the `client_id`
-it was asked to sign in to.
+another URL, or a replayed `jti`, is refused. The signed bindings prove which request the agent approved; that it is
+the session the agent meant to approve comes from the agent's own context. An app that relays another app's
+transaction gets a proof only from an agent that signs a `client_id` it did not start a sign-in with.
 
 ## Revocation
 
-The agent, its key and its owner are checked when the proof arrives, again when the code is issued (in the same
-write that uses the transaction), again when the code is redeemed, and on every UserInfo call. A revoked or expired
-agent, a revoked key, or an owner who was disabled, deleted or signed out everywhere since the agent was created
+The agent, the key that signed the proof and the owner are checked when the proof arrives, again when the code is
+issued (in the same write that uses the transaction), again when the code is redeemed (with their versions asserted
+in a save before the tokens are issued), and on every UserInfo call. The code and the encrypted access token carry
+that key's id, so another active key of the same agent does not keep a sign-in alive. A revoked or expired agent, a
+revoked proof key, or an owner who was disabled, deleted or signed out everywhere since the agent was created
 cannot complete a sign-in, and UserInfo refuses its tokens with `401 invalid_token`. ID tokens already issued stay
 valid until they expire (5 minutes).
 
@@ -123,11 +132,13 @@ the caller address's shared token budget, as `/terrascale/oauth/token` does. Ove
 
 ## Storage
 
-Transactions live in `agentid_transactions` ([storage](storage.md)): the id is the SHA-256 of the authorization
-request's parameters, so the same request finds the same transaction. A proof records the agent, owner and key in
-the same write as the used `jti` (`agent_assertions`), asserting the key and owner versions; completing the request
-sets `completed_at` in a write that asserts the transaction, key and owner versions, so it happens once and never
-after a revocation that won. Rows are pruned once expired.
+Transactions live in `agentid_transactions` ([storage](storage.md)): a random id, and a unique `request_hash`, the
+SHA-256 of the authorization request's parameters, so the same request finds the same transaction. A proof records
+the agent, owner and key in the same write as the used `jti` (`agent_assertions`), asserting the key and owner
+versions, after rechecking the transaction's deadline and the proof's accepted window; completing the request
+rechecks the deadline on a fresh read and sets `completed_at` in a write that asserts the transaction, key and owner
+versions, so it happens once, before the deadline, and never after a revocation that won. Rows are pruned an hour
+after they expire; a request repeated later opens a new transaction with a new id and proof URL.
 
 ## Coming next
 

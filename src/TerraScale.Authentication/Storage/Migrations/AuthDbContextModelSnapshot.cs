@@ -1394,7 +1394,7 @@ namespace TerraScale.Authentication.Storage.Migrations
             modelBuilder.Entity("TerraScale.Authentication.Features.AgentId.AgentIdTransactionRecord", b =>
                 {
                     b.Property<string>("Id")
-                        .HasMaxLength(43)
+                        .HasMaxLength(26)
                         .HasColumnType("TEXT")
                         .HasColumnName("id");
 
@@ -1435,6 +1435,12 @@ namespace TerraScale.Authentication.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("proved_at");
 
+                    b.Property<string>("RequestHash")
+                        .IsRequired()
+                        .HasMaxLength(43)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("request_hash");
+
                     b.Property<string>("Version")
                         .IsConcurrencyToken()
                         .IsRequired()
@@ -1447,6 +1453,9 @@ namespace TerraScale.Authentication.Storage.Migrations
                     b.HasIndex("ExpiresAt");
 
                     b.HasIndex("OwnerUserId");
+
+                    b.HasIndex("RequestHash")
+                        .IsUnique();
 
                     b.ToTable("agentid_transactions", null, t =>
                         {
