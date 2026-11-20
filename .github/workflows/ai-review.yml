@@ -188,7 +188,7 @@ jobs:
     timeout-minutes: 20
     outputs:
       base: ${{ steps.plan.outputs.base }}
-      resume: ${{ steps.plan.outputs.resume }}
+      patch: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -217,11 +217,11 @@ jobs:
           FIXABLE_FILE: ${{ needs.review.outputs.fixable_file }}
         run: python3 ../policy/.github/ai-review/review.py plan
       - name: Install the pinned OpenCode package
-        if: steps.plan.outputs.resume != 'true'
+        if: steps.plan.outputs.resume != 'true' && steps.plan.outputs.reject != 'true'
         working-directory: ${{ runner.temp }}
         run: npm install --prefix opencode --no-audit --no-fund --ignore-scripts opencode-ai@1.19.6
       - name: Generate a fix in an isolated checkout
-        if: steps.plan.outputs.resume != 'true'
+        if: steps.plan.outputs.resume != 'true' && steps.plan.outputs.reject != 'true'
         working-directory: source
         env:
           OCR_LLM_URL: ${{ secrets.OCR_LLM_URL }}
@@ -231,7 +231,8 @@ jobs:
           FIXABLE_FILE: ${{ needs.review.outputs.fixable_file }}
         run: python3 ../policy/.github/ai-review/review.py generate
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: steps.plan.outputs.resume != 'true'
+        id: upload
+        if: steps.plan.outputs.resume != 'true' && steps.plan.outputs.reject != 'true'
         with:
           name: fix-${{ needs.review.outputs.head }}
           path: ${{ runner.temp }}/fix.patch
@@ -268,29 +269,28 @@ jobs:
           DENY_PATHS: ${{ inputs.deny_paths }}
           MAX_FIX_LINES: ${{ inputs.max_fix_lines }}
           FIXABLE_FILE: ${{ needs.review.outputs.fixable_file }}
-        run: python3 ../policy/.github/ai-review/review.py plan
+        run: |
+          git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+          python3 ../policy/.github/ai-review/review.py plan
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        if: steps.plan.outputs.resume != 'true' && needs.generate.outputs.resume != 'true'
+        if: steps.plan.outputs.resume != 'true' && steps.plan.outputs.reject != 'true' && needs.generate.outputs.patch != ''
         with:
           name: fix-${{ needs.review.outputs.head }}
           path: ${{ runner.temp }}
       - name: Validate the patch on a fresh runner
+        if: steps.plan.outputs.resume != 'true' && steps.plan.outputs.reject != 'true'
         working-directory: source
         env:
           DENY_PATHS: ${{ inputs.deny_paths }}
           MAX_FIX_LINES: ${{ inputs.max_fix_lines }}
           FIXABLE_FILE: ${{ needs.review.outputs.fixable_file }}
-          EXISTING_PR: ${{ steps.plan.outputs.number }}
-          EXISTING_SHA: ${{ steps.plan.outputs.sha }}
-          RESUME: ${{ steps.plan.outputs.resume }}
-          RESUME_BASE: ${{ steps.plan.outputs.base }}
         run: python3 ../policy/.github/ai-review/review.py validate
       - uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc
         id: app
         with:
           client-id: ${{ secrets.AI_FIX_APP_CLIENT_ID }}
           private-key: ${{ secrets.AI_FIX_APP_PRIVATE_KEY }}
-          permission-contents: write
+          permission-contents: ${{ steps.plan.outputs.reject != 'true' && 'write' || '' }}
           permission-pull-requests: write
       - name: Publish the fix or resume auto-merge
         working-directory: source
@@ -302,13 +302,9 @@ jobs:
           EXISTING_PR: ${{ steps.plan.outputs.number }}
           EXISTING_SHA: ${{ steps.plan.outputs.sha }}
           RESUME: ${{ steps.plan.outputs.resume }}
+          REJECT: ${{ steps.plan.outputs.reject }}
           FIXABLE_COUNT: ${{ needs.review.outputs.fixable_count }}
         run: |
-          rules=$(gh api "repos/$GITHUB_REPOSITORY/rules/branches/main")
-          if ! jq -e 'any(.[]; .type == "required_status_checks" and any(.parameters.required_status_checks[]; .context == "all-green"))' <<< "$rules" >/dev/null; then
-            echo '::error::Main must require all-green before automated fixes can merge'
-            exit 1
-          fi
           bot="${APP_SLUG}[bot]"
           if [[ -n "$EXISTING_PR" ]]; then
             existing=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$EXISTING_PR")
@@ -317,12 +313,18 @@ jobs:
               echo '::error::The existing fix PR changed or belongs to another author'
               exit 1
             fi
-            if [[ "$RESUME" == true ]]; then
-              pr=$EXISTING_PR
-              pr_head=$EXISTING_SHA
-            else
-              gh pr close "$EXISTING_PR" --comment 'Superseding this fix because it no longer merges cleanly or passes the patch guard.'
+            if [[ "$REJECT" == true ]]; then
+              gh pr close "$EXISTING_PR" --comment 'Closed because this fix failed validation against current main.'
+              echo '::error::Closed an AI fix that failed validation against current main'
+              exit 1
             fi
+            pr=$EXISTING_PR
+            pr_head=$EXISTING_SHA
+          fi
+          rules=$(gh api "repos/$GITHUB_REPOSITORY/rules/branches/main")
+          if ! jq -e 'any(.[]; .type == "required_status_checks" and any(.parameters.required_status_checks[]; .context == "all-green"))' <<< "$rules" >/dev/null; then
+            echo '::error::Main must require all-green before automated fixes can merge'
+            exit 1
           fi
           if [[ "$RESUME" != true ]]; then
             bot_id=$(gh api "users/${APP_SLUG}%5Bbot%5D" --jq .id)
