@@ -67,6 +67,34 @@ test('both auditors exclude a held request canceled by page replacement', async 
   for (const audit of audits) await audit.finish();
 });
 
+test('quiet releases prior requests after replacement when their owner read was interrupted', async ({ page }, info) => {
+  await page.route(site + '/first', (route) => route.fulfill({ contentType: 'text/html', body: html('<p>First page</p>') }));
+  await page.route(site + '/second', (route) => route.fulfill({ contentType: 'text/html', body: html('<p>Second page</p>') }));
+  const prior = await holdRequest(page, '/prior.js');
+  const active = await holdRequest(page, '/active.js');
+  await page.goto(site + '/first');
+
+  const frame = page.mainFrame();
+  const evaluate = frame.evaluate;
+  frame.evaluate = () => {
+    frame.evaluate = evaluate;
+    return Promise.reject(new Error('Execution context was destroyed'));
+  };
+  const audit = new Audit(page, info);
+  await startScript(page, '/prior.js');
+  const priorRoute = await prior.held;
+  await page.goto(site + '/second');
+  expect(priorRoute.request().failure()).toBeNull();
+  await audit.quiet();
+
+  await startScript(page, '/active.js');
+  const activeRoute = await active.held;
+  const failed = page.waitForEvent('requestfailed', (request) => request === activeRoute.request());
+  await activeRoute.abort('failed');
+  await failed;
+  await expect(audit.finish()).rejects.toThrow(`request failed: GET ${site}/active.js net::ERR_FAILED`);
+});
+
 test('both auditors report the same request canceled after anchor and history transitions', async ({ page }, info) => {
   await page.route(site + '/stay', (route) => route.fulfill({
     contentType: 'text/html', body: html('<a href="#section">Jump</a><p id="section">Current page</p>'),

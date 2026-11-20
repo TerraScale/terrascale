@@ -12,6 +12,7 @@ const secrets = '[data-mfa-secret], img[src^="data:image/png"], input[type=passw
 
 type Expected = { url: RegExp; status: number; seen: number; logged: number };
 type PageIdentity = Promise<string | undefined>;
+type PendingRequest = { owner: PageIdentity; replacements: number };
 type Replacement = { request: Request; previous: PageIdentity; committed?: PageIdentity };
 type RequestFailure = {
   url: string; description: string; aborted: boolean; owner?: PageIdentity;
@@ -33,6 +34,7 @@ function readPageIdentity(frame: Frame): PageIdentity {
 
 class ActivePage {
   current: PageIdentity;
+  replacements = 0;
   replacement?: Replacement;
 
   constructor(page: Page) {
@@ -56,6 +58,7 @@ class ActivePage {
       if (replacement && replacement.request.url().split('#', 1)[0] === frame.url().split('#', 1)[0]) {
         replacement.committed = this.current;
         this.replacement = undefined;
+        this.replacements += 1;
       }
     });
   }
@@ -70,9 +73,10 @@ function isMainFrameNavigation(page: Page, request: Request): boolean {
   }
 }
 
-async function isPreviousPage(owner: PageIdentity | undefined, current: string | undefined): Promise<boolean> {
-  const identity = await owner;
-  return identity !== undefined && current !== undefined && identity !== current;
+async function isPreviousPage(pending: PendingRequest, current: string | undefined, replacements: number): Promise<boolean> {
+  if (current === undefined) return false;
+  const identity = await pending.owner;
+  return identity === undefined ? pending.replacements < replacements : identity !== current;
 }
 
 async function canceledByReplacement({ owner, observed, replacement }: RequestFailure): Promise<boolean> {
@@ -89,7 +93,7 @@ async function canceledByReplacement({ owner, observed, replacement }: RequestFa
 export class Audit {
   private problems: string[] = [];
   private readonly expected: Expected[] = [];
-  private readonly inflight = new Map<Request, PageIdentity>();
+  private readonly inflight = new Map<Request, PendingRequest>();
   private readonly streams = new Set<Request>();
   private readonly downloads = new Set<string>();
   private readonly failed: RequestFailure[] = [];
@@ -123,7 +127,7 @@ export class Audit {
       if (aborted && this.streams.has(request)) return;
       this.failed.push({
         url: request.url(), description: `${request.method()} ${request.url()} ${error}`, aborted,
-        owner: request.isNavigationRequest() ? undefined : this.inflight.get(request),
+        owner: request.isNavigationRequest() ? undefined : this.inflight.get(request)?.owner,
         observed: this.activePage.current, replacement: this.activePage.replacement,
       });
     });
@@ -145,9 +149,10 @@ export class Audit {
     await expect
       .poll(async () => {
         const observation = this.activePage.current;
+        const replacements = this.activePage.replacements;
         const current = await observation;
-        const pending = await Promise.all([...this.inflight].map(async ([request, owner]) => {
-          if (!request.isNavigationRequest() && await isPreviousPage(owner, current)) return undefined;
+        const pending = await Promise.all([...this.inflight].map(async ([request, started]) => {
+          if (!request.isNavigationRequest() && await isPreviousPage(started, current, replacements)) return undefined;
           if (this.inflight.has(request)) return `${request.method()} ${request.url()}`;
         }));
         if (observation !== this.activePage.current) return ['page changed while checking requests'];
@@ -161,7 +166,7 @@ export class Audit {
 
   private started(request: Request): void {
     if (this.isRegionPingProbe(request)) return;
-    this.inflight.set(request, this.activePage.current);
+    this.inflight.set(request, { owner: this.activePage.current, replacements: this.activePage.replacements });
   }
 
   private ended(request: Request): void {
