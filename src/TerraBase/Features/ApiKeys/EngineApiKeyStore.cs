@@ -52,7 +52,7 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
             var keyId = JsonSerializer.Deserialize(hash.Json.Span, TerraBaseJsonContext.Default.String);
             if (!EntityIds.IsValid(keyId))
             {
-                throw new InvalidDataException("the API key lookup names an invalid id");
+                return null;
             }
 
             return await transaction.GetAsync(Kind, keyId, cancellationToken).ConfigureAwait(false);
