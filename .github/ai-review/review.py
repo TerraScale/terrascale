@@ -15,7 +15,8 @@ HIGH_SEVERITIES = {"critical", "high"}
 MARKDOWN_ESCAPES = str.maketrans({char: f"&#{ord(char)};" for char in string.punctuation})
 TEST_PATH = re.compile(
     r"(^|/)(tests?|testing|e2e|__tests__|__mocks__|(?-i:[^/]*Tests[^/]*))(/|$)"
-    r"|\.(test[^/]*|e2e)\.(cs|fs|vb)proj$|\.(spec|test)\.[^/]+$|_tests?\.[^/]+$",
+    r"|\.(test[^/]*|e2e)\.(cs|fs|vb)proj$|\.(spec|test)\.[^/]+$|_tests?\.[^/]+$"
+    r"|(^|/)(test_[^/]*|conftest)\.py$",
     re.IGNORECASE,
 )
 EDITABLE_PATH = re.compile(r"[\w. /-]+")
@@ -106,14 +107,15 @@ def finding_paths():
     return {finding["path"] for finding in findings}
 
 
-def guard():
+def guard(*comparison):
     paths = finding_paths()
-    if git("ls-files", "-z", "--others", "--ignored", "--exclude-standard"):
-        sys.exit("Patch created ignored files")
-    git("add", "-A")
-    changes = git(
-        "diff", "--cached", "--numstat", "--no-renames", "--no-ext-diff", "--no-textconv", "-z", "HEAD"
-    ).split(b"\0")[:-1]
+    if not comparison:
+        if git("ls-files", "-z", "--others", "--ignored", "--exclude-standard"):
+            sys.exit("Patch created ignored files")
+        git("add", "-A")
+        comparison = ("--cached", "HEAD")
+    diff = ("diff", "--no-renames", "--no-ext-diff", "--no-textconv", "-z")
+    changes = git(*diff, "--numstat", *comparison).split(b"\0")[:-1]
     if not changes:
         sys.exit("Patch is empty")
     lines = 0
@@ -125,7 +127,7 @@ def guard():
         if inserted == b"-" or deleted == b"-":
             sys.exit("Patch changes a binary file")
         lines += int(inserted) + int(deleted)
-    for change in git("diff", "--cached", "--raw", "--no-renames", "-z", "HEAD").split(b"\0")[:-1:2]:
+    for change in git(*diff, "--raw", *comparison).split(b"\0")[:-1:2]:
         old_mode, new_mode = change[1:].split()[:2]
         if old_mode != new_mode and new_mode != b"000000" and old_mode != b"000000":
             sys.exit("Patch changes a file mode")
@@ -181,33 +183,29 @@ def plan():
     if not already_merged:
         output("number", number)
         output("sha", sha)
-    fetch_fix(number, sha)
-    parents = git("rev-list", "--parents", "-n1", sha).decode().split()[1:]
-    if len(parents) != 1 or not is_ancestor(head, parents[0]) or not is_ancestor(parents[0], main):
-        return
-    if not already_merged:
-        merge = subprocess.run(["git", "merge-tree", "--write-tree", main, sha], stdout=subprocess.DEVNULL, check=False)
-        if merge.returncode == 1:
-            return
-        merge.check_returncode()
-
-    base = parents[0]
-    original = git("rev-parse", "HEAD").decode().strip()
-    git("checkout", "--detach", base)
     try:
-        apply_patch(git("diff", "--binary", "--no-ext-diff", "--no-textconv", base, sha))
-        guard()
-    except SystemExit as error:
-        print(f"The existing fix no longer passes validation: {error}")
-    else:
+        fetch_fix(number, sha)
+        parents = git("rev-list", "--parents", "-n1", sha).decode().split()[1:]
+        if len(parents) != 1 or not is_ancestor(head, parents[0]) or not is_ancestor(parents[0], main):
+            sys.exit("Fix PR is outside the reviewed history")
         if already_merged:
-            output("number", number)
-            output("sha", sha)
-        output("base", base)
-        output("resume", "true")
-    finally:
-        git("reset", "--hard", base)
-        git("checkout", "--detach", original)
+            guard(parents[0], sha)
+        else:
+            guard(f"{main}...{sha}")
+            merge = subprocess.run(["git", "merge-tree", "--write-tree", main, sha], capture_output=True, check=False)
+            if merge.returncode == 1:
+                sys.exit("Fix no longer merges cleanly into main")
+            merge.check_returncode()
+            guard(main, merge.stdout.decode().strip())
+    except (SystemExit, subprocess.CalledProcessError) as error:
+        print(f"The existing fix no longer passes validation: {error}")
+        if not already_merged:
+            output("reject", "true")
+        return
+    if already_merged:
+        output("number", number)
+        output("sha", sha)
+    output("resume", "true")
 
 
 def is_ancestor(ancestor, head):
@@ -282,17 +280,10 @@ def generate():
 
 
 def validate():
-    if os.environ["RESUME"] == "true":
-        base = os.environ["RESUME_BASE"]
-        git("checkout", "--detach", base)
-        head = os.environ["EXISTING_SHA"]
-        fetch_fix(int(os.environ["EXISTING_PR"]), head)
-        patch = git("diff", "--binary", "--no-ext-diff", "--no-textconv", base, head)
-    else:
-        artifact = Path(os.environ["RUNNER_TEMP"]) / "fix.patch"
-        if not artifact.exists():
-            sys.exit("The existing fix changed after generation. Rerun all jobs to generate a replacement.")
-        patch = artifact.read_bytes()
+    artifact = Path(os.environ["RUNNER_TEMP"]) / "fix.patch"
+    if not artifact.exists():
+        sys.exit("The existing fix changed after generation. Rerun all jobs to generate a replacement.")
+    patch = artifact.read_bytes()
     if not patch:
         sys.exit("Patch is empty")
     apply_patch(patch)
