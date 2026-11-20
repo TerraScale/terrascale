@@ -54,25 +54,26 @@ namespace TerraScale.Dashboard.Features.Billing
 
         [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "change_plan", Title = "Change plan", OpenWorld = true, Idempotent = true, Destructive = false, UseStructuredContent = true), Description("Change a subscribed organization's plan. Upgrades apply now (charging a prorated amount); downgrades and switching a Personal workspace to free are scheduled for renewal and can be undone with undo_plan_change. Owner only. Always returns step_up_required: a plan change is confirmed with fresh credentials on the dashboard's billing page, never through unattended MCP.")]
-        public Task<PlanChanged> ChangePlan(
+        public async Task<PlanChanged> ChangePlan(
             [Description("Plan key from list_plans, such as starter or pro. change_plan and preview_plan_change also accept free for Personal workspaces.")] string plan,
             [Description(IntervalDescription)] string interval = "",
             string? organizationId = null, string? projectId = null)
         {
-            return Invoke<PlanChanged>(async () =>
-        {
             var context = Scope(organizationId, projectId);
-            RequireBillingOwner(context);
+            if (context.Organization is null || context.Role != "owner")
+            {
+                throw new AccountAccessException("Only organization owners manage billing.");
+            }
+
             var key = plan.Trim().ToLowerInvariant();
             var catalog = PlanCatalog.For(key);
-            if (catalog.Key == "free" && context.Organization?.Kind != "personal")
+            if (catalog.Key == "free" && context.Organization.Kind != "personal")
             {
                 throw new AccountAccessException(catalog.Name + " is available only for Personal workspaces.", 400);
             }
 
             _ = Interval(key, interval);
             throw ConfirmedInDashboard(context);
-        });
         }
 
         [McpAccess(McpAccess.Destructive)]
@@ -150,7 +151,12 @@ namespace TerraScale.Dashboard.Features.Billing
         [McpServerTool(Name = "get_billing_portal_url", Title = "Open billing portal", OpenWorld = true, Destructive = false, UseStructuredContent = true), Description("Create a billing portal session where the owner updates payment methods and downloads invoices. Returns the URL to open in a browser. Owner only.")]
         public async Task<BillingMcpPortal> Portal(string? organizationId = null, string? projectId = null)
         {
-            return new(await billing.PortalAsync(Scope(organizationId, projectId), Cancellation));
+            return await billing.PortalAsync(Scope(organizationId, projectId), Cancellation) switch
+            {
+                PortalSessionUrl session => new(session.Url),
+                Validation error => throw new AccountAccessException(error.Message, 422),
+                _ => throw new UnreachableException()
+            };
         }
 
         private AccountContext Scope(string? organizationId, string? projectId)

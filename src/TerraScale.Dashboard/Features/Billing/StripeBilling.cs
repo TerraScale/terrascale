@@ -222,13 +222,13 @@ namespace TerraScale.Dashboard.Features.Billing
             return await RefreshAsync(binding.OrganizationId, cancellationToken);
         }
 
-        public async Task<string> PortalAsync(AccountContext context, CancellationToken cancellationToken)
+        public async Task<PortalSession> PortalAsync(AccountContext context, CancellationToken cancellationToken)
         {
             context = await OwnerAsync(context, cancellationToken);
             var binding = await ReadAsync(context.Organization!.Id, cancellationToken);
             if (binding is null || binding.CustomerId.Length == 0)
             {
-                throw new AccountAccessException("Set up billing before opening the customer portal.", 422);
+                return new Validation("Set up billing before opening the customer portal.");
             }
 
             var client = await ClientAsync(cancellationToken);
@@ -237,7 +237,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 Customer = binding.CustomerId,
                 ReturnUrl = Origin + "/billing"
             }, cancellationToken: cancellationToken);
-            return portal.Url;
+            return new PortalSessionUrl(portal.Url);
         }
 
         public async Task<WebhookReceipt> HandleWebhookAsync(string body, string signature, CancellationToken cancellationToken)
