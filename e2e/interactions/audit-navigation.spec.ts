@@ -4,7 +4,7 @@ import { production } from '../support/stack';
 
 test.use({ storageState: { cookies: [], origins: [] } });
 
-test('a previous document cancel is not the next page failure, and the current page still reports its own', async ({ page }, info) => {
+test('a previous page cancel is not the next page failure, and the current page still reports its own', async ({ page }, info) => {
   test.skip(production, 'the audit fixture is exercised on the local stack');
   const audit = new Audit(page, info);
   let releaseSlow = () => {};
