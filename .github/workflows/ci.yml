@@ -853,8 +853,13 @@ jobs:
           fetch-depth: 0
           filter: blob:none
       - id: probe
-        name: Probe live ts-auth readiness
+        name: Validate live ts-auth readiness response
         run: node scripts/ci/site-deploy-gate.mjs auth --probe
+      - name: Report live ts-auth readiness HTTP 503
+        if: steps.probe.outputs.unavailable == 'true'
+        run: |
+          echo '::error::Live ts-auth readiness returned HTTP 503'
+          exit 1
       - id: live
         name: Reconcile qualified main with live ts-auth
         env:
