@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 export const slotMs = 7_000;
 export const accountStride = 10;
 export const productionAccountCreates = 50;
@@ -6,17 +10,24 @@ export const cooldownMs = 60_000;
 export const mailPollMs = 120_000;
 export const teardownMs = 5 * 60_000;
 export const requestMs = 15_000;
+export const providerRetryMs = 120_000;
 export const quarantineMs = 65_000;
 export const readyzRequestMs = 15_000;
-export const readyzCalls = 4;
+export const readyzBeforeCalls = 2;
+export const readyzAfterCalls = 2;
+export const shellStarts = 2;
 export const checkoutMinutes = 2;
+export const checkoutCount = 2;
 export const toolSetupMinutes = 2;
 export const toolSetupCount = 3;
 export const installMinutes = 15;
 export const scrubMinutes = 5;
 export const uploadMinutes = 2;
 export const uploadCount = 2;
-export const preflightMs = cooldownMs + slotMs + requestMs;
+export const runnerCount = 2;
+export const nonAccountWaitMs = 2 * slotMs;
+export const preflightMs = nonAccountWaitMs + providerRetryMs;
+export const reviewerPreflightMs = cooldownMs + slotMs + requestMs;
 
 const workflowKeys = [
   'PRODUCTION_CHECKOUT_MINUTES',
@@ -28,56 +39,107 @@ const workflowKeys = [
   'PRODUCTION_JOB_MINUTES',
 ];
 
-export function productionInboxRunMs(accounts = productionAccountCreates) {
+const postCount = checkoutCount + toolSetupCount;
+const dnsHosts = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../env/hostnames'), 'utf8')
+  .split('\n')
+  .filter((line) => line.endsWith('.terrascale.tech')).length;
+
+function nextNonAccount(after, alignment, every) {
+  let at = Math.ceil(after / slotMs) * slotMs;
+  if (at >= alignment && (at - alignment) % every === 0) at += slotMs;
+  return at;
+}
+
+export function productionSchedule(preflight) {
   const alignment = (accountStride - 1) * slotMs;
-  const span = (accounts - 1) * accountStride * slotMs;
-  const tail = 3 * slotMs + mailPollMs;
-  return alignment + span + observedCooldowns * cooldownMs + tail;
+  const every = accountStride * slotMs;
+  const readyAt = preflight + readyzBeforeCalls * readyzRequestMs;
+  let index = 0;
+  while (alignment + index * every < readyAt) index += 1;
+  const skips = observedCooldowns * Math.ceil(cooldownMs / every);
+  const creates = [];
+  for (let n = 0; n < productionAccountCreates; n += 1) {
+    creates.push(alignment + (index + n + (n === 0 ? 0 : skips)) * every);
+  }
+  const fiftiethStart = creates[creates.length - 1];
+  const tokenAt = nextNonAccount(fiftiethStart + requestMs, alignment, every);
+  const pollDone = tokenAt + requestMs + mailPollMs;
+  return { alignment, readyAt, firstCreate: creates[0], fiftiethStart, tokenAt, pollDone, skips, creates };
 }
 
-export function productionSuiteMs(accounts = productionAccountCreates) {
-  return productionInboxRunMs(accounts) + teardownMs;
+function fundedSchedule() {
+  const reviewer = productionSchedule(reviewerPreflightMs);
+  if (reviewer.fiftiethStart !== 3_703_000) {
+    throw new Error(`reviewer schedule starts create 50 at ${reviewer.fiftiethStart}, expected 3703000`);
+  }
+  const actual = productionSchedule(preflightMs);
+  if (actual.pollDone < reviewer.pollDone) {
+    throw new Error(`funded poll ends at ${actual.pollDone}, before the reviewer poll at ${reviewer.pollDone}`);
+  }
+  return { reviewer, actual };
 }
 
-export function productionStepMs(accounts = productionAccountCreates) {
-  return quarantineMs + preflightMs + readyzCalls * readyzRequestMs + productionSuiteMs(accounts);
+export function productionInboxRunMs() {
+  return fundedSchedule().actual.pollDone;
 }
 
-export function productionStepMinutes(accounts = productionAccountCreates) {
-  return Math.ceil(productionStepMs(accounts) / 60_000);
+export function productionSuiteMs() {
+  const { actual } = fundedSchedule();
+  return actual.pollDone - actual.readyAt + teardownMs;
+}
+
+export function productionStepMs() {
+  const runMs = productionInboxRunMs();
+  return shellStarts * requestMs + quarantineMs + dnsHosts * requestMs + runMs + teardownMs + readyzAfterCalls * readyzRequestMs;
+}
+
+export function productionStepMinutes() {
+  return Math.ceil(productionStepMs() / 60_000);
 }
 
 export function productionJobMinutes(stepMinutes = productionStepMinutes()) {
-  return checkoutMinutes + toolSetupMinutes * toolSetupCount + installMinutes + stepMinutes + scrubMinutes + uploadMinutes * uploadCount;
-}
-
-export function accountSlotsWithin(runMs) {
-  let count = 0;
-  for (let at = (accountStride - 1) * slotMs; at < runMs; at += accountStride * slotMs) count += 1;
-  return count;
+  return checkoutMinutes * (checkoutCount + runnerCount + postCount)
+    + toolSetupMinutes * toolSetupCount
+    + installMinutes
+    + stepMinutes
+    + scrubMinutes
+    + uploadMinutes * uploadCount;
 }
 
 function integer(env, key) {
   const raw = env[key];
-  if (typeof raw !== 'string' || !/^[0-9]+$/.test(raw)) {
-    throw new Error(`running workflow budget ${key}=${raw} is not an integer`);
+  if (typeof raw !== 'string' || !/^[1-9][0-9]*$/.test(raw)) {
+    throw new Error(`running workflow budget ${key}=${raw} is not a positive integer`);
   }
-  return Number(raw);
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value)) {
+    throw new Error(`running workflow budget ${key}=${raw} is outside the safe integer range`);
+  }
+  return value;
 }
 
 export function assertRunningBudget(env = process.env) {
-  const runMs = productionInboxRunMs();
+  const { reviewer, actual } = fundedSchedule();
+  const runMs = actual.pollDone;
   const suiteMs = productionSuiteMs();
   const stepMinutes = productionStepMinutes();
   const jobMinutes = productionJobMinutes(stepMinutes);
-  const slots = accountSlotsWithin(runMs);
-  const createsAfterPreflight = slots - accountSlotsWithin(preflightMs);
-  if (createsAfterPreflight < productionAccountCreates) {
-    throw new Error(`inbox window holds ${createsAfterPreflight} account slots after preflight for ${productionAccountCreates} creates`);
-  }
+  const budget = {
+    runMs,
+    suiteMs,
+    stepMinutes,
+    jobMinutes,
+    preflightMs,
+    quarantineMs,
+    fiftiethStart: actual.fiftiethStart,
+    reviewerFiftieth: reviewer.fiftiethStart,
+    pollDone: actual.pollDone,
+    reviewerPollDone: reviewer.pollDone,
+    slots: actual.creates.length,
+  };
+  const ci = env.GITHUB_ACTIONS === 'true';
   const present = workflowKeys.filter((key) => key in env);
-  const budget = { runMs, suiteMs, stepMinutes, jobMinutes, preflightMs, quarantineMs, slots };
-  if (!present.length) return budget;
+  if (!ci && !present.length) return budget;
   const missing = workflowKeys.filter((key) => !(key in env));
   if (missing.length) throw new Error(`running workflow budget missing ${missing.join(' ')}`);
   const checkout = integer(env, 'PRODUCTION_CHECKOUT_MINUTES');
@@ -88,8 +150,8 @@ export function assertRunningBudget(env = process.env) {
   const step = integer(env, 'PRODUCTION_STEP_MINUTES');
   const job = integer(env, 'PRODUCTION_JOB_MINUTES');
   const needJob = productionJobMinutes(step);
-  if (checkout !== checkoutMinutes || tool !== toolSetupMinutes || install !== installMinutes || scrub !== scrubMinutes || upload !== uploadMinutes || step < stepMinutes || job < needJob) {
-    throw new Error(`running workflow budget checkout=${env.PRODUCTION_CHECKOUT_MINUTES} tool=${env.PRODUCTION_TOOL_MINUTES} install=${env.PRODUCTION_INSTALL_MINUTES} scrub=${env.PRODUCTION_SCRUB_MINUTES} upload=${env.PRODUCTION_UPLOAD_MINUTES} step=${env.PRODUCTION_STEP_MINUTES} job=${env.PRODUCTION_JOB_MINUTES}; need checkout ${checkoutMinutes}, tool ${toolSetupMinutes} for ${toolSetupCount} actions, install ${installMinutes}, scrub ${scrubMinutes}, upload ${uploadMinutes} for ${uploadCount} artifacts, step at least ${stepMinutes}, job at least ${needJob}`);
+  if (!Number.isSafeInteger(needJob) || checkout !== checkoutMinutes || tool !== toolSetupMinutes || install !== installMinutes || scrub !== scrubMinutes || upload !== uploadMinutes || step < stepMinutes || job < needJob) {
+    throw new Error(`running workflow budget checkout=${env.PRODUCTION_CHECKOUT_MINUTES} tool=${env.PRODUCTION_TOOL_MINUTES} install=${env.PRODUCTION_INSTALL_MINUTES} scrub=${env.PRODUCTION_SCRUB_MINUTES} upload=${env.PRODUCTION_UPLOAD_MINUTES} step=${env.PRODUCTION_STEP_MINUTES} job=${env.PRODUCTION_JOB_MINUTES}; need checkout ${checkoutMinutes} for ${checkoutCount} checkouts, tool ${toolSetupMinutes} for ${toolSetupCount} actions, install ${installMinutes}, scrub ${scrubMinutes}, upload ${uploadMinutes} for ${uploadCount} artifacts, step at least ${stepMinutes}, job at least ${needJob} including ${runnerCount} runner phases and ${postCount} post actions`);
   }
   return budget;
 }

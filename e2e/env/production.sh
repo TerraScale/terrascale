@@ -16,9 +16,14 @@ isolated() {
   local preset
   preset=$(env | sed -n -E 's/^(E2E_[A-Z_]*|TERRASCALE_[A-Z_]*|PW_[A-Z_]*|PLAYWRIGHT_[A-Z_]*|NODE_EXTRA_CA_CERTS|NODE_OPTIONS|NODE_TLS_REJECT_UNAUTHORIZED|CURL_CA_BUNDLE|REQUESTS_CA_BUNDLE|[Hh][Tt][Tt][Pp][Ss]?_[Pp][Rr][Oo][Xx][Yy]|[Aa][Ll][Ll]_[Pp][Rr][Oo][Xx][Yy])=.*/\1/p' | sort | paste -sd ' ' -)
   [ -z "$preset" ] || refuse "$preset set; the production target chooses its own state, hosts and trust"
-  local host address
+  local host address addresses status
   while read -r host; do
-    for address in $(getent ahosts "$host" | awk '{ print $1 }' | sort -u); do
+    addresses=$(timeout 15 getent ahosts "$host" | awk '{ print $1 }' | sort -u) || {
+      status=$?
+      [ "$status" -eq 124 ] && return "$status"
+      addresses=
+    }
+    for address in $addresses; do
       case $address in
         127.* | ::1 | ::ffff:127.* | 0.0.0.0) refuse "$host resolves to $address, the journey's network namespace or a pinned name, not production" ;;
       esac
@@ -63,7 +68,7 @@ served() {
 
 journey() {
   local status=0
-  (cd "$e2e" && node --input-type=module -e "import { assertRunningBudget, productionAccountCreates } from './support/inbox-budget.mjs'; const budget = assertRunningBudget(); console.log('production inbox budget accounts=' + productionAccountCreates + ' slots=' + budget.slots + ' runMs=' + budget.runMs + ' suiteMs=' + budget.suiteMs + ' preflightMs=' + budget.preflightMs + ' quarantineMs=' + budget.quarantineMs + ' stepMinutes=' + budget.stepMinutes + ' jobMinutes=' + budget.jobMinutes);")
+  (cd "$e2e" && timeout 15 node --input-type=module -e "import { assertRunningBudget, productionAccountCreates } from './support/inbox-budget.mjs'; const budget = assertRunningBudget(); console.log('production inbox budget accounts=' + productionAccountCreates + ' reviewerFiftieth=' + budget.reviewerFiftieth + ' fiftieth=' + budget.fiftiethStart + ' pollDone=' + budget.pollDone + ' runMs=' + budget.runMs + ' suiteMs=' + budget.suiteMs + ' stepMinutes=' + budget.stepMinutes + ' jobMinutes=' + budget.jobMinutes);")
   isolated
   inbox
   served before

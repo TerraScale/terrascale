@@ -314,25 +314,33 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
   after their first slot. Individual HTTP requests are bounded by 15 s and the remaining budget, and a response
   body that stalls or cannot be read fails with the same "inbox provider" error. The first provider call of a run
   records the run's start in `inbox-run`. The run keeps slots for 50 account creates: 3 setup, 18 hosted, 1 invitation,
-  19 interactions and 9 finish SDK creates. After the preflight allowance, 52 of those slots remain. The window is
-  3,754,000 ms: alignment to the next account slot, the 49 later creates at 70 s, both measured 60 s cooldowns, the
-  last token, list and body, and the 120 s mail poll (`support/inbox-budget.mjs`). A request that cannot get a slot
-  before that deadline fails with "has no slot before the run's time limit".
+  19 interactions and 9 finish SDK creates. Preflight and the two readiness calls before the suite share that clock.
+  The worst alignment puts the first account slot at 63 s. A replay that uses one 7 s slot, one 15 s request and one
+  60 s cooldown as its preflight passes that slot and starts the first create at 133 s. Each 60 s cooldown rounds up
+  to one 70 s account slot, so the 50th create starts at 3,703 s, its token at 3,724 s, and the 120 s poll ends at
+  3,859 s (`support/inbox-budget.mjs`). The funded window uses the provider's own bound instead: a non-account request
+  can wait 14 s, and retries stop 120 s after the first slot. That preflight plus the same readiness passes the 133 s
+  slot as well. The 50th create then starts at 3,773 s and the poll ends at 3,929,000 ms. A request that cannot get a
+  slot before that deadline fails with "has no slot before the run's time limit".
   Queue waits extend the current test's bound. Hooks with several inbox calls use `withInboxBudget` to accumulate
   every wait: Playwright's `TestInfo.timeout` exposes the default test slot, not the running `beforeAll` hook slot.
   Each MFA setup needs two creations (at least 70 s apart); the project-MFA test later creates a third inbox.
   Inboxes are never deleted: a deleted address can be registered again by anyone while the product account still
   uses it. Address, password and token are registered secrets; provider errors include method, path, status, rate
   headers and the first 500 characters of the validation body.
-  Playwright's production limit is that window plus 5 minutes of teardown (4,054,000 ms). The journey step also
-  holds a 65 s quarantine lookup (`timeout --kill-after=5 60`), an 82 s provider preflight (one 60 s cooldown, one
-  7 s slot and one 15 s request) and four 15 s readiness calls. Those sum to 4,261 s, so the step limit is 72 minutes.
-  The job limit is 104 minutes: 2 for checkout, 2 for each of the three tool actions, 15 for the install step, the
-  72-minute journey step, 5 for scrub and 2 for each of the two uploads. `production.sh` checks those integers before
-  DNS, mail.tm or production. A missing value or any non-integer refuses the run. `bash e2e/env/production.sh` with
-  none of the `PRODUCTION_*_MINUTES` variables set still runs: that is the standalone entry, and the workflow is what
-  supplies the seven values. The public service advertises 8 QPS per IP, but observed responses advertise 10/minute
-  or 1/minute. Account creates stay at 70 s.
+  Playwright starts after that preflight and readiness, so its production limit is the remaining window plus 5 minutes
+  of teardown (4,065,000 ms). The journey step also holds two 15 s shell starts, a 65 s quarantine lookup
+  (`timeout --kill-after=5 60`), a 15 s DNS lookup for each of the 13 production names, the 3,929,000 ms mail window,
+  the teardown, and two 15 s readiness calls after the suite. Those sum to 4,549 s, so the step limit is 76 minutes.
+  The job limit is 124 minutes: 2 for the released checkout and 2 for the workflow checkout, 2 for each of the three
+  tool actions, 15 for the install step, the 76-minute journey step, 5 for scrub, 2 for each of the two uploads, 2 for
+  runner setup, 2 for runner completion, and 2 for each of the five post actions. The workflow reads
+  `inbox-budget.mjs` from its own SHA (`github.sha`) and leaves the released checkout in place for the suite. A
+  released SHA without that module still runs; the workflow check has already used the workflow copy. On GitHub Actions
+  the seven `PRODUCTION_*_MINUTES` values are required before quarantine, DNS, mail.tm or production. Each must be a
+  positive safe integer. `bash e2e/env/production.sh` with `GITHUB_ACTIONS` unset and none of those variables set still
+  runs. The public service advertises 8 QPS per IP, but observed responses advertise 10/minute or 1/minute. Account
+  creates stay at 70 s.
 - Not run on production (`onLocalStack`): the Cloudflare fallback count of `setup`, because production shows no
   sender; `desktop-close`'s check that the deletion never shows the pending page, because production's managed
   snapshots, peer regions and erasure budget can keep a closure pending for a while (there the step still has to reach

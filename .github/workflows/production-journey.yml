@@ -78,7 +78,7 @@ jobs:
     needs: release
     if: needs.release.outputs.journey == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 104
+    timeout-minutes: 124
     concurrency:
       group: production-journey
       cancel-in-progress: false
@@ -95,13 +95,23 @@ jobs:
       PRODUCTION_INSTALL_MINUTES: 15
       PRODUCTION_SCRUB_MINUTES: 5
       PRODUCTION_UPLOAD_MINUTES: 2
-      PRODUCTION_STEP_MINUTES: 72
-      PRODUCTION_JOB_MINUTES: 104
+      PRODUCTION_STEP_MINUTES: 76
+      PRODUCTION_JOB_MINUTES: 124
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         timeout-minutes: 2
         with:
           ref: ${{ needs.release.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        timeout-minutes: 2
+        with:
+          ref: ${{ github.sha }}
+          path: workflow-budget
+          sparse-checkout: |
+            e2e/support/inbox-budget.mjs
+            e2e/env/hostnames
+          sparse-checkout-cone-mode: false
           persist-credentials: false
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
         timeout-minutes: 2
@@ -134,12 +144,13 @@ jobs:
           npx playwright install --only-shell chromium
           wait "$rust" || { cat "$RUNNER_TEMP/rust-runner.log"; exit 1; }
       - name: Journey against production
-        timeout-minutes: 72
+        timeout-minutes: 76
         env:
           GITHUB_TOKEN: ${{ github.token }}
           DOTNET_CLI_TELEMETRY_OPTOUT: 1
+          PRODUCTION_BUDGET_MODULE: ${{ github.workspace }}/workflow-budget/e2e/support/inbox-budget.mjs
         run: |
-          node --input-type=module -e "import { assertRunningBudget, productionAccountCreates } from './e2e/support/inbox-budget.mjs'; const budget = assertRunningBudget(); console.log('production inbox budget accounts=' + productionAccountCreates + ' slots=' + budget.slots + ' runMs=' + budget.runMs + ' suiteMs=' + budget.suiteMs + ' preflightMs=' + budget.preflightMs + ' quarantineMs=' + budget.quarantineMs + ' stepMinutes=' + budget.stepMinutes + ' jobMinutes=' + budget.jobMinutes);"
+          timeout 15 node --input-type=module -e 'const { assertRunningBudget, productionAccountCreates } = await import(process.env.PRODUCTION_BUDGET_MODULE); const budget = assertRunningBudget(); console.log("production inbox budget accounts=" + productionAccountCreates + " reviewerFiftieth=" + budget.reviewerFiftieth + " fiftieth=" + budget.fiftiethStart + " pollDone=" + budget.pollDone + " runMs=" + budget.runMs + " suiteMs=" + budget.suiteMs + " stepMinutes=" + budget.stepMinutes + " jobMinutes=" + budget.jobMinutes);'
           timeout --kill-after=5 60 node e2e/support/quarantine.mjs read
           unset GITHUB_TOKEN
           bash e2e/env/production.sh
