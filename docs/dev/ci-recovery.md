@@ -217,11 +217,12 @@ read and includes the bot and labeled issue histories.
 
 TerraBase build-only and release-only use the latest main-push CI for the
 exact source revision. The run must be complete, with successful code checks
-and every required journey lane green. The isolated ts-auth readiness probe
-and deployment receipt upload report their own failures in CI. A sole failure
-in either step leaves CI red and permits TerraBase maintenance qualification.
-Failures inside the reconciliation step block qualification. SDK publication
-requires overall CI success.
+and every required journey lane green. HTTP 503 from the live ts-auth readiness
+endpoint and failure to upload the deployment receipt leave CI red and permit
+TerraBase maintenance qualification when either is the sole failed step.
+Other probe failures, including HTTP 401 or 403 and an invalid live revision,
+block qualification, as do reconcile failures. SDK publication requires
+overall CI success.
 TerraBase release-only verifies the exact image digest and its source
 attestation before the signed release request and rollout check.
 Native-artifact maintenance never qualifies a deploy.

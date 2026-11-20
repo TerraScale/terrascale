@@ -42,8 +42,9 @@ async function cloudflare(path) {
   return body.result;
 }
 
-async function serviceLive(kind = thing) {
+async function serviceLive(kind = thing, { probe = false } = {}) {
   const response = await fetch(services[kind], { signal: AbortSignal.timeout(30000) });
+  if (probe && response.status === 503) return null;
   assert.ok(response.ok, `${kind}: readiness HTTP ${response.status}`);
   const live = response.headers.get('x-terrascale-revision');
   sha(live);
@@ -220,7 +221,9 @@ async function notify(alert, name, revision) {
 }
 
 if (thing === 'auth' && args[0] === '--probe') {
-  appendFileSync(process.env.GITHUB_OUTPUT, `revision=${await serviceLive()}\n`);
+  const revision = await serviceLive(thing, { probe: true });
+  const result = revision === null ? 'unavailable=true' : `revision=${revision}`;
+  appendFileSync(process.env.GITHUB_OUTPUT, `${result}\n`);
 } else if (args[0] === '--prove') {
   sha(process.env.REVISION);
   assert.equal(await serviceLive(), process.env.REVISION, `${thing}: deployed revision mismatch`);
