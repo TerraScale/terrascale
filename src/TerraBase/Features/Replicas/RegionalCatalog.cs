@@ -16,7 +16,6 @@ internal static class RegionalCatalog
 {
     private const int MaxRows = 10_000;
     private const long MaxBytes = 4 * 1024 * 1024;
-    internal static readonly Unavailable Unavailable = new("regional catalog exceeds the handoff bound");
 
     private static readonly string[] Tables =
     [
@@ -51,7 +50,7 @@ internal static class RegionalCatalog
             var result = await transaction.ExecuteStatementAsync(Sql($"SELECT * FROM {name} LIMIT {MaxRows + 1}"), cancellationToken).ConfigureAwait(false);
             if (result.Truncated || result.Rows.Count > MaxRows)
             {
-                return Unavailable;
+                return new Unavailable("regional catalog exceeds the handoff bound");
             }
             var rows = new List<RegionalCell[]>();
             foreach (var row in result.Rows)
@@ -59,7 +58,7 @@ internal static class RegionalCatalog
                 bytes += row.Sum(value => value is string text ? 6L * text.Length + 64 : 64);
                 if (bytes > MaxBytes || ++count > MaxRows)
                 {
-                    return Unavailable;
+                    return new Unavailable("regional catalog exceeds the handoff bound");
                 }
                 rows.Add([.. row.Select(value => value switch
                 {
@@ -89,7 +88,7 @@ internal static class RegionalCatalog
                         bytes += record.Json.Length * 2L + 6L * (record.Id.Length + kind.Name.Length) + 128;
                         if (bytes > MaxBytes || ++count > MaxRows)
                         {
-                            return Unavailable;
+                            return new Unavailable("regional catalog exceeds the handoff bound");
                         }
                         records.Add(new RegionalRecord(kind.Name, record.Id, record.Json.ToArray()));
                     }
@@ -102,7 +101,7 @@ internal static class RegionalCatalog
         while (afterKind is not null);
         if (bytes > MaxBytes)
         {
-            return Unavailable;
+            return new Unavailable("regional catalog exceeds the handoff bound");
         }
         return new RegionalCatalogSnapshot(tables, records);
     }

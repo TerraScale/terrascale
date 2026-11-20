@@ -927,7 +927,10 @@ internal sealed partial class RegionalHandoff(
                         exported = snapshot;
                         break;
                     case Unavailable:
-                        return DrainRefused(progress, "regional catalog exceeds the handoff bound", "catalog_unavailable");
+                        var failed = new IOException("regional catalog exceeds the handoff bound");
+                        LogHandoffFailed(logger, failed, progress.Label, progress.Peer);
+                        return new Unavailable($"the drain failed with {failed.GetType().Name} during {progress.Label} with peer {progress.Peer}", "drain_failed",
+                            Details(progress.Label, progress.Peer, new KeyValuePair<string, string>("error", failed.GetType().Name)));
                 }
             }
             var payload = JsonSerializer.SerializeToUtf8Bytes(new RegionalPrepare(options.MachineId, positions, owner.Epoch, exported, transfer.Id), ReplicasJsonContext.Default.RegionalPrepare);
