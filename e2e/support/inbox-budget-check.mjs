@@ -25,31 +25,47 @@ if (existsSync(modulePath)) {
 const releasedSha = process.env.RELEASED_SHA;
 const workflowSha = process.env.WORKFLOW_SHA;
 if (!releasedSha || !workflowSha) throw new Error('released harness check needs RELEASED_SHA and WORKFLOW_SHA');
-if (releasedSha === workflowSha && (inner.runMs < budget.runMs || inner.suiteMs < budget.suiteMs)) {
+const identity = `release=${releasedSha} harness=${releasedSha} runMs=${budget.runMs} suiteMs=${budget.suiteMs} pollDone=${budget.pollDone}`;
+if (inner.runMs >= budget.runMs && inner.suiteMs >= budget.suiteMs) {
+  console.log(`production journey ${identity} source=released`);
+  process.exit(0);
+}
+if (releasedSha === workflowSha) {
   throw new Error(`released harness cannot honor the schedule: provider ${inner.runMs}ms suite ${inner.suiteMs}ms, need run ${budget.runMs}ms suite ${budget.suiteMs}ms. The workflow SHA is that same source, so the new budget does not apply.`);
 }
-const files = releasedSha === workflowSha ? [] : await changedFiles(releasedSha, workflowSha);
+const files = await changedFiles(releasedSha, workflowSha);
 const decision = journeySource(inner, { runMs: productionInboxRunMs(), suiteMs: productionSuiteMs() }, files);
-if (decision.source === 'blocked') {
+if (decision.source !== 'workflow') {
   const shown = decision.inputs.slice(0, 20).join(', ');
-  throw new Error(`released harness cannot honor the schedule: provider ${inner.runMs}ms suite ${inner.suiteMs}ms, need run ${productionInboxRunMs()}ms suite ${productionSuiteMs()}ms. App inputs differ: ${shown}. The new budget does not apply to this harness.`);
+  throw new Error(`released harness cannot honor the schedule: provider ${inner.runMs}ms suite ${inner.suiteMs}ms, need run ${budget.runMs}ms suite ${budget.suiteMs}ms. App inputs differ: ${shown}. The new budget does not apply to this harness.`);
 }
-console.log(`production journey source=${decision.source} providerMs=${inner.runMs} suiteMs=${inner.suiteMs}`);
+console.log(`production journey release=${releasedSha} harness=${workflowSha} runMs=${budget.runMs} suiteMs=${budget.suiteMs} pollDone=${budget.pollDone} source=workflow`);
+
+function diffNames(base, head) {
+  const text = execFileSync('git', ['diff', '--no-renames', '--name-status', base, head], { encoding: 'utf8' });
+  return text.trim().split('\n').filter(Boolean).flatMap((row) => row.split('\t').slice(1));
+}
 
 async function changedFiles(base, head) {
   try {
-    return execFileSync('git', ['diff', '--name-only', base, head], { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
+    return diffNames(base, head);
   } catch {
     const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+    if (token) {
+      try {
+        execFileSync('git', ['-c', `http.extraheader=AUTHORIZATION: bearer ${token}`, 'fetch', '--depth=1', 'origin', head], { stdio: 'pipe' });
+        return diffNames(base, head);
+      } catch { /* the compare API is the remaining evidence */ }
+    }
     const repo = process.env.GITHUB_REPOSITORY;
-    if (!token || !repo) throw new Error(`cannot compare ${base} and ${head}; the new budget does not apply to an unidentified harness`);
-    const response = await fetch(`https://api.github.com/repos/${repo}/compare/${base}...${head}`, {
+    if (!token || !repo) throw new Error(`fallback comparison of ${base} and ${head} is unavailable; the new budget does not apply to this harness`);
+    const response = await fetch(`https://api.github.com/repos/${repo}/compare/${base}...${head}?per_page=100`, {
       headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json' },
     });
-    if (!response.ok) throw new Error(`cannot compare app inputs: GitHub ${response.status}`);
+    if (!response.ok) throw new Error(`fallback comparison is unavailable: GitHub ${response.status}`);
     const body = await response.json();
-    const names = (body.files ?? []).map((file) => file.filename);
-    if (names.length >= 300) throw new Error('app-input comparison is incomplete; the new budget does not apply to this harness');
-    return names;
+    const listed = body.files ?? [];
+    if (listed.length >= 300 || body.truncated === true) throw new Error('fallback comparison is incomplete; the new budget does not apply to this harness');
+    return listed.flatMap((file) => [file.filename, file.previous_filename].filter(Boolean));
   }
 }

@@ -21,6 +21,7 @@ export const scrubMinutes = 5;
 export const uploadMinutes = 2;
 export const uploadCount = 2;
 export const runnerCount = 2;
+export const selectMinutes = 2;
 export const nonAccountWaitMs = 2 * slotMs;
 export const preflightMs = nonAccountWaitMs + providerRetryMs;
 
@@ -73,36 +74,57 @@ export function journeySource(inner, required, files) {
   return { source: 'blocked', inputs };
 }
 
-export function productionSchedule(phase, skips = observedCooldowns) {
+function nextClaim(at) {
+  let claim = Math.ceil(at / slotMs) * slotMs;
+  if (claim % accountPeriod === 0) claim += slotMs;
+  return claim;
+}
+
+function occupy(claim) {
+  let next = claim + slotMs;
+  if (next % accountPeriod === 0) next += slotMs;
+  return next;
+}
+
+export function productionSchedule(phase, skips = observedCooldowns, retryMs = 0) {
   const readyAt = preflightMs + readyzBeforeCalls * readyzRequestMs;
   const slotPhase = ((accountPeriod - phase) % accountPeriod + accountPeriod) % accountPeriod;
   let first = phase;
   if (first < readyAt) first += Math.ceil((readyAt - first) / accountPeriod) * accountPeriod;
   const fiftiethStart = first + (productionAccountCreates - 1 + skips) * accountPeriod;
-  let slotAt = Math.ceil((slotPhase + fiftiethStart + requestMs) / slotMs) * slotMs;
-  if (slotAt % accountPeriod === 0) slotAt += slotMs;
-  const tokenAt = slotAt - slotPhase;
+  const open = nextClaim(slotPhase + fiftiethStart + requestMs);
+  const held = occupy(open);
+  let claim = held;
+  if (retryMs > 0) claim = occupy(nextClaim(held + requestMs + retryMs));
+  const tokenAt = (retryMs > 0 ? claim : held) - slotPhase;
+  const openAt = open - slotPhase;
   const pollDone = tokenAt + requestMs + mailPollMs;
-  return { phase, readyAt, firstCreate: first, fiftiethStart, tokenAt, pollDone, skips };
+  return { phase, readyAt, firstCreate: first, fiftiethStart, openAt, tokenAt, pollDone, skips, retryMs };
 }
 
 let cached;
 function coverage() {
   if (cached) return cached;
   const period = accountPeriod;
+  const proven = productionSchedule(23_999);
+  if (proven.openAt !== 3_824_999 || proven.tokenAt !== 3_831_999 || proven.pollDone !== 3_824_999 + slotMs + requestMs + mailPollMs) {
+    throw new Error(`occupied token open=${proven.openAt} claimed=${proven.tokenAt} poll=${proven.pollDone}`);
+  }
   for (let duration = 1; duration <= cooldownMs; duration += 1) {
-    if (Math.ceil(duration / period) !== 1) throw new Error(`cooldown ${duration}ms blocks more than one account slot`);
+    const quiet = productionSchedule(23_999, observedCooldowns, 0);
+    const retried = productionSchedule(23_999, observedCooldowns, duration);
+    const moved = retried.tokenAt - quiet.tokenAt;
+    if (moved <= 0 || moved > period + 2 * slotMs) throw new Error(`retry ${duration}ms moved the token by ${moved}ms`);
   }
-  const sample = productionSchedule(23_000);
-  if (sample.readyAt !== 164_000 || sample.firstCreate !== 233_000 || sample.fiftiethStart !== 3_803_000 || sample.tokenAt !== 3_824_000 || sample.pollDone !== 3_959_000) {
-    throw new Error(`23s phase first=${sample.firstCreate} fiftieth=${sample.fiftiethStart} token=${sample.tokenAt} poll=${sample.pollDone}`);
-  }
-  let worst = sample;
+  let worst = proven;
   for (let phase = 0; phase < period; phase += 1) {
-    const row = phase === sample.phase ? sample : productionSchedule(phase);
+    const held = productionSchedule(phase);
+    const retried = productionSchedule(phase, observedCooldowns, cooldownMs);
+    const row = retried.pollDone > held.pollDone ? retried : held;
     if (row.pollDone > worst.pollDone) worst = row;
   }
-  cached = { sample, worst };
+  if (worst.pollDone < proven.pollDone) throw new Error('worst poll drops the occupied-token poll');
+  cached = { sample: proven, worst };
   return cached;
 }
 
@@ -125,6 +147,7 @@ export function productionStepMinutes(hosts) {
 
 export function productionJobMinutes(stepMinutes) {
   return checkoutMinutes * (checkoutCount + runnerCount + postCount)
+    + selectMinutes
     + toolSetupMinutes * toolSetupCount
     + installMinutes
     + stepMinutes

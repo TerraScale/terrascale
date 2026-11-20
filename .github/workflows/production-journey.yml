@@ -78,7 +78,7 @@ jobs:
     needs: release
     if: needs.release.outputs.journey == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 125
+    timeout-minutes: 128
     concurrency:
       group: production-journey
       cancel-in-progress: false
@@ -87,6 +87,8 @@ jobs:
       issues: read
     outputs:
       report: ${{ steps.scrub.outputs.report }}
+      harness: ${{ steps.harness.outputs.sha }}
+      schedule: ${{ steps.harness.outputs.schedule }}
     env:
       JOURNEY_QUARANTINE: ${{ github.workspace }}/e2e/.state/quarantine.json
       JOURNEY_RESULTS: ${{ github.workspace }}/e2e/.state/quarantine-results
@@ -95,8 +97,8 @@ jobs:
       PRODUCTION_INSTALL_MINUTES: 15
       PRODUCTION_SCRUB_MINUTES: 5
       PRODUCTION_UPLOAD_MINUTES: 2
-      PRODUCTION_STEP_MINUTES: 77
-      PRODUCTION_JOB_MINUTES: 125
+      PRODUCTION_STEP_MINUTES: 78
+      PRODUCTION_JOB_MINUTES: 128
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         timeout-minutes: 2
@@ -107,12 +109,31 @@ jobs:
         timeout-minutes: 2
         with:
           ref: ${{ github.workflow_sha }}
-          path: workflow-budget
+          path: workflow-sha
           sparse-checkout: |
-            e2e
-            .github/workflows/production-journey.yml
+            e2e/support/inbox-budget.mjs
+            e2e/support/inbox-budget-check.mjs
+            e2e/env/hostnames
           sparse-checkout-cone-mode: false
           persist-credentials: false
+      - id: harness
+        name: Select the harness
+        timeout-minutes: 2
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          decision=$(RELEASED_ROOT="$GITHUB_WORKSPACE" RELEASED_SHA="${{ needs.release.outputs.commit }}" WORKFLOW_SHA="${{ github.workflow_sha }}" timeout 15 node "$GITHUB_WORKSPACE/workflow-sha/e2e/support/inbox-budget-check.mjs") || exit $?
+          printf '%s\n' "$decision"
+          harness=$(printf '%s\n' "$decision" | sed -n 's/.* harness=\([0-9a-f]\{40\}\).*/\1/p' | tail -1)
+          release=$(printf '%s\n' "$decision" | sed -n 's/.* release=\([0-9a-f]\{40\}\).*/\1/p' | tail -1)
+          [ -n "$harness" ] && [ -n "$release" ]
+          if [ "$harness" != "$(git rev-parse HEAD)" ]; then git checkout --force "$harness"; fi
+          rm -rf "$GITHUB_WORKSPACE/workflow-sha"
+          {
+            echo "sha=$harness"
+            echo "release=$release"
+            echo "schedule=$(printf '%s\n' "$decision" | tail -1)"
+          } >> "$GITHUB_OUTPUT"
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
         timeout-minutes: 2
         with:
@@ -144,25 +165,15 @@ jobs:
           npx playwright install --only-shell chromium
           wait "$rust" || { cat "$RUNNER_TEMP/rust-runner.log"; exit 1; }
       - name: Journey against production
-        timeout-minutes: 77
+        timeout-minutes: 78
         env:
           GITHUB_TOKEN: ${{ github.token }}
           DOTNET_CLI_TELEMETRY_OPTOUT: 1
         run: |
-          decision=$(RELEASED_ROOT="$GITHUB_WORKSPACE" RELEASED_SHA="${{ needs.release.outputs.commit }}" WORKFLOW_SHA="${{ github.workflow_sha }}" timeout 15 node "$GITHUB_WORKSPACE/workflow-budget/e2e/support/inbox-budget-check.mjs") || exit $?
-          printf '%s\n' "$decision"
+          printf '%s\n' "release=${{ steps.harness.outputs.release }} harness=${{ steps.harness.outputs.sha }} schedule=${{ steps.harness.outputs.schedule }}"
           timeout --kill-after=5 60 node e2e/support/quarantine.mjs read
           unset GITHUB_TOKEN
-          case "$decision" in
-            *'production journey source=workflow'*)
-              ln -sfn "$GITHUB_WORKSPACE/e2e/node_modules" "$GITHUB_WORKSPACE/workflow-budget/e2e/node_modules"
-              mkdir -p "$GITHUB_WORKSPACE/workflow-budget/e2e/.state"
-              if [ -d "$GITHUB_WORKSPACE/e2e/.state/sdk" ]; then ln -sfn "$GITHUB_WORKSPACE/e2e/.state/sdk" "$GITHUB_WORKSPACE/workflow-budget/e2e/.state/sdk"; fi
-              bash "$GITHUB_WORKSPACE/workflow-budget/e2e/env/production.sh"
-              ;;
-            *'production journey source=released'*) bash e2e/env/production.sh ;;
-            *) echo "production journey source was not chosen"; exit 1 ;;
-          esac
+          bash e2e/env/production.sh
       - id: scrub
         name: End every process of this job, then redact every generated secret from the files that upload
         if: always()
@@ -227,6 +238,8 @@ jobs:
       RESULT: ${{ needs.release.result == 'failure' && 'failure' || needs.journey.result }}
       TRIGGER: ${{ github.event_name == 'workflow_run' && format('{0} run {1}', github.event.workflow_run.name, github.event.workflow_run.id) || github.event_name }}
       COMMIT: ${{ needs.release.outputs.commit }}
+      HARNESS: ${{ needs.journey.outputs.harness }}
+      SCHEDULE: ${{ needs.journey.outputs.schedule }}
       RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -251,7 +264,7 @@ jobs:
               echo "The production journey ended with $RESULT: $RUN"
             fi
             echo
-            echo "Trigger: $TRIGGER. Suite: $COMMIT."
+            echo "Trigger: $TRIGGER. Release: $COMMIT. Harness: $HARNESS. Schedule: $SCHEDULE."
             echo
             if [ ! -f "$report/list.txt" ]; then
               echo "Cause: no report: the run stopped before or during the suite (setup, timeout, cancel or scrub). Read the job log."

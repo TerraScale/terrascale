@@ -315,12 +315,13 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
   body that stalls or cannot be read fails with the same "inbox provider" error. The first provider call of a run
   records the run's start in `inbox-run`. The run keeps slots for 50 account creates: 3 setup, 18 hosted, 1 invitation,
   19 interactions and 9 finish SDK creates. Preflight and the two readiness calls before the suite share that clock.
-  Account slots are absolute multiples of 70 s. The run's phase against that grid is not fixed: every offset from 0
-  through 69,999 ms is funded, and every cooldown of 1 ms through 60 s rounds up to one skipped account slot. A
-  non-account request can wait 14 s, and a preflight retry stops 120 s after its first slot. With that preflight and
-  the two readiness calls, a 23 s phase starts create 50 at 3,803 s, its token at 3,824 s, and the 120 s poll at
-  3,959 s. The worst phase, 23,999 ms, ends the poll at 3,959,999 ms (`support/inbox-budget.mjs`). A request that
-  cannot get a slot before that deadline fails with "has no slot before the run's time limit".
+  Account slots are absolute multiples of 70 s. Every phase from 0 through 69,999 ms is replayed. A cooldown of 1 ms
+  through 60 s, published from the response headers, moves the next claim by at most one account period plus the
+  occupied-slot skip. The final token's first free non-account slot can already be held: at phase 23,999 ms that slot
+  is 3,824,999 ms and the allocator takes 3,831,999 ms. The 15 s response and the whole 120 s poll are inside the
+  deadline. A further 60 s header retry on that claim is included. The funded poll ends at 4,050,999 ms
+  (`support/inbox-budget.mjs`). One request still leaves every 7 s, and account creates still take only every tenth
+  slot. A request that cannot get a slot before that deadline fails with "has no slot before the run's time limit".
   Queue waits extend the current test's bound. Hooks with several inbox calls use `withInboxBudget` to accumulate
   every wait: Playwright's `TestInfo.timeout` exposes the default test slot, not the running `beforeAll` hook slot.
   Each MFA setup needs two creations (at least 70 s apart); the project-MFA test later creates a third inbox.
@@ -328,22 +329,22 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
   uses it. Address, password and token are registered secrets; provider errors include method, path, status, rate
   headers and the first 500 characters of the validation body.
   Playwright starts after that preflight and readiness, so its production limit is the remaining worst window plus 5
-  minutes of teardown (4,095,999 ms). The journey step also holds two 15 s shell starts, a 65 s quarantine lookup
-  (`timeout --kill-after=5 60`), a 15 s DNS lookup for each of the 13 production names, the 3,959,999 ms mail window,
-  the teardown, and two 15 s readiness calls after the suite. Those sum to 4,579,999 ms, so the step limit is 77
-  minutes. The job limit is 125 minutes: 2 for the released checkout and 2 for the workflow checkout, 2 for each of
-  the three tool actions, 15 for the install step, the 77-minute journey step, 5 for scrub, 2 for each of the two
-  uploads, 2 for runner setup, 2 for runner completion, and 2 for each of the five post actions. The workflow loads
-  `support/inbox-budget-check.mjs` from `github.workflow_sha`. The suite checkout stays the dispatch SHA, or the
-  recorded release SHA after a workflow run. When that tree's own provider and suite caps cover the schedule, it runs
-  unchanged, runners included. Current main's caps are 24 minutes of provider work and a 25-minute suite, so they do
-  not. The current harness then runs only when the two SHAs differ solely by harness files (`e2e/` except its package
-  files, and this workflow). The SDK build stays the released tree, which is the same runner contract in that case.
-  Any other difference stops before quarantine or DNS: the new budget does not apply to that harness. On GitHub
-  Actions the seven `PRODUCTION_*_MINUTES` values are required before that check. Each must be a positive safe
-  integer. `bash e2e/env/production.sh` with `GITHUB_ACTIONS` unset and none of those variables set still runs. The
-  public service advertises 8 QPS per IP, but observed responses advertise 10/minute or 1/minute. Account creates stay
-  at 70 s.
+  minutes of teardown (4,186,999 ms). The journey step also holds two 15 s shell starts, a 65 s quarantine lookup
+  (`timeout --kill-after=5 60`), a 15 s DNS lookup for each of the 13 production names, the 4,050,999 ms mail window,
+  the teardown, and two 15 s readiness calls after the suite. Those sum to 4,670,999 ms, so the step limit is 78
+  minutes. The job limit is 128 minutes: 2 for the released checkout and 2 for the workflow-SHA checkout, 2 to select
+  the harness, 2 for each of the three tool actions, 15 for the install step, the 78-minute journey step, 5 for scrub,
+  2 for each of the two uploads, 2 for runner setup, 2 for runner completion, and 2 for each of the five post actions.
+  Selection runs before any install. `support/inbox-budget-check.mjs` is loaded from `github.workflow_sha`. A released
+  tree whose own provider and suite caps cover the schedule is checked out as the only harness, with no comparison.
+  Otherwise the two trees are compared with `git diff --no-renames`, so a rename keeps the old path. The workflow SHA
+  becomes the only checkout, and its SDK and runners are what get built, only when every changed path is harness
+  (`e2e/` except its package files, and this workflow). A missing or truncated comparison, or any other path, stops
+  before install. The alert records the release SHA, the harness SHA and the schedule. Scrub, the report and the
+  uploads read that one checkout. On GitHub Actions the seven `PRODUCTION_*_MINUTES` values are required before that
+  check. Each must be a positive safe integer. `bash e2e/env/production.sh` with `GITHUB_ACTIONS` unset and none of
+  those variables set still runs. The public service advertises 8 QPS per IP, but observed responses advertise
+  10/minute or 1/minute. Account creates stay at 70 s.
 - Not run on production (`onLocalStack`): the Cloudflare fallback count of `setup`, because production shows no
   sender; `desktop-close`'s check that the deletion never shows the pending page, because production's managed
   snapshots, peer regions and erasure budget can keep a closure pending for a while (there the step still has to reach
