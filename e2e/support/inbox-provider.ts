@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { accountStride, productionInboxRunMs, slotMs } from './inbox-budget.mjs';
+import { accountStride, nonAccountWaitMs, preflightMs, productionInboxRunMs, slotMs } from './inbox-budget.mjs';
 
 const runMs = productionInboxRunMs();
 
@@ -35,12 +35,20 @@ export class InboxProvider {
     this.context = context;
   }
 
-  private runDeadline(): number {
-    if ((this.context() as { source?: string }).source === 'preflight') return Number.POSITIVE_INFINITY;
+  private preflightAt = 0;
+
+  private envelope(): number {
+    const file = join(this.state, 'inbox-envelope');
+    if (existsSync(file)) return Number(readFileSync(file, 'utf8'));
     const starts = join(this.state, 'inbox-run');
     mkdirSync(starts, { recursive: true });
     if (!readdirSync(starts).length) writeFileSync(join(starts, String(Date.now())), '');
     return Math.min(...readdirSync(starts).map(Number)) + runMs;
+  }
+
+  private preflightLimits(): { acquire: number; overall: number } {
+    if (!this.preflightAt) this.preflightAt = Date.now();
+    return { acquire: this.preflightAt + nonAccountWaitMs, overall: this.preflightAt + preflightMs };
   }
 
   private async turn(every: number, notBefore: number, deadline: number, accounts: boolean): Promise<number | undefined> {
@@ -76,12 +84,17 @@ export class InboxProvider {
   async request<T>(method: string, path: string, token?: string, body?: object, deadline = Infinity): Promise<T> {
     const accounts = method === 'POST' && path === '/accounts';
     const every = accounts ? accountStride : 1;
-    const run = this.runDeadline();
-    let slot = await this.turn(every, Date.now(), Math.min(deadline, run), accounts);
+    const preflight = (this.context() as { source?: string }).source === 'preflight';
+    const limits = preflight ? this.preflightLimits() : undefined;
+    const run = preflight ? limits!.overall : this.envelope();
+    if (!preflight && Number.isFinite(deadline) && deadline > run) {
+      throw new Error(`inbox provider mail.tm: ${method} ${path} is over budget; remaining ${run - Date.now()}ms and the poll needs ${deadline - Date.now()}ms`);
+    }
+    let slot = await this.turn(every, Date.now(), preflight ? limits!.acquire : Math.min(deadline, run), accounts);
     if (slot === undefined) {
       throw new Error(`inbox provider mail.tm: ${method} ${path} has no slot before ${deadline <= run ? 'the mail poll deadline' : "the run's time limit"}`);
     }
-    const until = Math.min(run, Number.isFinite(deadline) ? deadline : Date.now() + 120_000);
+    const until = preflight ? limits!.overall : Math.min(run, Number.isFinite(deadline) ? deadline : Date.now() + 120_000);
     const headers: Record<string, string> = { accept: 'application/json' };
     if (body) headers['content-type'] = 'application/json';
     if (token) headers.authorization = `Bearer ${token}`;
@@ -111,6 +124,7 @@ export class InboxProvider {
       const failure = new Error(`inbox provider mail.tm: ${method} ${path} answered HTTP ${response.status}; headers ${JSON.stringify(limits)}: ${detail}`);
       if (response.status !== 429) throw failure;
       const retryAt = resetAt(response.headers, Date.now());
+      if (retryAt >= until) throw failure;
       slot = await this.turn(every, retryAt, until, accounts);
       if (slot === undefined) throw failure;
     }

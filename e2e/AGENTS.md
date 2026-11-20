@@ -315,34 +315,34 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
   body that stalls or cannot be read fails with the same "inbox provider" error. The first provider call of a run
   records the run's start in `inbox-run` on the first call that is not the preflight. Account slots stay 70 s apart
   and every other request stays on the remaining 7 s slots. A finish signup answers the account create in 15 s, claims
-  its token at 21 s, finishes that token and the signup at 36 s, and reads the mail detail at 148 s. The 70 s and
-  140 s account slots have both passed, so the next create is three slots later. The four .NET, Go, Python and
-  JavaScript signups therefore miss eight slots. At phase 23,999 ms, with the other creates on time, create 50 sends
-  at 4,013,999 ms. A 60 s cooldown moves the successful retry to 4,083,999 ms, the free token slot is 4,104,999 ms,
-  and the 15 s response plus the full 120 s poll ends at 4,239,999 ms. The slowest phase ends that poll at 4,285,999 ms
-  (`support/inbox-budget.mjs`). A request that cannot get a slot before that deadline fails with "has no slot before
-  the run's time limit".
+  its token at 21 s, finishes that token and the signup at 36 s,   and reads the mail detail at 148 s. The 70 s and 140 s account slots have both passed, so the next create is three
+  slots later. That is the supported finish, not every later cooldown. At phase 23,999 ms, create 50 sends at
+  4,013,999 ms, a 60 s account cooldown retries at 4,083,999 ms, and the free token plus the full 120 s poll ends at
+  4,239,999 ms. A further 60 s token cooldown lands at 4,167,999 ms and needs 4,302,999 ms, which is over that budget
+  and is refused before the poll starts. Phase 69,999 is over budget as well (`support/inbox-budget.mjs`). A request
+  that cannot get a slot before the supported deadline fails with "has no slot before the run's time limit".
   Queue waits extend the current test's bound. Hooks with several inbox calls use `withInboxBudget` to accumulate
   every wait: Playwright's `TestInfo.timeout` exposes the default test slot, not the running `beforeAll` hook slot.
   Each MFA setup needs two creations (at least 70 s apart); the project-MFA test later creates a third inbox.
   Inboxes are never deleted: a deleted address can be registered again by anyone while the product account still
   uses it. Address, password and token are registered secrets; provider errors include method, path, status, rate
   headers and the first 500 characters of the validation body.
-  Playwright's limit starts when Playwright starts: that mailbox window plus 5 minutes of teardown (4,585,999 ms).
-  Preflight (14 s wait plus the 120 s retry bound) and the two readiness calls before the suite sit outside that clock,
-  as do the two readiness calls after it. The journey step also holds two 15 s shell starts, a 65 s quarantine lookup
-  (`timeout --kill-after=5 60`) and a 15 s DNS lookup for each of the 13 production names. Those sum to 5,069,999 ms,
-  so the step limit is 85 minutes. The job limit is 131 minutes: 2 for the one checkout, 2 to read that tree's budget,
-  2 for each of the three tool actions, 15 for the install step, the 85-minute journey step, 5 for scrub, 2 for each
-  of the two uploads, 2 for runner setup, 2 for runner completion, and 2 for each of the four post actions. The
-  workflow checks out only that SHA. Its check prints the SHA as the suite and these caps, then the install builds
-  that tree's SDK. A tree without the check prints the provider and Playwright expressions in that source, names the
-  same SHA as the suite, and stops before install. A schedule or manual run never labels that SHA as a release. A
-  release-triggered run also records it as the release, because that is the SHA the release job checked out. To run
-  the current workflow against an older live release, read `version` from `https://auth.terrascale.tech/readyz` and
-  `https://dash.terrascale.tech/readyz`, and the TerraBase version from `https://api.terrascale.tech/readyz`. The
-  intended dispatch SHA's app, SDK, build and deploy inputs must be the ones that produced those revisions. Record
-  the three versions, the dispatch SHA, and that those inputs have no difference, and only then dispatch. Scrub, the
+  Playwright's limit starts when Playwright starts: the supported mailbox window plus 5 minutes of teardown
+  (4,539,999 ms). The envelope file is written at that moment, so time before the first mailbox call spends the
+  mailbox window, not the teardown. Preflight has its own limits: the first claim within 14 s and the whole preflight
+  within 134 s, including in a standalone run. A `Retry-After` is recorded for every caller and is not waited out past
+  that deadline. The journey step also holds two 15 s shell starts, a 65 s quarantine lookup
+  (`timeout --kill-after=5 60`), a 15 s DNS lookup for each of the 13 production names, and the readiness calls. Those
+  sum to 5,023,999 ms, so the step limit is 84 minutes. The job limit is 130 minutes: 2 for the one checkout, 2 to read
+  that tree's budget, 2 for each of the three tool actions, 15 for the install step, the 84-minute journey step, 5 for
+  scrub, 2 for each of the two uploads, 2 for runner setup, 2 for runner completion, and 2 for each of the four post
+  actions. The workflow checks out only that SHA and prints it as the suite. A schedule or manual run does not invent
+  a release. A release-triggered run prints a release SHA only after the deploy-revision artifact has been read; if
+  that artifact is missing the alert says the release was not identified. To dispatch this workflow for an older live
+  deployment, compare the serving auth and dashboard image digests and the release provenance that names their source
+  with the exact dispatch SHA. TerraBase `/readyz` publishes the display version and drops the revision suffix, so it
+  is not that comparison. Record the two digests, the provenance SHA and the dispatch SHA, and that the app, SDK,
+  build and deploy inputs of the provenance SHA and the dispatch SHA are the same, before dispatching. Scrub, the
   report, the uploads and the alert read this one checkout. On GitHub Actions the seven `PRODUCTION_*_MINUTES` values
   are required before DNS, mail.tm or production. Each must be a positive safe integer.
   `bash e2e/env/production.sh` with `GITHUB_ACTIONS` unset and none of those variables set still runs. The public

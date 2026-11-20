@@ -24,6 +24,7 @@ jobs:
     outputs:
       journey: ${{ steps.release.outputs.journey }}
       commit: ${{ steps.release.outputs.commit }}
+      verified: ${{ steps.release.outputs.verified }}
     steps:
       - id: release
         name: Run the journey for the source that was released
@@ -70,6 +71,7 @@ jobs:
             COMMIT=$(unzip -p "$RUNNER_TEMP/revision.zip" deploy-revision)
             [[ $COMMIT =~ ^[0-9a-f]{40}$ ]]
             echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+            echo "verified=$COMMIT" >> "$GITHUB_OUTPUT"
           fi
           echo "Run $RUN_ID released $COMMIT; run its production journey"
           echo "journey=true" >> "$GITHUB_OUTPUT"
@@ -78,7 +80,7 @@ jobs:
     needs: release
     if: needs.release.outputs.journey == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 131
+    timeout-minutes: 130
     concurrency:
       group: production-journey
       cancel-in-progress: false
@@ -96,8 +98,8 @@ jobs:
       PRODUCTION_INSTALL_MINUTES: 15
       PRODUCTION_SCRUB_MINUTES: 5
       PRODUCTION_UPLOAD_MINUTES: 2
-      PRODUCTION_STEP_MINUTES: 85
-      PRODUCTION_JOB_MINUTES: 131
+      PRODUCTION_STEP_MINUTES: 84
+      PRODUCTION_JOB_MINUTES: 130
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         timeout-minutes: 2
@@ -152,7 +154,7 @@ jobs:
           npx playwright install --only-shell chromium
           wait "$rust" || { cat "$RUNNER_TEMP/rust-runner.log"; exit 1; }
       - name: Journey against production
-        timeout-minutes: 85
+        timeout-minutes: 84
         env:
           GITHUB_TOKEN: ${{ github.token }}
           DOTNET_CLI_TELEMETRY_OPTOUT: 1
@@ -227,6 +229,7 @@ jobs:
       EVENT: ${{ github.event_name }}
       TRIGGER: ${{ github.event_name == 'workflow_run' && format('{0} run {1}', github.event.workflow_run.name, github.event.workflow_run.id) || github.event_name }}
       COMMIT: ${{ needs.release.outputs.commit }}
+      VERIFIED: ${{ needs.release.outputs.verified }}
       SCHEDULE: ${{ needs.journey.outputs.schedule }}
       RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
@@ -254,7 +257,9 @@ jobs:
             fi
             echo
             echo "Trigger: $TRIGGER. Suite: $COMMIT."
-            if [ "$EVENT" = workflow_run ]; then echo "Release: $COMMIT."; fi
+            if [ "$EVENT" = workflow_run ]; then
+              if [ -n "$VERIFIED" ]; then echo "Release: $VERIFIED."; else echo "Release: not identified."; fi
+            fi
             echo "Schedule: $SCHEDULE."
             echo
             if [ ! -f "$report/list.txt" ]; then

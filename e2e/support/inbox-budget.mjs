@@ -114,25 +114,39 @@ function coverage() {
     if (span !== 148_000) throw new Error(`signup detail at +${span}`);
     if (signup.token - signup.created !== 21_000 || signup.signed - signup.created !== 36_000) throw new Error('signup token clock moved');
   }
-  let worst = serial;
-  for (let phase = 0; phase < accountPeriod; phase += 1) {
-    const row = phase === serial.phase ? serial : productionSchedule(phase);
-    for (let index = 0; index < row.signups.length; index += 1) {
-      const next = index === row.signups.length - 1 ? row.fiftiethStart : row.signups[index + 1].created;
-      const passed = [row.signups[index].created + accountPeriod, row.signups[index].created + 2 * accountPeriod];
-      if (passed.some((slot) => slot >= next) || next - row.signups[index].created !== 3 * accountPeriod) {
-        throw new Error(`phase ${phase} signup missed ${next - row.signups[index].created}`);
-      }
-    }
-    if (row.pollDone - row.tokenAt !== requestMs + mailPollMs) throw new Error(`phase ${phase} clips the poll`);
-    if (row.pollDone > worst.pollDone) worst = row;
-  }
-  cached = { serial, worst };
+  cached = { serial };
   return cached;
 }
 
+export function proveAllocator() {
+  const supported = coverage().serial;
+  const retry = tokenRetry(supported);
+  if (retry.tokenAt !== 4_167_999 || retry.pollDone !== 4_302_999 || retry.fits) {
+    throw new Error(`token retry token=${retry.tokenAt} poll=${retry.pollDone} fits=${retry.fits}`);
+  }
+  const held = new Set([100, 101, 102]);
+  const claimed = take(100 * slotMs, 1, 100 * slotMs, 120 * slotMs, false, held);
+  if (claimed !== 103 * slotMs) throw new Error(`occupied claims reached ${claimed}`);
+  const now = 1_000_000;
+  const day = 86_400_000;
+  if (now + day < now + preflightMs) throw new Error('a day-long cooldown is inside the preflight deadline');
+  const late = productionSchedule(69_999);
+  if (late.pollDone <= supported.pollDone) throw new Error('phase 69999 was treated as supported');
+  return { supported: supported.pollDone, retry: retry.pollDone, overBudgetPhase: 69_999 };
+}
+
 export function productionInboxRunMs() {
-  return coverage().worst.pollDone;
+  return coverage().serial.pollDone;
+}
+
+export function tokenRetry(schedule = coverage().serial) {
+  const origin = schedule.phase === 0 ? 0 : accountPeriod - schedule.phase;
+  const held = new Set();
+  const claimed = origin + schedule.tokenAt;
+  held.add(claimed / slotMs);
+  const again = take(claimed + headerCooldownMs, 1, claimed + headerCooldownMs, claimed + providerRetryMs, false, held);
+  const tokenAt = again - origin;
+  return { tokenAt, pollDone: tokenAt + requestMs + mailPollMs, fits: tokenAt + requestMs + mailPollMs <= productionInboxRunMs() };
 }
 
 export function productionSuiteMs() {
@@ -171,8 +185,8 @@ function integer(env, key) {
 
 export function assertRunningBudget(env = process.env, hostnames) {
   const hosts = dnsHostCount(hostnames);
-  const { serial, worst } = coverage();
-  const runMs = worst.pollDone;
+  const { serial } = coverage();
+  const runMs = serial.pollDone;
   const suiteMs = productionSuiteMs();
   const stepMinutes = productionStepMinutes(hosts);
   const jobMinutes = productionJobMinutes(stepMinutes);
@@ -184,11 +198,10 @@ export function assertRunningBudget(env = process.env, hostnames) {
     preflightMs,
     quarantineMs,
     phase: serial.phase,
-    worstPhase: worst.phase,
     fiftiethStart: serial.fiftiethStart,
     retryAt: serial.retryAt,
     tokenAt: serial.tokenAt,
-    pollDone: worst.pollDone,
+    pollDone: serial.pollDone,
     hosts,
   };
   const ci = env.GITHUB_ACTIONS === 'true';

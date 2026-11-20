@@ -73,6 +73,7 @@ journey() {
   inbox
   served before
   cd "$e2e"
+  node --input-type=module -e "import { writeFileSync } from 'node:fs'; import { productionInboxRunMs } from './support/inbox-budget.mjs'; writeFileSync(process.argv[1], String(Date.now() + productionInboxRunMs()));" "$state/inbox-envelope"
   E2E_TARGET=production E2E_STATE="$state" E2E_SDK_BUILD="$e2e/.state/sdk" E2E_CA_FILE="$ca" E2E_INBOX_DOMAIN="$domain" \
     npx playwright test "${projects[@]/#/--project=}" || status=$?
   served after
