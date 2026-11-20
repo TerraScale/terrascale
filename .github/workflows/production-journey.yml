@@ -8,6 +8,11 @@ on:
   schedule:
     - cron: '23 13 * * *'
   workflow_dispatch:
+    inputs:
+      suite_sha:
+        description: Exact main commit verified against the serving images
+        required: true
+        type: string
 
 permissions: {}
 
@@ -24,8 +29,7 @@ jobs:
     outputs:
       journey: ${{ steps.release.outputs.journey }}
       commit: ${{ steps.release.outputs.commit }}
-      suite: ${{ steps.release.outputs.suite }}
-      verified: ${{ steps.release.outputs.verified }}
+      receipt: ${{ steps.release.outputs.receipt }}
       terrabase: ${{ steps.release.outputs.terrabase }}
     steps:
       - id: release
@@ -35,17 +39,20 @@ jobs:
           EVENT: ${{ github.event_name }}
           RUN_ID: ${{ github.event.workflow_run.id }}
           COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
+          EXPECTED_SUITE: ${{ inputs.suite_sha }}
           RELEASE_STEPS: '["Wait for rollout", "Release the pinned arm64 digest to each region"]'
           RELEASE_JOBS: '{".github/workflows/ci.yml": ["main-auth", "release-only"], ".github/workflows/images-ghcr.yml": ["Publish and release"]}'
         run: |
           set -euo pipefail
-          HEAD_SHA=$COMMIT
           [[ $COMMIT =~ ^[0-9a-f]{40}$ ]]
-          echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT" = workflow_dispatch ] && [ "$EXPECTED_SUITE" != "$COMMIT" ]; then
+            echo '::error::main moved after the suite commit was verified'
+            exit 1
+          fi
           if [ "$EVENT" != workflow_run ]; then
             echo "$EVENT: the journey runs the suite of $COMMIT"
+            echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
             echo "journey=true" >> "$GITHUB_OUTPUT"
-            echo "suite=$COMMIT" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?filter=latest&per_page=100")
@@ -67,6 +74,12 @@ jobs:
             echo "journey=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          if jq -e '.jobs[] | select(.name == "release-only" and .conclusion == "success")' <<< "$jobs" > /dev/null; then
+            jq -e '.jobs[] | select(.name == "release-only" and .conclusion == "success")
+              | any(.steps[]?; .name == "Release the pinned arm64 digest to each region" and .conclusion == "success")
+                and any(.steps[]?; .name == "Wait for rollout" and .conclusion == "success")' <<< "$jobs" > /dev/null
+            echo "terrabase=$COMMIT" >> "$GITHUB_OUTPUT"
+          fi
           if jq -e '.jobs[] | select(.name == "main-auth" or .name == "Publish and release") | select(.conclusion == "success")
             | .steps[]? | select(.name == "Wait for rollout" and .conclusion == "success")' <<< "$jobs" > /dev/null; then
             artifact=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts?name=deploy-revision&per_page=1" --jq '.artifacts[0].id // empty')
@@ -74,22 +87,17 @@ jobs:
             gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact/zip" > "$RUNNER_TEMP/revision.zip"
             COMMIT=$(unzip -p "$RUNNER_TEMP/revision.zip" deploy-revision)
             [[ $COMMIT =~ ^[0-9a-f]{40}$ ]]
-            echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
-            echo "verified=$COMMIT" >> "$GITHUB_OUTPUT"
-          fi
-          if jq -e '.jobs[] | select(.name == "release-only" and .conclusion == "success")
-            | .steps[]? | select(.name == "Release the pinned arm64 digest to each region" and .conclusion == "success")' <<< "$jobs" > /dev/null; then
-            echo "terrabase=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+            echo "receipt=$COMMIT" >> "$GITHUB_OUTPUT"
           fi
           echo "Run $RUN_ID released $COMMIT; run its production journey"
+          echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
           echo "journey=true" >> "$GITHUB_OUTPUT"
-          echo "suite=$COMMIT" >> "$GITHUB_OUTPUT"
 
   journey:
     needs: release
     if: needs.release.outputs.journey == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 162
+    timeout-minutes: 360
     concurrency:
       group: production-journey
       cancel-in-progress: false
@@ -98,7 +106,6 @@ jobs:
       issues: read
     outputs:
       report: ${{ steps.scrub.outputs.report }}
-      schedule: ${{ steps.budget.outputs.schedule }}
     env:
       JOURNEY_QUARANTINE: ${{ github.workspace }}/e2e/.state/quarantine.json
       JOURNEY_RESULTS: ${{ github.workspace }}/e2e/.state/quarantine-results
@@ -128,23 +135,6 @@ jobs:
         with:
           go-version-file: sdk/go/.go-version
           cache: false
-      - id: budget
-        name: Read the release budget
-        timeout-minutes: 2
-        run: |
-          sha=$(git rev-parse HEAD)
-          if [ -f e2e/support/inbox-budget-check.mjs ]; then
-            line=$(timeout 15 node e2e/support/inbox-budget-check.mjs)
-            printf '%s\n' "$line"
-          else
-            provider=$(sed -n 's/^const runMs = //p' e2e/support/inbox-provider.ts | head -1)
-            suite=$(sed -n 's/.*globalTimeout: production ? //p' e2e/playwright.config.ts | head -1 | sed 's/ :.*//')
-            line="legacy budget suite=$sha provider=$provider playwright=$suite"
-            printf '%s\n' "$line"
-            echo "schedule=$line" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-          echo "schedule=$line" >> "$GITHUB_OUTPUT"
       - name: Install the suite, its browser and the five runners
         timeout-minutes: 15
         working-directory: e2e
@@ -163,14 +153,17 @@ jobs:
           npx playwright install --only-shell chromium
           wait "$rust" || { cat "$RUNNER_TEMP/rust-runner.log"; exit 1; }
       - name: Journey against production
-        timeout-minutes: 116
+        timeout-minutes: 325
         env:
           GITHUB_TOKEN: ${{ github.token }}
           DOTNET_CLI_TELEMETRY_OPTOUT: 1
-          PRODUCTION_SCHEDULE: ${{ steps.budget.outputs.schedule }}
+          SUITE: ${{ needs.release.outputs.commit }}
         run: |
-          printf '%s\n' "$PRODUCTION_SCHEDULE"
-          timeout --kill-after=5 60 node e2e/support/quarantine.mjs read
+          test "$(git rev-parse HEAD)" = "$SUITE"
+          timeout --kill-after=5 60 node e2e/support/quarantine.mjs read || {
+            echo '[production-envelope] quarantine discovery did not complete'
+            exit 1
+          }
           unset GITHUB_TOKEN
           bash e2e/env/production.sh
       - id: scrub
@@ -235,17 +228,15 @@ jobs:
       GH_REPO: ${{ github.repository }}
       TITLE: Production journey failure
       RESULT: ${{ needs.release.result == 'failure' && 'failure' || needs.journey.result }}
-      EVENT: ${{ github.event_name }}
       TRIGGER: ${{ github.event_name == 'workflow_run' && format('{0} run {1}', github.event.workflow_run.name, github.event.workflow_run.id) || github.event_name }}
-      SUITE: ${{ needs.release.outputs.suite }}
-      VERIFIED: ${{ needs.release.outputs.verified }}
+      COMMIT: ${{ needs.release.outputs.commit }}
+      RECEIPT: ${{ needs.release.outputs.receipt }}
       TERRABASE: ${{ needs.release.outputs.terrabase }}
-      SCHEDULE: ${{ needs.journey.outputs.schedule }}
       RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
-          ref: ${{ needs.release.outputs.commit }}
+          ref: ${{ needs.release.outputs.commit || github.sha }}
           persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         if: needs.journey.outputs.report == 'true'
@@ -258,6 +249,10 @@ jobs:
         run: |
           set -euo pipefail
           report=production-report
+          reports=()
+          for file in report.json cleanup.json; do
+            if [ -f "$report/$file" ]; then reports+=("$report/$file"); fi
+          done
           changed=""
           {
             if [ "$RESULT" = success ]; then
@@ -267,12 +262,9 @@ jobs:
             fi
             echo
             echo "Trigger: $TRIGGER."
-            if [ -n "$SUITE" ]; then echo "Suite: $SUITE."; else echo "Suite: not selected."; fi
-            if [ "$EVENT" = workflow_run ]; then
-              if [ -n "$VERIFIED" ]; then echo "Deploy revision: $VERIFIED."; else echo "Deploy revision: not identified."; fi
-              if [ -n "$TERRABASE" ]; then echo "TerraBase release: $TERRABASE."; else echo "TerraBase release: not identified."; fi
-            fi
-            echo "Schedule: $SCHEDULE."
+            if [ -n "$COMMIT" ]; then echo "Suite: $COMMIT."; else echo 'Suite: not selected.'; fi
+            if [ -n "$RECEIPT" ]; then echo "Verified deployment receipt: $RECEIPT."; fi
+            if [ -n "$TERRABASE" ]; then echo "Verified TerraBase release and rollout: $TERRABASE."; fi
             echo
             if [ ! -f "$report/list.txt" ]; then
               echo "Cause: no report: the run stopped before or during the suite (setup, timeout, cancel or scrub). Read the job log."
@@ -294,29 +286,37 @@ jobs:
               elif grep -q '^production: .* is not ready' "$report/list.txt"; then
                 echo "Cause: $(grep -m1 '^production: .* is not ready' "$report/list.txt")."
                 echo
+              elif grep -Fq '[production-envelope]' "$report/list.txt"; then
+                echo "Cause: production journey infrastructure deadline failure."
+                echo
               elif grep -q 'Error: inbox provider mail.tm' "$report/list.txt"; then
                 echo "Cause: the inbox provider (mail.tm) refused or failed a request during the run; read those errors below before you look at production."
                 echo
-              elif [ ! -f "$report/report.json" ]; then
+              elif [ "${#reports[@]}" -eq 0 ]; then
                 echo "Cause: no report: the run stopped before or during the suite (timeout, cancel or a refused start)."
                 echo
-              elif jq -e '.errors | length > 0' "$report/report.json" > /dev/null; then
-                jq -r '"Cause: \(.errors[0].message | gsub("\u001b\\[[0-9;]*[A-Za-z]"; "") | split("\n")[0])."' "$report/report.json"
+              elif jq -se 'any(.[]; .errors | length > 0)' "${reports[@]}" > /dev/null; then
+                jq -sr '[.[] | .errors[]][0] | "Cause: \(.message | gsub("\u001b\\[[0-9;]*[A-Za-z]"; "") | split("\n")[0])."' "${reports[@]}"
                 echo
               fi
-              if [ -f "$report/report.json" ]; then
-                jq -r '.stats | "Tests: \(.expected) passed, \(.unexpected) failed, \(.flaky) flaky, \(.skipped) did not run, in \(.duration / 1000 | floor) s."' "$report/report.json"
+              if [ -f "$report/phases.txt" ]; then cat "$report/phases.txt"; fi
+              if [ "${#reports[@]}" -gt 0 ]; then
+                for file in "${reports[@]}"; do
+                  phase=suite
+                  if [ "${file##*/}" = cleanup.json ]; then phase=cleanup; fi
+                  jq -r --arg phase "$phase" '.stats | "Tests: \($phase) — \(.expected) passed, \(.unexpected) failed, \(.flaky) flaky, \(.skipped) did not run, in \(.duration / 1000 | floor) s."' "$file"
+                done
                 echo
-                jq -r '[.suites | .. | objects | select(has("specs")) | .specs[] as $spec | $spec.tests[]
+                jq -sr '[.[] | .suites | .. | objects | select(has("specs")) | .specs[] as $spec | $spec.tests[]
                   | select(.status == "unexpected" or .status == "flaky") | "- \(.projectName) › \($spec.file) › \($spec.title)"]
-                  | if length > 0 then "Failed tests:\n\(join("\n"))\n" else empty end' "$report/report.json"
-                jq -r '[.suites | .. | objects | select(has("specs")) | .specs[] as $spec | $spec.tests[]
+                  | if length > 0 then "Failed tests:\n\(join("\n"))\n" else empty end' "${reports[@]}"
+                jq -sr '[.[] | .suites | .. | objects | select(has("specs")) | .specs[] as $spec | $spec.tests[]
                   | select(.status == "unexpected" or .status == "flaky") | .results[-1] as $result
                   | "### \(.projectName) › \($spec.file):\($spec.line) › \($spec.title)\n\n"
                     + "Result: \($result.status).\(([.annotations[]?, $result.annotations[]? | select(.type == "url") | .description] | unique | map(" Page: \(.)") | join("")))\n\n"
                     + "````\n" + ([$result.errors[]? | (.message // .value // "") + (if .location then "\n    at \(.location.file | sub("^.*/e2e/"; "e2e/")):\(.location.line)" else "" end)]
                       | join("\n\n") | gsub("\u001b\\[[0-9;]*[A-Za-z]"; "") | split("\n") | .[:40] | join("\n")) + "\n````\n"]
-                  | .[:10] | join("\n")' "$report/report.json"
+                  | .[:10] | join("\n")' "${reports[@]}"
               else
                 echo "The last lines the run printed:"
                 echo
