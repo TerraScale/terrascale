@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { APIRequestContext, Page } from '@playwright/test';
 import { expect } from '@playwright/test';
+import { assertAuthAuditEvent, requiredAuditActions } from './auth-failures';
 import { request } from './client-address';
 import { newAddress, nextMail } from './inbox';
 import { auth, dash, onLocalStack, stateDir } from './stack';
@@ -361,12 +362,9 @@ export async function prepareAuthManagement(page: Page, sdk: string, current: Au
 
 export async function closeAuthManagement(page: Page, management: AuthManagement, current: AuthOwner = journey()): Promise<void> {
   const root = `${auth}/v1/${current.projectId}`;
-  for (const action of ['disable_project_user.succeeded', 'enable_project_user.succeeded', 'sign_out_project_user.succeeded']) {
-    const audit = await page.request.get('/api/v1/dashboard/audit-events', { params: { action, range: '7d' } });
-    expect(audit.status()).toBe(200);
-    const events = (await audit.json()).events as { actor: string; action: string; source: string }[];
-    expect(events.some(event => event.actor === keyId(management.writeKey)
-      && event.action === action && event.source === 'ts-auth')).toBe(true);
+  for (const action of requiredAuditActions) {
+    await assertAuthAuditEvent(action, keyId(management.writeKey),
+      () => page.request.get('/api/v1/dashboard/audit-events', { params: { action, range: '7d' } }));
   }
   const events: { actor: string; action: string; detail: string }[] = [];
   let after: string | undefined;
