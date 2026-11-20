@@ -535,7 +535,8 @@ Paid Checkout session creation must carry allowed_payment_method_types of card a
   `info`, `dir`, `dirxml`, `table`, `trace`, `clear`, the group, profile, count and time types), a status below 400,
   and a status a test expects for its own page with `audit.expectStatus`, matched by URL and status whatever the
   order of its response and console events, and seen exactly once. A navigation that becomes a download ends in `net::ERR_ABORTED` for the
-  download's own URL; that one failure passes, because the browser hands the response to the download. Not checked: links to another origin than the
+  download's own URL; that one failure passes, because the browser hands the response to the download. An aborted subresource from a replaced
+  document does not count against the current document. Anchor and History API navigation preserve the document. Not checked: links to another origin than the
   page's own, every link on the MCP and platform origins, popups, WebSocket frames, lazy-loaded and SVG images,
   overflow inside an element, and axe's best-practice rules and incomplete results.
 - No retries, no fixed sleeps, no `waitForTimeout`: every wait ends on a condition. The SDK stage's pacing waits are

@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, type Browser, type BrowserContext, type BrowserContextOptions, type Page, type Request, type Response, type TestInfo } from '@playwright/test';
+import { expect, type Browser, type BrowserContext, type BrowserContextOptions, type Frame, type Page, type Request, type Response, type TestInfo } from '@playwright/test';
 import { clientProxy, test as base } from './client-address';
 import { checkLinks, type Link } from './links';
 import { production, stackHosts } from './stack';
@@ -11,23 +11,55 @@ const regionPingProbe = /^https:\/\/[a-z][a-z0-9-]*\.api\.terrascale\.tech\/heal
 const secrets = '[data-mfa-secret], img[src^="data:image/png"], input[type=password], .ts-apikeys-secret-value, .ts-apikeys-secret-mask, #access-token-secret, #alert-secret';
 
 type Expected = { url: RegExp; status: number; seen: number; logged: number };
+type PageIdentity = Promise<string | undefined>;
+type RequestFailure = { url: string; description: string; aborted: boolean; owner?: PageIdentity };
+
+const activePages = new WeakMap<Page, ActivePage>();
+
+function readPageIdentity(frame: Frame): PageIdentity {
+  return frame.evaluate(() => {
+    const key = Symbol.for('terrascale.journey.audit.page');
+    const existing: unknown = Reflect.get(window.document, key);
+    if (typeof existing === 'string') return existing;
+    const identity = crypto.getRandomValues(new Uint32Array(4)).join('-');
+    Object.defineProperty(window.document, key, { value: identity });
+    return identity;
+  }).catch(() => undefined);
+}
+
+class ActivePage {
+  current: PageIdentity;
+
+  constructor(page: Page) {
+    this.current = readPageIdentity(page.mainFrame());
+    page.on('framenavigated', (frame) => {
+      if (frame === page.mainFrame()) this.current = readPageIdentity(frame);
+    });
+  }
+}
+
+async function isPreviousPage(owner: PageIdentity | undefined, current: string | undefined): Promise<boolean> {
+  const identity = await owner;
+  return identity !== undefined && current !== undefined && identity !== current;
+}
 
 export class Audit {
   private problems: string[] = [];
   private readonly expected: Expected[] = [];
-  private readonly inflight = new Map<Request, number>();
+  private readonly inflight = new Map<Request, PageIdentity>();
   private readonly streams = new Set<Request>();
   private readonly downloads = new Set<string>();
-  private failed: { url: string; error: string }[] = [];
+  private readonly failed: RequestFailure[] = [];
   private readonly probeConsole: { url: string; problem: string }[] = [];
   private readonly probeFailures = new Map<string, number>();
-  private generation = 0;
-  private lastActivity = Date.now();
+  private readonly activePage: ActivePage;
 
   constructor(
     private readonly page: Page,
     private readonly info: TestInfo,
   ) {
+    this.activePage = activePages.get(page) ?? new ActivePage(page);
+    activePages.set(page, this.activePage);
     page.on('console', (message) => {
       if (!reportedConsole.has(message.type())) return;
       if (this.expectedLoadFailure(message.text(), message.location().url)) return;
@@ -43,19 +75,19 @@ export class Audit {
         this.probeFailures.set(request.url(), (this.probeFailures.get(request.url()) ?? 0) + 1);
         return;
       }
-      if (this.streams.has(request) && request.failure()?.errorText === 'net::ERR_ABORTED') return;
-      this.failed.push({ url: request.url(), error: `${request.method()} ${request.url()} ${request.failure()?.errorText ?? ''}` });
+      const error = request.failure()?.errorText ?? '';
+      const aborted = error === 'net::ERR_ABORTED';
+      if (aborted && this.streams.has(request)) return;
+      this.failed.push({
+        url: request.url(), description: `${request.method()} ${request.url()} ${error}`, aborted,
+        owner: request.isNavigationRequest() ? undefined : this.inflight.get(request),
+      });
     });
     page.on('download', (download) => this.downloads.add(download.url()));
     page.on('response', (response) => this.response(response));
     page.on('request', (request) => this.started(request));
     page.on('requestfinished', (request) => this.ended(request));
     page.on('requestfailed', (request) => this.ended(request));
-    page.on('framenavigated', (frame) => {
-      if (frame !== page.mainFrame()) return;
-      this.generation += 1;
-      for (const [request, generation] of this.inflight) if (generation < this.generation && !request.isNavigationRequest()) this.inflight.delete(request);
-    });
     if (production) {
       const reached = { type: 'url', description: page.url() };
       info.annotations.push(reached);
@@ -67,8 +99,17 @@ export class Audit {
 
   async quiet(): Promise<void> {
     await expect
-      .poll(() => (this.inflight.size === 0 && Date.now() - this.lastActivity >= 500 ? [] : [...this.inflight.keys()].map((request) => `${request.method()} ${request.url()}`)), {
-        message: 'requests still in flight (none for 500 ms is quiet)',
+      .poll(async () => {
+        const observation = this.activePage.current;
+        const current = await observation;
+        const pending = await Promise.all([...this.inflight].map(async ([request, owner]) => {
+          if (!request.isNavigationRequest() && await isPreviousPage(owner, current)) return undefined;
+          if (this.inflight.has(request)) return `${request.method()} ${request.url()}`;
+        }));
+        if (observation !== this.activePage.current) return ['page changed while checking requests'];
+        return pending.filter((request) => request !== undefined);
+      }, {
+        message: 'requests still in flight',
         intervals: [100],
       })
       .toEqual([]);
@@ -76,15 +117,13 @@ export class Audit {
 
   private started(request: Request): void {
     if (this.isRegionPingProbe(request)) return;
-    this.inflight.set(request, this.generation);
-    this.lastActivity = Date.now();
+    this.inflight.set(request, this.activePage.current);
   }
 
   private ended(request: Request): void {
     if (this.isRegionPingProbe(request)) return;
     this.streams.delete(request);
     this.inflight.delete(request);
-    this.lastActivity = Date.now();
   }
 
   expectStatus(url: RegExp, status: number): void {
@@ -117,20 +156,20 @@ export class Audit {
         contentType: 'image/png',
       });
     }
-    const problems = [...this.problems.splice(0), ...this.failures(), ...found];
+    const problems = [...this.problems.splice(0), ...await this.failures(), ...found];
     expect(problems, `${name} at ${page.url()}`).toEqual([]);
   }
 
   async finish(): Promise<void> {
     if (!this.page.isClosed()) await this.quiet();
-    expect([...this.problems.splice(0), ...this.failures()], 'after the last audited state').toEqual([]);
+    expect([...this.problems.splice(0), ...await this.failures()], 'after the last audited state').toEqual([]);
     for (const expected of this.expected) {
       expect(expected.seen, `HTTP ${expected.status} for ${expected.url}`).toBe(1);
       expect(expected.logged, `console lines for the expected HTTP ${expected.status} of ${expected.url}`).toBeLessThanOrEqual(expected.seen);
     }
   }
 
-  private failures(): string[] {
+  private async failures(): Promise<string[]> {
     const consoleProblems = this.probeConsole.splice(0).filter((message) => {
       const remaining = (this.probeFailures.get(message.url) ?? 0) - 1;
       if (remaining < 0) return true;
@@ -138,12 +177,12 @@ export class Audit {
       else this.probeFailures.set(message.url, remaining);
       return false;
     }).map((message) => message.problem);
-    return [
-      ...consoleProblems,
-      ...this.failed.splice(0)
-        .filter((failure) => !(this.downloads.has(failure.url) && failure.error.endsWith(' net::ERR_ABORTED')))
-        .map((failure) => `request failed: ${failure.error}`),
-    ];
+    const current = await this.activePage.current;
+    const requestProblems = await Promise.all(this.failed.splice(0).map(async (failure) => {
+      if (failure.aborted && (this.downloads.has(failure.url) || await isPreviousPage(failure.owner, current))) return undefined;
+      return `request failed: ${failure.description}`;
+    }));
+    return [...consoleProblems, ...requestProblems.filter((problem) => problem !== undefined)];
   }
 
   private isRegionPingProbe(request: Request): boolean {
