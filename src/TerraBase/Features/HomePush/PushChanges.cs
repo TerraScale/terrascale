@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using System.Text.Json;
 using TerraBase.Engine;
 using TerraBase.Features.HomeApply;
+using TerraBase.Features.Sql;
 
 namespace TerraBase.Features.HomePush;
 
@@ -38,17 +40,20 @@ internal static class PushChanges
         foreach (var change in changes)
         {
             var table = ApplySql.Quote(change.Table!);
-            var (sql, args) = change.Op switch
+            (string, object?[]) built = change.Op switch
             {
                 "insert" => ($"INSERT OR REPLACE INTO {table} ({string.Join(", ", change.Values!.Keys.Select(ApplySql.Quote))}) VALUES ({string.Join(", ", change.Values.Select(_ => "?"))})",
-                    change.Values.Values.Select(ApplySql.Value).ToArray()),
+                    [.. change.Values.Values.Select(Value)]),
                 "update" => ($"UPDATE {table} SET {string.Join(", ", change.Values!.Keys.Select(column => ApplySql.Quote(column) + " = ?"))} WHERE {Where(change.Key!)}",
-                    change.Values.Values.Concat(change.Key!.Values).Select(ApplySql.Value).ToArray()),
-                _ => ($"DELETE FROM {table} WHERE {Where(change.Key!)}", change.Key!.Values.Select(ApplySql.Value).ToArray()),
+                    [.. change.Values.Values.Concat(change.Key!.Values).Select(Value)]),
+                _ => ($"DELETE FROM {table} WHERE {Where(change.Key!)}", [.. change.Key!.Values.Select(Value)]),
             };
+            var (sql, args) = built;
             _ = await writer.ExecuteAsync(ApplySql.Statement(sql, args), cancellationToken).ConfigureAwait(false);
         }
     }
+
+    private static object? Value(JsonElement value) => SqlJson.Value(value) is SqlValue sql ? SqlSession.Bound(sql) : throw new UnreachableException("a captured value is not a SQL value");
 
     private static RegionChange Update(CapturedRowChange change, string[] key)
     {

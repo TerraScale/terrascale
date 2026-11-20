@@ -1,16 +1,17 @@
 using System.Text.Json;
+using TerraBase.Errors;
 using TerraScale.TerraBase.Contracts;
 using TerraBase.Engine;
 using TerraBase.Features.Clock;
+using TerraBase.Features.Sql;
 
 namespace TerraBase.Features.HomeApply;
 
 internal sealed record Rejection(string Kind, string? Table, string? Key, string Message);
 
-internal sealed class RejectedException(Rejection rejection) : Exception(rejection.Message)
-{
-    public Rejection Rejection { get; } = rejection;
-}
+internal readonly union AppliedChange(Done, Rejection);
+
+internal readonly union CheckedForeignKeys(Done, Rejection);
 
 internal sealed record ConflictRecord(
     string Kind, string LoserState, string? Table, string? Key, string? Column, Writer? Winner, string? WinnerValue, string? LoserValue, string Message)
@@ -42,44 +43,92 @@ internal sealed class ApplyRun(IStorageTransaction transaction, Writer origin, C
                 return null;
             }
 
-            try
-            {
-                values[i] = ApplySql.Value(found.Value);
-            }
-            catch (FormatException)
+            if (SqlJson.Value(found.Value) is not SqlValue sql)
             {
                 return null;
             }
+
+            values[i] = SqlSession.Bound(sql);
         }
 
         return values;
     }
 
-    public async ValueTask ApplyAsync(RegionChange change)
+    public async ValueTask<AppliedChange> ApplyAsync(RegionChange change)
     {
         Current = null;
         if (change.Op is not ("insert" or "update" or "delete"))
         {
-            throw Reject("schema", change.Table, null, "a change is an insert, update or delete");
+            return Reject("schema", change.Table, null, "a change is an insert, update or delete");
         }
 
-        var shape = await ShapeAsync(change.Table!).ConfigureAwait(false)
-            ?? throw Reject("schema", change.Table, null, "no such table");
+        TableShape? shape;
+        {
+            var found = await ShapeAsync(change.Table!).ConfigureAwait(false);
+            if (found is null)
+            {
+                return Reject("schema", change.Table, null, "no such table");
+            }
+
+            shape = found;
+        }
+
         if (shape.Keys.Count == 0)
         {
-            throw Reject("schema", shape.Name, null, "the table has no declared primary key");
+            return Reject("schema", shape.Name, null, "the table has no declared primary key");
         }
 
         var source = change.Op == "insert" ? change.Values : change.Key;
-        if (source is null || KeyValues(shape, source) is not { } key)
+        object?[] key;
         {
-            throw Reject("schema", shape.Name, null, "the change does not name every primary-key column");
+            var parsed = source is null ? null : KeyValues(shape, source);
+            if (parsed is null)
+            {
+                return Reject("schema", shape.Name, null, "the change does not name every primary-key column");
+            }
+
+            key = parsed;
         }
 
         var keyText = ApplySql.KeyText(key);
         var rowKey = ApplySql.Object(shape.Keys, key);
         Current = (shape.Name, rowKey);
-        var values = Values(shape, change, rowKey);
+        var values = new Dictionary<string, object?>(StringComparer.Ordinal);
+        if (change.Op == "delete")
+        {
+            if (change.Values is { Count: > 0 })
+            {
+                return Reject("schema", shape.Name, rowKey, "a delete carries only its key");
+            }
+        }
+        else if (change.Values is not { Count: > 0 } given)
+        {
+            return Reject("schema", shape.Name, rowKey, "the change carries no values");
+        }
+        else
+        {
+            foreach (var (name, value) in given)
+            {
+                var column = shape.Column(name);
+                if (column is null)
+                {
+                    return Reject("schema", shape.Name, rowKey, "no such column");
+                }
+
+                if (change.Op == "update" && shape.Keys.Contains(column, StringComparer.OrdinalIgnoreCase))
+                {
+                    return Reject("schema", shape.Name, rowKey, "an update cannot change a primary-key column");
+                }
+
+                if (SqlJson.Value(value) is not SqlValue sql)
+                {
+                    return Reject("schema", shape.Name, rowKey, "a value is not a SQL value");
+                }
+
+                values[column] = SqlSession.Bound(sql);
+            }
+        }
+
         var row = await ApplySql.ReadRowAsync(transaction, shape, key, cancellationToken).ConfigureAwait(false);
         _ = _touched.TryAdd(shape.Name + "\n" + keyText, (shape, key, row));
         var stamps = await ApplySql.ReadStampsAsync(transaction, shape.Name, keyText, cancellationToken).ConfigureAwait(false);
@@ -89,7 +138,7 @@ internal sealed class ApplyRun(IStorageTransaction transaction, Writer origin, C
                 if (stamps.Deleted is { } deleted && deleted.Stamp > _stamp)
                 {
                     Supersede(shape, rowKey, null, deleted, null, ApplySql.Shown(ValuesJson(values)), "a newer delete of the row is kept");
-                    return;
+                    return new Done();
                 }
 
                 var columns = values.Keys.ToList();
@@ -105,20 +154,20 @@ internal sealed class ApplyRun(IStorageTransaction transaction, Writer origin, C
                 stamps.Deleted = null;
                 break;
             case "insert":
-                throw Reject("primary_key", shape.Name, rowKey, "UNIQUE constraint failed: the row already exists at the home");
+                return Reject("primary_key", shape.Name, rowKey, "UNIQUE constraint failed: the row already exists at the home");
             case "update" when row is not null:
                 await MergeAsync(shape, key, row, rowKey, values, stamps).ConfigureAwait(false);
                 break;
             case "update" when stamps.Deleted is { } tombstone:
                 Supersede(shape, rowKey, null, tombstone, null, ApplySql.Shown(ValuesJson(values)), "the row was deleted at the home");
-                return;
+                return new Done();
             case "update":
-                throw Reject("missing_row", shape.Name, rowKey, "the row does not exist at the home");
+                return Reject("missing_row", shape.Name, rowKey, "the row does not exist at the home");
             case "delete" when row is not null:
                 if (stamps.Newest is { } newest && newest.Stamp > _stamp)
                 {
                     Supersede(shape, rowKey, null, newest, ApplySql.Shown(ApplySql.Object(shape.Columns, row)), null, "a newer write of the row is kept");
-                    return;
+                    return new Done();
                 }
 
                 _ = await transaction.ExecuteStatementAsync(ApplySql.Statement($"DELETE FROM {ApplySql.Quote(shape.Name)} WHERE {shape.KeyWhere}", key), cancellationToken)
@@ -126,46 +175,13 @@ internal sealed class ApplyRun(IStorageTransaction transaction, Writer origin, C
                 stamps.Columns.Clear();
                 stamps.Deleted = origin;
                 break;
-            default:
+            case "delete":
                 stamps.Deleted = stamps.Deleted is { } older && older.Stamp > _stamp ? older : origin;
                 break;
         }
 
         _ = await ApplySql.WriteStampsAsync(transaction, shape.Name, keyText, stamps, cancellationToken).ConfigureAwait(false);
-    }
-
-    private static Dictionary<string, object?> Values(TableShape shape, RegionChange change, string rowKey)
-    {
-        var values = new Dictionary<string, object?>(StringComparer.Ordinal);
-        if (change.Op == "delete")
-        {
-            return change.Values is { Count: > 0 } ? throw Reject("schema", shape.Name, rowKey, "a delete carries only its key") : values;
-        }
-
-        if (change.Values is not { Count: > 0 } given)
-        {
-            throw Reject("schema", shape.Name, rowKey, "the change carries no values");
-        }
-
-        foreach (var (name, value) in given)
-        {
-            var column = shape.Column(name) ?? throw Reject("schema", shape.Name, rowKey, "no such column");
-            if (change.Op == "update" && shape.Keys.Contains(column, StringComparer.OrdinalIgnoreCase))
-            {
-                throw Reject("schema", shape.Name, rowKey, "an update cannot change a primary-key column");
-            }
-
-            try
-            {
-                values[column] = ApplySql.Value(value);
-            }
-            catch (FormatException)
-            {
-                throw Reject("schema", shape.Name, rowKey, "a value is not a SQL value");
-            }
-        }
-
-        return values;
+        return new Done();
     }
 
     private async ValueTask MergeAsync(TableShape shape, object?[] key, object?[] row, string rowKey, Dictionary<string, object?> values, RowStamps stamps)
@@ -205,7 +221,7 @@ internal sealed class ApplyRun(IStorageTransaction transaction, Writer origin, C
     private void Supersede(TableShape shape, string rowKey, string? column, Writer winner, string? winnerValue, string? loserValue, string message) =>
         Superseded.Add(new ConflictRecord(WriteStates.Superseded, WriteStates.Superseded, shape.Name, rowKey, column, winner, winnerValue, loserValue, message));
 
-    public async ValueTask CheckForeignKeysAsync()
+    public async ValueTask<CheckedForeignKeys> CheckForeignKeysAsync()
     {
         foreach (var (shape, key, before) in _touched.Values)
         {
@@ -223,7 +239,7 @@ internal sealed class ApplyRun(IStorageTransaction transaction, Writer origin, C
 
                     if (!await ExistsAsync(parent.Name, foreignKey.To ?? parent.Keys, values).ConfigureAwait(false))
                     {
-                        throw Reject("foreign_key", shape.Name, Current.Value.Key, "FOREIGN KEY constraint failed: the referenced row does not exist at the home");
+                        return Reject("foreign_key", shape.Name, Current.Value.Key, "FOREIGN KEY constraint failed: the referenced row does not exist at the home");
                     }
                 }
             }
@@ -244,10 +260,12 @@ internal sealed class ApplyRun(IStorageTransaction transaction, Writer origin, C
 
                 if (!await ExistsAsync(shape.Name, referenced, old).ConfigureAwait(false) && await ExistsAsync(foreignKey.Child, foreignKey.From, old).ConfigureAwait(false))
                 {
-                    throw Reject("foreign_key", shape.Name, Current.Value.Key, "FOREIGN KEY constraint failed: a row still references it");
+                    return Reject("foreign_key", shape.Name, Current.Value.Key, "FOREIGN KEY constraint failed: a row still references it");
                 }
             }
         }
+
+        return new Done();
     }
 
     private static object?[]? Pick(TableShape shape, object?[] row, IReadOnlyList<string> columns)
@@ -323,5 +341,5 @@ internal sealed class ApplyRun(IStorageTransaction transaction, Writer origin, C
         return shape;
     }
 
-    private static RejectedException Reject(string kind, string? table, string? key, string message) => new(new Rejection(kind, table, key, message));
+    private static Rejection Reject(string kind, string? table, string? key, string message) => new(kind, table, key, message);
 }
