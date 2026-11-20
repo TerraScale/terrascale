@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { accountStride, productionInboxRunMs, slotMs } from './inbox-budget.ts';
+import { accountStride, productionInboxRunMs, slotMs } from './inbox-budget.mjs';
 
 const runMs = productionInboxRunMs();
 

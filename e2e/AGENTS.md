@@ -316,7 +316,7 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
   rest, so a list or body read cannot take an account slot. The total stays one request per 7 s. The run keeps slots
   for 50 account creates: 3 setup, 18 hosted, 1 invitation, 19 interactions and 9 finish SDK creates. The window
   includes alignment to the next account slot, both observed 60 s cooldowns, the last token, list and body, and the
-  120 s mail poll (`support/inbox-budget.ts`). A request that cannot get a slot before that deadline fails with
+  120 s mail poll (`support/inbox-budget.mjs`). A request that cannot get a slot before that deadline fails with
   "has no slot before the run's time limit".
   Queue waits extend the current test's bound. Hooks with several inbox calls use `withInboxBudget` to accumulate
   every wait: Playwright's `TestInfo.timeout` exposes the default test slot, not the running `beforeAll` hook slot.

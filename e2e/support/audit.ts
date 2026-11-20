@@ -76,7 +76,7 @@ export class Audit {
 
   private async keepGenerationUnlessReplaced(frame: Frame, previous: number): Promise<void> {
     const replaced = await frame.evaluate((mark) => {
-      const holder = globalThis as Record<string, true>;
+      const holder = globalThis as unknown as Record<string, true>;
       if (holder[mark]) return false;
       holder[mark] = true;
       return true;

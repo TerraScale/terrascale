@@ -9,34 +9,32 @@ export const readyzMs = 30_000;
 export const installMinutes = 15;
 export const scrubMinutes = 5;
 
-export function productionInboxRunMs(accounts = productionAccountCreates): number {
+export function productionInboxRunMs(accounts = productionAccountCreates) {
   const alignment = (accountStride - 1) * slotMs;
   const span = (accounts - 1) * accountStride * slotMs;
   const tail = 3 * slotMs + mailPollMs;
   return alignment + span + observedCooldowns * cooldownMs + tail;
 }
 
-export function productionSuiteMs(accounts = productionAccountCreates): number {
+export function productionSuiteMs(accounts = productionAccountCreates) {
   return productionInboxRunMs(accounts) + teardownMs;
 }
 
-export function productionStepMinutes(accounts = productionAccountCreates): number {
+export function productionStepMinutes(accounts = productionAccountCreates) {
   return Math.ceil((readyzMs + productionSuiteMs(accounts) + readyzMs) / 60_000);
 }
 
-export function productionJobMinutes(accounts = productionAccountCreates): number {
+export function productionJobMinutes(accounts = productionAccountCreates) {
   return installMinutes + productionStepMinutes(accounts) + scrubMinutes;
 }
 
-export function accountSlotsWithin(runMs: number): number {
+export function accountSlotsWithin(runMs) {
   let count = 0;
   for (let at = (accountStride - 1) * slotMs; at < runMs; at += accountStride * slotMs) count += 1;
   return count;
 }
 
-export function assertRunningBudget(env: NodeJS.ProcessEnv = process.env): {
-  runMs: number; suiteMs: number; stepMinutes: number; jobMinutes: number;
-} {
+export function assertRunningBudget(env = process.env) {
   const step = Number(env.PRODUCTION_STEP_MINUTES);
   const job = Number(env.PRODUCTION_JOB_MINUTES);
   const install = Number(env.PRODUCTION_INSTALL_MINUTES);
