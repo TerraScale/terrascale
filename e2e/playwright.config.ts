@@ -1,12 +1,14 @@
 import { defineConfig } from '@playwright/test';
-import { productionSuiteMs } from './support/inbox-budget.mjs';
+import { envelopeDeadline } from './support/production-envelope.mjs';
 import { quarantineGrep } from './support/quarantine.mjs';
-import { browserHome, dash, desktop, mailWait, mobile, production, sessionFile } from './support/stack';
+import { browserHome, dash, desktop, mailWait, mobile, production, sessionFile, stateDir } from './support/stack';
 
 const placementRequested = process.env.E2E_PLACEMENT_SELECTED === '1' || process.argv.includes('placement') || process.argv.includes('--project=placement');
 if (placementRequested) process.env.E2E_PLACEMENT_SELECTED = '1';
 
 const secretFree = { trace: 'off' } as const;
+const cleanup = process.env.E2E_PRODUCTION_PHASE === 'cleanup';
+const cleanupTag = /@production-cleanup/;
 const faultRequested = process.env.E2E_FAULT_SELECTED === '1' || process.argv.includes('fault') || process.argv.includes('--project=fault');
 if (faultRequested) process.env.E2E_FAULT_SELECTED = '1';
 if (faultRequested && (production || process.env.E2E_REGIONS !== '2' || process.env.E2E_NODES_PER_REGION !== '2')) {
@@ -14,17 +16,17 @@ if (faultRequested && (production || process.env.E2E_REGIONS !== '2' || process.
 }
 
 export default defineConfig({
-  outputDir: 'test-results',
+  outputDir: production ? `production-report/${cleanup ? 'cleanup' : 'suite'}-results` : 'test-results',
   fullyParallel: true,
   forbidOnly: true,
   retries: 0,
   workers: faultRequested ? 1 : 6,
   timeout: 60_000 + mailWait,
-  globalTimeout: production ? productionSuiteMs() : 0,
+  globalTimeout: production ? Math.max(1, envelopeDeadline(stateDir, cleanup ? 'cleanup' : 'suite') - Date.now()) : 0,
   expect: { timeout: 20_000 },
-  grep: production && process.env.PRODUCTION_PHASE === 'cleanup' ? /teardown/ : undefined,
-  grepInvert: production && process.env.PRODUCTION_PHASE === 'suite' ? [...(quarantineGrep() ?? []), /teardown/] : quarantineGrep(),
-  reporter: production ? [['list'], ['json', { outputFile: 'production-report/report.json' }], ['./support/quarantine-reporter.ts']] : [['list'], ['html', { open: 'never' }], ['./support/quarantine-reporter.ts']],
+  grep: production && cleanup ? cleanupTag : undefined,
+  grepInvert: production && !cleanup ? [...(quarantineGrep() ?? []), cleanupTag] : quarantineGrep(),
+  reporter: production ? [['list'], ['json', { outputFile: `production-report/${cleanup ? 'cleanup' : 'report'}.json` }], ['./support/quarantine-reporter.ts']] : [['list'], ['html', { open: 'never' }], ['./support/quarantine-reporter.ts']],
   globalSetup: './support/client-address.ts',
   globalTeardown: './support/teardown.ts',
   use: {

@@ -309,7 +309,7 @@ test.describe('SDK group B', () => {
   }
 });
 
-test.describe('teardown', () => {
+test.describe('teardown', { tag: '@production-cleanup' }, () => {
   test('a new display name shows in the shell', async ({ page, audit }) => {
     const current = journey();
     const name = `Renamed ${current.runId}`;
