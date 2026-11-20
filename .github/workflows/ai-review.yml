@@ -6,6 +6,7 @@ on:
       head_sha:
         type: string
       deny_paths:
+        description: Newline-separated paths excluded from auto-fix. The policy and prompt come from this reusable workflow's revision.
         type: string
         required: true
       max_fix_lines:
@@ -74,7 +75,6 @@ jobs:
         working-directory: source
         env:
           HEAD_SHA: ${{ inputs.head_sha || github.sha }}
-          BEFORE_SHA: ${{ github.event.before }}
         run: |
           if [[ ! "$HEAD_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || ! git merge-base --is-ancestor "$HEAD_SHA" origin/main; then
             echo '::error::Review head must be a full commit SHA on main'
@@ -97,10 +97,18 @@ jobs:
           fi
           if [[ -n "$watermark" ]] && git merge-base --is-ancestor "$watermark" "$head"; then
             base=$watermark
-          elif [[ "$BEFORE_SHA" =~ ^[0-9a-fA-F]{40}$ ]] && git merge-base --is-ancestor "$BEFORE_SHA" "$head"; then
-            base=$BEFORE_SHA
           else
-            base=$(git rev-parse "$head^")
+            workflow_path=${GITHUB_WORKFLOW_REF#"$GITHUB_REPOSITORY/"}
+            workflow_path=${workflow_path%@*}
+            rollout=$(git log --first-parent --format=%H -G 'uses:.*ai-review\.yml' origin/main -- "$workflow_path" | tail -1)
+            if [[ -z "$rollout" ]]; then
+              echo '::error::Could not locate the AI review workflow rollout on main'
+              exit 1
+            fi
+            base=$(git rev-parse "$rollout^" 2>/dev/null || git rev-parse "$rollout")
+            if ! git merge-base --is-ancestor "$base" "$head"; then
+              base=$(git rev-parse "$head^")
+            fi
           fi
           git checkout --detach "$head"
           printf 'head=%s\nbase=%s\nwatermark=%s\n' "$head" "$base" "$watermark" >> "$GITHUB_OUTPUT"
@@ -142,21 +150,6 @@ jobs:
           name: ai-review-${{ steps.range.outputs.head }}
           path: ${{ runner.temp }}/review/
           overwrite: true
-      - uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc
-        id: checkpoint-token
-        if: steps.secrets.outputs.app == 'true' && steps.route.outputs.checkpoint == 'true' && steps.route.outputs.fixable_count == '0'
-        with:
-          client-id: ${{ secrets.AI_FIX_APP_CLIENT_ID }}
-          private-key: ${{ secrets.AI_FIX_APP_PRIVATE_KEY }}
-          permission-contents: write
-      - name: Advance the review checkpoint
-        if: steps.checkpoint-token.outcome == 'success'
-        working-directory: source
-        env:
-          GH_TOKEN: ${{ steps.checkpoint-token.outputs.token }}
-          HEAD_SHA: ${{ steps.range.outputs.head }}
-          WATERMARK: ${{ steps.range.outputs.watermark }}
-        run: python3 ../policy/.github/ai-review/review.py checkpoint
 
   report:
     needs: review
@@ -174,7 +167,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           issues=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues?state=open&per_page=100" |
-            jq -rs '[.[][] | select(.title == "AI review findings" and (has("pull_request") | not)) | .number]')
+            jq -rs '[.[][] | select(.title == "AI review findings" and (has("pull_request") | not)
+              and .user.login == "github-actions[bot]" and any(.labels[]; .name == "ai-review")) | .number]')
           case "$(jq length <<< "$issues")" in
             0)
               gh label create ai-review --repo "$GITHUB_REPOSITORY" --color 7057ff --force
@@ -187,33 +181,22 @@ jobs:
           esac
           gh issue comment "$issue" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/review/report.md"
 
-  fix:
+  generate:
     needs: review
     if: needs.review.outputs.app == 'true' && fromJSON(needs.review.outputs.fixable_count || '0') > 0
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    outputs:
+      base: ${{ steps.plan.outputs.base }}
+      resume: ${{ steps.plan.outputs.resume }}
     steps:
-      - name: Check for an existing fix PR
-        id: branch
-        env:
-          HEAD_SHA: ${{ needs.review.outputs.head }}
-        run: |
-          branch="ai-fix/${HEAD_SHA:0:12}"
-          prs=$(curl -fsS --get "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/pulls" \
-            --data-urlencode "head=${GITHUB_REPOSITORY_OWNER}:$branch" --data-urlencode 'state=open')
-          if [[ "$(jq length <<< "$prs")" != 0 ]]; then
-            echo '::notice::An open fix PR already exists for this head'
-            exit 0
-          fi
-          echo "name=$branch" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        if: steps.branch.outputs.name != ''
         with:
           ref: ${{ needs.review.outputs.head }}
+          fetch-depth: 0
           persist-credentials: false
           path: source
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        if: steps.branch.outputs.name != ''
         with:
           repository: ${{ fromJSON(toJSON(job)).workflow_repository }}
           ref: ${{ fromJSON(toJSON(job)).workflow_sha }}
@@ -221,64 +204,104 @@ jobs:
           persist-credentials: false
           path: policy
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        if: steps.branch.outputs.name != ''
         with:
           name: ai-review-${{ needs.review.outputs.head }}
           path: ${{ runner.temp }}/review
-      - name: Generate a fix
-        if: steps.branch.outputs.name != ''
+      - name: Plan fix publication
+        id: plan
+        working-directory: source
+        env:
+          HEAD_SHA: ${{ needs.review.outputs.head }}
+          DENY_PATHS: ${{ inputs.deny_paths }}
+          MAX_FIX_LINES: ${{ inputs.max_fix_lines }}
+          FIXABLE_FILE: ${{ needs.review.outputs.fixable_file }}
+        run: python3 ../policy/.github/ai-review/review.py plan
+      - name: Install the pinned OpenCode package
+        if: steps.plan.outputs.resume != 'true'
+        working-directory: ${{ runner.temp }}
+        run: npm install --prefix opencode --no-audit --no-fund --ignore-scripts opencode-ai@1.19.6
+      - name: Generate a fix in an isolated checkout
+        if: steps.plan.outputs.resume != 'true'
         working-directory: source
         env:
           OCR_LLM_URL: ${{ secrets.OCR_LLM_URL }}
           OCR_LLM_TOKEN: ${{ secrets.OCR_LLM_TOKEN }}
+          FIX_BASE: ${{ steps.plan.outputs.base }}
+          DENY_PATHS: ${{ inputs.deny_paths }}
           FIXABLE_FILE: ${{ needs.review.outputs.fixable_file }}
-          OPENCODE_DISABLE_PROJECT_CONFIG: 'true'
-          OPENCODE_DISABLE_AUTOUPDATE: 'true'
-        run: |
-          (cd "$RUNNER_TEMP" && env -u OCR_LLM_URL -u OCR_LLM_TOKEN npm install \
-            --prefix "$RUNNER_TEMP/opencode" --no-audit --no-fund --ignore-scripts opencode-ai@1.19.6)
-          export OPENCODE_CONFIG="$RUNNER_TEMP/opencode.json"
-          export OPENCODE_PROXY_BASE="${OCR_LLM_URL%/}"
-          OPENCODE_PROXY_BASE="${OPENCODE_PROXY_BASE%/chat/completions}"
-          umask 077
-          cat > "$OPENCODE_CONFIG" <<'JSON'
-          {
-            "provider": {"cliproxy": {
-              "npm": "@ai-sdk/openai-compatible",
-              "options": {"baseURL": "{env:OPENCODE_PROXY_BASE}", "apiKey": "{env:OCR_LLM_TOKEN}"},
-              "models": {"glm-5.3": {"name": "GLM-5.3"}}
-            }},
-            "permission": {"*": "deny", "glob": "allow", "grep": "allow", "list": "allow",
-              "read": {"*": "allow", ".git": "deny", ".git/**": "deny"},
-              "edit": {"*": "allow", ".git": "deny", ".git/**": "deny"}}
-          }
-          JSON
-          "$RUNNER_TEMP/opencode/node_modules/opencode-linux-x64/bin/opencode" run --pure --model cliproxy/glm-5.3 \
-            --file "$RUNNER_TEMP/review/$FIXABLE_FILE" -- "$(cat ../policy/.github/ai-review/fix-prompt.md)"
-      - name: Validate the fix
-        if: steps.branch.outputs.name != ''
+        run: python3 ../policy/.github/ai-review/review.py generate
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: steps.plan.outputs.resume != 'true'
+        with:
+          name: fix-${{ needs.review.outputs.head }}
+          path: ${{ runner.temp }}/fix.patch
+          if-no-files-found: error
+          overwrite: true
+
+  fix:
+    needs: [review, generate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ needs.generate.outputs.base }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: source
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ fromJSON(toJSON(job)).workflow_repository }}
+          ref: ${{ fromJSON(toJSON(job)).workflow_sha }}
+          sparse-checkout: .github/ai-review
+          persist-credentials: false
+          path: policy
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ai-review-${{ needs.review.outputs.head }}
+          path: ${{ runner.temp }}/review
+      - name: Resolve current fix PR state
+        id: plan
+        working-directory: source
+        env:
+          HEAD_SHA: ${{ needs.review.outputs.head }}
+          DENY_PATHS: ${{ inputs.deny_paths }}
+          MAX_FIX_LINES: ${{ inputs.max_fix_lines }}
+          FIXABLE_FILE: ${{ needs.review.outputs.fixable_file }}
+        run: python3 ../policy/.github/ai-review/review.py plan
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        if: steps.plan.outputs.resume != 'true' && needs.generate.outputs.resume != 'true'
+        with:
+          name: fix-${{ needs.review.outputs.head }}
+          path: ${{ runner.temp }}
+      - name: Validate the patch on a fresh runner
         working-directory: source
         env:
           DENY_PATHS: ${{ inputs.deny_paths }}
           MAX_FIX_LINES: ${{ inputs.max_fix_lines }}
           FIXABLE_FILE: ${{ needs.review.outputs.fixable_file }}
-        run: python3 ../policy/.github/ai-review/review.py guard
+          EXISTING_PR: ${{ steps.plan.outputs.number }}
+          EXISTING_SHA: ${{ steps.plan.outputs.sha }}
+          RESUME: ${{ steps.plan.outputs.resume }}
+          RESUME_BASE: ${{ steps.plan.outputs.base }}
+        run: python3 ../policy/.github/ai-review/review.py validate
       - uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc
         id: app
-        if: steps.branch.outputs.name != ''
         with:
           client-id: ${{ secrets.AI_FIX_APP_CLIENT_ID }}
           private-key: ${{ secrets.AI_FIX_APP_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write
-      - name: Open a fix PR and enable auto-merge
-        if: steps.branch.outputs.name != ''
+      - name: Publish the fix or resume auto-merge
         working-directory: source
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           APP_SLUG: ${{ steps.app.outputs.app-slug }}
           HEAD_SHA: ${{ needs.review.outputs.head }}
-          BRANCH: ${{ steps.branch.outputs.name }}
+          BRANCH: ${{ steps.plan.outputs.branch }}
+          EXISTING_PR: ${{ steps.plan.outputs.number }}
+          EXISTING_SHA: ${{ steps.plan.outputs.sha }}
+          RESUME: ${{ steps.plan.outputs.resume }}
           FIXABLE_COUNT: ${{ needs.review.outputs.fixable_count }}
         run: |
           rules=$(gh api "repos/$GITHUB_REPOSITORY/rules/branches/main")
@@ -287,17 +310,70 @@ jobs:
             exit 1
           fi
           bot="${APP_SLUG}[bot]"
-          bot_id=$(gh api "users/${APP_SLUG}%5Bbot%5D" --jq .id)
-          title="[ai-fix] $FIXABLE_COUNT findings from ${HEAD_SHA:0:12}"
-          git -c user.name="$bot" -c user.email="$bot_id+$bot@users.noreply.github.com" commit -m "$title"
-          remote=$(git ls-remote --heads origin "refs/heads/$BRANCH")
-          git -c credential.helper= -c 'credential.helper=!gh auth git-credential' \
-            push origin --force-with-lease="refs/heads/$BRANCH:${remote%%$'\t'*}" "HEAD:refs/heads/$BRANCH"
-          gh label create ai-fix --color 7057ff --force
-          pr=$(gh pr create --base main --head "$BRANCH" --title "$title" --label ai-fix --body-file "$RUNNER_TEMP/review/fix.md")
-          gh pr merge "$pr" --auto --squash --delete-branch
-      - name: Advance the review checkpoint
-        if: steps.branch.outputs.name != '' && needs.review.outputs.checkpoint == 'true'
+          if [[ -n "$EXISTING_PR" ]]; then
+            existing=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$EXISTING_PR")
+            if ! jq -e --arg bot "$bot" --arg sha "$EXISTING_SHA" --arg branch "$BRANCH" \
+              '.user.login == $bot and .head.sha == $sha and .head.ref == $branch and .base.ref == "main"' <<< "$existing" >/dev/null; then
+              echo '::error::The existing fix PR changed or belongs to another author'
+              exit 1
+            fi
+            if [[ "$RESUME" == true ]]; then
+              pr=$EXISTING_PR
+              pr_head=$EXISTING_SHA
+            else
+              gh pr close "$EXISTING_PR" --comment 'Superseding this fix because it no longer merges cleanly or passes the patch guard.'
+            fi
+          fi
+          if [[ "$RESUME" != true ]]; then
+            bot_id=$(gh api "users/${APP_SLUG}%5Bbot%5D" --jq .id)
+            title="[ai-fix] $FIXABLE_COUNT findings from ${HEAD_SHA:0:12}"
+            git -c user.name="$bot" -c user.email="$bot_id+$bot@users.noreply.github.com" commit -m "$title"
+            pr_head=$(git rev-parse HEAD)
+            remote=$(git ls-remote --heads origin "refs/heads/$BRANCH")
+            git -c credential.helper= -c 'credential.helper=!gh auth git-credential' \
+              push origin --force-with-lease="refs/heads/$BRANCH:${remote%%$'\t'*}" "HEAD:refs/heads/$BRANCH"
+            gh label create ai-fix --color 7057ff --force
+            pr=$(gh pr create --base main --head "$BRANCH" --title "$title" --label ai-fix --body-file "$RUNNER_TEMP/review/fix.md")
+          fi
+          state=$(gh pr view "$pr" --json state,autoMergeRequest,headRefOid)
+          if ! jq -e --arg head "$pr_head" '.headRefOid == $head and (.state == "MERGED" or (.state == "OPEN" and .autoMergeRequest != null))' <<< "$state" >/dev/null; then
+            gh pr merge "$pr" --auto --squash --delete-branch --match-head-commit "$pr_head"
+            state=$(gh pr view "$pr" --json state,autoMergeRequest,headRefOid)
+            jq -e --arg head "$pr_head" '.headRefOid == $head and (.state == "MERGED" or (.state == "OPEN" and .autoMergeRequest != null))' <<< "$state" >/dev/null
+          fi
+
+  checkpoint:
+    needs: [review, report, generate, fix]
+    if: >-
+      ${{ !cancelled() &&
+      needs.review.result == 'success' &&
+      needs.review.outputs.app == 'true' &&
+      needs.review.outputs.checkpoint == 'true' &&
+      ((needs.review.outputs.report == 'true' && needs.report.result == 'success') ||
+       (needs.review.outputs.report == 'false' && needs.report.result == 'skipped')) &&
+      ((needs.review.outputs.fixable_count == '0' && needs.generate.result == 'skipped' && needs.fix.result == 'skipped') ||
+       (needs.generate.result == 'success' && needs.fix.result == 'success')) }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ needs.review.outputs.head }}
+          persist-credentials: false
+          path: source
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ fromJSON(toJSON(job)).workflow_repository }}
+          ref: ${{ fromJSON(toJSON(job)).workflow_sha }}
+          sparse-checkout: .github/ai-review
+          persist-credentials: false
+          path: policy
+      - uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc
+        id: app
+        with:
+          client-id: ${{ secrets.AI_FIX_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AI_FIX_APP_PRIVATE_KEY }}
+          permission-contents: write
+      - name: Advance the completed review checkpoint
         working-directory: source
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
