@@ -305,30 +305,31 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
   slot (70 s apart). A worker that wakes after its slot has ended claims another slot before sending. Each request
   and response logs its UTC dispatch time, slot, process, spec, worker and response rate headers, without credentials.
   Preflight uses the same scheduler and logs its source instead of a spec and worker.
-  A 429 publishes a cooldown for that route class; workers of that class recheck it after waking. `Retry-After`
+  A 429 publishes one shared cooldown for every request as soon as its headers arrive, before the body is read.
+  `RateLimit-Policy` supplies a window, not a partition, so it does not keep other routes moving. `Retry-After`
   (seconds or HTTP date) and `RateLimit-Reset` (relative seconds, epoch seconds or HTTP date) determine the earliest
   next request. With neither, the response's `RateLimit-Policy` window applies, with a 60-s minimum. Requests continue
   only while a scheduled slot fits inside the original mail deadline; non-poll requests have a 120-s response budget
   after their first slot. Individual HTTP requests are bounded by 15 s and the remaining budget, and a response
   body that stalls or cannot be read fails with the same "inbox provider" error.   The first provider call of a run
-  records the run's start in `inbox-run`. A 429 cooldown is stored for that route class only (`accounts`, `token`,
-  `messages`, `message`, or `other`), because observed policies differ by path. An unused slot claimed before that
-  cooldown is released so another request of a different class can take it. The run keeps a slot for 40 account
-  creates at the 70 s cadence, including the worst alignment to the next account slot, the last token, list and body,
-  one 60 s cooldown and the 120 s mail poll (`support/inbox-budget.ts`). A request that cannot get a slot before that
-  deadline fails with "has no slot before the run's time limit".
+  records the run's start in `inbox-run`. Account creates claim only every tenth slot, and other requests claim the
+  rest, so a list or body read cannot take an account slot. The total stays one request per 7 s. The run keeps slots
+  for 50 account creates: 3 setup, 18 hosted, 1 invitation, 19 interactions and 9 finish SDK creates. The window
+  includes alignment to the next account slot, both observed 60 s cooldowns, the last token, list and body, and the
+  120 s mail poll (`support/inbox-budget.ts`). A request that cannot get a slot before that deadline fails with
+  "has no slot before the run's time limit".
   Queue waits extend the current test's bound. Hooks with several inbox calls use `withInboxBudget` to accumulate
   every wait: Playwright's `TestInfo.timeout` exposes the default test slot, not the running `beforeAll` hook slot.
   Each MFA setup needs two creations (at least 70 s apart); the project-MFA test later creates a third inbox.
   Inboxes are never deleted: a deleted address can be registered again by anyone while the product account still
   uses it. Address, password and token are registered secrets; provider errors include method, path, status, rate
   headers and the first 500 characters of the validation body.
-  A production run schedules 40 account creates: the 30 that reached the scheduler in run 44773500958, plus the
-  finish teardown's SDK owners and hashing-cap owner, which that run never reached. At 70 s apart, with alignment,
-  the last mail poll and one cooldown, the inbox window is 2,994,000 ms and the suite window is 3,294,000 ms,
-  including 5 minutes of teardown. The production journey job allows 77 minutes and its journey step 57; `production.sh`
-  refuses to start when those timeouts disagree with `support/inbox-budget.ts`. The public service advertises 8 QPS
-  per IP, but observed responses advertise 10/minute or 1/minute on a route. Account creates stay at 70 s.
+  Fifty creates at 70 s, plus alignment, two 60 s cooldowns, the last mail exchange and the 120 s poll, make an inbox
+  window of 3,754,000 ms. Playwright's production limit adds 5 minutes of teardown (4,054,000 ms). The running
+  workflow passes its own step, job, install and scrub minutes into `production.sh`, which refuses to open mail.tm
+  or production unless that step covers the suite and both readiness checks and the job covers 15 minutes of setup,
+  the step and the separate 5-minute scrub. Those running limits are 69 and 89 minutes. The public service advertises
+  8 QPS per IP, but observed responses advertise 10/minute or 1/minute. Account creates stay at 70 s.
 - Not run on production (`onLocalStack`): the Cloudflare fallback count of `setup`, because production shows no
   sender; `desktop-close`'s check that the deletion never shows the pending page, because production's managed
   snapshots, peer regions and erasure budget can keep a closure pending for a while (there the step still has to reach

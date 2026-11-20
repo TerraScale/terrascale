@@ -7,8 +7,13 @@ const projects = 'https://api.terrascale.tech/v1/projects/';
 
 export async function checkTenantTokens(context: APIRequestContext, project: string, otherProject: string, apiKey: string,
   tokens: { user: string; machine: string }): Promise<void> {
+  const material = `${keyId(apiKey)}:${apiKey}`;
+  const encoded = Buffer.from(material).toString('base64');
+  saveSecret('tenant-basic-material', material);
+  saveSecret('tenant-basic-credential', encoded);
+  saveSecret('tenant-basic-header', `Basic ${encoded}`);
   const exchanged = await context.post(auth + '/terrascale/oauth/token', {
-    headers: { Authorization: 'Basic ' + Buffer.from(keyId(apiKey) + ':' + apiKey).toString('base64') },
+    headers: { Authorization: `Basic ${encoded}` },
     form: { grant_type: 'client_credentials', project },
   });
   expect(exchanged.status(), 'exchange the project API key for a project token').toBe(200);

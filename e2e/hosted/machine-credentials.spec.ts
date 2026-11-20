@@ -8,7 +8,7 @@ import { checkTenantTokens } from '../support/tenant-tokens';
 test('machine credentials restrict scope and audience, interactive tokens identify users and reach TerraBase only with its data audience', async ({ browser }, info) => {
   const account = await createProjectOwner(browser, info);
   const { current, page } = account;
-  try {
+  await withCleanup(async () => {
     const management = await prepareAuthManagement(page, 'machine', current);
     await withCleanup(async () => {
       const tokens = await checkMachineClient(page, management.ownerToken, current.projectId, current.password);
@@ -20,7 +20,5 @@ test('machine credentials restrict scope and audience, interactive tokens identi
         expect(response.status()).toBe(200);
       }
     }, () => closeAuthManagement(page, management, current));
-  } finally {
-    await account.close();
-  }
+  }, () => account.close());
 });

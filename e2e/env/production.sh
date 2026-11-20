@@ -64,10 +64,10 @@ served() {
 journey() {
   local status=0
   isolated
+  (cd "$e2e" && node --input-type=module -e "import { assertRunningBudget, productionAccountCreates } from './support/inbox-budget.ts'; const budget = assertRunningBudget(); console.log('production inbox budget accounts=' + productionAccountCreates + ' runMs=' + budget.runMs + ' suiteMs=' + budget.suiteMs + ' stepMinutes=' + budget.stepMinutes + ' jobMinutes=' + budget.jobMinutes);")
   inbox
   served before
   cd "$e2e"
-  node --input-type=module -e "import { assertProductionSchedule, productionAccountCreates } from './support/inbox-budget.ts'; const budget = assertProductionSchedule('..'); console.log('production inbox budget accounts=' + productionAccountCreates + ' runMs=' + budget.runMs + ' suiteMs=' + budget.suiteMs + ' stepMinutes=' + budget.stepMinutes + ' jobMinutes=' + budget.jobMinutes);"
   E2E_TARGET=production E2E_STATE="$state" E2E_SDK_BUILD="$e2e/.state/sdk" E2E_CA_FILE="$ca" E2E_INBOX_DOMAIN="$domain" \
     npx playwright test "${projects[@]/#/--project=}" || status=$?
   served after

@@ -359,22 +359,48 @@ export async function prepareAuthManagement(page: Page, sdk: string, current: Au
   return management;
 }
 
+export class AuditGap extends Error {
+  readonly summary: string;
+
+  constructor(action: string, rows: number, sources: number, actorMatched: boolean) {
+    const summary = `category=audit action=${action} rows=${rows} sources=${sources} actorMatched=${actorMatched}`;
+    super(summary);
+    this.summary = summary;
+  }
+}
+
+export class HarnessFailure extends Error {
+  readonly parts: readonly string[];
+
+  constructor(parts: readonly string[]) {
+    super(parts.join('; '));
+    this.parts = parts;
+  }
+}
+
+function failurePart(error: unknown): string {
+  if (error instanceof AuditGap) return error.summary;
+  if (error instanceof HarnessFailure) return error.parts.join('; ');
+  return 'category=failure';
+}
+
 export async function withCleanup(body: () => Promise<void>, cleanup: () => Promise<void>): Promise<void> {
-  let failure: unknown;
+  let primary: unknown;
   try {
     await body();
   } catch (error) {
-    failure = error;
+    primary = error;
   }
+  let secondary: unknown;
   try {
     await cleanup();
   } catch (error) {
-    if (failure === undefined) throw error;
-    const earlier = failure instanceof Error ? failure.message : String(failure);
-    const later = error instanceof Error ? error.message : String(error);
-    throw new AggregateError([failure, error], `${earlier}\n${later}`);
+    secondary = error;
   }
-  if (failure !== undefined) throw failure;
+  if (primary === undefined && secondary === undefined) return;
+  if (secondary === undefined) throw primary;
+  if (primary === undefined) throw secondary;
+  throw new HarnessFailure([`primary ${failurePart(primary)}`, `cleanup ${failurePart(secondary)}`]);
 }
 
 export async function closeAuthManagement(page: Page, management: AuthManagement, current: AuthOwner = journey()): Promise<void> {
@@ -385,9 +411,9 @@ export async function closeAuthManagement(page: Page, management: AuthManagement
     expect(audit.status(), action).toBe(200);
     const events = (await audit.json()).events as { actor: string; action: string; source: string }[];
     const same = events.filter(event => event.action === action);
-    const sources = [...new Set(same.map(event => event.source))];
-    expect(same.some(event => event.actor === actor && event.source === 'ts-auth'),
-      `${action} from ts-auth: ${same.length} rows with that action, sources ${sources.join(',') || 'none'}, write-key actor matched ${same.some(event => event.actor === actor)}`).toBe(true);
+    if (!same.some(event => event.actor === actor && event.source === 'ts-auth')) {
+      throw new AuditGap(action, same.length, new Set(same.map(event => event.source)).size, same.some(event => event.actor === actor));
+    }
   }
   const events: { actor: string; action: string; detail: string }[] = [];
   let after: string | undefined;

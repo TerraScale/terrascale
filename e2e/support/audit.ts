@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, type Browser, type BrowserContext, type BrowserContextOptions, type Page, type Request, type Response, type TestInfo } from '@playwright/test';
+import { expect, type Browser, type BrowserContext, type BrowserContextOptions, type Frame, type Page, type Request, type Response, type TestInfo } from '@playwright/test';
 import { clientProxy, test as base } from './client-address';
 import { checkLinks, type Link } from './links';
 import { production, stackHosts } from './stack';
@@ -61,9 +61,9 @@ export class Audit {
     page.on('requestfailed', (request) => this.ended(request));
     page.on('framenavigated', (frame) => {
       if (frame !== page.mainFrame()) return;
+      const previous = this.generation;
       this.generation += 1;
-      for (const [request, generation] of this.inflight) if (generation < this.generation && !request.isNavigationRequest()) this.inflight.delete(request);
-      this.failed = this.failed.filter((failure) => failure.navigation || !failure.error.endsWith(' net::ERR_ABORTED') || failure.generation >= this.generation);
+      void this.keepGenerationUnlessReplaced(frame, previous);
     });
     if (production) {
       const reached = { type: 'url', description: page.url() };
@@ -72,6 +72,25 @@ export class Audit {
         if (frame === page.mainFrame()) reached.description = frame.url();
       });
     }
+  }
+
+  private async keepGenerationUnlessReplaced(frame: Frame, previous: number): Promise<void> {
+    const replaced = await frame.evaluate((mark) => {
+      const holder = globalThis as Record<string, true>;
+      if (holder[mark]) return false;
+      holder[mark] = true;
+      return true;
+    }, '__terrascaleAuditPage').catch(() => true);
+    if (replaced) {
+      for (const [request, generation] of this.inflight) {
+        if (generation <= previous && !request.isNavigationRequest()) this.inflight.delete(request);
+      }
+      this.failed = this.failed.filter((failure) => failure.navigation || !failure.error.endsWith(' net::ERR_ABORTED') || failure.generation > previous);
+      return;
+    }
+    this.generation = previous;
+    for (const failure of this.failed) if (failure.generation === previous + 1) failure.generation = previous;
+    for (const [request, generation] of this.inflight) if (generation === previous + 1) this.inflight.set(request, previous);
   }
 
   async quiet(): Promise<void> {

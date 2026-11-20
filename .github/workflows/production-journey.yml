@@ -78,7 +78,7 @@ jobs:
     needs: release
     if: needs.release.outputs.journey == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 77
+    timeout-minutes: 89
     concurrency:
       group: production-journey
       cancel-in-progress: false
@@ -90,6 +90,10 @@ jobs:
     env:
       JOURNEY_QUARANTINE: ${{ github.workspace }}/e2e/.state/quarantine.json
       JOURNEY_RESULTS: ${{ github.workspace }}/e2e/.state/quarantine-results
+      PRODUCTION_INSTALL_MINUTES: 15
+      PRODUCTION_SCRUB_MINUTES: 5
+      PRODUCTION_STEP_MINUTES: 69
+      PRODUCTION_JOB_MINUTES: 89
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -122,7 +126,7 @@ jobs:
           npx playwright install --only-shell chromium
           wait "$rust" || { cat "$RUNNER_TEMP/rust-runner.log"; exit 1; }
       - name: Journey against production
-        timeout-minutes: 57
+        timeout-minutes: 69
         env:
           GITHUB_TOKEN: ${{ github.token }}
           DOTNET_CLI_TELEMETRY_OPTOUT: 1

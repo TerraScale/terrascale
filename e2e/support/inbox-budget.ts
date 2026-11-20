@@ -1,18 +1,19 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-
 export const slotMs = 7_000;
 export const accountStride = 10;
-export const productionAccountCreates = 40;
+export const productionAccountCreates = 50;
+export const observedCooldowns = 2;
 export const cooldownMs = 60_000;
 export const mailPollMs = 120_000;
 export const teardownMs = 5 * 60_000;
+export const readyzMs = 30_000;
+export const installMinutes = 15;
+export const scrubMinutes = 5;
 
 export function productionInboxRunMs(accounts = productionAccountCreates): number {
   const alignment = (accountStride - 1) * slotMs;
   const span = (accounts - 1) * accountStride * slotMs;
-  const tail = 3 * slotMs + mailPollMs + cooldownMs;
-  return alignment + span + tail;
+  const tail = 3 * slotMs + mailPollMs;
+  return alignment + span + observedCooldowns * cooldownMs + tail;
 }
 
 export function productionSuiteMs(accounts = productionAccountCreates): number {
@@ -20,21 +21,34 @@ export function productionSuiteMs(accounts = productionAccountCreates): number {
 }
 
 export function productionStepMinutes(accounts = productionAccountCreates): number {
-  return Math.ceil(productionSuiteMs(accounts) / 60_000) + 2;
+  return Math.ceil((readyzMs + productionSuiteMs(accounts) + readyzMs) / 60_000);
 }
 
 export function productionJobMinutes(accounts = productionAccountCreates): number {
-  return productionStepMinutes(accounts) + 20;
+  return installMinutes + productionStepMinutes(accounts) + scrubMinutes;
 }
 
-export function assertProductionSchedule(root: string): { runMs: number; suiteMs: number; stepMinutes: number; jobMinutes: number } {
-  const stepMinutes = productionStepMinutes();
-  const jobMinutes = productionJobMinutes();
-  const workflow = readFileSync(join(root, '.github/workflows/production-journey.yml'), 'utf8');
-  const job = / {2}journey:[\s\S]*?\n {4}timeout-minutes: (\d+)/.exec(workflow);
-  const step = /name: Journey against production\n {8}timeout-minutes: (\d+)/.exec(workflow);
-  if (job?.[1] !== String(jobMinutes) || step?.[1] !== String(stepMinutes)) {
-    throw new Error(`production journey timeouts are ${job?.[1] ?? 'missing'}/${step?.[1] ?? 'missing'}; the ${productionAccountCreates} account creates need job ${jobMinutes} and step ${stepMinutes}`);
+export function accountSlotsWithin(runMs: number): number {
+  let count = 0;
+  for (let at = (accountStride - 1) * slotMs; at < runMs; at += accountStride * slotMs) count += 1;
+  return count;
+}
+
+export function assertRunningBudget(env: NodeJS.ProcessEnv = process.env): {
+  runMs: number; suiteMs: number; stepMinutes: number; jobMinutes: number;
+} {
+  const step = Number(env.PRODUCTION_STEP_MINUTES);
+  const job = Number(env.PRODUCTION_JOB_MINUTES);
+  const install = Number(env.PRODUCTION_INSTALL_MINUTES);
+  const scrub = Number(env.PRODUCTION_SCRUB_MINUTES);
+  const needStep = productionStepMinutes();
+  const needJob = installMinutes + needStep + scrubMinutes;
+  const runMs = productionInboxRunMs();
+  if (accountSlotsWithin(runMs) < productionAccountCreates) {
+    throw new Error(`inbox window holds ${accountSlotsWithin(runMs)} account slots for ${productionAccountCreates} creates`);
   }
-  return { runMs: productionInboxRunMs(), suiteMs: productionSuiteMs(), stepMinutes, jobMinutes };
+  if (install !== installMinutes || scrub !== scrubMinutes || step < needStep || job < install + step + scrub) {
+    throw new Error(`running workflow budget step=${env.PRODUCTION_STEP_MINUTES} job=${env.PRODUCTION_JOB_MINUTES} install=${env.PRODUCTION_INSTALL_MINUTES} scrub=${env.PRODUCTION_SCRUB_MINUTES}; need step ${needStep}, scrub ${scrubMinutes}, install ${installMinutes}, job at least ${needJob}`);
+  }
+  return { runMs, suiteMs: productionSuiteMs(), stepMinutes: needStep, jobMinutes: needJob };
 }
