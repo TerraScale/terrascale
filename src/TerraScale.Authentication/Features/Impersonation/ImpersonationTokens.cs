@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore;
 using OpenIddict.Abstractions;
+using OidcErrors = OpenIddict.Abstractions.OpenIddictConstants.Errors;
 using OpenIddict.Server;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 using static OpenIddict.Server.OpenIddictServerEvents;
@@ -21,7 +22,7 @@ public sealed class ValidateImpersonationToken(Impersonations impersonations) : 
         if (await impersonations.FindAsync(tenant, id, context.CancellationToken).ConfigureAwait(false) is not { } live
             || live.User.Id != context.Principal.GetClaim(Claims.Subject))
         {
-            context.Reject(Errors.InvalidToken, "The impersonation has ended.");
+            context.Reject(OidcErrors.InvalidToken, "The impersonation has ended.");
         }
     }
 }
@@ -40,7 +41,7 @@ public sealed class LimitImpersonationToken(Impersonations impersonations) : IOp
         if (await impersonations.FindAsync(tenant, id, context.CancellationToken).ConfigureAwait(false) is not { } live
             || live.Record.ClientId != context.Request?.ClientId || live.User.Id != context.Principal.GetClaim(Claims.Subject))
         {
-            context.Reject(Errors.InvalidGrant, "The impersonation has ended or belongs to another client.");
+            context.Reject(OidcErrors.InvalidGrant, "The impersonation has ended or belongs to another client.");
             return;
         }
 

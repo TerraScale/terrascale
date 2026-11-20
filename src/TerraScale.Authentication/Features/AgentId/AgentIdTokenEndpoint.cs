@@ -2,6 +2,7 @@ using Microsoft.AspNetCore;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http.Metadata;
 using OpenIddict.Abstractions;
+using OidcErrors = OpenIddict.Abstractions.OpenIddictConstants.Errors;
 using OpenIddict.Server.AspNetCore;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
@@ -45,7 +46,7 @@ public sealed class AgentIdTokenEndpoint(AgentIdTransactions transactions, Attem
         catch (Exception error) when (AuthData.IsUnavailable(error) && !this.HttpContext.RequestAborted.IsCancellationRequested)
         {
             var unavailable = error as ApiException ?? ApiException.Unavailable(error);
-            return Results.Json(new OAuthErrorBody(Errors.TemporarilyUnavailable, unavailable.Message), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status503ServiceUnavailable);
+            return Results.Json(new OAuthErrorBody(OidcErrors.TemporarilyUnavailable, unavailable.Message), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status503ServiceUnavailable);
         }
     }
 
@@ -58,7 +59,7 @@ public sealed class AgentIdTokenEndpoint(AgentIdTransactions transactions, Attem
 
         if (!request.IsAuthorizationCodeGrantType())
         {
-            return OidcResults.Forbid(Errors.UnsupportedGrantType, "The agent issuer grants authorization_code only.");
+            return OidcResults.Forbid(OidcErrors.UnsupportedGrantType, "The agent issuer grants authorization_code only.");
         }
 
         var principal = (await this.HttpContext.AuthenticateAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme)).Principal
@@ -66,7 +67,7 @@ public sealed class AgentIdTokenEndpoint(AgentIdTransactions transactions, Attem
         if (principal.GetClaim(AgentIdIssuer.AgentClaim) is not { } agentId || principal.GetClaim(AgentIdIssuer.OwnerClaim) is not { } ownerId
             || principal.GetClaim(AgentIdIssuer.KeyClaim) is not { } kid)
         {
-            return OidcResults.Forbid(Errors.InvalidGrant, "The code does not name an agent.");
+            return OidcResults.Forbid(OidcErrors.InvalidGrant, "The code does not name an agent.");
         }
 
         if ((await limiter.AcquireAsync(AgentIdIssuer.Slug, "agentid-token-agent", agentId, TokensPerAgentMinute, TimeSpan.FromMinutes(1), cancellationToken)
@@ -78,13 +79,13 @@ public sealed class AgentIdTokenEndpoint(AgentIdTransactions transactions, Attem
 
         if (await transactions.LiveAsync(agentId, ownerId, kid, cancellationToken) is not { } live)
         {
-            return OidcResults.Forbid(Errors.InvalidGrant, "The agent can no longer sign in.");
+            return OidcResults.Forbid(OidcErrors.InvalidGrant, "The agent can no longer sign in.");
         }
 
         var registration = this.HttpContext.Items[new AgentIdRegistration.RequestCopy(clientId)] as AgentIdRegistration;
         if (!AgentIdIssuer.IsOpenClient(clientId) && registration is null)
         {
-            return OidcResults.Forbid(Errors.InvalidGrant, "The client is no longer registered.");
+            return OidcResults.Forbid(OidcErrors.InvalidGrant, "The client is no longer registered.");
         }
 
         this.HttpContext.Items[AgentIdFence.Item] = live with { Registration = registration };

@@ -1,5 +1,6 @@
 using System.Diagnostics.Metrics;
 using OpenIddict.Server;
+using OidcErrors = OpenIddict.Abstractions.OpenIddictConstants.Errors;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 using static OpenIddict.Server.OpenIddictServerEvents;
 
@@ -63,7 +64,7 @@ public static class AuthMetrics
         }
 
         string?[] grants = [GrantTypes.AuthorizationCode, GrantTypes.RefreshToken, GrantTypes.ClientCredentials, GrantTypes.TokenExchange, "other"];
-        string?[] errors = [null, Errors.InvalidRequest, Errors.InvalidClient, Errors.InvalidGrant, Errors.UnauthorizedClient, Errors.UnsupportedGrantType, Errors.InvalidScope, Errors.TemporarilyUnavailable, Errors.ServerError, "other"];
+        string?[] errors = [null, OidcErrors.InvalidRequest, OidcErrors.InvalidClient, OidcErrors.InvalidGrant, OidcErrors.UnauthorizedClient, OidcErrors.UnsupportedGrantType, OidcErrors.InvalidScope, OidcErrors.TemporarilyUnavailable, OidcErrors.ServerError, "other"];
         foreach (var grant in grants)
         {
             foreach (var error in errors)
@@ -85,8 +86,8 @@ public static class AuthMetrics
     internal static string Outcome(string? error) => error switch
     {
         null or "" => "issued",
-        Errors.InvalidRequest or Errors.InvalidClient or Errors.InvalidGrant or Errors.UnauthorizedClient
-            or Errors.UnsupportedGrantType or Errors.InvalidScope or Errors.TemporarilyUnavailable or Errors.ServerError => error,
+        OidcErrors.InvalidRequest or OidcErrors.InvalidClient or OidcErrors.InvalidGrant or OidcErrors.UnauthorizedClient
+            or OidcErrors.UnsupportedGrantType or OidcErrors.InvalidScope or OidcErrors.TemporarilyUnavailable or OidcErrors.ServerError => error,
         _ => "other",
     };
 }

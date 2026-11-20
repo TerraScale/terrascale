@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore;
 using Microsoft.AspNetCore.Http.Metadata;
 using OpenIddict.Abstractions;
+using OidcErrors = OpenIddict.Abstractions.OpenIddictConstants.Errors;
 using OpenIddict.Server;
 using OpenIddict.Server.AspNetCore;
 using TerraScale.Authentication.Configuration;
@@ -52,7 +53,7 @@ internal sealed class RouteGuestGrant : IOpenIddictServerHandler<ExtractTokenReq
         {
             if (request.GrantType == GuestSignIn.GrantType)
             {
-                context.Reject(Errors.UnsupportedGrantType, "Guests sign in at oauth/anonymous.");
+                context.Reject(OidcErrors.UnsupportedGrantType, "Guests sign in at oauth/anonymous.");
             }
 
             return ValueTask.CompletedTask;
@@ -60,13 +61,13 @@ internal sealed class RouteGuestGrant : IOpenIddictServerHandler<ExtractTokenReq
 
         if (!Tenancy.IsProject(Tenancy.Current(context.Transaction.GetHttpRequest()?.HttpContext)))
         {
-            context.Reject(Errors.UnsupportedGrantType, "Only a project issuer admits guests.");
+            context.Reject(OidcErrors.UnsupportedGrantType, "Only a project issuer admits guests.");
             return ValueTask.CompletedTask;
         }
 
         if (request.GrantType is not null || request.Scope is not null)
         {
-            context.Reject(Errors.InvalidRequest, "A guest sign-in takes only client_id and the client's authentication.");
+            context.Reject(OidcErrors.InvalidRequest, "A guest sign-in takes only client_id and the client's authentication.");
             return ValueTask.CompletedTask;
         }
 
@@ -106,7 +107,7 @@ public sealed class GuestSignInEndpoint(Users users, AttemptLimiter limiter, Pro
         }
         catch (ApiException error) when (error.Status == StatusCodes.Status503ServiceUnavailable)
         {
-            return Results.Json(new OAuthErrorBody(Errors.TemporarilyUnavailable, error.Message), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status503ServiceUnavailable);
+            return Results.Json(new OAuthErrorBody(OidcErrors.TemporarilyUnavailable, error.Message), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status503ServiceUnavailable);
         }
     }
 
@@ -120,12 +121,12 @@ public sealed class GuestSignInEndpoint(Users users, AttemptLimiter limiter, Pro
         var tenant = Tenancy.Current(this.HttpContext);
         if (!Tenancy.IsProject(tenant))
         {
-            return OidcResults.Forbid(Errors.UnsupportedGrantType, "Only a project issuer admits guests.");
+            return OidcResults.Forbid(OidcErrors.UnsupportedGrantType, "Only a project issuer admits guests.");
         }
 
         if ((await settings.GetAsync(tenant, cancellationToken)).SignUpMode != "public")
         {
-            return Results.Json(new OAuthErrorBody(Errors.AccessDenied, "This project does not admit guests."), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status403Forbidden);
+            return Results.Json(new OAuthErrorBody(OidcErrors.AccessDenied, "This project does not admit guests."), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status403Forbidden);
         }
 
         var address = HostedAuth.Subject(this.HttpContext.Connection.RemoteIpAddress?.ToString()) ?? "unknown";

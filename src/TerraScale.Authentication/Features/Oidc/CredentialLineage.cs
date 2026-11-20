@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using OpenIddict.Abstractions;
+using OidcErrors = OpenIddict.Abstractions.OpenIddictConstants.Errors;
 using OpenIddict.Server;
 using OpenIddict.Server.AspNetCore;
 using TerraScale.Authentication.Contracts;
@@ -97,7 +98,7 @@ public sealed class ValidateCredentialLineage(IOpenIddictTokenStore<OidcToken> t
             && await CredentialLineage.RevokeReplayAsync(tokens, token, context.Principal, request.ClientId,
                 context.CancellationToken).ConfigureAwait(false))
         {
-            context.Reject(Errors.InvalidToken, CredentialLineage.ReplayNotice);
+            context.Reject(OidcErrors.InvalidToken, CredentialLineage.ReplayNotice);
             return;
         }
 
@@ -106,14 +107,14 @@ public sealed class ValidateCredentialLineage(IOpenIddictTokenStore<OidcToken> t
             case Statuses.Valid:
                 return;
             case Statuses.Inactive:
-                context.Reject(Errors.AuthorizationPending, "The device authorization is pending.");
+                context.Reject(OidcErrors.AuthorizationPending, "The device authorization is pending.");
                 return;
             case Statuses.Rejected:
-                context.Reject(Errors.AccessDenied, "The device authorization was denied.");
+                context.Reject(OidcErrors.AccessDenied, "The device authorization was denied.");
                 return;
             default:
                 context.Reject(context.Principal?.HasTokenType(TokenTypeIdentifiers.Private.ClientAssertion) == true
-                    ? Errors.InvalidClient : Errors.InvalidToken, CredentialLineage.ConflictNotice);
+                    ? OidcErrors.InvalidClient : OidcErrors.InvalidToken, CredentialLineage.ConflictNotice);
                 return;
         }
     }
@@ -124,7 +125,7 @@ public sealed class ReportCodeReplayNotice : IOpenIddictServerHandler<ApplyToken
     public ValueTask HandleAsync(ApplyTokenResponseContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
-        if (context.Response.Error != Errors.InvalidGrant
+        if (context.Response.Error != OidcErrors.InvalidGrant
             || context.Response.ErrorDescription is not ({ Length: > 0 } description)
             || description is CredentialLineage.ReplayNotice or CredentialLineage.ConflictNotice
             || context.Transaction.GetProperty<string>(CredentialLineage.RedeemedCodeProperty) is null)

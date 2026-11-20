@@ -20,7 +20,7 @@ def load_allow_list(policy):
     for file in files:
         entries = json.loads(file.read_text())
         if not isinstance(entries, list):
-            raise ValueError(f"{file.name} must contain a JSON array of allow-list entries")
+            raise TypeError(f"{file.name} must contain a JSON array of allow-list entries")
         paths = [entry["path"] for entry in entries]
         if paths != sorted(paths):
             raise ValueError(f"{file.name} entries must be sorted by path")
@@ -40,7 +40,7 @@ def main():
     parser.add_argument("--mode", choices=["report", "fail"])
     parser.add_argument("--output", type=Path)
     parser.add_argument("--path-prefix", help="Scan only paths under this repository-relative directory")
-    parser.add_argument("--term", action="append", choices=["documents", "collections", "document-feeds", "lattices"], help="Scan only these retired document API terms (repeatable)")
+    parser.add_argument("--term", action="append", choices=["documents", "collections", "document-feeds", "lattices", "exception-types"], help="Scan only these retired term families (repeatable)")
     parser.add_argument("--changed-from", help="Scan only existing files changed since this Git revision")
     args = parser.parse_args()
     root = args.root.resolve()
@@ -85,7 +85,7 @@ def main():
     sha = git(root, "rev-parse", "HEAD").decode().strip()
     print(f"Legacy scan: {args.repo} {sha} mode={mode} hits={len(hits)}")
     for name, number, term, match, owner in hits:
-        print(json.dumps(dict(path=name, line=number, term=term, match=match, owner=owner)))
+        print(json.dumps({"path": name, "line": number, "term": term, "match": match, "owner": owner}))
     if args.output:
         def cell(value):
             return str(value).replace("&", "&amp;").replace("<", "&lt;").replace("|", "&#124;").replace("`", "&#96;").replace("\n", " ")
@@ -103,6 +103,6 @@ def main():
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except (OSError, ValueError, subprocess.CalledProcessError) as error:
+    except (OSError, ValueError, TypeError, subprocess.CalledProcessError) as error:
         print(f"Legacy scan error: {error}", file=sys.stderr)
         sys.exit(2)
