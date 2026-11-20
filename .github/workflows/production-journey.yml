@@ -24,6 +24,9 @@ jobs:
     outputs:
       journey: ${{ steps.release.outputs.journey }}
       commit: ${{ steps.release.outputs.commit }}
+      suite: ${{ steps.release.outputs.suite }}
+      verified: ${{ steps.release.outputs.verified }}
+      terrabase: ${{ steps.release.outputs.terrabase }}
     steps:
       - id: release
         name: Run the journey for the source that was released
@@ -36,11 +39,13 @@ jobs:
           RELEASE_JOBS: '{".github/workflows/ci.yml": ["main-auth", "release-only"], ".github/workflows/images-ghcr.yml": ["Publish and release"]}'
         run: |
           set -euo pipefail
+          HEAD_SHA=$COMMIT
           [[ $COMMIT =~ ^[0-9a-f]{40}$ ]]
           echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
           if [ "$EVENT" != workflow_run ]; then
             echo "$EVENT: the journey runs the suite of $COMMIT"
             echo "journey=true" >> "$GITHUB_OUTPUT"
+            echo "suite=$COMMIT" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?filter=latest&per_page=100")
@@ -70,15 +75,21 @@ jobs:
             COMMIT=$(unzip -p "$RUNNER_TEMP/revision.zip" deploy-revision)
             [[ $COMMIT =~ ^[0-9a-f]{40}$ ]]
             echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+            echo "verified=$COMMIT" >> "$GITHUB_OUTPUT"
+          fi
+          if jq -e '.jobs[] | select(.name == "release-only" and .conclusion == "success")
+            | .steps[]? | select(.name == "Release the pinned arm64 digest to each region" and .conclusion == "success")' <<< "$jobs" > /dev/null; then
+            echo "terrabase=$HEAD_SHA" >> "$GITHUB_OUTPUT"
           fi
           echo "Run $RUN_ID released $COMMIT; run its production journey"
           echo "journey=true" >> "$GITHUB_OUTPUT"
+          echo "suite=$COMMIT" >> "$GITHUB_OUTPUT"
 
   journey:
     needs: release
     if: needs.release.outputs.journey == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 162
     concurrency:
       group: production-journey
       cancel-in-progress: false
@@ -87,25 +98,55 @@ jobs:
       issues: read
     outputs:
       report: ${{ steps.scrub.outputs.report }}
+      schedule: ${{ steps.budget.outputs.schedule }}
     env:
       JOURNEY_QUARANTINE: ${{ github.workspace }}/e2e/.state/quarantine.json
       JOURNEY_RESULTS: ${{ github.workspace }}/e2e/.state/quarantine-results
+      PRODUCTION_CHECKOUT_MINUTES: 2
+      PRODUCTION_TOOL_MINUTES: 2
+      PRODUCTION_INSTALL_MINUTES: 15
+      PRODUCTION_SCRUB_MINUTES: 5
+      PRODUCTION_UPLOAD_MINUTES: 2
+      PRODUCTION_STEP_MINUTES: 116
+      PRODUCTION_JOB_MINUTES: 162
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        timeout-minutes: 2
         with:
           ref: ${{ needs.release.outputs.commit }}
           persist-credentials: false
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        timeout-minutes: 2
         with:
           global-json-file: global.json
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        timeout-minutes: 2
         with:
           node-version: '24.21.0'
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        timeout-minutes: 2
         with:
           go-version-file: sdk/go/.go-version
           cache: false
+      - id: budget
+        name: Read the release budget
+        timeout-minutes: 2
+        run: |
+          sha=$(git rev-parse HEAD)
+          if [ -f e2e/support/inbox-budget-check.mjs ]; then
+            line=$(timeout 15 node e2e/support/inbox-budget-check.mjs)
+            printf '%s\n' "$line"
+          else
+            provider=$(sed -n 's/^const runMs = //p' e2e/support/inbox-provider.ts | head -1)
+            suite=$(sed -n 's/.*globalTimeout: production ? //p' e2e/playwright.config.ts | head -1 | sed 's/ :.*//')
+            line="legacy budget suite=$sha provider=$provider playwright=$suite"
+            printf '%s\n' "$line"
+            echo "schedule=$line" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "schedule=$line" >> "$GITHUB_OUTPUT"
       - name: Install the suite, its browser and the five runners
+        timeout-minutes: 15
         working-directory: e2e
         env:
           E2E_TOOLS: ${{ runner.temp }}/tools
@@ -122,12 +163,14 @@ jobs:
           npx playwright install --only-shell chromium
           wait "$rust" || { cat "$RUNNER_TEMP/rust-runner.log"; exit 1; }
       - name: Journey against production
-        timeout-minutes: 30
+        timeout-minutes: 116
         env:
           GITHUB_TOKEN: ${{ github.token }}
           DOTNET_CLI_TELEMETRY_OPTOUT: 1
+          PRODUCTION_SCHEDULE: ${{ steps.budget.outputs.schedule }}
         run: |
-          node e2e/support/quarantine.mjs read
+          printf '%s\n' "$PRODUCTION_SCHEDULE"
+          timeout --kill-after=5 60 node e2e/support/quarantine.mjs read
           unset GITHUB_TOKEN
           bash e2e/env/production.sh
       - id: scrub
@@ -157,6 +200,7 @@ jobs:
           python3 e2e/env/scrub.py e2e/.state/production e2e/production-report "$JOURNEY_RESULTS"
           if [ -f e2e/production-report/list.txt ]; then echo "report=true" >> "$GITHUB_OUTPUT"; fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        timeout-minutes: 2
         if: always() && steps.scrub.outcome == 'success'
         with:
           name: journey-results-${{ github.run_attempt }}-production
@@ -165,6 +209,7 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        timeout-minutes: 2
         if: always() && steps.scrub.outcome == 'success' && steps.scrub.outputs.report == 'true'
         with:
           name: production-journey-report
@@ -190,12 +235,17 @@ jobs:
       GH_REPO: ${{ github.repository }}
       TITLE: Production journey failure
       RESULT: ${{ needs.release.result == 'failure' && 'failure' || needs.journey.result }}
+      EVENT: ${{ github.event_name }}
       TRIGGER: ${{ github.event_name == 'workflow_run' && format('{0} run {1}', github.event.workflow_run.name, github.event.workflow_run.id) || github.event_name }}
-      COMMIT: ${{ needs.release.outputs.commit }}
+      SUITE: ${{ needs.release.outputs.suite }}
+      VERIFIED: ${{ needs.release.outputs.verified }}
+      TERRABASE: ${{ needs.release.outputs.terrabase }}
+      SCHEDULE: ${{ needs.journey.outputs.schedule }}
       RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
+          ref: ${{ needs.release.outputs.commit }}
           persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         if: needs.journey.outputs.report == 'true'
@@ -216,7 +266,13 @@ jobs:
               echo "The production journey ended with $RESULT: $RUN"
             fi
             echo
-            echo "Trigger: $TRIGGER. Suite: $COMMIT."
+            echo "Trigger: $TRIGGER."
+            if [ -n "$SUITE" ]; then echo "Suite: $SUITE."; else echo "Suite: not selected."; fi
+            if [ "$EVENT" = workflow_run ]; then
+              if [ -n "$VERIFIED" ]; then echo "Deploy revision: $VERIFIED."; else echo "Deploy revision: not identified."; fi
+              if [ -n "$TERRABASE" ]; then echo "TerraBase release: $TERRABASE."; else echo "TerraBase release: not identified."; fi
+            fi
+            echo "Schedule: $SCHEDULE."
             echo
             if [ ! -f "$report/list.txt" ]; then
               echo "Cause: no report: the run stopped before or during the suite (setup, timeout, cancel or scrub). Read the job log."

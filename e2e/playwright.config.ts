@@ -1,4 +1,5 @@
 import { defineConfig } from '@playwright/test';
+import { productionSuiteMs } from './support/inbox-budget.mjs';
 import { quarantineGrep } from './support/quarantine.mjs';
 import { browserHome, dash, desktop, mailWait, mobile, production, sessionFile } from './support/stack';
 
@@ -19,9 +20,10 @@ export default defineConfig({
   retries: 0,
   workers: faultRequested ? 1 : 6,
   timeout: 60_000 + mailWait,
-  globalTimeout: production ? 25 * 60_000 : 0,
+  globalTimeout: production ? productionSuiteMs() : 0,
   expect: { timeout: 20_000 },
-  grepInvert: quarantineGrep(),
+  grep: production && process.env.PRODUCTION_PHASE === 'cleanup' ? /teardown/ : undefined,
+  grepInvert: production && process.env.PRODUCTION_PHASE === 'suite' ? [...(quarantineGrep() ?? []), /teardown/] : quarantineGrep(),
   reporter: production ? [['list'], ['json', { outputFile: 'production-report/report.json' }], ['./support/quarantine-reporter.ts']] : [['list'], ['html', { open: 'never' }], ['./support/quarantine-reporter.ts']],
   globalSetup: './support/client-address.ts',
   globalTeardown: './support/teardown.ts',
