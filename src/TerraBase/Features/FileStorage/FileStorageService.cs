@@ -189,12 +189,16 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
         {
             return authorized;
         }
-        FileSignedUrlEntry signedEntry;
-        try { signedEntry = await objects.UploadAsync(definition.Region, Key(bucket, file.Id), file, cancellationToken).ConfigureAwait(false); }
+        FileSignedUrlEntry entry;
+        try { entry = await objects.UploadAsync(definition.Region, Key(bucket, file.Id), file, cancellationToken).ConfigureAwait(false); }
         catch (Exception error) when (StoreFailure(error)) { return Busy; }
-        if (signedEntry is not FileSignedUrl signed)
+        if (entry is not FileSignedUrl signed)
         {
-            return Busy;
+            return entry switch
+            {
+                Unavailable => Busy,
+                FileSignedUrl => throw new UnreachableException(),
+            };
         }
         var admission = await quota.EnterOrganizationsAsync([Access.OrganizationId], cancellationToken).ConfigureAwait(false);
         if (admission is Unavailable unavailable)
@@ -254,10 +258,15 @@ internal sealed class FileStorageService(SystemCatalog catalog, IStorageEngine e
         }
         try
         {
-            if (await objects.VerifyAsync(definition.Region, Key(bucket, file), saved, cancellationToken).ConfigureAwait(false)
-                is not true)
+            var verified = await objects.VerifyAsync(definition.Region, Key(bucket, file), saved, cancellationToken).ConfigureAwait(false);
+            if (verified is not true)
             {
-                return new Conflict("the uploaded file does not match the reserved size and checksum");
+                return verified switch
+                {
+                    false => new Conflict("the uploaded file does not match the reserved size and checksum"),
+                    Unavailable => Busy,
+                    true => throw new UnreachableException(),
+                };
             }
         }
         catch (Exception error) when (StoreFailure(error)) { return Busy; }

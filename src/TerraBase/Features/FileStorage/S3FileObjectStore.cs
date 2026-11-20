@@ -93,9 +93,13 @@ internal sealed class S3FileObjectStore : IFileObjectStore, IDisposable
 
     public async ValueTask<FileVerify> VerifyAsync(string region, string key, FileObject file, CancellationToken cancellationToken)
     {
+        if (_client is not { } client)
+        {
+            return Unconfigured;
+        }
         try
         {
-            using var response = await _client!.GetObjectAsync(new GetObjectRequest { BucketName = Bucket(region), Key = key }, cancellationToken).ConfigureAwait(false);
+            using var response = await client.GetObjectAsync(new GetObjectRequest { BucketName = Bucket(region), Key = key }, cancellationToken).ConfigureAwait(false);
             if (response.ContentLength != file.Size)
             {
                 return false;
@@ -109,18 +113,26 @@ internal sealed class S3FileObjectStore : IFileObjectStore, IDisposable
 
     public async ValueTask DeleteAsync(string region, string key, CancellationToken cancellationToken)
     {
+        if (_client is not { } client)
+        {
+            throw new IOException("file object storage credentials are unavailable");
+        }
         try
         {
-            _ = await _client!.DeleteObjectAsync(new DeleteObjectRequest { BucketName = Bucket(region), Key = key }, cancellationToken).ConfigureAwait(false);
+            _ = await client.DeleteObjectAsync(new DeleteObjectRequest { BucketName = Bucket(region), Key = key }, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested) { throw Unanswered(error); }
     }
 
     public async ValueTask<FileObjectListing> ListAsync(string region, string prefix, CancellationToken cancellationToken)
     {
+        if (_client is not { } client)
+        {
+            throw new IOException("file object storage credentials are unavailable");
+        }
         try
         {
-            var response = await _client!.ListObjectsV2Async(new ListObjectsV2Request { BucketName = Bucket(region), Prefix = prefix }, cancellationToken).ConfigureAwait(false);
+            var response = await client.ListObjectsV2Async(new ListObjectsV2Request { BucketName = Bucket(region), Prefix = prefix }, cancellationToken).ConfigureAwait(false);
             return new([.. (response.S3Objects ?? []).Select(stored => stored.Key)], response.IsTruncated == true);
         }
         catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested) { throw Unanswered(error); }

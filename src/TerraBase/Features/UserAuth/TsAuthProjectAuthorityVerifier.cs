@@ -97,10 +97,6 @@ internal sealed class TsAuthProjectAuthorityVerifier(TerraBaseOptions options, I
             client.MaxResponseContentBufferSize = MaxResponseBytes;
             return await check(client, new Uri(configured)).ConfigureAwait(false);
         }
-        catch (JsonException)
-        {
-            return false;
-        }
         catch (HttpRequestException)
         {
             return Unavailable();
@@ -128,7 +124,7 @@ internal sealed class TsAuthProjectAuthorityVerifier(TerraBaseOptions options, I
         using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
         if ((int)response.StatusCode >= 500 || response.StatusCode == HttpStatusCode.TooManyRequests)
         {
-            return new Unavailable("ts-auth authority unavailable");
+            return Unavailable();
         }
 
         if (response.StatusCode != HttpStatusCode.OK)
