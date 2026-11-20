@@ -17,6 +17,10 @@ internal sealed record TsAuthProjectAuthority(
 internal sealed record TsAuthOrganizationAuthority(string? Id, string? Role);
 internal sealed record TsAuthAuthoritySubject(string? Sub);
 
+internal readonly union Fetched<T>(T, NoBody, Unavailable);
+
+internal sealed record NoBody;
+
 internal sealed class TsAuthProjectAuthorityVerifier(TerraBaseOptions options, IHttpClientFactory http, IMemoryBudget budget) : IProjectAuthorityVerifier
 {
     private const int MaxInFlight = 16;
@@ -27,27 +31,39 @@ internal sealed class TsAuthProjectAuthorityVerifier(TerraBaseOptions options, I
         string token, string userId, string organizationId, string projectId, CancellationToken cancellationToken) =>
         CheckAsync(token, async (client, issuer) =>
         {
-            var subject = await FetchAsync(client, new Uri(issuer.AbsoluteUri.TrimEnd('/') + "/oauth/userinfo"), token,
-                UserAuthJsonContext.Default.TsAuthAuthoritySubject, cancellationToken).ConfigureAwait(false);
-            if (subject?.Sub != userId)
+            switch (await FetchAsync(client, new Uri(issuer.AbsoluteUri.TrimEnd('/') + "/oauth/userinfo"), token,
+                UserAuthJsonContext.Default.TsAuthAuthoritySubject, cancellationToken).ConfigureAwait(false))
             {
-                return false;
+                case Unavailable error:
+                    return error;
+                case TsAuthAuthoritySubject { Sub: var subject } when subject == userId:
+                    break;
+                default:
+                    return false;
             }
 
-            var organization = await FetchAsync(client, OrganizationAddress(issuer, organizationId), token,
-                UserAuthJsonContext.Default.TsAuthOrganizationAuthority, cancellationToken).ConfigureAwait(false);
-            if (organization is not { Role: "owner" or "admin" } || organization.Id != organizationId)
+            switch (await FetchAsync(client, OrganizationAddress(issuer, organizationId), token,
+                UserAuthJsonContext.Default.TsAuthOrganizationAuthority, cancellationToken).ConfigureAwait(false))
             {
-                return false;
+                case Unavailable error:
+                    return error;
+                case TsAuthOrganizationAuthority { Role: "owner" or "admin", Id: var organization } when organization == organizationId:
+                    break;
+                default:
+                    return false;
             }
 
-            var project = await FetchAsync(client, ProjectAddress(issuer, organizationId, projectId), token,
-                UserAuthJsonContext.Default.TsAuthProjectAuthority, cancellationToken).ConfigureAwait(false);
-            return project is { Role: "admin" } && project.Id == projectId && project.OrganizationId == organizationId;
+            return await FetchAsync(client, ProjectAddress(issuer, organizationId, projectId), token,
+                UserAuthJsonContext.Default.TsAuthProjectAuthority, cancellationToken).ConfigureAwait(false) switch
+            {
+                Unavailable error => error,
+                TsAuthProjectAuthority { Role: "admin" } authority when authority.Id == projectId && authority.OrganizationId == organizationId => true,
+                _ => false,
+            };
         }, cancellationToken);
 
     private async ValueTask<ProjectAuthorityResult> CheckAsync(
-        string token, Func<HttpClient, Uri, Task<bool>> check, CancellationToken cancellationToken)
+        string token, Func<HttpClient, Uri, Task<ProjectAuthorityResult>> check, CancellationToken cancellationToken)
     {
         if (options.AuthIssuer is not { } configured || token.Length is 0 or > 8192)
         {
@@ -95,18 +111,29 @@ internal sealed class TsAuthProjectAuthorityVerifier(TerraBaseOptions options, I
     private static Uri ProjectAddress(Uri issuer, string organization, string project) =>
         new(OrganizationAddress(issuer, organization).AbsoluteUri + "/projects/" + Uri.EscapeDataString(project));
 
-    private static async Task<T?> FetchAsync<T>(HttpClient client, Uri address, string token, JsonTypeInfo<T> type, CancellationToken cancellationToken)
+    private static async Task<Fetched<T>> FetchAsync<T>(HttpClient client, Uri address, string token, JsonTypeInfo<T> type, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, address);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
         if ((int)response.StatusCode >= 500 || response.StatusCode == HttpStatusCode.TooManyRequests)
         {
-            throw new HttpRequestException("ts-auth authority unavailable");
+            return new Unavailable("ts-auth authority unavailable");
         }
 
-        return response.StatusCode == HttpStatusCode.OK
-            ? await response.Content.ReadFromJsonAsync(type, cancellationToken).ConfigureAwait(false) : default;
+        if (response.StatusCode != HttpStatusCode.OK)
+        {
+            return new NoBody();
+        }
+
+        try
+        {
+            return await response.Content.ReadFromJsonAsync(type, cancellationToken).ConfigureAwait(false) is { } value ? value : new NoBody();
+        }
+        catch (JsonException)
+        {
+            return new NoBody();
+        }
     }
 
     private static Unavailable Unavailable() => new("ts-auth project verification is unavailable");
