@@ -62,15 +62,10 @@ internal sealed class ApplyRun(IStorageTransaction transaction, Writer origin, C
             return Reject("schema", change.Table, null, "a change is an insert, update or delete");
         }
 
-        TableShape? shape;
+        var shape = await ShapeAsync(change.Table!).ConfigureAwait(false);
+        if (shape is null)
         {
-            var found = await ShapeAsync(change.Table!).ConfigureAwait(false);
-            if (found is null)
-            {
-                return Reject("schema", change.Table, null, "no such table");
-            }
-
-            shape = found;
+            return Reject("schema", change.Table, null, "no such table");
         }
 
         if (shape.Keys.Count == 0)
@@ -79,15 +74,10 @@ internal sealed class ApplyRun(IStorageTransaction transaction, Writer origin, C
         }
 
         var source = change.Op == "insert" ? change.Values : change.Key;
-        object?[] key;
+        var key = source is null ? null : KeyValues(shape, source);
+        if (key is null)
         {
-            var parsed = source is null ? null : KeyValues(shape, source);
-            if (parsed is null)
-            {
-                return Reject("schema", shape.Name, null, "the change does not name every primary-key column");
-            }
-
-            key = parsed;
+            return Reject("schema", shape.Name, null, "the change does not name every primary-key column");
         }
 
         var keyText = ApplySql.KeyText(key);
