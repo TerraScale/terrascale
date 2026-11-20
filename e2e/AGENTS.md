@@ -302,30 +302,48 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
   specs and SDK preparation in Playwright workers, use `support/inbox-provider.ts` and the same state directory.
   Language runners receive the prepared user; they do not poll mail themselves.
   The scheduler atomically claims shared `inbox-requests` slots 7 s apart, with account creations only every tenth
-  slot (70 s apart). A worker that wakes after its slot has ended claims another slot before sending. Each request
-  and response logs its UTC dispatch time, slot, process, spec, worker and response rate headers, without credentials.
-  Preflight uses the same scheduler and logs its source instead of a spec and worker.
-  A 429 publishes a cooldown in `inbox-cooldowns` for every process; workers recheck it after waking. `Retry-After`
+  slot (70 s apart). Other requests claim the remaining slots, so a list or body read cannot take an account slot,
+  and the total stays one request per 7 s. A worker that wakes after its slot has ended claims another slot before
+  sending. Each request and response logs its UTC dispatch time, slot, process, spec, worker and response rate
+  headers, without credentials. Preflight uses the same scheduler and logs its source instead of a spec and worker.
+  A 429 publishes one shared cooldown for every request as soon as its headers arrive, before the body is read.
+  `RateLimit-Policy` supplies a window, not a partition, so it does not keep other routes moving. `Retry-After`
   (seconds or HTTP date) and `RateLimit-Reset` (relative seconds, epoch seconds or HTTP date) determine the earliest
   next request. With neither, the response's `RateLimit-Policy` window applies, with a 60-s minimum. Requests continue
   only while a scheduled slot fits inside the original mail deadline; non-poll requests have a 120-s response budget
   after their first slot. Individual HTTP requests are bounded by 15 s and the remaining budget, and a response
   body that stalls or cannot be read fails with the same "inbox provider" error. The first provider call of a run
-  records the run's start in `inbox-run`; no request waits for a slot or a response past 24 minutes after it, one
-  minute inside the suite's limit, and a request that cannot get a slot before then fails with "has no slot before
-  the run's time limit".
+  records the run's start in `inbox-run`. The run keeps slots for 50 account creates: 3 setup, 18 hosted, 1 invitation,
+  19 interactions and 9 finish SDK creates. Preflight and the two readiness calls before the suite share that clock.
+  Account slots are absolute multiples of 70 s. The run's phase against that grid is not fixed: every offset from 0
+  through 69,999 ms is funded, and every cooldown of 1 ms through 60 s rounds up to one skipped account slot. A
+  non-account request can wait 14 s, and a preflight retry stops 120 s after its first slot. With that preflight and
+  the two readiness calls, a 23 s phase starts create 50 at 3,803 s, its token at 3,824 s, and the 120 s poll at
+  3,959 s. The worst phase, 23,999 ms, ends the poll at 3,959,999 ms (`support/inbox-budget.mjs`). A request that
+  cannot get a slot before that deadline fails with "has no slot before the run's time limit".
   Queue waits extend the current test's bound. Hooks with several inbox calls use `withInboxBudget` to accumulate
   every wait: Playwright's `TestInfo.timeout` exposes the default test slot, not the running `beforeAll` hook slot.
   Each MFA setup needs two creations (at least 70 s apart); the project-MFA test later creates a third inbox.
   Inboxes are never deleted: a deleted address can be registered again by anyone while the product account still
   uses it. Address, password and token are registered secrets; provider errors include method, path, status, rate
   headers and the first 500 characters of the validation body.
-  A successful full production suite needs 15 inboxes and at least 65 provider requests: one domain discovery,
-  15 creations, 15 tokens and 17 mail reads with a list and body request each. Empty polls and 429s add requests.
-  The 15 creations alone span at least 980 s; after the preflight slot and the last token/list/body, even ideal
-  availability needs at least 1,008 s (16 min 48 s). The 25-minute run budget also includes browser and SDK work.
-  The public service advertises 8 QPS per IP, but observed responses advertise 10/minute or 1/minute. Its changing
-  limits and shared public capacity cannot reliably carry this suite inside that bound.
+  Playwright starts after that preflight and readiness, so its production limit is the remaining worst window plus 5
+  minutes of teardown (4,095,999 ms). The journey step also holds two 15 s shell starts, a 65 s quarantine lookup
+  (`timeout --kill-after=5 60`), a 15 s DNS lookup for each of the 13 production names, the 3,959,999 ms mail window,
+  the teardown, and two 15 s readiness calls after the suite. Those sum to 4,579,999 ms, so the step limit is 77
+  minutes. The job limit is 125 minutes: 2 for the released checkout and 2 for the workflow checkout, 2 for each of
+  the three tool actions, 15 for the install step, the 77-minute journey step, 5 for scrub, 2 for each of the two
+  uploads, 2 for runner setup, 2 for runner completion, and 2 for each of the five post actions. The workflow loads
+  `support/inbox-budget-check.mjs` from `github.workflow_sha`. The suite checkout stays the dispatch SHA, or the
+  recorded release SHA after a workflow run. When that tree's own provider and suite caps cover the schedule, it runs
+  unchanged, runners included. Current main's caps are 24 minutes of provider work and a 25-minute suite, so they do
+  not. The current harness then runs only when the two SHAs differ solely by harness files (`e2e/` except its package
+  files, and this workflow). The SDK build stays the released tree, which is the same runner contract in that case.
+  Any other difference stops before quarantine or DNS: the new budget does not apply to that harness. On GitHub
+  Actions the seven `PRODUCTION_*_MINUTES` values are required before that check. Each must be a positive safe
+  integer. `bash e2e/env/production.sh` with `GITHUB_ACTIONS` unset and none of those variables set still runs. The
+  public service advertises 8 QPS per IP, but observed responses advertise 10/minute or 1/minute. Account creates stay
+  at 70 s.
 - Not run on production (`onLocalStack`): the Cloudflare fallback count of `setup`, because production shows no
   sender; `desktop-close`'s check that the deletion never shows the pending page, because production's managed
   snapshots, peer regions and erasure budget can keep a closure pending for a while (there the step still has to reach
