@@ -127,8 +127,7 @@ namespace TerraScale.Dashboard.Features.Billing
             return InvoiceHistory.Page(invoices, status, issued, page, time.GetUtcNow()) switch
             {
                 BillingInvoiceList listed => Reply(listed, BillingMcpJson.Default.BillingInvoiceList),
-                Validation invalid => Failure(invalid.Message),
-                _ => throw new UnreachableException()
+                Validation invalid => Failure(invalid.Message)
             };
         }
 
@@ -154,8 +153,7 @@ namespace TerraScale.Dashboard.Features.Billing
             return await billing.PortalAsync(Scope(organizationId, projectId), Cancellation) switch
             {
                 PortalSessionUrl session => new(session.Url),
-                Validation error => throw new AccountAccessException(error.Message, 422),
-                _ => throw new UnreachableException()
+                Validation error => throw new AccountAccessException(error.Message, 422)
             };
         }
 

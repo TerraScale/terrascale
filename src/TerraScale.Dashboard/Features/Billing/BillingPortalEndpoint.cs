@@ -27,8 +27,7 @@ namespace TerraScale.Dashboard.Features.Billing
             {
                 PortalSessionUrl session => HttpRedirects.SeeOther(session.Url),
                 Validation error when DatabaseEndpoints.WantsHtml(http) => BillingRecoveryModel.Response(http, 422, "Billing portal unavailable", error.Message + " Return to billing to choose a plan or finish checkout."),
-                Validation error => Results.Problem(error.Message, statusCode: 422),
-                _ => throw new UnreachableException()
+                Validation error => Results.Problem(error.Message, statusCode: 422)
             };
         }
     }

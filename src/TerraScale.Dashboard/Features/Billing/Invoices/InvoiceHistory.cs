@@ -104,8 +104,7 @@ namespace TerraScale.Dashboard.Features.Billing.Invoices
             return Page(invoices, status, issued, page, now) switch
             {
                 BillingInvoiceList listed => new(listed, status, issued),
-                Validation => new(new([], 1, 1, 0), status, issued),
-                _ => throw new UnreachableException()
+                Validation => new(new([], 1, 1, 0), status, issued)
             };
         }
 
