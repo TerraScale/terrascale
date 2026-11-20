@@ -40,7 +40,7 @@ namespace TerraScale.Dashboard.Features.Billing
             var index = await CustomerAsync(binding.CustomerId, cancellationToken);
             if (index is null || index.OrganizationId != context.Organization.Id)
             {
-                return new Unavailable("Payment method customer ownership does not match.");
+                throw new IOException("Payment method customer ownership does not match.");
             }
 
             var client = await ClientAsync(cancellationToken);

@@ -17,8 +17,9 @@ public readonly union PaymentMethod(BillingCard, NoCard, Unavailable);
 public sealed record NoCard;
 public sealed record Rejected;
 public sealed record Deferred(string EventId, string EventType, Exception Cause);
-public sealed record InternalBillReported(InternalBill Bill, Unavailable? Failure);
+public readonly union InternalBillReported(InternalBill, InternalBillUnavailable);
+public sealed record InternalBillUnavailable(InternalBill Bill, string Message);
 
-[JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
+[JsonSourceGenerationOptions(JsonSerializerDefaults.Web, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(BillingInvoiceList))]
 internal sealed partial class BillingMcpJson : JsonSerializerContext;

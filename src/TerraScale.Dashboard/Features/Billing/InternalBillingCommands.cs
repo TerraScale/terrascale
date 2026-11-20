@@ -35,7 +35,7 @@ namespace TerraScale.Dashboard.Features.Billing
             var parsed = Parse(args);
             if (parsed is CommandRejection rejection)
             {
-                await error.WriteLineAsync(command + ": " + rejection.Message, cancellationToken);
+                error.WriteLine(command + ": " + rejection.Message);
                 return 1;
             }
 
@@ -117,20 +117,23 @@ namespace TerraScale.Dashboard.Features.Billing
             {
                 await internalBilling.ConfigureAsync(context, new(options.OrganizationId, options.BasePlanKey,
                     options.SpendCapCents, options.WriteCentsPerMillion, options.StorageCentsPerGBMonth), refreshAuthority, cancellationToken);
-                await output.WriteLineAsync($"configured report-only internal billing for organization {options.OrganizationId} using base plan {options.BasePlanKey}", cancellationToken);
+                output.WriteLine($"configured report-only internal billing for organization {options.OrganizationId} using base plan {options.BasePlanKey}");
                 return;
             }
 
             var reported = await internalBilling.ReportAsync(context, options.OrganizationId, refreshAuthority, cancellationToken);
-            await output.WriteLineAsync(JsonSerializer.Serialize(reported.Bill, Json), cancellationToken);
-            if (reported.Bill is not { Available: true })
+            switch (reported)
             {
-                throw new AccountAccessException(reported.Bill.Error ?? "Internal bill is unavailable.", 503);
-            }
-
-            if (reported.Failure is { } reportFailure)
-            {
-                throw new AccountAccessException(reportFailure.Message, 503);
+                case InternalBillUnavailable unavailable:
+                    output.WriteLine(JsonSerializer.Serialize(unavailable.Bill, Json));
+                    throw new AccountAccessException(unavailable.Message, 503);
+                case InternalBill bill:
+                    output.WriteLine(JsonSerializer.Serialize(bill, Json));
+                    if (bill is not { Available: true })
+                    {
+                        throw new AccountAccessException(bill.Error ?? "Internal bill is unavailable.", 503);
+                    }
+                    break;
             }
         }
 
