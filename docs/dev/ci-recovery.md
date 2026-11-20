@@ -215,10 +215,16 @@ read and includes the bot and labeled issue histories.
 
 ## Manual releases and rollback
 
-TerraBase release-only and SDK publication retain exact-commit qualification.
-They are not scheduled reconciles. Build-only and release-only maintenance
-reuse main-push proof. Native-artifact maintenance never qualifies a deploy.
-Push SDK tags only after main CI is green for the exact tagged commit.
+TerraBase build-only, release-only and manually triggered SDK publication use
+the latest main-push CI for the exact source revision. The run must be complete,
+with successful code checks and every journey shard green. A failure confined
+to ts-auth live reconciliation, rollout observation, live revision proof or
+the deployment receipt leaves main-push CI red and still supplies code
+qualification.
+TerraBase release-only verifies the exact image digest and its source
+attestation before the signed release request and rollout check. Automatic
+Go releases still require a successful CI run. Native-artifact maintenance
+never qualifies a deploy.
 
 To undo this change, revert PR #2011's squash merge commit in a new PR and
 merge it through normal CI. Revert the workflows and the shared reconcile
