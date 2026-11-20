@@ -1,8 +1,12 @@
 # Regional application images
 
-GitHub Actions publishes the same Linux arm64 manifest to GHCR and, in order,
-to `sa-saopaulo-1.ocir.io`, `eu-frankfurt-1.ocir.io` and
+GitHub Actions publishes the same Linux arm64 manifest to GHCR and to
+`sa-saopaulo-1.ocir.io`, `eu-frankfurt-1.ocir.io` and
 `us-sanjose-1.ocir.io` during the registry migration.
+TerraBase's image copy walks those repositories one at a time, gru then fra
+then sjc. Auth and dashboard image copies, and their selection-bundle
+attachments, still upload to every region at once. Fail-fast order applies
+only to each regional `:release` write and its read-back.
 The production OCIR repository is `<namespace>/terrascale/<pkg>`, where the package is
 `terrabase`, `ts-auth` or `terrascale-dashboard`. `OCIR_NAMESPACE` is the
 repository variable identifying the OCI tenancy's registry namespace.
@@ -23,9 +27,11 @@ attachment, checks its subject and artifact type, downloads its layer and
 compares the bytes with the original signed bundle.
 
 Before regional publication, each publisher job exercises the same commands
-against the three production repositories in its local registry service, in
-gru, fra, sjc order, using its actual image and GitHub-signed bundles. This proves the registry transfer without
-requiring OCI credentials on a development machine.
+against the three production repositories in its local registry service.
+That local proof walks gru, then fra, then sjc. It is not the parallel auth
+and dashboard upload. It uses the job's actual image and GitHub-signed
+bundles and proves the registry transfer without requiring OCI credentials
+on a development machine.
 
 The existing PR lint job runs a cheaper transport proof with a public arm64
 image and an unsigned dummy bundle. Its registry has no referrers API, as
