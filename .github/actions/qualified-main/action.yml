@@ -1,5 +1,5 @@
-name: Require the journey on the released main commit
-description: Reject a revision without a successful main push CI run and both journey shards.
+name: Qualify the exact main revision
+description: Require successful code checks and journey shards on a completed main push CI run.
 inputs:
   revision:
     description: Exact source revision being published or deployed.
@@ -7,7 +7,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Require successful CI and journey for the exact revision
+    - name: Require successful code checks and journey for the exact revision
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
@@ -19,12 +19,28 @@ runs:
           --jq '.workflow_runs | max_by(.id) // empty')
         jq -e --arg sha "$REVISION" --arg repo "$GITHUB_REPOSITORY" '
           .head_sha == $sha and .head_branch == "main" and .event == "push"
-          and .head_repository.full_name == $repo and .status == "completed" and .conclusion == "success"
-        ' <<< "$run" > /dev/null
+          and .head_repository.full_name == $repo and .repository.full_name == $repo
+          and .path == ".github/workflows/ci.yml"
+          and .status == "completed" and (.conclusion == "success" or .conclusion == "failure")
+        ' <<< "$run" > /dev/null || { echo "::error::No eligible completed main CI run for $REVISION"; exit 1; }
         id=$(jq -r .id <<< "$run")
+        conclusion=$(jq -r .conclusion <<< "$run")
         gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?filter=latest&per_page=100" | \
-          jq -e '[.[].jobs[]] as $jobs
+          jq -e --arg conclusion "$conclusion" '
+            def live_auth_failure:
+              .name == "main-auth" and .conclusion == "failure"
+              and ([.steps[] | select(.conclusion != "success" and .conclusion != "skipped")] | length == 1
+                and all(.[]; .status == "completed" and .conclusion == "failure"
+                  and (.name | IN("Reconcile qualified main with live ts-auth", "Wait for rollout",
+                    "Prove the live revision", "Record the released source for the production journey"))));
+            [.[].jobs[]] as $jobs
             | [$jobs[] | select(.name | startswith("journey / journey "))] as $journey
-            | ($journey | length) >= 2 and all($journey[]; .conclusion == "success")
-              and any($jobs[]; .name == "all-green" and .conclusion == "success")' > /dev/null
+            | [$jobs[] | select(.conclusion != "success" and .conclusion != "skipped")] as $unsuccessful
+            | all($jobs[]; .status == "completed")
+              and ($journey | length) >= 2 and all($journey[]; .conclusion == "success")
+              and all("changes", "checks", "all-green"; . as $name
+                | any($jobs[]; .name == $name and .conclusion == "success"))
+              and (if $conclusion == "success" then $unsuccessful == []
+                   else ($unsuccessful | length == 1 and all(.[]; live_auth_failure)) end)
+          ' > /dev/null || { echo "::error::Main CI run $id lacks successful code and journey qualification for $REVISION"; exit 1; }
         echo "Qualified $REVISION with main CI run $id and its successful journey" >> "$GITHUB_STEP_SUMMARY"
