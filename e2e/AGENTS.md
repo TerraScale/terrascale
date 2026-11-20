@@ -313,35 +313,40 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
   only while a scheduled slot fits inside the original mail deadline; non-poll requests have a 120-s response budget
   after their first slot. Individual HTTP requests are bounded by 15 s and the remaining budget, and a response
   body that stalls or cannot be read fails with the same "inbox provider" error. The first provider call of a run
-  records the run's start in `inbox-run`. The run keeps slots for 50 account creates: 3 setup, 18 hosted, 1 invitation,
-  19 interactions and 9 finish SDK creates. Preflight and the two readiness calls before the suite share that clock.
-  Account slots stay 70 s apart and every other request stays on the remaining 7 s slots. The finish graph runs the
-  .NET, Go, Python and JavaScript signup polls one after another. A poll that returns at 100 s, inside the 120 s
-  allowance, misses the next 70 s account slot. At phase 23,999 ms those four misses put create 50 at 3,943,999 ms
-  and its first token slot at 3,964,999 ms. The allocator can then skip every later non-account slot until the
-  provider's 120 s retry bound, so the token claim is 4,069,999 ms. The 15 s response and the whole following 120 s
-  poll end at 4,204,999 ms, which is the mailbox deadline (`support/inbox-budget.mjs`). A request that cannot get a
-  slot before that deadline fails with "has no slot before the run's time limit".
+  records the run's start in `inbox-run` on the first call that is not the preflight. Account slots stay 70 s apart
+  and every other request stays on the remaining 7 s slots. A finish signup answers the account create in 15 s, claims
+  its token at 21 s, finishes that token and the signup at 36 s, and reads the mail detail at 148 s. The 70 s and
+  140 s account slots have both passed, so the next create is three slots later. The four .NET, Go, Python and
+  JavaScript signups therefore miss eight slots. At phase 23,999 ms, with the other creates on time, create 50 sends
+  at 4,013,999 ms. A 60 s cooldown moves the successful retry to 4,083,999 ms, the free token slot is 4,104,999 ms,
+  and the 15 s response plus the full 120 s poll ends at 4,239,999 ms. The slowest phase ends that poll at 4,285,999 ms
+  (`support/inbox-budget.mjs`). A request that cannot get a slot before that deadline fails with "has no slot before
+  the run's time limit".
   Queue waits extend the current test's bound. Hooks with several inbox calls use `withInboxBudget` to accumulate
   every wait: Playwright's `TestInfo.timeout` exposes the default test slot, not the running `beforeAll` hook slot.
   Each MFA setup needs two creations (at least 70 s apart); the project-MFA test later creates a third inbox.
   Inboxes are never deleted: a deleted address can be registered again by anyone while the product account still
   uses it. Address, password and token are registered secrets; provider errors include method, path, status, rate
   headers and the first 500 characters of the validation body.
-  That mailbox deadline is also the suite's provider limit. Playwright adds 5 minutes of teardown (4,340,999 ms).
-  The journey step also holds two 15 s shell starts, a 65 s quarantine lookup (`timeout --kill-after=5 60`), a 15 s
-  DNS lookup for each of the 13 production names, and two 15 s readiness calls after the suite. Those sum to
-  4,824,999 ms, so the step limit is 81 minutes. The job limit is 127 minutes: 2 for the one release checkout, 2 to
-  read that tree's budget, 2 for each of the three tool actions, 15 for the install step, the 81-minute journey step,
-  5 for scrub, 2 for each of the two uploads, 2 for runner setup, 2 for runner completion, and 2 for each of the four
-  post actions. The workflow checks out only the release SHA. A tree with `support/inbox-budget-check.mjs` prints that
-  SHA and these caps and then installs its own SDK. A tree without it prints the provider and suite expressions in
-  that source and stops before install; a dispatch of the current workflow is the manual recovery after the release
-  owner has compared inputs. Scrub, the report, the uploads and the alert all read this same checkout. On GitHub
-  Actions the seven `PRODUCTION_*_MINUTES` values are required before DNS, mail.tm or production. Each must be a
-  positive safe integer. `bash e2e/env/production.sh` with `GITHUB_ACTIONS` unset and none of those variables set
-  still runs. The public service advertises 8 QPS per IP, but observed responses advertise 10/minute or 1/minute.
-  Account creates stay at 70 s.
+  Playwright's limit starts when Playwright starts: that mailbox window plus 5 minutes of teardown (4,585,999 ms).
+  Preflight (14 s wait plus the 120 s retry bound) and the two readiness calls before the suite sit outside that clock,
+  as do the two readiness calls after it. The journey step also holds two 15 s shell starts, a 65 s quarantine lookup
+  (`timeout --kill-after=5 60`) and a 15 s DNS lookup for each of the 13 production names. Those sum to 5,069,999 ms,
+  so the step limit is 85 minutes. The job limit is 131 minutes: 2 for the one checkout, 2 to read that tree's budget,
+  2 for each of the three tool actions, 15 for the install step, the 85-minute journey step, 5 for scrub, 2 for each
+  of the two uploads, 2 for runner setup, 2 for runner completion, and 2 for each of the four post actions. The
+  workflow checks out only that SHA. Its check prints the SHA as the suite and these caps, then the install builds
+  that tree's SDK. A tree without the check prints the provider and Playwright expressions in that source, names the
+  same SHA as the suite, and stops before install. A schedule or manual run never labels that SHA as a release. A
+  release-triggered run also records it as the release, because that is the SHA the release job checked out. To run
+  the current workflow against an older live release, read `version` from `https://auth.terrascale.tech/readyz` and
+  `https://dash.terrascale.tech/readyz`, and the TerraBase version from `https://api.terrascale.tech/readyz`. The
+  intended dispatch SHA's app, SDK, build and deploy inputs must be the ones that produced those revisions. Record
+  the three versions, the dispatch SHA, and that those inputs have no difference, and only then dispatch. Scrub, the
+  report, the uploads and the alert read this one checkout. On GitHub Actions the seven `PRODUCTION_*_MINUTES` values
+  are required before DNS, mail.tm or production. Each must be a positive safe integer.
+  `bash e2e/env/production.sh` with `GITHUB_ACTIONS` unset and none of those variables set still runs. The public
+  service advertises 8 QPS per IP, but observed responses advertise 10/minute or 1/minute. Account creates stay at 70 s.
 - Not run on production (`onLocalStack`): the Cloudflare fallback count of `setup`, because production shows no
   sender; `desktop-close`'s check that the deletion never shows the pending page, because production's managed
   snapshots, peer regions and erasure budget can keep a closure pending for a while (there the step still has to reach

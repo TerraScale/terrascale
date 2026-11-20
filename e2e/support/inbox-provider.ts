@@ -36,6 +36,7 @@ export class InboxProvider {
   }
 
   private runDeadline(): number {
+    if ((this.context() as { source?: string }).source === 'preflight') return Number.POSITIVE_INFINITY;
     const starts = join(this.state, 'inbox-run');
     mkdirSync(starts, { recursive: true });
     if (!readdirSync(starts).length) writeFileSync(join(starts, String(Date.now())), '');

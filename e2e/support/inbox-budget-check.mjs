@@ -7,5 +7,5 @@ import { assertRunningBudget } from './inbox-budget.mjs';
 const here = dirname(fileURLToPath(import.meta.url));
 const hostnames = readFileSync(join(here, '../env/hostnames'), 'utf8');
 const budget = assertRunningBudget(process.env, hostnames);
-const release = (process.env.RELEASED_SHA || execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' })).trim();
-console.log(`production journey release=${release} providerMs=${budget.runMs} suiteMs=${budget.suiteMs} pollDone=${budget.pollDone} legacy=false`);
+const suite = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+console.log(`production journey suite=${suite} providerMs=${budget.runMs} suiteMs=${budget.suiteMs} pollDone=${budget.pollDone} legacy=false`);

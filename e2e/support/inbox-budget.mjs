@@ -1,8 +1,6 @@
 export const slotMs = 7_000;
 export const accountStride = 10;
 export const productionAccountCreates = 50;
-export const observedCooldowns = 2;
-export const cooldownMs = 60_000;
 export const mailPollMs = 120_000;
 export const teardownMs = 5 * 60_000;
 export const requestMs = 15_000;
@@ -45,56 +43,90 @@ export function dnsHostCount(hostnames) {
   return count;
 }
 
-function nextClaim(at) {
-  let claim = Math.ceil(at / slotMs) * slotMs;
-  if (claim % accountPeriod === 0) claim += slotMs;
-  return claim;
-}
+const headerCooldownMs = 60_000;
+const detailAfterSignupMs = 112_000;
+const signupCount = 4;
 
-function latestClaim(first, limit) {
-  let claim = first;
+function take(now, every, notBefore, deadline, accounts, held) {
+  let slot = every * Math.ceil(Math.max(now, notBefore) / (every * slotMs));
   for (;;) {
-    const next = nextClaim(claim + 1);
-    if (next > limit) return claim;
-    claim = next;
+    if (slot * slotMs >= deadline) return undefined;
+    if (accounts ? slot % accountStride !== 0 : slot % accountStride === 0) {
+      slot += every;
+      continue;
+    }
+    if (held.has(slot)) {
+      slot += every;
+      continue;
+    }
+    held.add(slot);
+    return slot * slotMs;
   }
 }
 
-export const serialPolls = 4;
-export const serialPollMs = 100_000;
-
-export function productionSchedule(phase, misses = serialPolls) {
-  const readyAt = preflightMs + readyzBeforeCalls * readyzRequestMs;
-  const slotPhase = ((accountPeriod - phase) % accountPeriod + accountPeriod) % accountPeriod;
-  let first = phase;
-  if (first < readyAt) first += Math.ceil((readyAt - first) / accountPeriod) * accountPeriod;
-  const fiftiethStart = first + (productionAccountCreates - 1 + misses) * accountPeriod;
-  const open = nextClaim(slotPhase + fiftiethStart + requestMs);
-  const limit = open + providerRetryMs - requestMs;
-  const claim = latestClaim(open, limit);
-  const openAt = open - slotPhase;
-  const tokenAt = claim - slotPhase;
-  const quietPoll = openAt + requestMs + mailPollMs;
-  const pollDone = tokenAt + requestMs + mailPollMs;
-  return { phase, readyAt, firstCreate: first, fiftiethStart, openAt, tokenAt, quietPoll, pollDone, misses };
+export function productionSchedule(phase) {
+  const origin = phase === 0 ? 0 : accountPeriod - phase;
+  const held = new Set();
+  const rel = (abs) => abs - origin;
+  const account = (at) => take(at, accountStride, at, Number.POSITIVE_INFINITY, true, held);
+  const other = (at) => take(at, 1, at, Number.POSITIVE_INFINITY, false, held);
+  const first = account(origin);
+  const creates = [first];
+  const signups = [];
+  for (let index = 1; index < productionAccountCreates; index += 1) {
+    const created = creates[creates.length - 1];
+    if (index > productionAccountCreates - 1 - signupCount) {
+      const response = created + requestMs;
+      const token = other(response);
+      const signed = token + requestMs;
+      const detail = signed + detailAfterSignupMs;
+      signups.push({ created: rel(created), token: rel(token), signed: rel(signed), detail: rel(detail) });
+      creates.push(account(detail));
+    } else {
+      creates.push(account(created + 1));
+    }
+  }
+  const fiftieth = creates[creates.length - 1];
+  const retryAt = fiftieth + headerCooldownMs;
+  const retried = account(retryAt);
+  const token = other(retried + requestMs);
+  const pollDone = rel(token + requestMs + mailPollMs);
+  return {
+    phase,
+    firstCreate: rel(first),
+    fiftiethStart: rel(fiftieth),
+    retryAt: rel(retried),
+    tokenAt: rel(token),
+    pollDone,
+    signups,
+  };
 }
 
 let cached;
 function coverage() {
   if (cached) return cached;
   const serial = productionSchedule(23_999);
-  if (serial.fiftiethStart !== 3_943_999 || serial.openAt !== 3_964_999 || serial.quietPoll !== 4_099_999) {
-    throw new Error(`serial finish create=${serial.fiftiethStart} token=${serial.openAt} poll=${serial.quietPoll}`);
+  if (serial.firstCreate !== 23_999 || serial.fiftiethStart !== 4_013_999 || serial.retryAt !== 4_083_999 || serial.tokenAt !== 4_104_999 || serial.pollDone !== 4_239_999) {
+    throw new Error(`serial finish first=${serial.firstCreate} create=${serial.fiftiethStart} retry=${serial.retryAt} token=${serial.tokenAt} poll=${serial.pollDone}`);
   }
-  if (serialPollMs <= accountPeriod || serialPollMs > mailPollMs) throw new Error('a 100s poll must miss one 70s slot and stay inside 120s');
+  for (const signup of serial.signups) {
+    const span = signup.detail - signup.created;
+    if (span !== 148_000) throw new Error(`signup detail at +${span}`);
+    if (signup.token - signup.created !== 21_000 || signup.signed - signup.created !== 36_000) throw new Error('signup token clock moved');
+  }
   let worst = serial;
   for (let phase = 0; phase < accountPeriod; phase += 1) {
     const row = phase === serial.phase ? serial : productionSchedule(phase);
-    if (row.tokenAt < row.openAt || row.pollDone < row.quietPoll) throw new Error(`phase ${phase} shortens the poll`);
+    for (let index = 0; index < row.signups.length; index += 1) {
+      const next = index === row.signups.length - 1 ? row.fiftiethStart : row.signups[index + 1].created;
+      const passed = [row.signups[index].created + accountPeriod, row.signups[index].created + 2 * accountPeriod];
+      if (passed.some((slot) => slot >= next) || next - row.signups[index].created !== 3 * accountPeriod) {
+        throw new Error(`phase ${phase} signup missed ${next - row.signups[index].created}`);
+      }
+    }
     if (row.pollDone - row.tokenAt !== requestMs + mailPollMs) throw new Error(`phase ${phase} clips the poll`);
     if (row.pollDone > worst.pollDone) worst = row;
   }
-  if (worst.pollDone < serial.quietPoll) throw new Error('deadline clips the serial poll');
   cached = { serial, worst };
   return cached;
 }
@@ -104,12 +136,11 @@ export function productionInboxRunMs() {
 }
 
 export function productionSuiteMs() {
-  const { worst } = coverage();
-  return worst.pollDone - worst.readyAt + teardownMs;
+  return productionInboxRunMs() + teardownMs;
 }
 
 export function productionStepMs(hosts) {
-  return shellStarts * requestMs + quarantineMs + hosts * requestMs + productionInboxRunMs() + teardownMs + readyzAfterCalls * readyzRequestMs;
+  return shellStarts * requestMs + quarantineMs + hosts * requestMs + preflightMs + readyzBeforeCalls * readyzRequestMs + productionSuiteMs() + readyzAfterCalls * readyzRequestMs;
 }
 
 export function productionStepMinutes(hosts) {
@@ -152,11 +183,11 @@ export function assertRunningBudget(env = process.env, hostnames) {
     jobMinutes,
     preflightMs,
     quarantineMs,
-    phase: worst.phase,
+    phase: serial.phase,
+    worstPhase: worst.phase,
     fiftiethStart: serial.fiftiethStart,
-    openAt: serial.openAt,
-    tokenAt: worst.tokenAt,
-    quietPoll: serial.quietPoll,
+    retryAt: serial.retryAt,
+    tokenAt: serial.tokenAt,
     pollDone: worst.pollDone,
     hosts,
   };
