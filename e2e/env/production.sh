@@ -16,9 +16,14 @@ isolated() {
   local preset
   preset=$(env | sed -n -E 's/^(E2E_[A-Z_]*|TERRASCALE_[A-Z_]*|PW_[A-Z_]*|PLAYWRIGHT_[A-Z_]*|NODE_EXTRA_CA_CERTS|NODE_OPTIONS|NODE_TLS_REJECT_UNAUTHORIZED|CURL_CA_BUNDLE|REQUESTS_CA_BUNDLE|[Hh][Tt][Tt][Pp][Ss]?_[Pp][Rr][Oo][Xx][Yy]|[Aa][Ll][Ll]_[Pp][Rr][Oo][Xx][Yy])=.*/\1/p' | sort | paste -sd ' ' -)
   [ -z "$preset" ] || refuse "$preset set; the production target chooses its own state, hosts and trust"
-  local host address
+  local host address addresses status
   while read -r host; do
-    for address in $(getent ahosts "$host" | awk '{ print $1 }' | sort -u); do
+    addresses=$(timeout 15 getent ahosts "$host" | awk '{ print $1 }' | sort -u) || {
+      status=$?
+      [ "$status" -eq 124 ] && return "$status"
+      addresses=
+    }
+    for address in $addresses; do
       case $address in
         127.* | ::1 | ::ffff:127.* | 0.0.0.0) refuse "$host resolves to $address, the journey's network namespace or a pinned name, not production" ;;
       esac
@@ -63,12 +68,17 @@ served() {
 
 journey() {
   local status=0
+  (cd "$e2e" && timeout 15 node support/inbox-budget-check.mjs)
   isolated
   inbox
   served before
   cd "$e2e"
-  E2E_TARGET=production E2E_STATE="$state" E2E_SDK_BUILD="$e2e/.state/sdk" E2E_CA_FILE="$ca" E2E_INBOX_DOMAIN="$domain" \
-    npx playwright test "${projects[@]/#/--project=}" || status=$?
+  node --input-type=module -e "import { writeEnvelope } from './support/inbox-budget.mjs'; writeEnvelope(process.argv[1]);" "$state/inbox-envelope"
+  local cleanup=0
+  local play=(env E2E_TARGET=production E2E_STATE="$state" E2E_SDK_BUILD="$e2e/.state/sdk" E2E_CA_FILE="$ca" E2E_INBOX_DOMAIN="$domain")
+  PRODUCTION_PHASE=suite "${play[@]}" npx playwright test "${projects[@]/#/--project=}" || status=$?
+  PRODUCTION_PHASE=cleanup "${play[@]}" npx playwright test --project=finish || cleanup=$?
+  if [ "$status" -eq 0 ]; then status=$cleanup; fi
   served after
   return "$status"
 }
@@ -76,7 +86,10 @@ journey() {
 export SSL_CERT_FILE=$ca
 unset SSL_CERT_DIR
 [ $# -eq 0 ] || refuse "it takes no arguments, so nothing can point it elsewhere"
-rm -rf "$state" "$report"
-mkdir -p "$state/browser-home" "$report"
+rm -rf "$report"
+mkdir -p "$report"
+(cd "$e2e" && node support/production-owner.mjs acquire "$state" "$$")
+trap '(cd "$e2e" && node support/production-owner.mjs release "$state" "$$")' EXIT
+mkdir -p "$state/browser-home"
 chmod 700 "$state"
 journey 2>&1 | tee "$report/list.txt"

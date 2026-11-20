@@ -1,9 +1,7 @@
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-
-const slotMs = 7_000;
-const runMs = 24 * 60_000;
+import { accountStride, nonAccountWaitMs, preflightMs, sendAfterWake, slotMs } from './inbox-budget.mjs';
 
 function resetAt(headers: Headers, now: number): number {
   const retry = headers.get('retry-after');
@@ -35,23 +33,33 @@ export class InboxProvider {
     this.context = context;
   }
 
-  private runDeadline(): number {
-    const starts = join(this.state, 'inbox-run');
-    mkdirSync(starts, { recursive: true });
-    if (!readdirSync(starts).length) writeFileSync(join(starts, String(Date.now())), '');
-    return Math.min(...readdirSync(starts).map(Number)) + runMs;
+  private preflightAt = 0;
+
+  private envelope(): number {
+    const file = join(this.state, 'inbox-envelope');
+    if (!existsSync(file)) throw new Error('inbox provider mail.tm: the suite envelope is missing');
+    const deadline = Number(readFileSync(file, 'utf8'));
+    if (!Number.isSafeInteger(deadline)) throw new Error('inbox provider mail.tm: the suite envelope is missing');
+    return deadline;
   }
 
-  private async turn(every: number, notBefore: number, deadline: number): Promise<number | undefined> {
+  private preflightLimits(): { acquire: number; overall: number } {
+    if (!this.preflightAt) this.preflightAt = Date.now();
+    return { acquire: this.preflightAt + nonAccountWaitMs, overall: this.preflightAt + preflightMs };
+  }
+
+  private async turn(every: number, notBefore: number, deadline: number, accounts: boolean, dispatchBy: number): Promise<number | undefined> {
     const slots = join(this.state, 'inbox-requests');
     const cooldowns = join(this.state, 'inbox-cooldowns');
     mkdirSync(slots, { recursive: true });
     mkdirSync(cooldowns, { recursive: true });
     for (;;) {
-      const cooldown = Math.max(0, ...readdirSync(cooldowns).map(Number));
+      if (!sendAfterWake(Date.now(), dispatchBy)) return undefined;
+      const cooldown = Math.max(0, ...readdirSync(cooldowns).filter((name) => /^\d+$/.test(name)).map(Number));
       let slot = every * Math.ceil(Math.max(Date.now(), notBefore, cooldown) / (every * slotMs));
       for (;; slot += every) {
         if (slot * slotMs >= deadline) return undefined;
+        if (accounts ? slot % accountStride !== 0 : slot % accountStride === 0) continue;
         try {
           writeFileSync(join(slots, String(slot)), '', { flag: 'wx' });
           break;
@@ -62,20 +70,33 @@ export class InboxProvider {
       const wait = Math.max(0, slot * slotMs - Date.now());
       this.onWait(wait);
       await new Promise((resolve) => setTimeout(resolve, wait));
-      if (Date.now() >= (slot + 1) * slotMs) continue;
-      if (readdirSync(cooldowns).some((reset) => Number(reset) > Date.now())) continue;
+      const held = join(slots, String(slot));
+      const woke = Date.now();
+      const cooled = readdirSync(cooldowns).some((name) => /^\d+$/.test(name) && Number(name) > woke);
+      if (!sendAfterWake(woke, dispatchBy) || woke >= (slot + 1) * slotMs || cooled) {
+        rmSync(held, { force: true });
+        if (!sendAfterWake(woke, dispatchBy)) return undefined;
+        continue;
+      }
       return slot;
     }
   }
 
   async request<T>(method: string, path: string, token?: string, body?: object, deadline = Infinity): Promise<T> {
-    const every = method === 'POST' && path === '/accounts' ? 10 : 1;
-    const run = this.runDeadline();
-    let slot = await this.turn(every, Date.now(), Math.min(deadline, run));
+    const accounts = method === 'POST' && path === '/accounts';
+    const every = accounts ? accountStride : 1;
+    const preflight = (this.context() as { source?: string }).source === 'preflight';
+    const limits = preflight ? this.preflightLimits() : undefined;
+    const run = preflight ? limits!.overall : this.envelope();
+    if (!preflight && Number.isFinite(deadline) && deadline > run) {
+      throw new Error(`inbox provider mail.tm: ${method} ${path} is over budget; remaining ${run - Date.now()}ms and the poll needs ${deadline - Date.now()}ms`);
+    }
+    const limit = preflight ? limits!.acquire : Math.min(deadline, run);
+    let slot = await this.turn(every, Date.now(), limit, accounts, limit);
     if (slot === undefined) {
       throw new Error(`inbox provider mail.tm: ${method} ${path} has no slot before ${deadline <= run ? 'the mail poll deadline' : "the run's time limit"}`);
     }
-    const until = Math.min(run, Number.isFinite(deadline) ? deadline : Date.now() + 120_000);
+    const until = preflight ? limits!.overall : Math.min(run, Number.isFinite(deadline) ? deadline : Date.now() + 120_000);
     const headers: Record<string, string> = { accept: 'application/json' };
     if (body) headers['content-type'] = 'application/json';
     if (token) headers.authorization = `Bearer ${token}`;
@@ -94,13 +115,19 @@ export class InboxProvider {
       const read = <V>(content: Promise<V>): Promise<V> => content.catch((error: Error) => {
         throw new Error(`inbox provider mail.tm: ${method} ${path} answered HTTP ${response.status} and its body failed: ${error.cause ?? error.message}`);
       });
+      if (response.status === 429) {
+        const retryAt = resetAt(response.headers, Date.now());
+        const cooldown = join(this.state, 'inbox-cooldowns');
+        mkdirSync(cooldown, { recursive: true });
+        writeFileSync(join(cooldown, String(Math.ceil(retryAt))), '');
+      }
       if (response.ok) return (await read(response.json())) as T;
       const detail = (await read(response.text())).replace(/\s+/g, ' ').slice(0, 500);
       const failure = new Error(`inbox provider mail.tm: ${method} ${path} answered HTTP ${response.status}; headers ${JSON.stringify(limits)}: ${detail}`);
       if (response.status !== 429) throw failure;
       const retryAt = resetAt(response.headers, Date.now());
-      writeFileSync(join(this.state, 'inbox-cooldowns', String(Math.ceil(retryAt))), '');
-      slot = await this.turn(every, retryAt, until);
+      if (retryAt >= until) throw failure;
+      slot = await this.turn(every, retryAt, until, accounts, until);
       if (slot === undefined) throw failure;
     }
   }
