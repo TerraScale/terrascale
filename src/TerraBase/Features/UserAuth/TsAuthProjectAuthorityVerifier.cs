@@ -36,10 +36,15 @@ internal sealed class TsAuthProjectAuthorityVerifier(TerraBaseOptions options, I
             {
                 case Unavailable error:
                     return error;
-                case TsAuthAuthoritySubject { Sub: var subject } when subject == userId:
-                    break;
-                default:
+                case NoBody:
                     return false;
+                case TsAuthAuthoritySubject { Sub: var subject }:
+                    if (subject != userId)
+                    {
+                        return false;
+                    }
+
+                    break;
             }
 
             switch (await FetchAsync(client, OrganizationAddress(issuer, organizationId), token,
@@ -47,18 +52,23 @@ internal sealed class TsAuthProjectAuthorityVerifier(TerraBaseOptions options, I
             {
                 case Unavailable error:
                     return error;
-                case TsAuthOrganizationAuthority { Role: "owner" or "admin", Id: var organization } when organization == organizationId:
-                    break;
-                default:
+                case NoBody:
                     return false;
+                case TsAuthOrganizationAuthority authority:
+                    if (authority.Role is not ("owner" or "admin") || authority.Id != organizationId)
+                    {
+                        return false;
+                    }
+
+                    break;
             }
 
             return await FetchAsync(client, ProjectAddress(issuer, organizationId, projectId), token,
                 UserAuthJsonContext.Default.TsAuthProjectAuthority, cancellationToken).ConfigureAwait(false) switch
             {
                 Unavailable error => error,
-                TsAuthProjectAuthority { Role: "admin" } authority when authority.Id == projectId && authority.OrganizationId == organizationId => true,
-                _ => false,
+                NoBody => false,
+                TsAuthProjectAuthority authority => authority.Role == "admin" && authority.Id == projectId && authority.OrganizationId == organizationId,
             };
         }, cancellationToken);
 
