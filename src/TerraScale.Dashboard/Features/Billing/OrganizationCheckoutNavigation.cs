@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.WebUtilities;
 using Stripe;
 using TerraScale.Dashboard.Platform.Http;
 using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.Dashboard.Errors;
 
 namespace TerraScale.Dashboard.Features.Billing;
 
@@ -253,14 +254,14 @@ public sealed partial class StripeBilling
             var draft = await ReadPendingOrganizationAsync(draftId, cancellationToken);
             if (draft is null)
             {
-                await using var db = await storage.CreateDbContextAsync(cancellationToken);
-                var checkout = await db.StripeCheckouts.AsNoTracking().SingleOrDefaultAsync(row => row.RequestId == draftId, cancellationToken);
+                await using var cancelDb = await storage.CreateDbContextAsync(cancellationToken);
+                var checkout = await cancelDb.StripeCheckouts.AsNoTracking().SingleOrDefaultAsync(row => row.RequestId == draftId, cancellationToken);
                 var context = await accounts.GetContextAsync(session, cancellationToken);
                 if (checkout is not null && context.Organizations.Any(org => org.Id == checkout.OrganizationId && org.OwnerUserId == session.UserId))
                 {
-                    const string message = "The organization has been created. Checkout cannot be canceled.";
-                    await OrganizationCheckoutNavigation.RefusedAsync(http, session.UserId, message, cancellationToken);
-                    return new OrganizationCheckoutCompletion(checkout.OrganizationId, message);
+                    const string createdMessage = "The organization has been created. Checkout cannot be canceled.";
+                    await OrganizationCheckoutNavigation.RefusedAsync(http, session.UserId, createdMessage, cancellationToken);
+                    return new OrganizationCheckoutCompletion(checkout.OrganizationId, createdMessage);
                 }
                 return new OrganizationCheckoutCompletion();
             }
@@ -284,44 +285,43 @@ public sealed partial class StripeBilling
                 }
             }
 
-            try
+            var refund = await CancelDraftPaymentAsync(draft, cancellationToken);
+            if (refund is OrganizationRefundPending pendingRefund)
             {
-                var refunded = await CancelDraftPaymentAsync(draft, cancellationToken);
-                var message = draft.RefusalReason + (refunded ? " Your payment was refunded." : "");
-                await using var db = await storage.CreateDbContextAsync(cancellationToken);
-                var current = await db.PendingOrganizationCheckouts.SingleOrDefaultAsync(row => row.DraftId == draftId, cancellationToken);
-                if (current is null)
+                var unsettledNotice = await RecordUnsettledRefundAsync(draftId, pendingRefund.Status, cancellationToken);
+                if (unsettledNotice)
                 {
-                    return new OrganizationCheckoutCompletion();
-                }
-                if (current.State == OrganizationCheckoutStates.Creating)
-                {
-                    continue;
-                }
-                db.Remove(current);
-                try
-                {
-                    await db.SaveChangesAsync(cancellationToken);
-                }
-                catch (DbUpdateConcurrencyException)
-                {
-                    continue;
-                }
-
-                await OrganizationCheckoutNavigation.RefusedAsync(http, session.UserId, message, cancellationToken);
-                return new OrganizationCheckoutCompletion(Notice: message);
-            }
-            catch (OrganizationRefundUnsettledException error)
-            {
-                var notice = await RecordUnsettledRefundAsync(draftId, error.Status, cancellationToken);
-                if (notice)
-                {
-                    var message = draft.RefusalReason + " Your refund is " + error.Status + ". You can start a new checkout.";
-                    await OrganizationCheckoutNavigation.RefusedAsync(http, session.UserId, message, cancellationToken);
-                    return new OrganizationCheckoutCompletion(Notice: message);
+                    var unsettledMessage = draft.RefusalReason + " Your refund is " + pendingRefund.Status + ". You can start a new checkout.";
+                    await OrganizationCheckoutNavigation.RefusedAsync(http, session.UserId, unsettledMessage, cancellationToken);
+                    return new OrganizationCheckoutCompletion(Notice: unsettledMessage);
                 }
                 return new OrganizationCheckoutCompletion();
             }
+
+            var refunded = refund switch { bool canceled => canceled, OrganizationRefundPending => false };
+            var message = draft.RefusalReason + (refunded ? " Your payment was refunded." : "");
+            await using var db = await storage.CreateDbContextAsync(cancellationToken);
+            var current = await db.PendingOrganizationCheckouts.SingleOrDefaultAsync(row => row.DraftId == draftId, cancellationToken);
+            if (current is null)
+            {
+                return new OrganizationCheckoutCompletion();
+            }
+            if (current.State == OrganizationCheckoutStates.Creating)
+            {
+                continue;
+            }
+            db.Remove(current);
+            try
+            {
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                continue;
+            }
+
+            await OrganizationCheckoutNavigation.RefusedAsync(http, session.UserId, message, cancellationToken);
+            return new OrganizationCheckoutCompletion(Notice: message);
         }
         throw new IOException("Organization cancellation changed concurrently. Retry organization setup.");
     }
