@@ -1,41 +1,290 @@
 [
-  {"path": "^src/TerraScale\\.Dashboard/.*\\.(?:cs|cshtml)$", "repo": "terrascale", "terms": ["documents"], "match": "\\bDocumentModel\\s+Document\\b|\\b(?:DocumentModel|ShellDocument)\\b|\\bTerraScale\\.Dashboard\\.Common\\.UI\\.Slices\\.Document\\b|\\bModel\\.Document\\b|\\bDocument\\s*=\\s*new\\(", "reason": "Razor HTML layout types, layout model properties and layout directives; unrelated to persisted data."},
-  {"path": "^src/TerraScale\\.Dashboard/Common/Accounts/AccountModels\\.cs$", "repo": "terrascale", "terms": ["exception-types"], "match": "\\bclass AccountAccessException\\b", "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."},
-  {"path": "^src/TerraScale\\.Dashboard/Common/Databases/DatabaseBackend\\.cs$", "repo": "terrascale", "terms": ["exception-types"], "match": "\\bclass DatabaseListingException\\b", "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."},
-  {"path": "^src/TerraScale\\.Dashboard/Common/Databases/DatabaseBackend\\.cs$", "repo": "terrascale", "terms": ["exception-types"], "match": "\\bclass DatabaseProviderException\\b", "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."},
-  {"path": "^src/TerraScale\\.Dashboard/Common/Databases/DatabaseBackend\\.cs$", "repo": "terrascale", "terms": ["exception-types"], "match": "\\bclass DatabaseRegionsCopyingException\\b", "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."},
-  {"path": "^src/TerraScale\\.Dashboard/Common/Databases/DatabaseBackend\\.cs$", "repo": "terrascale", "terms": ["exception-types"], "match": "\\bclass DatabaseSqlException\\b", "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."},
-  {"path": "^src/TerraScale\\.Dashboard/Common/Databases/DatabaseBackend\\.cs$", "repo": "terrascale", "terms": ["exception-types"], "match": "\\bclass DatabaseWrongRegionException\\b", "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."},
-  {"path": "^src/TerraScale\\.Dashboard/Common/Databases/DatabaseBackend\\.cs$", "repo": "terrascale", "terms": ["exception-types"], "match": "\\bclass SqlOutcomeUnknownException\\b", "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."},
-  {"path": "^src/TerraScale\\.Dashboard/Common/Validation/OnboardingValidationException\\.cs$", "repo": "terrascale", "terms": ["exception-types"], "match": "\\bclass OnboardingValidationException\\b", "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."},
-  {"path": "^src/TerraScale\\.Dashboard/DashboardApplication\\.cs$", "repo": "terrascale", "terms": ["webhooks"], "match": "\\b(?:StripeWebhookEndpoint|AuthStripeWebhookEndpoint|Billing\\.Webhooks)\\b", "reason": "Registration of the Stripe payment event verification endpoints; required for billing correctness."},
-  {"path": "^src/TerraScale\\.Dashboard/Features/Auth/(?:TsAuthProjects|StepUpFlow)\\.cs$", "repo": "terrascale", "terms": ["webhooks"], "match": "(?i)webhooks?", "reason": "Dashboard management of ts-auth's end-user lifecycle webhook endpoints (T237); not the retired database event API."},
-  {"path": "^src/TerraScale\\.Dashboard/Features/Auth/TsAuthDevice\\.cs$", "repo": "terrascale", "terms": ["exception-types"], "match": "\\bclass DeviceSignInException\\b", "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."},
-  {"path": "^src/TerraScale\\.Dashboard/Features/Auth/TsAuthMfa\\.cs$", "repo": "terrascale", "terms": ["exception-types"], "match": "\\bclass OrganizationMfaRequiredException\\b", "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."},
-  {"path": "^src/TerraScale\\.Dashboard/Features/AuthenticationManagement/AuthenticationConsole\\.cs$", "repo": "terrascale", "terms": ["webhooks"], "match": "(?i)webhooks?", "reason": "Dashboard management of ts-auth's end-user lifecycle webhook endpoints (T237); not the retired database event API."},
-  {"path": "^src/TerraScale\\.Dashboard/Features/AuthenticationManagement/AuthenticationSectionView\\.cshtml$", "repo": "terrascale", "terms": ["webhooks"], "match": "(?i)webhooks?", "reason": "Dashboard management of ts-auth's end-user lifecycle webhook endpoints (T237); not the retired database event API."},
-  {"path": "^src/TerraScale\\.Dashboard/Features/AuthenticationManagement/AuthenticationView\\.cshtml$", "repo": "terrascale", "terms": ["webhooks"], "match": "(?i)webhooks?", "reason": "Dashboard management of ts-auth's end-user lifecycle webhook endpoints (T237); not the retired database event API."},
-  {"path": "^src/TerraScale\\.Dashboard/Features/AuthenticationManagement/AuthenticationWebhookDeliveries\\.cshtml$", "repo": "terrascale", "terms": ["webhooks"], "match": "(?i)webhooks?", "reason": "Authentication lifecycle delivery history and replay UI; unrelated to retired database callbacks."},
-  {"path": "^src/TerraScale\\.Dashboard/Features/Billing/(?:BillingEndpoints|BillingPlanChanges|PlanReconciler|StripeAuditCommand|StripeBilling|Webhooks/(?:Auth)?StripeWebhook\\w*)\\.cs$", "repo": "terrascale", "terms": ["webhooks"], "match": "(?i)webhooks?", "reason": "Stripe payment event verification, reconciliation and audit; these callbacks are required for billing correctness."},
-  {"path": "^src/TerraScale\\.Dashboard/Features/Billing/BillingPaymentMethod\\.cs$", "repo": "terrascale", "terms": ["exception-types"], "match": "\\bclass BillingPaymentMethodUnavailableException\\b", "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."},
-  {"path": "^src/TerraScale\\.Dashboard/Features/Billing/Internal/InternalBillingPolicy\\.cs$", "repo": "terrascale", "terms": ["exception-types"], "match": "\\bclass InternalBillingReportException\\b", "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."},
-  {"path": "^src/TerraScale\\.Dashboard/Features/Billing/InternalBillingCommands\\.cs$", "repo": "terrascale", "terms": ["exception-types"], "match": "\\bclass CommandRejectedException\\b", "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."},
-  {"path": "^src/TerraScale\\.Dashboard/Features/Billing/OrganizationCheckoutNavigation\\.cs$", "repo": "terrascale", "terms": ["documents"], "match": "(?<=destination == \")document(?=\")", "reason": "The standardized Sec-Fetch-Dest value for a full HTML navigation."},
-  {"path": "^src/TerraScale\\.Dashboard/Features/Billing/OrganizationCheckoutNavigation\\.cs$", "repo": "terrascale", "terms": ["exception-types"], "match": "\\bclass OrganizationCheckoutRefusedException\\b", "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."},
-  {"path": "^src/TerraScale\\.Dashboard/Features/Billing/OrganizationCheckoutRefunds\\.cs$", "repo": "terrascale", "terms": ["exception-types"], "match": "\\bclass OrganizationRefundUnsettledException\\b", "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."},
-  {"path": "^src/TerraScale\\.Dashboard/Features/Billing/StripeBilling\\.cs$", "repo": "terrascale", "terms": ["exception-types"], "match": "\\bclass StripeWebhookDeferredException\\b", "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."},
-  {"path": "^src/TerraScale\\.Dashboard/Features/Billing/StripeBilling\\.cs$", "repo": "terrascale", "terms": ["exception-types"], "match": "\\bclass StripeWebhookRejectedException\\b", "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."},
-  {"path": "^src/TerraScale\\.Dashboard/Features/Data/SqlWorkspace\\.cs$", "repo": "terrascale", "terms": ["exception-types"], "match": "\\bclass SqlWorkspaceUnavailableException\\b", "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."},
-  {"path": "^src/TerraScale\\.Dashboard/Features/Notifications/(?:AlertRules\\.cs|AlertsView\\.cshtml|AlertsContent\\.cshtml|NotificationRows\\.cs)$", "repo": "terrascale", "terms": ["webhooks"], "match": "\\b(?:WebhookStatus|WebhookAttempts|WebhookUrl|WebhookSecret|WebhookNonce|WebhookCiphertext|WebhookTag|Webhook|webhook)\\b|(?:ck_alert_rules_|ck_alert_events_)?webhook_(?:url|nonce|ciphertext|tag|status|attempts)\\b|\\bck_alert_rules_webhook\\b", "reason": "Signed project usage/latency alert delivery channels, unrelated to retired database change callbacks."},
-  {"path": "^src/TerraScale\\.Dashboard/Platform/Identity/AuthGatewayContracts\\.cs$", "repo": "terrascale", "terms": ["exception-types"], "match": "\\bclass RefreshNotStartedException\\b", "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."},
-  {"path": "^src/TerraScale\\.Dashboard/Platform/Identity/AuthGatewayContracts\\.cs$", "repo": "terrascale", "terms": ["exception-types"], "match": "\\bclass SignInRejectedException\\b", "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."},
-  {"path": "^src/TerraScale\\.Dashboard/Platform/Persistence/Migrations/[\\w.]+\\.cs$", "repo": "terrascale", "terms": ["webhooks"], "match": "\\bWebhook(?:Attempts|Ciphertext|Nonce|Status|Tag|Url)\\b|(?:ck_alert_rules_|ck_alert_events_)?webhook_(?:url|nonce|ciphertext|tag|status|attempts)\\b|\\bck_alert_rules_webhook\\b", "reason": "Generated alert_rules and alert_events columns and checks of the signed alert delivery channel, unrelated to retired database webhooks."},
-  {"path": "^src/TerraScale\\.Dashboard/Platform/TsAuth/(?:TsAuthProjectModels|TsAuthProjects|TsAuthIntegrationJsonContext)\\.cs$", "repo": "terrascale", "terms": ["webhooks"], "match": "(?i)webhooks?", "reason": "Dashboard management of ts-auth's end-user lifecycle webhook endpoints (T237); not the retired database event API."},
-  {"path": "^src/TerraScale\\.Dashboard/Platform/TsAuth/TsAuthErrors\\.cs$", "repo": "terrascale", "terms": ["exception-types"], "match": "\\bclass ErrorBodyLimitException\\b", "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."},
-  {"path": "^src/TerraScale\\.Dashboard/Platform/TsAuth/TsAuthException\\.cs$", "repo": "terrascale", "terms": ["exception-types"], "match": "\\bclass TsAuthException\\b", "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."},
-  {"path": "^src/TerraScale\\.Dashboard/Platform/TsAuth/TsAuthWebhookHistory\\.cs$", "repo": "terrascale", "terms": ["webhooks"], "match": "(?i)webhooks?", "reason": "Authentication lifecycle delivery and event history client; unrelated to retired database callbacks."},
-  {"path": "^src/TerraScale\\.Dashboard/web/assets/css/(?:base|controls)\\.css$", "repo": "terrascale", "terms": ["documents"], "match": "\\bShellDocument\\b", "reason": "Comments name the Razor HTML shell layout that owns these styles."},
-  {"path": "^src/TerraScale\\.Dashboard/web/assets/js/(?:button-loading|code-editor/index|region-map)\\.js$", "repo": "terrascale", "terms": ["documents"], "match": "\\bdocument\\.(?:createElementNS|fonts)\\b", "reason": "Browser SVG creation (button spinner, region map arcs) and web font loading."},
-  {"path": "^src/TerraScale\\.Dashboard/web/assets/js/vendor/datastar\\.js(?:\\.map)?$", "repo": "terrascale", "terms": ["documents"], "match": "\\b(?:DOCUMENT|document|documentElement|DocumentFragment|createDocumentFragment|isDocumentObserverActive|newDocument|DocumentElement|Document)\\b", "reason": "Pinned Datastar DOM parser/observer identifiers, including its source map."},
-  {"path": "^src/TerraScale\\.Dashboard/web/assets/js/workspace\\.js$", "repo": "terrascale", "terms": ["documents"], "match": "\\bupdate\\(document\\)", "reason": "Apply workspace navigation scoping to the browser DOM root."}
+ {
+  "path": "^src/TerraScale\\.Dashboard/.*\\.(?:cs|cshtml)$",
+  "repo": "terrascale",
+  "terms": [
+   "documents"
+  ],
+  "match": "\\bDocumentModel\\s+Document\\b|\\b(?:DocumentModel|ShellDocument)\\b|\\bTerraScale\\.Dashboard\\.Common\\.UI\\.Slices\\.Document\\b|\\bModel\\.Document\\b|\\bDocument\\s*=\\s*new\\(",
+  "reason": "Razor HTML layout types, layout model properties and layout directives; unrelated to persisted data."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/Common/Accounts/AccountModels\\.cs$",
+  "repo": "terrascale",
+  "terms": [
+   "exception-types"
+  ],
+  "match": "\\bclass AccountAccessException\\b",
+  "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/Common/Databases/DatabaseBackend\\.cs$",
+  "repo": "terrascale",
+  "terms": [
+   "exception-types"
+  ],
+  "match": "\\bclass DatabaseListingException\\b",
+  "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/Common/Databases/DatabaseBackend\\.cs$",
+  "repo": "terrascale",
+  "terms": [
+   "exception-types"
+  ],
+  "match": "\\bclass DatabaseProviderException\\b",
+  "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/Common/Databases/DatabaseBackend\\.cs$",
+  "repo": "terrascale",
+  "terms": [
+   "exception-types"
+  ],
+  "match": "\\bclass DatabaseRegionsCopyingException\\b",
+  "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/Common/Databases/DatabaseBackend\\.cs$",
+  "repo": "terrascale",
+  "terms": [
+   "exception-types"
+  ],
+  "match": "\\bclass DatabaseSqlException\\b",
+  "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/Common/Databases/DatabaseBackend\\.cs$",
+  "repo": "terrascale",
+  "terms": [
+   "exception-types"
+  ],
+  "match": "\\bclass DatabaseWrongRegionException\\b",
+  "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/Common/Databases/DatabaseBackend\\.cs$",
+  "repo": "terrascale",
+  "terms": [
+   "exception-types"
+  ],
+  "match": "\\bclass SqlOutcomeUnknownException\\b",
+  "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/Common/Validation/OnboardingValidationException\\.cs$",
+  "repo": "terrascale",
+  "terms": [
+   "exception-types"
+  ],
+  "match": "\\bclass OnboardingValidationException\\b",
+  "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/DashboardApplication\\.cs$",
+  "repo": "terrascale",
+  "terms": [
+   "webhooks"
+  ],
+  "match": "\\b(?:StripeWebhookEndpoint|AuthStripeWebhookEndpoint|Billing\\.Webhooks)\\b",
+  "reason": "Registration of the Stripe payment event verification endpoints; required for billing correctness."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/Features/Auth/(?:TsAuthProjects|StepUpFlow)\\.cs$",
+  "repo": "terrascale",
+  "terms": [
+   "webhooks"
+  ],
+  "match": "(?i)webhooks?",
+  "reason": "Dashboard management of ts-auth's end-user lifecycle webhook endpoints (T237); not the retired database event API."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/Features/Auth/TsAuthDevice\\.cs$",
+  "repo": "terrascale",
+  "terms": [
+   "exception-types"
+  ],
+  "match": "\\bclass DeviceSignInException\\b",
+  "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/Features/Auth/TsAuthMfa\\.cs$",
+  "repo": "terrascale",
+  "terms": [
+   "exception-types"
+  ],
+  "match": "\\bclass OrganizationMfaRequiredException\\b",
+  "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/Features/AuthenticationManagement/AuthenticationConsole\\.cs$",
+  "repo": "terrascale",
+  "terms": [
+   "webhooks"
+  ],
+  "match": "(?i)webhooks?",
+  "reason": "Dashboard management of ts-auth's end-user lifecycle webhook endpoints (T237); not the retired database event API."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/Features/AuthenticationManagement/AuthenticationSectionView\\.cshtml$",
+  "repo": "terrascale",
+  "terms": [
+   "webhooks"
+  ],
+  "match": "(?i)webhooks?",
+  "reason": "Dashboard management of ts-auth's end-user lifecycle webhook endpoints (T237); not the retired database event API."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/Features/AuthenticationManagement/AuthenticationView\\.cshtml$",
+  "repo": "terrascale",
+  "terms": [
+   "webhooks"
+  ],
+  "match": "(?i)webhooks?",
+  "reason": "Dashboard management of ts-auth's end-user lifecycle webhook endpoints (T237); not the retired database event API."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/Features/AuthenticationManagement/AuthenticationWebhookDeliveries\\.cshtml$",
+  "repo": "terrascale",
+  "terms": [
+   "webhooks"
+  ],
+  "match": "(?i)webhooks?",
+  "reason": "Authentication lifecycle delivery history and replay UI; unrelated to retired database callbacks."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/Features/Billing/(?:BillingEndpoints|BillingPlanChanges|PlanReconciler|StripeAuditCommand|StripeBilling|Webhooks/(?:Auth)?StripeWebhook\\w*)\\.cs$",
+  "repo": "terrascale",
+  "terms": [
+   "webhooks"
+  ],
+  "match": "(?i)webhooks?",
+  "reason": "Stripe payment event verification, reconciliation and audit; these callbacks are required for billing correctness."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/Features/Billing/OrganizationCheckoutNavigation\\.cs$",
+  "repo": "terrascale",
+  "terms": [
+   "documents"
+  ],
+  "match": "(?<=destination == \")document(?=\")",
+  "reason": "The standardized Sec-Fetch-Dest value for a full HTML navigation."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/Features/Data/SqlWorkspace\\.cs$",
+  "repo": "terrascale",
+  "terms": [
+   "exception-types"
+  ],
+  "match": "\\bclass SqlWorkspaceUnavailableException\\b",
+  "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/Features/Notifications/(?:AlertRules\\.cs|AlertsView\\.cshtml|AlertsContent\\.cshtml|NotificationRows\\.cs)$",
+  "repo": "terrascale",
+  "terms": [
+   "webhooks"
+  ],
+  "match": "\\b(?:WebhookStatus|WebhookAttempts|WebhookUrl|WebhookSecret|WebhookNonce|WebhookCiphertext|WebhookTag|Webhook|webhook)\\b|(?:ck_alert_rules_|ck_alert_events_)?webhook_(?:url|nonce|ciphertext|tag|status|attempts)\\b|\\bck_alert_rules_webhook\\b",
+  "reason": "Signed project usage/latency alert delivery channels, unrelated to retired database change callbacks."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/Platform/Identity/AuthGatewayContracts\\.cs$",
+  "repo": "terrascale",
+  "terms": [
+   "exception-types"
+  ],
+  "match": "\\bclass RefreshNotStartedException\\b",
+  "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/Platform/Identity/AuthGatewayContracts\\.cs$",
+  "repo": "terrascale",
+  "terms": [
+   "exception-types"
+  ],
+  "match": "\\bclass SignInRejectedException\\b",
+  "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/Platform/Persistence/Migrations/[\\w.]+\\.cs$",
+  "repo": "terrascale",
+  "terms": [
+   "webhooks"
+  ],
+  "match": "\\bWebhook(?:Attempts|Ciphertext|Nonce|Status|Tag|Url)\\b|(?:ck_alert_rules_|ck_alert_events_)?webhook_(?:url|nonce|ciphertext|tag|status|attempts)\\b|\\bck_alert_rules_webhook\\b",
+  "reason": "Generated alert_rules and alert_events columns and checks of the signed alert delivery channel, unrelated to retired database webhooks."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/Platform/TsAuth/(?:TsAuthProjectModels|TsAuthProjects|TsAuthIntegrationJsonContext)\\.cs$",
+  "repo": "terrascale",
+  "terms": [
+   "webhooks"
+  ],
+  "match": "(?i)webhooks?",
+  "reason": "Dashboard management of ts-auth's end-user lifecycle webhook endpoints (T237); not the retired database event API."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/Platform/TsAuth/TsAuthErrors\\.cs$",
+  "repo": "terrascale",
+  "terms": [
+   "exception-types"
+  ],
+  "match": "\\bclass ErrorBodyLimitException\\b",
+  "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/Platform/TsAuth/TsAuthException\\.cs$",
+  "repo": "terrascale",
+  "terms": [
+   "exception-types"
+  ],
+  "match": "\\bclass TsAuthException\\b",
+  "reason": "Existing exception type awaiting conversion to a result-pattern union case; this allow-list only shrinks."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/Platform/TsAuth/TsAuthWebhookHistory\\.cs$",
+  "repo": "terrascale",
+  "terms": [
+   "webhooks"
+  ],
+  "match": "(?i)webhooks?",
+  "reason": "Authentication lifecycle delivery and event history client; unrelated to retired database callbacks."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/web/assets/css/(?:base|controls)\\.css$",
+  "repo": "terrascale",
+  "terms": [
+   "documents"
+  ],
+  "match": "\\bShellDocument\\b",
+  "reason": "Comments name the Razor HTML shell layout that owns these styles."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/web/assets/js/(?:button-loading|code-editor/index|region-map)\\.js$",
+  "repo": "terrascale",
+  "terms": [
+   "documents"
+  ],
+  "match": "\\bdocument\\.(?:createElementNS|fonts)\\b",
+  "reason": "Browser SVG creation (button spinner, region map arcs) and web font loading."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/web/assets/js/vendor/datastar\\.js(?:\\.map)?$",
+  "repo": "terrascale",
+  "terms": [
+   "documents"
+  ],
+  "match": "\\b(?:DOCUMENT|document|documentElement|DocumentFragment|createDocumentFragment|isDocumentObserverActive|newDocument|DocumentElement|Document)\\b",
+  "reason": "Pinned Datastar DOM parser/observer identifiers, including its source map."
+ },
+ {
+  "path": "^src/TerraScale\\.Dashboard/web/assets/js/workspace\\.js$",
+  "repo": "terrascale",
+  "terms": [
+   "documents"
+  ],
+  "match": "\\bupdate\\(document\\)",
+  "reason": "Apply workspace navigation scoping to the browser DOM root."
+ }
 ]

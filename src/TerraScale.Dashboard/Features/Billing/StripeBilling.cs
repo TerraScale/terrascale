@@ -7,6 +7,7 @@ using TerraScale.Dashboard.Platform.Observability;
 using TerraScale.TerraBase.Contracts;
 using AccountService = TerraScale.Dashboard.Common.Accounts.AccountService;
 using TerraScale.Dashboard.Common.Validation;
+using TerraScale.Dashboard.Errors;
 
 namespace TerraScale.Dashboard.Features.Billing
 {
@@ -239,22 +240,22 @@ namespace TerraScale.Dashboard.Features.Billing
             return portal.Url;
         }
 
-        public async Task HandleWebhookAsync(string body, string signature, CancellationToken cancellationToken)
+        public async Task<WebhookReceipt> HandleWebhookAsync(string body, string signature, CancellationToken cancellationToken)
         {
             var credentials = await identity.ReadAsync(cancellationToken);
             var webhookSecret = credentials.Stripe?.WebhookSecret ?? throw new IOException("Stripe identity is unavailable.");
             Event @event;
             try { @event = EventUtility.ConstructEvent(body, signature, webhookSecret); }
             catch (Exception)
-            { throw new StripeWebhookRejectedException(); }
+            { return new Rejected(); }
             if (@event.Livemode != credentials.Stripe!.IsLive)
             {
-                throw new StripeWebhookRejectedException();
+                return new Rejected();
             }
 
             if (!WebhookEvents.Contains(@event.Type))
             {
-                return;
+                return new Done();
             }
 
             var customerId = @event.Data.Object switch
@@ -266,18 +267,18 @@ namespace TerraScale.Dashboard.Features.Billing
             };
             if (string.IsNullOrEmpty(customerId))
             {
-                return;
+                return new Done();
             }
 
             var customer = await CustomerAsync(customerId, cancellationToken);
             if (customer is null)
             {
-                return;
+                return new Done();
             }
 
             var orgId = customer.OrganizationId;
             var binding = await ReadAsync(orgId, cancellationToken);
-            if (@event.Created < time.GetUtcNow().UtcDateTime.AddDays(-30)) { return; }
+            if (@event.Created < time.GetUtcNow().UtcDateTime.AddDays(-30)) { return new Done(); }
             var receipt = new StripeEventReceipt
             {
                 Id = @event.Id,
@@ -289,7 +290,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 ReceivedAt = time.GetUtcNow(),
                 ProcessingUntil = time.GetUtcNow().AddMinutes(5)
             };
-            if (!await storage.InsertAsync(receipt, cancellationToken)) { return; }
+            if (!await storage.InsertAsync(receipt, cancellationToken)) { return new Done(); }
             try
             {
                 if (binding?.CustomerId != customerId)
@@ -304,9 +305,10 @@ namespace TerraScale.Dashboard.Features.Billing
             {
                 receipt.ProcessingUntil = time.GetUtcNow();
                 await storage.ReplaceAsync(receipt, cancellationToken);
-                throw new StripeWebhookDeferredException(@event.Id, @event.Type, error);
+                return new Deferred(@event.Id, @event.Type, error);
             }
             logger.StripeEventAppliedForOrganization(@event.Id, @event.Type, orgId);
+            return new Done();
         }
 
         internal async Task<BillingBinding?> EndSubscriptionAsync(string orgId, CancellationToken cancellationToken, bool completedDeletion = false)
@@ -973,14 +975,5 @@ namespace TerraScale.Dashboard.Features.Billing
                            select (plan, interval)).ToArray();
             return matches.Length == 1 ? matches[0] : null;
         }
-    }
-
-    public sealed class StripeWebhookRejectedException : Exception;
-
-    // A verified event this dashboard could not apply; Stripe redelivers it after a non-2xx answer.
-    public sealed class StripeWebhookDeferredException(string eventId, string eventType, Exception inner) : Exception("Stripe event was not applied.", inner)
-    {
-        public string EventId { get; } = eventId;
-        public string EventType { get; } = eventType;
     }
 }

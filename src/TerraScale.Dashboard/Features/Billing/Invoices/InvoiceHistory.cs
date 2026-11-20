@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Globalization;
 using TerraScale.Dashboard.Common.Formatting;
+using TerraScale.Dashboard.Errors;
 
 namespace TerraScale.Dashboard.Features.Billing.Invoices
 {
@@ -54,11 +56,11 @@ namespace TerraScale.Dashboard.Features.Billing.Invoices
              ((now.Year - 1).ToString(CultureInfo.InvariantCulture), (now.Year - 1).ToString(CultureInfo.InvariantCulture))];
         }
 
-        public static BillingInvoiceList Page(IReadOnlyList<BillingInvoice> invoices, string status, string issued, int page, DateTimeOffset now)
+        public static Valid<BillingInvoiceList> Page(IReadOnlyList<BillingInvoice> invoices, string status, string issued, int page, DateTimeOffset now)
         {
             if (status.Length > 0 && !StatusOptions.Any(option => option.Value == status))
             {
-                throw new AccountAccessException("status must be paid, open, or void", 422);
+                return new Validation("status must be paid, open, or void");
             }
 
             DateTimeOffset? cutoff = null;
@@ -73,7 +75,7 @@ namespace TerraScale.Dashboard.Features.Billing.Invoices
             else if (issued.Length > 0 && (issued.Length != 4 || !issued.All(char.IsAsciiDigit) ||
                 !int.TryParse(issued, NumberStyles.None, CultureInfo.InvariantCulture, out year) || year < 1))
             {
-                throw new AccountAccessException("issued must be 3m, 6m, 12m, or a four-digit year", 422);
+                return new Validation("issued must be 3m, 6m, 12m, or a four-digit year");
             }
 
             var rows = invoices.Where(invoice => (status.Length == 0 || invoice.Status == status) &&
@@ -81,7 +83,7 @@ namespace TerraScale.Dashboard.Features.Billing.Invoices
                 .OrderByDescending(invoice => invoice.CreatedAt).ToArray();
             var pages = Math.Max(1, (rows.Length + PageSize - 1) / PageSize);
             page = Math.Clamp(page, 1, pages);
-            return new([.. rows.Skip((page - 1) * PageSize).Take(PageSize)], page, pages, rows.Length);
+            return new BillingInvoiceList([.. rows.Skip((page - 1) * PageSize).Take(PageSize)], page, pages, rows.Length);
         }
 
         public static InvoiceHistoryPage ForBrowser(IReadOnlyList<BillingInvoice> invoices, IQueryCollection query, DateTimeOffset now)
@@ -99,7 +101,12 @@ namespace TerraScale.Dashboard.Features.Billing.Invoices
             }
 
             var page = int.TryParse(query["page"], NumberStyles.Integer, CultureInfo.InvariantCulture, out var number) ? number : 1;
-            return new(Page(invoices, status, issued, page, now), status, issued);
+            return Page(invoices, status, issued, page, now) switch
+            {
+                BillingInvoiceList listed => new(listed, status, issued),
+                Validation => new(new([], 1, 1, 0), status, issued),
+                _ => throw new UnreachableException()
+            };
         }
 
         public static string SafeUrl(string? raw)

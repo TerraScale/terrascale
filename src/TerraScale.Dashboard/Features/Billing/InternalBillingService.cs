@@ -7,6 +7,7 @@ using TerraScale.Dashboard.Features.Billing.Internal;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Common.Formatting;
 using TerraScale.TerraBase.Contracts;
+using TerraScale.Dashboard.Errors;
 
 namespace TerraScale.Dashboard.Features.Billing
 {
@@ -80,7 +81,7 @@ namespace TerraScale.Dashboard.Features.Billing
             throw new IOException("Internal billing changed concurrently. Retry configuration.");
         }
 
-        public async Task<InternalBill> ReportAsync(AccountContext principal, string organizationId,
+        public async Task<InternalBillReported> ReportAsync(AccountContext principal, string organizationId,
             Func<CancellationToken, Task<AccountContext>> refreshAuthority, CancellationToken cancellationToken)
         {
             await AdministratorAsync(principal, cancellationToken);
@@ -93,10 +94,10 @@ namespace TerraScale.Dashboard.Features.Billing
                 try { await RecordAlertAsync(principal, organization, bill, refreshAuthority, cancellationToken); }
                 catch (Exception error) when (error is AccountAccessException or IOException or TerraBaseException or HttpRequestException or JsonException or TimeoutException ||
                                               error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
-                { throw new InternalBillingReportException(bill, error); }
+                { return new InternalBillReported(bill, new Unavailable(error.Message)); }
             }
 
-            return bill;
+            return new InternalBillReported(bill, null);
         }
 
         public async Task<InternalBill> ReadAsync(AccountContext context, CancellationToken cancellationToken)

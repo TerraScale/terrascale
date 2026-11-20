@@ -1,7 +1,12 @@
 using TerraScale.TerraBase.Contracts;
 using System.ComponentModel;
+using System.Diagnostics;
+using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
+using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Stripe;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Features.Billing.Invoices;
 using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Common.Accounts;
@@ -111,14 +116,19 @@ namespace TerraScale.Dashboard.Features.Billing
 
         [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "list_invoices", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("List organization invoices from Stripe newest first, ten per page, filtered by status or issued date.")]
-        public async Task<BillingInvoiceList> Invoices(
+        public async Task<CallToolResult> Invoices(
             [Description("paid, open, void, or empty for all statuses.")] string status = "",
             [Description("3m, 6m, 12m, a four-digit year other than 0000, or empty for all dates.")] string issued = "",
             [Description("1-based page, ten invoices per page; clamped to available pages.")] int page = 1,
             string? organizationId = null, string? projectId = null)
         {
             var invoices = await billing.InvoicesAsync(Scope(organizationId, projectId), Cancellation);
-            return InvoiceHistory.Page(invoices, status, issued, page, time.GetUtcNow());
+            return InvoiceHistory.Page(invoices, status, issued, page, time.GetUtcNow()) switch
+            {
+                BillingInvoiceList listed => Reply(listed, BillingMcpJson.Default.BillingInvoiceList),
+                Validation invalid => Failure(invalid.Message),
+                _ => throw new UnreachableException()
+            };
         }
 
         [McpAccess(McpAccess.Destructive)]
@@ -147,6 +157,18 @@ namespace TerraScale.Dashboard.Features.Billing
         {
             return DashboardMcp.Scope(http.HttpContext, organizationId, projectId);
         }
+
+        private static CallToolResult Reply<T>(T value, JsonTypeInfo<T> type) => new()
+        {
+            StructuredContent = JsonSerializer.SerializeToElement(value, type),
+            Content = [new TextContentBlock { Text = JsonSerializer.Serialize(value, type) }]
+        };
+
+        private static CallToolResult Failure(string message) => new()
+        {
+            IsError = true,
+            Content = [new TextContentBlock { Text = message }]
+        };
 
         private CancellationToken Cancellation => http.HttpContext?.RequestAborted ?? default;
 
