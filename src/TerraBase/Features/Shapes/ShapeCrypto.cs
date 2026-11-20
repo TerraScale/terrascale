@@ -3,6 +3,7 @@ using System.Buffers.Binary;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using TerraBase.Errors;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
@@ -23,7 +24,13 @@ internal sealed class ShapeCiphertext(byte[] bytes, string keyId, long epoch, IM
     public void Dispose() => reservation.Dispose();
 }
 
-internal sealed class ShapeKeysUnavailableException() : IOException("unavailable: shape keys need the database data key store");
+internal readonly union GetKeyResult(ShapeEpochKey, NotFound, Unavailable);
+
+internal readonly union CurrentKeyResult(ShapeEpochKey, Unavailable);
+
+internal sealed record EpochBoundary;
+
+internal readonly union EncryptResult(ShapeCiphertext, Unavailable, EpochBoundary);
 
 internal interface IShapeKeyRetention
 {
@@ -34,11 +41,11 @@ internal interface IShapeCrypto
 {
     long CurrentEpoch { get; }
 
-    Task<ShapeEpochKey?> GetKeyAsync(TenantContext database, string handle, long epoch, string keyId, CancellationToken cancellationToken);
+    Task<GetKeyResult> GetKeyAsync(TenantContext database, string handle, long epoch, string keyId, CancellationToken cancellationToken);
 
-    Task<ShapeEpochKey> CurrentKeyAsync(TenantContext database, string handle, CancellationToken cancellationToken);
+    Task<CurrentKeyResult> CurrentKeyAsync(TenantContext database, string handle, CancellationToken cancellationToken);
 
-    Task<ShapeCiphertext> EncryptAsync(TenantContext database, string handle, string requestOffset, ReadOnlyMemory<byte> plain, CancellationToken cancellationToken);
+    Task<EncryptResult> EncryptAsync(TenantContext database, string handle, string requestOffset, ReadOnlyMemory<byte> plain, CancellationToken cancellationToken);
 }
 
 internal sealed class ShapeCrypto(DataKeys? keys, IShapeKeyRetention retention, IMemoryBudget memory, TimeProvider time) : IShapeCrypto
@@ -58,13 +65,17 @@ internal sealed class ShapeCrypto(DataKeys? keys, IShapeKeyRetention retention, 
 
     public long CurrentEpoch => time.GetUtcNow().ToUnixTimeSeconds() / EpochSeconds;
 
-    public async Task<ShapeEpochKey?> GetKeyAsync(TenantContext database, string handle, long epoch, string keyId, CancellationToken cancellationToken)
+    public async Task<GetKeyResult> GetKeyAsync(TenantContext database, string handle, long epoch, string keyId, CancellationToken cancellationToken)
     {
         ValidateHandle(handle);
-        var store = keys ?? throw new ShapeKeysUnavailableException();
+        if (keys is not { } store)
+        {
+            return new Unavailable("shape keys need the database data key store");
+        }
+
         if (epoch < 0 || epoch > CurrentEpoch || !Ulid.TryParse(keyId, out var parsed) || parsed.ToString() != keyId)
         {
-            return null;
+            return new NotFound();
         }
 
         var scope = Scope(database);
@@ -78,57 +89,71 @@ internal sealed class ShapeCrypto(DataKeys? keys, IShapeKeyRetention retention, 
             }
             catch (DatabaseShreddedException)
             {
-                return null;
+                return new NotFound();
             }
 
             if (id == keyId && epoch == CurrentEpoch)
             {
-                return new(handle, epoch, keyId, EpochKey(dataKey, handle, epoch));
+                return new ShapeEpochKey(handle, epoch, keyId, EpochKey(dataKey, handle, epoch));
             }
         }
 
         if (!await retention.HasObjectAsync(database, handle, epoch, keyId, cancellationToken).ConfigureAwait(false))
         {
-            return null;
+            return new NotFound();
         }
 
         try
         {
-            return new(handle, epoch, keyId, EpochKey(await store.GetAsync(scope, keyId, cancellationToken).ConfigureAwait(false), handle, epoch));
+            return new ShapeEpochKey(handle, epoch, keyId,
+                EpochKey(await store.GetAsync(scope, keyId, cancellationToken).ConfigureAwait(false), handle, epoch));
         }
         catch (Exception error) when (error is InvalidDataException or DatabaseShreddedException)
         {
-            return null;
+            return new NotFound();
         }
     }
 
-    public async Task<ShapeEpochKey> CurrentKeyAsync(TenantContext database, string handle, CancellationToken cancellationToken)
+    public async Task<CurrentKeyResult> CurrentKeyAsync(TenantContext database, string handle, CancellationToken cancellationToken)
     {
         ValidateHandle(handle);
-        var store = keys ?? throw new ShapeKeysUnavailableException();
+        if (keys is not { } store)
+        {
+            return new Unavailable("shape keys need the database data key store");
+        }
+
         var (id, dataKey) = await store.CurrentAsync(Scope(database), cancellationToken).ConfigureAwait(false);
         var epoch = CurrentEpoch;
-        return new(handle, epoch, id, EpochKey(dataKey, handle, epoch));
+        return new ShapeEpochKey(handle, epoch, id, EpochKey(dataKey, handle, epoch));
     }
 
-    public async Task<ShapeCiphertext> EncryptAsync(TenantContext database, string handle, string requestOffset, ReadOnlyMemory<byte> plain, CancellationToken cancellationToken)
+    public async Task<EncryptResult> EncryptAsync(TenantContext database, string handle, string requestOffset, ReadOnlyMemory<byte> plain, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         ArgumentOutOfRangeException.ThrowIfGreaterThan(plain.Length, MaxPlainBytes);
-        var key = await CurrentKeyAsync(database, handle, cancellationToken).ConfigureAwait(false);
+        return await CurrentKeyAsync(database, handle, cancellationToken).ConfigureAwait(false) switch
+        {
+            ShapeEpochKey key => await EncryptKeyedAsync(key, database, requestOffset, plain, cancellationToken).ConfigureAwait(false),
+            Unavailable error => error,
+        };
+    }
+
+    private async Task<EncryptResult> EncryptKeyedAsync(ShapeEpochKey key, TenantContext database, string requestOffset, ReadOnlyMemory<byte> plain, CancellationToken cancellationToken)
+    {
         try
         {
             var reservation = memory.TryReserve(SealedLength(plain.Length), database) ?? throw new QosMemoryException();
             try
             {
-                var bytes = Seal(plain.Span, handle, requestOffset, key.Epoch, key.KeyId, key.Key, RandomNumberGenerator.GetBytes(SaltBytes), cancellationToken);
+                var bytes = Seal(plain.Span, key.Handle, requestOffset, key.Epoch, key.KeyId, key.Key, RandomNumberGenerator.GetBytes(SaltBytes), cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
                 if (key.Epoch != CurrentEpoch)
                 {
-                    throw new IOException("shape encryption crossed an epoch boundary; retry");
+                    reservation.Dispose();
+                    return new EpochBoundary();
                 }
 
-                return new(bytes, key.KeyId, key.Epoch, reservation);
+                return new ShapeCiphertext(bytes, key.KeyId, key.Epoch, reservation);
             }
             catch
             {
