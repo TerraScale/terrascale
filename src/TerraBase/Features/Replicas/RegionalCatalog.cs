@@ -1,4 +1,5 @@
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.FileStorage;
 using TerraBase.Features.Management;
 
@@ -9,10 +10,14 @@ internal sealed record RegionalTable(string Name, IReadOnlyList<RegionalCell[]> 
 internal sealed record RegionalRecord(string Kind, string Id, byte[] Json);
 internal sealed record RegionalCatalogSnapshot(IReadOnlyList<RegionalTable> Tables, IReadOnlyList<RegionalRecord> Records);
 
+internal readonly union RegionalCatalogExport(RegionalCatalogSnapshot, Unavailable);
+
 internal static class RegionalCatalog
 {
     private const int MaxRows = 10_000;
     private const long MaxBytes = 4 * 1024 * 1024;
+    internal static readonly Unavailable Unavailable = new("regional catalog exceeds the handoff bound");
+
     private static readonly string[] Tables =
     [
         "catalog_organizations", "catalog_projects", "catalog_databases", "catalog_database_replicas",
@@ -34,7 +39,7 @@ internal static class RegionalCatalog
         || kind.StartsWith("database_purge_receipts/", StringComparison.Ordinal)
         || kind.StartsWith("project_closure_receipts/", StringComparison.Ordinal);
 
-    internal static async Task<RegionalCatalogSnapshot> ExportAsync(IStorageEngine engine, CancellationToken cancellationToken)
+    internal static async Task<RegionalCatalogExport> ExportAsync(IStorageEngine engine, CancellationToken cancellationToken)
     {
         var store = await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
         await using var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
@@ -46,7 +51,7 @@ internal static class RegionalCatalog
             var result = await transaction.ExecuteStatementAsync(Sql($"SELECT * FROM {name} LIMIT {MaxRows + 1}"), cancellationToken).ConfigureAwait(false);
             if (result.Truncated || result.Rows.Count > MaxRows)
             {
-                throw new IOException("regional catalog exceeds the handoff bound");
+                return Unavailable;
             }
             var rows = new List<RegionalCell[]>();
             foreach (var row in result.Rows)
@@ -54,7 +59,7 @@ internal static class RegionalCatalog
                 bytes += row.Sum(value => value is string text ? 6L * text.Length + 64 : 64);
                 if (bytes > MaxBytes || ++count > MaxRows)
                 {
-                    throw new IOException("regional catalog exceeds the handoff bound");
+                    return Unavailable;
                 }
                 rows.Add([.. row.Select(value => value switch
                 {
@@ -84,7 +89,7 @@ internal static class RegionalCatalog
                         bytes += record.Json.Length * 2L + 6L * (record.Id.Length + kind.Name.Length) + 128;
                         if (bytes > MaxBytes || ++count > MaxRows)
                         {
-                            throw new IOException("regional catalog exceeds the handoff bound");
+                            return Unavailable;
                         }
                         records.Add(new RegionalRecord(kind.Name, record.Id, record.Json.ToArray()));
                     }
@@ -97,7 +102,7 @@ internal static class RegionalCatalog
         while (afterKind is not null);
         if (bytes > MaxBytes)
         {
-            throw new IOException("regional catalog exceeds the handoff bound");
+            return Unavailable;
         }
         return new RegionalCatalogSnapshot(tables, records);
     }

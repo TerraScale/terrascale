@@ -34,7 +34,6 @@ internal sealed class ReplicaForgetEndpoint(RegionReplication replication, IRepl
         {
             DatabaseForgotten => TypedResults.NoContent(),
             Unavailable error => ErrorResponse.From(error),
-            _ => throw new InvalidOperationException(),
         };
     }
 }

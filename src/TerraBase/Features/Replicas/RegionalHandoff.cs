@@ -918,8 +918,19 @@ internal sealed partial class RegionalHandoff(
             }
 
             var address = peer.InternalListener(options.InternalPort);
-            var payload = JsonSerializer.SerializeToUtf8Bytes(new RegionalPrepare(options.MachineId, positions, owner.Epoch, promoting
-                ? await RegionalCatalog.ExportAsync(services.GetRequiredService<IStorageEngine>(), cancellationToken).ConfigureAwait(false) : null, transfer.Id), ReplicasJsonContext.Default.RegionalPrepare);
+            RegionalCatalogSnapshot? exported = null;
+            if (promoting)
+            {
+                switch (await RegionalCatalog.ExportAsync(services.GetRequiredService<IStorageEngine>(), cancellationToken).ConfigureAwait(false))
+                {
+                    case RegionalCatalogSnapshot snapshot:
+                        exported = snapshot;
+                        break;
+                    case Unavailable:
+                        return DrainRefused(progress, "regional catalog exceeds the handoff bound", "catalog_unavailable");
+                }
+            }
+            var payload = JsonSerializer.SerializeToUtf8Bytes(new RegionalPrepare(options.MachineId, positions, owner.Epoch, exported, transfer.Id), ReplicasJsonContext.Default.RegionalPrepare);
             if (payload.Length > 4 * 1024 * 1024)
             {
                 return DrainRefused(progress, "preparation payload bound reached", "payload_bound_reached");
