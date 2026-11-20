@@ -18,7 +18,7 @@ export class Audit {
   private readonly inflight = new Map<Request, number>();
   private readonly streams = new Set<Request>();
   private readonly downloads = new Set<string>();
-  private failed: { url: string; error: string }[] = [];
+  private failed: { url: string; error: string; generation: number; navigation: boolean }[] = [];
   private readonly probeConsole: { url: string; problem: string }[] = [];
   private readonly probeFailures = new Map<string, number>();
   private generation = 0;
@@ -43,8 +43,16 @@ export class Audit {
         this.probeFailures.set(request.url(), (this.probeFailures.get(request.url()) ?? 0) + 1);
         return;
       }
-      if (this.streams.has(request) && request.failure()?.errorText === 'net::ERR_ABORTED') return;
-      this.failed.push({ url: request.url(), error: `${request.method()} ${request.url()} ${request.failure()?.errorText ?? ''}` });
+      const error = request.failure()?.errorText ?? '';
+      const navigation = request.isNavigationRequest();
+      if (this.streams.has(request) && error === 'net::ERR_ABORTED') return;
+      if (error === 'net::ERR_ABORTED' && !navigation && !this.inflight.has(request)) return;
+      this.failed.push({
+        url: request.url(),
+        error: `${request.method()} ${request.url()} ${error}`,
+        generation: this.inflight.get(request) ?? this.generation,
+        navigation,
+      });
     });
     page.on('download', (download) => this.downloads.add(download.url()));
     page.on('response', (response) => this.response(response));
@@ -55,6 +63,7 @@ export class Audit {
       if (frame !== page.mainFrame()) return;
       this.generation += 1;
       for (const [request, generation] of this.inflight) if (generation < this.generation && !request.isNavigationRequest()) this.inflight.delete(request);
+      this.failed = this.failed.filter((failure) => failure.navigation || !failure.error.endsWith(' net::ERR_ABORTED') || failure.generation >= this.generation);
     });
     if (production) {
       const reached = { type: 'url', description: page.url() };
@@ -141,6 +150,7 @@ export class Audit {
     return [
       ...consoleProblems,
       ...this.failed.splice(0)
+        .filter((failure) => failure.generation >= this.generation || failure.navigation || !failure.error.endsWith(' net::ERR_ABORTED'))
         .filter((failure) => !(this.downloads.has(failure.url) && failure.error.endsWith(' net::ERR_ABORTED')))
         .map((failure) => `request failed: ${failure.error}`),
     ];

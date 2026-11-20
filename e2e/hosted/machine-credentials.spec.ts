@@ -1,5 +1,5 @@
 import { expect, test } from '../support/audit';
-import { checkMachineClient, closeAuthManagement, prepareAuthManagement } from '../support/auth-management';
+import { checkMachineClient, closeAuthManagement, prepareAuthManagement, withCleanup } from '../support/auth-management';
 import { createProjectOwner } from '../support/project-owner';
 import { auth } from '../support/stack';
 import { journey } from '../support/state';
@@ -10,7 +10,7 @@ test('machine credentials restrict scope and audience, interactive tokens identi
   const { current, page } = account;
   try {
     const management = await prepareAuthManagement(page, 'machine', current);
-    try {
+    await withCleanup(async () => {
       const tokens = await checkMachineClient(page, management.ownerToken, current.projectId, current.password);
       await checkTenantTokens(page.request, current.projectId, journey().projectId, current.apiKey, tokens);
       for (const action of ['disable', 'enable']) {
@@ -19,9 +19,7 @@ test('machine credentials restrict scope and audience, interactive tokens identi
         });
         expect(response.status()).toBe(200);
       }
-    } finally {
-      await closeAuthManagement(page, management, current);
-    }
+    }, () => closeAuthManagement(page, management, current));
   } finally {
     await account.close();
   }

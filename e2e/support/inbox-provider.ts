@@ -1,9 +1,17 @@
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { productionInboxRunMs, slotMs } from './inbox-budget.ts';
 
-const slotMs = 7_000;
-const runMs = 24 * 60_000;
+const runMs = productionInboxRunMs();
+
+export function limitScope(method: string, path: string): string {
+  if (method === 'POST' && path === '/accounts') return 'accounts';
+  if (method === 'POST' && path === '/token') return 'token';
+  if (method === 'GET' && path === '/messages') return 'messages';
+  if (method === 'GET' && /^\/messages\/[^/]+$/.test(path)) return 'message';
+  return 'other';
+}
 
 function resetAt(headers: Headers, now: number): number {
   const retry = headers.get('retry-after');
@@ -42,9 +50,9 @@ export class InboxProvider {
     return Math.min(...readdirSync(starts).map(Number)) + runMs;
   }
 
-  private async turn(every: number, notBefore: number, deadline: number): Promise<number | undefined> {
+  private async turn(every: number, notBefore: number, deadline: number, scope: string): Promise<number | undefined> {
     const slots = join(this.state, 'inbox-requests');
-    const cooldowns = join(this.state, 'inbox-cooldowns');
+    const cooldowns = join(this.state, 'inbox-cooldowns', scope);
     mkdirSync(slots, { recursive: true });
     mkdirSync(cooldowns, { recursive: true });
     for (;;) {
@@ -62,16 +70,20 @@ export class InboxProvider {
       const wait = Math.max(0, slot * slotMs - Date.now());
       this.onWait(wait);
       await new Promise((resolve) => setTimeout(resolve, wait));
-      if (Date.now() >= (slot + 1) * slotMs) continue;
-      if (readdirSync(cooldowns).some((reset) => Number(reset) > Date.now())) continue;
+      const held = join(slots, String(slot));
+      if (Date.now() >= (slot + 1) * slotMs || readdirSync(cooldowns).some((reset) => Number(reset) > Date.now())) {
+        rmSync(held, { force: true });
+        continue;
+      }
       return slot;
     }
   }
 
   async request<T>(method: string, path: string, token?: string, body?: object, deadline = Infinity): Promise<T> {
-    const every = method === 'POST' && path === '/accounts' ? 10 : 1;
+    const scope = limitScope(method, path);
+    const every = scope === 'accounts' ? 10 : 1;
     const run = this.runDeadline();
-    let slot = await this.turn(every, Date.now(), Math.min(deadline, run));
+    let slot = await this.turn(every, Date.now(), Math.min(deadline, run), scope);
     if (slot === undefined) {
       throw new Error(`inbox provider mail.tm: ${method} ${path} has no slot before ${deadline <= run ? 'the mail poll deadline' : "the run's time limit"}`);
     }
@@ -99,8 +111,10 @@ export class InboxProvider {
       const failure = new Error(`inbox provider mail.tm: ${method} ${path} answered HTTP ${response.status}; headers ${JSON.stringify(limits)}: ${detail}`);
       if (response.status !== 429) throw failure;
       const retryAt = resetAt(response.headers, Date.now());
-      writeFileSync(join(this.state, 'inbox-cooldowns', String(Math.ceil(retryAt))), '');
-      slot = await this.turn(every, retryAt, until);
+      const cooldown = join(this.state, 'inbox-cooldowns', scope);
+      mkdirSync(cooldown, { recursive: true });
+      writeFileSync(join(cooldown, String(Math.ceil(retryAt))), '');
+      slot = await this.turn(every, retryAt, until, scope);
       if (slot === undefined) throw failure;
     }
   }
