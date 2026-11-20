@@ -5,7 +5,7 @@ import { deleteAccount } from '../support/account';
 import { test, expect } from '../support/remote-database';
 import { completeUpload, deleteFile, leftFiles, putReserved, putUnnamed, reserveUpload, stored, unnamedPath, type Reservation } from '../support/files';
 import { runOperations, runSessionFault, sdks } from '../support/sdk';
-import { prepareAuthManagement, closeAuthManagement } from '../support/auth-management';
+import { prepareAuthManagement, closeAuthManagement, withCleanup } from '../support/auth-management';
 import { deleteProjectOwner } from '../support/project-owner';
 import { checkPasswordFairness } from '../support/password-fairness';
 import { shell } from '../support/shell';
@@ -184,8 +184,7 @@ test.describe('SDK group A', () => {
   for (const sdk of sdks) {
     test(`${sdk} SDK: SQL, values, sessions, conflicts and ids on the journey database`, async ({ page }) => {
       const management = await prepareAuthManagement(page, sdk);
-      try { await runOperations(sdk, 'a', management, page); }
-      finally { await closeAuthManagement(page, management); }
+      await withCleanup(() => runOperations(sdk, 'a', management, page), () => closeAuthManagement(page, management));
     });
   }
 });

@@ -359,14 +359,61 @@ export async function prepareAuthManagement(page: Page, sdk: string, current: Au
   return management;
 }
 
+export class AuditGap extends Error {
+  readonly summary: string;
+
+  constructor(action: string, rows: number, sources: number, actorMatched: boolean) {
+    const summary = `category=audit action=${action} rows=${rows} sources=${sources} actorMatched=${actorMatched}`;
+    super(summary);
+    this.summary = summary;
+  }
+}
+
+export class HarnessFailure extends Error {
+  readonly parts: readonly string[];
+
+  constructor(parts: readonly string[]) {
+    super(parts.join('; '));
+    this.parts = parts;
+  }
+}
+
+function failurePart(error: unknown): string {
+  if (error instanceof AuditGap) return error.summary;
+  if (error instanceof HarnessFailure) return error.parts.join('; ');
+  return 'category=failure';
+}
+
+export async function withCleanup(body: () => Promise<void>, cleanup: () => Promise<void>): Promise<void> {
+  let primary: unknown;
+  try {
+    await body();
+  } catch (error) {
+    primary = error;
+  }
+  let secondary: unknown;
+  try {
+    await cleanup();
+  } catch (error) {
+    secondary = error;
+  }
+  if (primary === undefined && secondary === undefined) return;
+  if (secondary === undefined) throw primary;
+  if (primary === undefined) throw secondary;
+  throw new HarnessFailure([`primary ${failurePart(primary)}`, `cleanup ${failurePart(secondary)}`]);
+}
+
 export async function closeAuthManagement(page: Page, management: AuthManagement, current: AuthOwner = journey()): Promise<void> {
   const root = `${auth}/v1/${current.projectId}`;
+  const actor = keyId(management.writeKey);
   for (const action of ['disable_project_user.succeeded', 'enable_project_user.succeeded', 'sign_out_project_user.succeeded']) {
     const audit = await page.request.get('/api/v1/dashboard/audit-events', { params: { action, range: '7d' } });
-    expect(audit.status()).toBe(200);
+    expect(audit.status(), action).toBe(200);
     const events = (await audit.json()).events as { actor: string; action: string; source: string }[];
-    expect(events.some(event => event.actor === keyId(management.writeKey)
-      && event.action === action && event.source === 'ts-auth')).toBe(true);
+    const same = events.filter(event => event.action === action);
+    if (!same.some(event => event.actor === actor && event.source === 'ts-auth')) {
+      throw new AuditGap(action, same.length, new Set(same.map(event => event.source)).size, same.some(event => event.actor === actor));
+    }
   }
   const events: { actor: string; action: string; detail: string }[] = [];
   let after: string | undefined;

@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, type Browser, type BrowserContext, type BrowserContextOptions, type Page, type Request, type Response, type TestInfo } from '@playwright/test';
+import { expect, type Browser, type BrowserContext, type BrowserContextOptions, type Frame, type Page, type Request, type Response, type TestInfo } from '@playwright/test';
 import { clientProxy, test as base } from './client-address';
 import { checkLinks, type Link } from './links';
 import { production, stackHosts } from './stack';
@@ -18,7 +18,7 @@ export class Audit {
   private readonly inflight = new Map<Request, number>();
   private readonly streams = new Set<Request>();
   private readonly downloads = new Set<string>();
-  private failed: { url: string; error: string }[] = [];
+  private failed: { url: string; error: string; generation: number; navigation: boolean }[] = [];
   private readonly probeConsole: { url: string; problem: string }[] = [];
   private readonly probeFailures = new Map<string, number>();
   private generation = 0;
@@ -43,8 +43,16 @@ export class Audit {
         this.probeFailures.set(request.url(), (this.probeFailures.get(request.url()) ?? 0) + 1);
         return;
       }
-      if (this.streams.has(request) && request.failure()?.errorText === 'net::ERR_ABORTED') return;
-      this.failed.push({ url: request.url(), error: `${request.method()} ${request.url()} ${request.failure()?.errorText ?? ''}` });
+      const error = request.failure()?.errorText ?? '';
+      const navigation = request.isNavigationRequest();
+      if (this.streams.has(request) && error === 'net::ERR_ABORTED') return;
+      if (error === 'net::ERR_ABORTED' && !navigation && !this.inflight.has(request)) return;
+      this.failed.push({
+        url: request.url(),
+        error: `${request.method()} ${request.url()} ${error}`,
+        generation: this.inflight.get(request) ?? this.generation,
+        navigation,
+      });
     });
     page.on('download', (download) => this.downloads.add(download.url()));
     page.on('response', (response) => this.response(response));
@@ -53,8 +61,9 @@ export class Audit {
     page.on('requestfailed', (request) => this.ended(request));
     page.on('framenavigated', (frame) => {
       if (frame !== page.mainFrame()) return;
+      const previous = this.generation;
       this.generation += 1;
-      for (const [request, generation] of this.inflight) if (generation < this.generation && !request.isNavigationRequest()) this.inflight.delete(request);
+      void this.keepGenerationUnlessReplaced(frame, previous);
     });
     if (production) {
       const reached = { type: 'url', description: page.url() };
@@ -63,6 +72,25 @@ export class Audit {
         if (frame === page.mainFrame()) reached.description = frame.url();
       });
     }
+  }
+
+  private async keepGenerationUnlessReplaced(frame: Frame, previous: number): Promise<void> {
+    const replaced = await frame.evaluate((mark) => {
+      const holder = globalThis as unknown as Record<string, true>;
+      if (holder[mark]) return false;
+      holder[mark] = true;
+      return true;
+    }, '__terrascaleAuditPage').catch(() => true);
+    if (replaced) {
+      for (const [request, generation] of this.inflight) {
+        if (generation <= previous && !request.isNavigationRequest()) this.inflight.delete(request);
+      }
+      this.failed = this.failed.filter((failure) => failure.navigation || !failure.error.endsWith(' net::ERR_ABORTED') || failure.generation > previous);
+      return;
+    }
+    this.generation = previous;
+    for (const failure of this.failed) if (failure.generation === previous + 1) failure.generation = previous;
+    for (const [request, generation] of this.inflight) if (generation === previous + 1) this.inflight.set(request, previous);
   }
 
   async quiet(): Promise<void> {
@@ -141,6 +169,7 @@ export class Audit {
     return [
       ...consoleProblems,
       ...this.failed.splice(0)
+        .filter((failure) => failure.generation >= this.generation || failure.navigation || !failure.error.endsWith(' net::ERR_ABORTED'))
         .filter((failure) => !(this.downloads.has(failure.url) && failure.error.endsWith(' net::ERR_ABORTED')))
         .map((failure) => `request failed: ${failure.error}`),
     ];
