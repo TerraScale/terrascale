@@ -12,7 +12,11 @@ const secrets = '[data-mfa-secret], img[src^="data:image/png"], input[type=passw
 
 type Expected = { url: RegExp; status: number; seen: number; logged: number };
 type PageIdentity = Promise<string | undefined>;
-type RequestFailure = { url: string; description: string; aborted: boolean; owner?: PageIdentity };
+type Replacement = { request: Request; previous: PageIdentity; committed?: PageIdentity };
+type RequestFailure = {
+  url: string; description: string; aborted: boolean; owner?: PageIdentity;
+  observed: PageIdentity; replacement?: Replacement;
+};
 
 const activePages = new WeakMap<Page, ActivePage>();
 
@@ -29,18 +33,57 @@ function readPageIdentity(frame: Frame): PageIdentity {
 
 class ActivePage {
   current: PageIdentity;
+  replacement?: Replacement;
 
   constructor(page: Page) {
     this.current = readPageIdentity(page.mainFrame());
-    page.on('framenavigated', (frame) => {
-      if (frame === page.mainFrame()) this.current = readPageIdentity(frame);
+    page.on('request', (request) => {
+      if (!isMainFrameNavigation(page, request)) return;
+      const replacement = this.replacement;
+      if (replacement && request.redirectedFrom() === replacement.request) {
+        replacement.request = request;
+      } else {
+        this.replacement = { request, previous: this.current };
+      }
     });
+    page.on('requestfailed', (request) => {
+      if (this.replacement?.request === request) this.replacement = undefined;
+    });
+    page.on('framenavigated', (frame) => {
+      if (frame !== page.mainFrame()) return;
+      this.current = readPageIdentity(frame);
+      const replacement = this.replacement;
+      if (replacement && replacement.request.url().split('#', 1)[0] === frame.url().split('#', 1)[0]) {
+        replacement.committed = this.current;
+        this.replacement = undefined;
+      }
+    });
+  }
+}
+
+function isMainFrameNavigation(page: Page, request: Request): boolean {
+  if (!request.isNavigationRequest()) return false;
+  try {
+    return request.frame() === page.mainFrame();
+  } catch {
+    return false;
   }
 }
 
 async function isPreviousPage(owner: PageIdentity | undefined, current: string | undefined): Promise<boolean> {
   const identity = await owner;
   return identity !== undefined && current !== undefined && identity !== current;
+}
+
+async function canceledByReplacement({ owner, observed, replacement }: RequestFailure): Promise<boolean> {
+  const identity = await owner;
+  if (identity === undefined) return false;
+  const seen = await observed;
+  if (seen !== undefined && seen !== identity) return true;
+  if (!replacement?.committed) return false;
+  const previous = await replacement.previous;
+  const committed = await replacement.committed;
+  return previous === identity && committed !== undefined && committed !== identity;
 }
 
 export class Audit {
@@ -81,6 +124,7 @@ export class Audit {
       this.failed.push({
         url: request.url(), description: `${request.method()} ${request.url()} ${error}`, aborted,
         owner: request.isNavigationRequest() ? undefined : this.inflight.get(request),
+        observed: this.activePage.current, replacement: this.activePage.replacement,
       });
     });
     page.on('download', (download) => this.downloads.add(download.url()));
@@ -177,12 +221,14 @@ export class Audit {
       else this.probeFailures.set(message.url, remaining);
       return false;
     }).map((message) => message.problem);
-    const current = await this.activePage.current;
-    const requestProblems = await Promise.all(this.failed.splice(0).map(async (failure) => {
-      if (failure.aborted && (this.downloads.has(failure.url) || await isPreviousPage(failure.owner, current))) return undefined;
-      return `request failed: ${failure.description}`;
-    }));
-    return [...consoleProblems, ...requestProblems.filter((problem) => problem !== undefined)];
+    const observation = this.activePage.current;
+    const failures = this.failed.splice(0);
+    const replaced = await Promise.all(failures.map((failure) => failure.aborted && canceledByReplacement(failure)));
+    const stable = observation === this.activePage.current;
+    const requestProblems = failures.filter((failure, index) =>
+      !failure.aborted || !(this.downloads.has(failure.url) || (stable && replaced[index])))
+      .map((failure) => `request failed: ${failure.description}`);
+    return [...consoleProblems, ...requestProblems];
   }
 
   private isRegionPingProbe(request: Request): boolean {

@@ -1,11 +1,16 @@
-import { expect, type APIRequestContext } from '@playwright/test';
+import { expect, type APIRequestContext, type APIResponse } from '@playwright/test';
 import { keyId } from './api-key';
+import { withAuthCleanup } from './auth-failures';
 import { auth } from './stack';
 import { saveSecret } from './state';
 
 const projects = 'https://api.terrascale.tech/v1/projects/';
 
-export async function checkTenantTokens(context: APIRequestContext, project: string, otherProject: string, apiKey: string,
+type TokenRequests = {
+  [Method in 'post' | 'put' | 'get' | 'delete']: (...args: Parameters<APIRequestContext[Method]>) => Promise<Pick<APIResponse, 'status' | 'json'>>;
+};
+
+export async function checkTenantTokens(context: TokenRequests, project: string, otherProject: string, apiKey: string,
   tokens: { user: string; machine: string }): Promise<void> {
   const exchanged = await context.post(auth + '/terrascale/oauth/token', {
     headers: { Authorization: 'Basic ' + Buffer.from(keyId(apiKey) + ':' + apiKey).toString('base64') },
@@ -20,7 +25,7 @@ export async function checkTenantTokens(context: APIRequestContext, project: str
   expect(created.status()).toBe(201);
   const id = (await created.json()).id as string;
   const database = projects + project + '/databases/' + id;
-  try {
+  await withAuthCleanup('validate-tenant-tokens', async () => {
     const subject = JSON.parse(Buffer.from(tokens.user.split('.')[1], 'base64url').toString()).sub as string;
     const setup = await context.post(database + '/sql/execute', {
       headers: owner,
@@ -45,8 +50,8 @@ export async function checkTenantTokens(context: APIRequestContext, project: str
     expect(otherProjectRead.status(), 'a tenant token on another project\'s route').toBe(401);
     const machineRead = await context.get(database + shape, { headers: { Authorization: 'Bearer ' + tokens.machine }, maxRedirects: 0 });
     expect(machineRead.status(), 'a tenant machine-client token').toBe(401);
-  } finally {
+  }, 'remove-tenant-token-database', async () => {
     const removed = await context.delete(database, { headers: owner });
     expect(removed.status()).toBe(204);
-  }
+  });
 }
