@@ -58,39 +58,23 @@ namespace TerraScale.Dashboard.Features.Billing
                 var context = await accounts.GetContextAsync(grant, cancellationToken);
                 if (!context.Session.Email.Equals(options.AdminEmail, StringComparison.OrdinalIgnoreCase))
                 {
-                    throw new AccountAccessException("Approved account does not match --admin-email.");
+                    failure = "Approved account does not match --admin-email.";
                 }
-
-                if (await application.Services.GetRequiredService<IPlatformRoleGateway>().PlatformRoleAsync(context.Session, cancellationToken) != "admin")
+                else if (await application.Services.GetRequiredService<IPlatformRoleGateway>().PlatformRoleAsync(context.Session, cancellationToken) != "admin")
                 {
-                    throw new AccountAccessException("Platform administrator authorization is required.");
+                    failure = "Platform administrator authorization is required.";
                 }
 
-                var internalBilling = application.Services.GetRequiredService<InternalBillingService>();
-                async Task<AccountContext> RefreshAuthorityAsync(CancellationToken token)
+                if (failure is null)
+                {
+                    await RunCommandAsync(application, auth, accounts, context, options, output, RefreshGrant, cancellationToken);
+                }
+
+                async Task<AccountContext> RefreshGrant(CancellationToken token)
                 {
                     try { grant = await auth.DeviceRefreshAsync(grant!, token); }
                     catch (SignInRejectedException) { throw new AccountAccessException("Authorization has expired.", 401); }
                     return await accounts.GetContextAsync(grant, token);
-                }
-                if (options.Command == Configure)
-                {
-                    await internalBilling.ConfigureAsync(context, new(options.OrganizationId, options.BasePlanKey,
-                        options.SpendCapCents, options.WriteCentsPerMillion, options.StorageCentsPerGBMonth), RefreshAuthorityAsync, cancellationToken);
-                    output.WriteLine($"configured report-only internal billing for organization {options.OrganizationId} using base plan {options.BasePlanKey}");
-                }
-                else
-                {
-                    var reported = await internalBilling.ReportAsync(context, options.OrganizationId, RefreshAuthorityAsync, cancellationToken);
-                    output.WriteLine(JsonSerializer.Serialize(reported.Bill, Json));
-                    if (reported.Failure is not null)
-                    {
-                        failure = "Internal billing dependencies are unavailable.";
-                    }
-                    else if (!reported.Bill.Available)
-                    {
-                        throw new AccountAccessException(reported.Bill.Error ?? "Internal bill is unavailable.", 503);
-                    }
                 }
             }
             catch (Exception dependency) when (DependencyFailure(dependency, cancellationToken))
@@ -123,6 +107,31 @@ namespace TerraScale.Dashboard.Features.Billing
                 return 1;
             }
             return 0;
+        }
+
+        private static async Task RunCommandAsync(WebApplication application, TsAuthGateway auth, AccountService accounts, AccountContext context,
+            Arguments options, TextWriter output, Func<CancellationToken, Task<AccountContext>> refreshAuthority, CancellationToken cancellationToken)
+        {
+            var internalBilling = application.Services.GetRequiredService<InternalBillingService>();
+            if (options.Command == Configure)
+            {
+                await internalBilling.ConfigureAsync(context, new(options.OrganizationId, options.BasePlanKey,
+                    options.SpendCapCents, options.WriteCentsPerMillion, options.StorageCentsPerGBMonth), refreshAuthority, cancellationToken);
+                await output.WriteLineAsync($"configured report-only internal billing for organization {options.OrganizationId} using base plan {options.BasePlanKey}", cancellationToken);
+                return;
+            }
+
+            var reported = await internalBilling.ReportAsync(context, options.OrganizationId, refreshAuthority, cancellationToken);
+            await output.WriteLineAsync(JsonSerializer.Serialize(reported.Bill, Json), cancellationToken);
+            if (reported.Bill is not { Available: true })
+            {
+                throw new AccountAccessException(reported.Bill.Error ?? "Internal bill is unavailable.", 503);
+            }
+
+            if (reported.Failure is { } reportFailure)
+            {
+                throw new AccountAccessException(reportFailure.Message, 503);
+            }
         }
 
         private static ParsedArguments Parse(string[] args)

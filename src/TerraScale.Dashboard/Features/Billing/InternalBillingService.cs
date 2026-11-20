@@ -94,7 +94,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 try { await RecordAlertAsync(principal, organization, bill, refreshAuthority, cancellationToken); }
                 catch (Exception error) when (error is AccountAccessException or IOException or TerraBaseException or HttpRequestException or JsonException or TimeoutException ||
                                               error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
-                { return new InternalBillReported(bill, new Unavailable(error.Message)); }
+                { return new InternalBillReported(bill, new Unavailable(error is AccountAccessException rejected ? rejected.Message : "Internal billing dependencies are unavailable.")); }
             }
 
             return new InternalBillReported(bill, null);

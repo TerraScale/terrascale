@@ -18,7 +18,7 @@ public readonly union WebhookReceipt(Done, Rejected, Deferred);
 public sealed record NoCard;
 public sealed record Rejected;
 public sealed record Deferred(string EventId, string EventType, Exception Cause);
-public sealed record InternalBillReported(InternalBill Bill, Failure? Failure);
+public sealed record InternalBillReported(InternalBill Bill, Unavailable? Failure);
 
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 [JsonSerializable(typeof(BillingInvoiceList))]
