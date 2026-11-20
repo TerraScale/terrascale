@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -57,7 +58,8 @@ internal sealed class AtlasPlacementPublisher(
             }, static _ => false, timeout.Token, durable: true).ConfigureAwait(false);
             if (!queued)
             {
-                throw new InvalidOperationException("the system catalog is unavailable for the Atlas placement queue");
+                logger.ZLogError($"Queueing Atlas placement for project {project:@Project} and database {database:@Database} failed");
+                _publishes.Add(1, new KeyValuePair<string, object?>("result", "queue_failed"));
             }
         }
         catch (Exception error)
@@ -97,7 +99,14 @@ internal sealed class AtlasPlacementPublisher(
                 if (now >= nextResync)
                 {
                     nextResync = now + ResyncInterval;
-                    await ResyncAsync(stoppingToken).ConfigureAwait(false);
+                    switch (await ResyncAsync(stoppingToken).ConfigureAwait(false))
+                    {
+                        case Done:
+                            break;
+                        case Unavailable:
+                            logger.ZLogWarning($"Atlas placement publishing is unavailable; durable outbox work retries");
+                            continue;
+                    }
                 }
 
                 await RunOnceAsync(stoppingToken).ConfigureAwait(false);
@@ -109,7 +118,7 @@ internal sealed class AtlasPlacementPublisher(
         }
     }
 
-    private async Task ResyncAsync(CancellationToken cancellationToken)
+    private async Task<CatalogCheck> ResyncAsync(CancellationToken cancellationToken)
     {
         TenantContext? after = null;
         while (true)
@@ -131,13 +140,13 @@ internal sealed class AtlasPlacementPublisher(
                 }, static _ => false, cancellationToken, durable: true).ConfigureAwait(false);
                 if (!queued)
                 {
-                    throw new InvalidOperationException("the system catalog is unavailable for the Atlas placement resync");
+                    return new Unavailable("the system catalog is unavailable for the Atlas placement resync");
                 }
             }
 
             if (page.Count < Batch)
             {
-                return;
+                return new Done();
             }
 
             after = page[^1];

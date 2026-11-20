@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using TerraBase.Configuration;
 using TerraBase.Errors;
@@ -114,9 +115,9 @@ internal static class RulesRoute
                 return ErrorResponse.From(error);
             case Unavailable error:
                 return ErrorResponse.From(error);
-            default:
-                throw new InvalidOperationException("a rules deploy answered an unexpected result");
         }
+
+        throw new UnreachableException();
     }
 
     private sealed class Status(int status, string code, string message) : IResult
