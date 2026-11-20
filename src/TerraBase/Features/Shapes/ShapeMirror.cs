@@ -545,16 +545,17 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
                         continue;
                     }
 
-                    if (outcome is Retry && !pending.AdoptOnly && attempt < MirrorAttempts)
+                    switch (outcome)
                     {
-                        _logger.ZLogInformation($"Shape mirror attempt {attempt} of {MirrorAttempts} crossed an epoch boundary; it is tried again");
-                        await Task.Delay(RetryDelay * attempt, _time, stoppingToken).ConfigureAwait(false);
-                        continue;
-                    }
-
-                    if (outcome is Retry)
-                    {
-                        _logger.ZLogWarning($"Shape mirror failed; immutable origin bytes remain available");
+                        case Retry when !pending.AdoptOnly && attempt < MirrorAttempts:
+                            _logger.ZLogInformation($"Shape mirror attempt {attempt} of {MirrorAttempts} failed; it is tried again");
+                            await Task.Delay(RetryDelay * attempt, _time, stoppingToken).ConfigureAwait(false);
+                            continue;
+                        case Retry:
+                            _logger.ZLogWarning($"Shape mirror failed; immutable origin bytes remain available");
+                            break;
+                        case Done:
+                            break;
                     }
 
                     break;
@@ -725,9 +726,12 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
                 more = page.NextRowid is not null;
                 var offset = ShapeSnapshots.PageOffset(pending.CoveredOffset, index);
                 var next = more ? ShapeSnapshots.PageOffset(pending.CoveredOffset, index + 1) : Number(pending.CoveredOffset);
-                if (await MirrorBodyAsync(pending with { Offset = offset, NextOffset = next, Body = page.Body }, linked.Token).ConfigureAwait(false) is Retry outcome)
+                switch (await MirrorBodyAsync(pending with { Offset = offset, NextOffset = next, Body = page.Body }, linked.Token).ConfigureAwait(false))
                 {
-                    return outcome;
+                    case Retry outcome:
+                        return outcome;
+                    case Done:
+                        break;
                 }
 
                 index++;
