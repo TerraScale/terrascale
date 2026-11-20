@@ -171,6 +171,15 @@
   "reason": "The standardized Sec-Fetch-Dest value for a full HTML navigation."
  },
  {
+  "path": "^src/TerraScale\\.Dashboard/Features/Billing/OrganizationCheckoutNavigation\\.cs$",
+  "repo": "terrascale",
+  "terms": [
+   "exception-types"
+  ],
+  "match": "\\bclass OrganizationCheckoutRefusedException\\b",
+  "reason": "Thrown by Common/Accounts/OrganizationStore.cs (outside owned folders); RESERVED-CALLER until phase 2 converts its callers."
+ },
+ {
   "path": "^src/TerraScale\\.Dashboard/Features/Data/SqlWorkspace\\.cs$",
   "repo": "terrascale",
   "terms": [

@@ -14,7 +14,6 @@ internal sealed record Arguments(string Command, string OrganizationId, string A
 public readonly union PortalSession(PortalSessionUrl, Validation);
 public sealed record PortalSessionUrl(string Url);
 public readonly union PaymentMethod(BillingCard, NoCard, Unavailable);
-public readonly union WebhookReceipt(Done, Rejected, Deferred);
 public sealed record NoCard;
 public sealed record Rejected;
 public sealed record Deferred(string EventId, string EventType, Exception Cause);

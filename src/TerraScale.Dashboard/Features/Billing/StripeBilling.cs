@@ -11,6 +11,8 @@ using TerraScale.Dashboard.Errors;
 
 namespace TerraScale.Dashboard.Features.Billing
 {
+    public readonly union WebhookReceipt(Done, Rejected, Deferred);
+
     // Every entitlement is derived from a bound checkout and Stripe's current
     // subscription. Browser return parameters and webhook snapshots grant nothing.
     public sealed partial class StripeBilling(IDashboardIdentity identity, IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, AccountService accounts,
