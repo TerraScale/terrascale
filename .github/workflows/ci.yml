@@ -631,6 +631,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.publication == 'build-only'
         with:
           revision: ${{ github.sha }}
+          qualification: terrabase-maintenance
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           global-json-file: terrascale/global.json
@@ -794,6 +795,7 @@ jobs:
       - uses: ./.github/actions/qualified-main
         with:
           revision: ${{ github.sha }}
+          qualification: terrabase-maintenance
       - *setup-builder
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
@@ -850,11 +852,15 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
           filter: blob:none
+      - id: probe
+        name: Probe live ts-auth readiness
+        run: node scripts/ci/site-deploy-gate.mjs auth --probe
       - id: live
         name: Reconcile qualified main with live ts-auth
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/ci/site-deploy-gate.mjs auth
+          AUTH_LIVE_REVISION: ${{ steps.probe.outputs.revision }}
+        run: node scripts/ci/site-deploy-gate.mjs auth --reconcile
       - uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad
         if: steps.live.outputs.deploy == 'true'
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9

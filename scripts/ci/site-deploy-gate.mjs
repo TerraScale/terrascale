@@ -219,7 +219,9 @@ async function notify(alert, name, revision) {
   });
 }
 
-if (args[0] === '--prove') {
+if (thing === 'auth' && args[0] === '--probe') {
+  appendFileSync(process.env.GITHUB_OUTPUT, `revision=${await serviceLive()}\n`);
+} else if (args[0] === '--prove') {
   sha(process.env.REVISION);
   assert.equal(await serviceLive(), process.env.REVISION, `${thing}: deployed revision mismatch`);
   writeFileSync(`${process.env.RUNNER_TEMP}/deploy-revision`, `${process.env.REVISION}\n`);
@@ -234,13 +236,17 @@ if (args[0] === '--prove') {
   console.log(`GitHub API reads: ${reads}`);
 } else {
   git('fetch', '--no-tags', 'origin', '+refs/heads/main:refs/remotes/origin/main');
+  const authReconcile = thing === 'auth' && args[0] === '--reconcile';
+  if (thing === 'auth') assert.ok(authReconcile, 'Auth reconciliation requires a live probe result');
   const groups = thing === 'all'
     ? [['docs', ['ts-docs']], ['landing', ['ts-landing']], ['status', ['ts-status-vantage-sfo', 'ts-status-vantage-gru', 'ts-status']], ['auth', []], ['dashboard', []]]
     : [[thing, args]];
   const live = [];
   for (const [kind, workers] of groups) {
     if (services[kind]) {
-      live.push([kind, kind, await serviceLive(kind)]);
+      const revision = authReconcile ? process.env.AUTH_LIVE_REVISION : await serviceLive(kind);
+      sha(revision);
+      live.push([kind, kind, revision]);
     } else {
       for (const worker of workers) live.push([kind, worker, await workerLive(worker)]);
     }
