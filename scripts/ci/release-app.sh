@@ -56,15 +56,8 @@ select_bounded() {
 bash "$(dirname "$0")/fetch-ts-orch.sh" "$work"
 export -f select_release
 export digest summary
-pids=()
 while IFS= read -r repository; do
-  select_bounded "$repository" &
-  pids+=("$!")
+  select_bounded "$repository"
 done <<< "$repositories"
-result=0
-for pid in "${pids[@]}"; do
-  wait "$pid" || result=1
-done
-[[ $result == 0 ]] || exit "$result"
 docker buildx imagetools create --prefer-index=false --tag "ghcr.io/terrascale/${package}:release" "$image"
 printf 'Selected %s %s for verified host pulls\n' "$service" "$fleet" | tee -a "$summary"
