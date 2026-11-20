@@ -19,6 +19,12 @@ async function startScript(page: Page, path: string): Promise<void> {
   }, path);
 }
 
+function gate(): { wait: Promise<void>; release(): void } {
+  let release!: () => void;
+  const wait = new Promise<void>((resolve) => { release = resolve; });
+  return { wait, release };
+}
+
 test('both auditors retain an abort observed before an unrelated navigation', async ({ page }, info) => {
   await page.route(site + '/first', (route) => route.fulfill({ contentType: 'text/html', body: html('<script defer src="/slow.js"></script>') }));
   await page.route(site + '/second', (route) => route.fulfill({ contentType: 'text/html', body: html('<p>Second page</p>') }));
@@ -82,4 +88,67 @@ test('both auditors report the same request canceled after anchor and history tr
 
   const line = `request failed: GET ${site}/cancel.js net::ERR_ABORTED`;
   for (const audit of audits) await expect(audit.finish()).rejects.toThrow(line);
+});
+
+test('finish includes a failure delivered while an earlier abort is classified', async ({ page }, info) => {
+  await page.route(site + '/first', (route) => route.fulfill({ contentType: 'text/html', body: html('<p>First page</p>') }));
+  const prior = await holdRequest(page, '/prior.js');
+  const navigation = await holdRequest(page, '/second');
+  const active = await holdRequest(page, '/active.js');
+  await page.goto(site + '/first');
+
+  const frame = page.mainFrame();
+  const evaluate = frame.evaluate;
+  const runEvaluate = evaluate.bind(frame);
+  const ownerReady = gate();
+  const releaseOwner = gate();
+  let first = true;
+  frame.evaluate = ((...args: Parameters<typeof frame.evaluate>) => {
+    const result = runEvaluate(...args);
+    if (!first) return result;
+    first = false;
+    return result.then(async (identity) => {
+      ownerReady.release();
+      await releaseOwner.wait;
+      return identity;
+    });
+  }) as typeof frame.evaluate;
+
+  try {
+    const audit = new Audit(page, info);
+    await ownerReady.wait;
+    await startScript(page, '/prior.js');
+    const priorRoute = await prior.held;
+    const priorFailure = page.waitForEvent('requestfailed', (request) => request === priorRoute.request());
+    const navigating = page.goto(site + '/second');
+    const navigationRoute = await navigation.held;
+    await priorRoute.abort('aborted');
+    expect((await priorFailure).failure()?.errorText).toBe('net::ERR_ABORTED');
+    await navigationRoute.fulfill({ contentType: 'text/html', body: html('<p>Second page</p>') });
+    await navigating;
+
+    const draining = gate();
+    const collector = audit as unknown as { failures(): Promise<string[]> };
+    const collect = collector.failures.bind(audit);
+    collector.failures = () => {
+      const result = collect();
+      draining.release();
+      return result;
+    };
+    const finishing = audit.finish().then(() => '<passed>', (error: Error) => error.message);
+    await draining.wait;
+    await startScript(page, '/active.js');
+    const activeRoute = await active.held;
+    const activeFailure = page.waitForEvent('requestfailed', (request) => request === activeRoute.request());
+    await activeRoute.abort('failed');
+    expect((await activeFailure).failure()?.errorText).toBe('net::ERR_FAILED');
+    releaseOwner.release();
+
+    const result = await finishing;
+    expect(result).toContain(`request failed: GET ${site}/active.js net::ERR_FAILED`);
+    expect(result).not.toContain('prior.js net::ERR_ABORTED');
+  } finally {
+    releaseOwner.release();
+    frame.evaluate = evaluate;
+  }
 });

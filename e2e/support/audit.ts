@@ -200,13 +200,13 @@ export class Audit {
         contentType: 'image/png',
       });
     }
-    const problems = [...this.problems.splice(0), ...await this.failures(), ...found];
+    const problems = [...await this.failures(), ...found];
     expect(problems, `${name} at ${page.url()}`).toEqual([]);
   }
 
   async finish(): Promise<void> {
     if (!this.page.isClosed()) await this.quiet();
-    expect([...this.problems.splice(0), ...await this.failures()], 'after the last audited state').toEqual([]);
+    expect(await this.failures(), 'after the last audited state').toEqual([]);
     for (const expected of this.expected) {
       expect(expected.seen, `HTTP ${expected.status} for ${expected.url}`).toBe(1);
       expect(expected.logged, `console lines for the expected HTTP ${expected.status} of ${expected.url}`).toBeLessThanOrEqual(expected.seen);
@@ -214,21 +214,31 @@ export class Audit {
   }
 
   private async failures(): Promise<string[]> {
-    const consoleProblems = this.probeConsole.splice(0).filter((message) => {
+    const requestProblems: string[] = [];
+    let verdict: string[] = [];
+    await expect.poll(async () => {
+      const observation = this.activePage.current;
+      const failures = this.failed.splice(0);
+      const replaced = await Promise.all(failures.map((failure) => failure.aborted && canceledByReplacement(failure)));
+      const stable = observation === this.activePage.current;
+      requestProblems.push(...failures.filter((failure, index) =>
+        !failure.aborted || !(this.downloads.has(failure.url) || (stable && replaced[index])))
+        .map((failure) => `request failed: ${failure.description}`));
+      if (!stable || this.failed.length > 0) return false;
+      verdict = [...this.problems.splice(0), ...this.probeProblems(), ...requestProblems];
+      return true;
+    }, { message: 'browser audit events still pending', intervals: [100] }).toBe(true);
+    return verdict;
+  }
+
+  private probeProblems(): string[] {
+    return this.probeConsole.splice(0).filter((message) => {
       const remaining = (this.probeFailures.get(message.url) ?? 0) - 1;
       if (remaining < 0) return true;
       if (remaining === 0) this.probeFailures.delete(message.url);
       else this.probeFailures.set(message.url, remaining);
       return false;
     }).map((message) => message.problem);
-    const observation = this.activePage.current;
-    const failures = this.failed.splice(0);
-    const replaced = await Promise.all(failures.map((failure) => failure.aborted && canceledByReplacement(failure)));
-    const stable = observation === this.activePage.current;
-    const requestProblems = failures.filter((failure, index) =>
-      !failure.aborted || !(this.downloads.has(failure.url) || (stable && replaced[index])))
-      .map((failure) => `request failed: ${failure.description}`);
-    return [...consoleProblems, ...requestProblems];
   }
 
   private isRegionPingProbe(request: Request): boolean {
