@@ -312,37 +312,48 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
   next request. With neither, the response's `RateLimit-Policy` window applies, with a 60-s minimum. Requests continue
   only while a scheduled slot fits inside the original mail deadline; non-poll requests have a 120-s response budget
   after their first slot. Individual HTTP requests are bounded by 15 s and the remaining budget, and a response
-  body that stalls or cannot be read fails with the same "inbox provider" error. The first provider call of a run
-  records the run's start in `inbox-run` on the first call that is not the preflight. Account slots stay 70 s apart
-  and every other request stays on the remaining 7 s slots. A finish signup answers the account create in 15 s, claims
-  its token at 21 s, finishes that token and the signup at 36 s,   and reads the mail detail at 148 s. The 70 s and 140 s account slots have both passed, so the next create is three
-  slots later. That is the supported finish, not every later cooldown. At phase 23,999 ms, create 50 sends at
-  4,013,999 ms, a 60 s account cooldown retries at 4,083,999 ms, and the free token plus the full 120 s poll ends at
-  4,239,999 ms. A further 60 s token cooldown lands at 4,167,999 ms and needs 4,302,999 ms, which is over that budget
-  and is refused before the poll starts. Phase 69,999 is over budget as well (`support/inbox-budget.mjs`). A request
-  that cannot get a slot before the supported deadline fails with "has no slot before the run's time limit".
+  body that stalls or cannot be read fails with the same "inbox provider" error. Account slots stay 70 s apart
+  and every other request stays on the remaining 7 s slots. The admitted mailbox workload is those 50 creates:
+  41 at that cadence, then the finish chain. The chain is the member signup (account, one occupied non-account
+  slot, the token, and the full 120 s poll), the .NET SDK signup only after that poll, three serial account creates
+  with tokens and no poll, then the Go, Python, JavaScript and Rust signups, each with an occupied slot and a full
+  poll. Every start phase from 0 through 69,999 ms is funded by the same allocator. The longest is phase 69,999:
+  the first account waits 69,999 ms, the member poll ends at 3,102,999 ms, the .NET account starts at 3,149,999 ms,
+  the Rust token is at 4,227,999 ms and its poll ends at 4,362,999 ms. A further 60 s retry of that token needs
+  4,425,999 ms and is refused before that poll starts. A request that cannot get a slot before the admitted deadline
+  fails with "has no slot before the run's time limit".
   Queue waits extend the current test's bound. Hooks with several inbox calls use `withInboxBudget` to accumulate
   every wait: Playwright's `TestInfo.timeout` exposes the default test slot, not the running `beforeAll` hook slot.
   Each MFA setup needs two creations (at least 70 s apart); the project-MFA test later creates a third inbox.
   Inboxes are never deleted: a deleted address can be registered again by anyone while the product account still
   uses it. Address, password and token are registered secrets; provider errors include method, path, status, rate
   headers and the first 500 characters of the validation body.
-  Playwright's limit starts when Playwright starts: the supported mailbox window plus 5 minutes of teardown
-  (4,539,999 ms). The envelope file is written at that moment, so time before the first mailbox call spends the
-  mailbox window, not the teardown. Preflight has its own limits: the first claim within 14 s and the whole preflight
-  within 134 s, including in a standalone run. A `Retry-After` is recorded for every caller and is not waited out past
-  that deadline. The journey step also holds two 15 s shell starts, a 65 s quarantine lookup
-  (`timeout --kill-after=5 60`), a 15 s DNS lookup for each of the 13 production names, and the readiness calls. Those
-  sum to 5,023,999 ms, so the step limit is 84 minutes. The job limit is 130 minutes: 2 for the one checkout, 2 to read
-  that tree's budget, 2 for each of the three tool actions, 15 for the install step, the 84-minute journey step, 5 for
-  scrub, 2 for each of the two uploads, 2 for runner setup, 2 for runner completion, and 2 for each of the four post
-  actions. The workflow checks out only that SHA and prints it as the suite. A schedule or manual run does not invent
-  a release. A release-triggered run prints a release SHA only after the deploy-revision artifact has been read; if
-  that artifact is missing the alert says the release was not identified. To dispatch this workflow for an older live
-  deployment, compare the serving auth and dashboard image digests and the release provenance that names their source
-  with the exact dispatch SHA. TerraBase `/readyz` publishes the display version and drops the revision suffix, so it
-  is not that comparison. Record the two digests, the provenance SHA and the dispatch SHA, and that the app, SDK,
-  build and deploy inputs of the provenance SHA and the dispatch SHA are the same, before dispatching. Scrub, the
+  Playwright's suite limit starts when Playwright starts. The envelope file written at that moment is the admitted
+  deadline for the phase the clock is in, and a missing file fails the call. Time before the first mailbox call spends
+  the mailbox window. The suite invocation then adds the finish work between the last poll and account deletion: one
+  ordinary 180 s test limit for the SDK calls that continue after that poll, four database-deletion tests and five
+  SDK group B tests at that same limit (1,800,000 ms). Account deletion is a second invocation limited to 5 minutes.
+  The suite invocation's limit is 6,162,999 ms. Preflight has its own limits: the first claim within 14 s and the
+  whole preflight within 134 s, including a standalone run. After the claim sleep, a wake later than the cutoff drops
+  the slot and does not send, even while that slot's window is still open. A `Retry-After` is recorded and is not
+  waited out past the deadline. A second run cannot take the state directory from a live owner, and a dead owner's
+  cooldown that is still in the future is kept. The journey step also holds two 15 s shell starts, a 65 s quarantine
+  lookup (`timeout --kill-after=5 60`), a 15 s DNS lookup for each of the 13 production names, and the readiness calls.
+  With the mailbox window, the SDK phase and the cleanup invocation those sum to 6,946,999 ms, so the step limit is
+  116 minutes. The job limit is 162 minutes: 2 for the one checkout, 2 to read that tree's budget, 2 for each of the
+  three tool actions, 15 for the install step, the 116-minute journey step, 5 for scrub, 2 for each of the two uploads,
+  2 for runner setup, 2 for runner completion, and 2 for each of the four post actions. The workflow checks out only
+  that SHA. The alert names it as the suite only when the release job selected it. A schedule or manual run does not
+  invent a release. A release-triggered run prints a deploy revision only after the deploy-revision artifact has been
+  read, and a TerraBase release only when the release-only job's pinned-digest step succeeded for that workflow head.
+  Missing evidence is printed as not identified. To dispatch this workflow for an older live deployment, record the
+  serving digest of terrabase (`ghcr.io/terrascale/terrabase`), ts-auth (`ghcr.io/terrascale/ts-auth`) and the dashboard
+  (`ghcr.io/terrascale/terrascale-dashboard`) in each declared region (us-sanjose-1, eu-frankfurt-1 and sa-saopaulo-1).
+  Verify each digest with `gh attestation verify` for owner TerraScale, source ref `refs/heads/main`, and source digest
+  equal to the exact dispatch SHA. TerraBase and ts-auth are signed by `.github/workflows/ci.yml`; the dashboard is
+  signed by `.github/workflows/images-ghcr.yml`. TerraBase `/readyz` publishes the display version and drops the
+  revision suffix, so it is not that comparison. All three services have to match in every declared region before
+  dispatching. Scrub, the
   report, the uploads and the alert read this one checkout. On GitHub Actions the seven `PRODUCTION_*_MINUTES` values
   are required before DNS, mail.tm or production. Each must be a positive safe integer.
   `bash e2e/env/production.sh` with `GITHUB_ACTIONS` unset and none of those variables set still runs. The public
@@ -362,8 +373,8 @@ What the target changes (`E2E_TARGET`, read by `support/stack.ts`):
   host, with a fresh home and no extra CA.
 - Evidence: no trace, video or screenshot. The run writes `production-report/list.txt` (everything it printed, with
   the list reporter), `report.json` (JSON reporter) and `readyz.txt`; each audited page adds a `url` annotation and
-  the SDK runners print their output. Playwright ends a run that reaches 25 minutes (`globalTimeout`, under the
-  step's 30), so a slow run still writes `report.json`. A timeout or a cancel signals only the step's shell, so the
+  the SDK runners print their output. The suite invocation ends at 6,162,999 ms and the cleanup invocation at 5 minutes
+  (`globalTimeout`, both under the 116-minute step), so a slow run still writes `report.json`. A timeout or a cancel signals only the step's shell, so the
   scrub step first kills every process that carries the job's `RUNNER_TRACKING_ID` (the runner marks with it all a
   job starts, and kills them itself only when the job ends) and every process those started (Chromium overwrites its
   environment), until none is left; then `env/scrub.py` redacts the files, and they upload only when that step
@@ -407,9 +418,9 @@ tests of `pages-mobile`, `hosted`, `interactions` and `invitation` share six wor
 order `playwright.config.ts` lists the projects, so in practice the flows start once every page test has started;
 nothing enforces that order and no test depends on it. The organization audit is read through the tab's own Action
 filter, and its second page is a state of its own (the phone owner's organization holds 12 audit events before
-`finish`; the two pages show 20). `finish`, the teardown of `setup`, starts when all four have ended and runs its
-tests in order in one worker: SDK group A, the database deletion through the UI, SDK group B, a rename and the account
-deletion. A teardown whose setup failed fails once with "setup did not finish" and runs nothing else.
+`finish`; the two pages show 20). `finish`, the teardown of `setup`, starts when all four have ended. The suite
+invocation runs SDK group A, the database deletion through the UI and SDK group B. The rename and the account
+deletion run in a second invocation with its own 5 minute limit. A teardown whose setup failed fails once with "setup did not finish" and runs nothing else.
 
 `interactions/files.spec.ts` (the phone owner, local stack only) creates a bucket, uploads through the upload zone,
 downloads the same bytes, deletes the file and deletes the bucket in the next click: TerraBase erases a bucket's

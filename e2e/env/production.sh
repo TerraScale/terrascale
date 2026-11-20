@@ -73,9 +73,12 @@ journey() {
   inbox
   served before
   cd "$e2e"
-  node --input-type=module -e "import { writeFileSync } from 'node:fs'; import { productionInboxRunMs } from './support/inbox-budget.mjs'; writeFileSync(process.argv[1], String(Date.now() + productionInboxRunMs()));" "$state/inbox-envelope"
-  E2E_TARGET=production E2E_STATE="$state" E2E_SDK_BUILD="$e2e/.state/sdk" E2E_CA_FILE="$ca" E2E_INBOX_DOMAIN="$domain" \
-    npx playwright test "${projects[@]/#/--project=}" || status=$?
+  node --input-type=module -e "import { writeEnvelope } from './support/inbox-budget.mjs'; writeEnvelope(process.argv[1]);" "$state/inbox-envelope"
+  local cleanup=0
+  local play=(env E2E_TARGET=production E2E_STATE="$state" E2E_SDK_BUILD="$e2e/.state/sdk" E2E_CA_FILE="$ca" E2E_INBOX_DOMAIN="$domain")
+  PRODUCTION_PHASE=suite "${play[@]}" npx playwright test "${projects[@]/#/--project=}" || status=$?
+  PRODUCTION_PHASE=cleanup "${play[@]}" npx playwright test --project=finish || cleanup=$?
+  if [ "$status" -eq 0 ]; then status=$cleanup; fi
   served after
   return "$status"
 }
@@ -83,7 +86,10 @@ journey() {
 export SSL_CERT_FILE=$ca
 unset SSL_CERT_DIR
 [ $# -eq 0 ] || refuse "it takes no arguments, so nothing can point it elsewhere"
-rm -rf "$state" "$report"
-mkdir -p "$state/browser-home" "$report"
+rm -rf "$report"
+mkdir -p "$report"
+(cd "$e2e" && node support/production-owner.mjs acquire "$state" "$$")
+trap '(cd "$e2e" && node support/production-owner.mjs release "$state" "$$")' EXIT
+mkdir -p "$state/browser-home"
 chmod 700 "$state"
 journey 2>&1 | tee "$report/list.txt"

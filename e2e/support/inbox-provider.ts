@@ -1,9 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { accountStride, nonAccountWaitMs, preflightMs, productionInboxRunMs, slotMs } from './inbox-budget.mjs';
-
-const runMs = productionInboxRunMs();
+import { accountStride, nonAccountWaitMs, preflightMs, sendAfterWake, slotMs } from './inbox-budget.mjs';
 
 function resetAt(headers: Headers, now: number): number {
   const retry = headers.get('retry-after');
@@ -39,11 +37,10 @@ export class InboxProvider {
 
   private envelope(): number {
     const file = join(this.state, 'inbox-envelope');
-    if (existsSync(file)) return Number(readFileSync(file, 'utf8'));
-    const starts = join(this.state, 'inbox-run');
-    mkdirSync(starts, { recursive: true });
-    if (!readdirSync(starts).length) writeFileSync(join(starts, String(Date.now())), '');
-    return Math.min(...readdirSync(starts).map(Number)) + runMs;
+    if (!existsSync(file)) throw new Error('inbox provider mail.tm: the suite envelope is missing');
+    const deadline = Number(readFileSync(file, 'utf8'));
+    if (!Number.isSafeInteger(deadline)) throw new Error('inbox provider mail.tm: the suite envelope is missing');
+    return deadline;
   }
 
   private preflightLimits(): { acquire: number; overall: number } {
@@ -51,12 +48,13 @@ export class InboxProvider {
     return { acquire: this.preflightAt + nonAccountWaitMs, overall: this.preflightAt + preflightMs };
   }
 
-  private async turn(every: number, notBefore: number, deadline: number, accounts: boolean): Promise<number | undefined> {
+  private async turn(every: number, notBefore: number, deadline: number, accounts: boolean, dispatchBy: number): Promise<number | undefined> {
     const slots = join(this.state, 'inbox-requests');
     const cooldowns = join(this.state, 'inbox-cooldowns');
     mkdirSync(slots, { recursive: true });
     mkdirSync(cooldowns, { recursive: true });
     for (;;) {
+      if (!sendAfterWake(Date.now(), dispatchBy)) return undefined;
       const cooldown = Math.max(0, ...readdirSync(cooldowns).filter((name) => /^\d+$/.test(name)).map(Number));
       let slot = every * Math.ceil(Math.max(Date.now(), notBefore, cooldown) / (every * slotMs));
       for (;; slot += every) {
@@ -73,8 +71,11 @@ export class InboxProvider {
       this.onWait(wait);
       await new Promise((resolve) => setTimeout(resolve, wait));
       const held = join(slots, String(slot));
-      if (Date.now() >= (slot + 1) * slotMs || readdirSync(cooldowns).some((name) => /^\d+$/.test(name) && Number(name) > Date.now())) {
+      const woke = Date.now();
+      const cooled = readdirSync(cooldowns).some((name) => /^\d+$/.test(name) && Number(name) > woke);
+      if (!sendAfterWake(woke, dispatchBy) || woke >= (slot + 1) * slotMs || cooled) {
         rmSync(held, { force: true });
+        if (!sendAfterWake(woke, dispatchBy)) return undefined;
         continue;
       }
       return slot;
@@ -90,7 +91,8 @@ export class InboxProvider {
     if (!preflight && Number.isFinite(deadline) && deadline > run) {
       throw new Error(`inbox provider mail.tm: ${method} ${path} is over budget; remaining ${run - Date.now()}ms and the poll needs ${deadline - Date.now()}ms`);
     }
-    let slot = await this.turn(every, Date.now(), preflight ? limits!.acquire : Math.min(deadline, run), accounts);
+    const limit = preflight ? limits!.acquire : Math.min(deadline, run);
+    let slot = await this.turn(every, Date.now(), limit, accounts, limit);
     if (slot === undefined) {
       throw new Error(`inbox provider mail.tm: ${method} ${path} has no slot before ${deadline <= run ? 'the mail poll deadline' : "the run's time limit"}`);
     }
@@ -125,7 +127,7 @@ export class InboxProvider {
       if (response.status !== 429) throw failure;
       const retryAt = resetAt(response.headers, Date.now());
       if (retryAt >= until) throw failure;
-      slot = await this.turn(every, retryAt, until, accounts);
+      slot = await this.turn(every, retryAt, until, accounts, until);
       if (slot === undefined) throw failure;
     }
   }

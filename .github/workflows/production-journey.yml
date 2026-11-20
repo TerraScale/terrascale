@@ -24,7 +24,9 @@ jobs:
     outputs:
       journey: ${{ steps.release.outputs.journey }}
       commit: ${{ steps.release.outputs.commit }}
+      suite: ${{ steps.release.outputs.suite }}
       verified: ${{ steps.release.outputs.verified }}
+      terrabase: ${{ steps.release.outputs.terrabase }}
     steps:
       - id: release
         name: Run the journey for the source that was released
@@ -37,11 +39,13 @@ jobs:
           RELEASE_JOBS: '{".github/workflows/ci.yml": ["main-auth", "release-only"], ".github/workflows/images-ghcr.yml": ["Publish and release"]}'
         run: |
           set -euo pipefail
+          HEAD_SHA=$COMMIT
           [[ $COMMIT =~ ^[0-9a-f]{40}$ ]]
           echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
           if [ "$EVENT" != workflow_run ]; then
             echo "$EVENT: the journey runs the suite of $COMMIT"
             echo "journey=true" >> "$GITHUB_OUTPUT"
+            echo "suite=$COMMIT" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?filter=latest&per_page=100")
@@ -73,14 +77,19 @@ jobs:
             echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
             echo "verified=$COMMIT" >> "$GITHUB_OUTPUT"
           fi
+          if jq -e '.jobs[] | select(.name == "release-only" and .conclusion == "success")
+            | .steps[]? | select(.name == "Release the pinned arm64 digest to each region" and .conclusion == "success")' <<< "$jobs" > /dev/null; then
+            echo "terrabase=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          fi
           echo "Run $RUN_ID released $COMMIT; run its production journey"
           echo "journey=true" >> "$GITHUB_OUTPUT"
+          echo "suite=$COMMIT" >> "$GITHUB_OUTPUT"
 
   journey:
     needs: release
     if: needs.release.outputs.journey == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 130
+    timeout-minutes: 162
     concurrency:
       group: production-journey
       cancel-in-progress: false
@@ -98,8 +107,8 @@ jobs:
       PRODUCTION_INSTALL_MINUTES: 15
       PRODUCTION_SCRUB_MINUTES: 5
       PRODUCTION_UPLOAD_MINUTES: 2
-      PRODUCTION_STEP_MINUTES: 84
-      PRODUCTION_JOB_MINUTES: 130
+      PRODUCTION_STEP_MINUTES: 116
+      PRODUCTION_JOB_MINUTES: 162
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         timeout-minutes: 2
@@ -154,7 +163,7 @@ jobs:
           npx playwright install --only-shell chromium
           wait "$rust" || { cat "$RUNNER_TEMP/rust-runner.log"; exit 1; }
       - name: Journey against production
-        timeout-minutes: 84
+        timeout-minutes: 116
         env:
           GITHUB_TOKEN: ${{ github.token }}
           DOTNET_CLI_TELEMETRY_OPTOUT: 1
@@ -228,8 +237,9 @@ jobs:
       RESULT: ${{ needs.release.result == 'failure' && 'failure' || needs.journey.result }}
       EVENT: ${{ github.event_name }}
       TRIGGER: ${{ github.event_name == 'workflow_run' && format('{0} run {1}', github.event.workflow_run.name, github.event.workflow_run.id) || github.event_name }}
-      COMMIT: ${{ needs.release.outputs.commit }}
+      SUITE: ${{ needs.release.outputs.suite }}
       VERIFIED: ${{ needs.release.outputs.verified }}
+      TERRABASE: ${{ needs.release.outputs.terrabase }}
       SCHEDULE: ${{ needs.journey.outputs.schedule }}
       RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
@@ -256,9 +266,11 @@ jobs:
               echo "The production journey ended with $RESULT: $RUN"
             fi
             echo
-            echo "Trigger: $TRIGGER. Suite: $COMMIT."
+            echo "Trigger: $TRIGGER."
+            if [ -n "$SUITE" ]; then echo "Suite: $SUITE."; else echo "Suite: not selected."; fi
             if [ "$EVENT" = workflow_run ]; then
-              if [ -n "$VERIFIED" ]; then echo "Release: $VERIFIED."; else echo "Release: not identified."; fi
+              if [ -n "$VERIFIED" ]; then echo "Deploy revision: $VERIFIED."; else echo "Deploy revision: not identified."; fi
+              if [ -n "$TERRABASE" ]; then echo "TerraBase release: $TERRABASE."; else echo "TerraBase release: not identified."; fi
             fi
             echo "Schedule: $SCHEDULE."
             echo
