@@ -5,6 +5,7 @@ using Amazon.Runtime;
 using Amazon.S3;
 using Amazon.S3.Model;
 using TerraBase.Configuration;
+using TerraBase.Errors;
 
 namespace TerraBase.Features.FileStorage;
 
@@ -36,12 +37,16 @@ internal sealed class S3FileObjectStore : IFileObjectStore, IDisposable
     }
 
     public bool Configured => _client is not null;
-    private AmazonS3Client Client => _client ?? throw new IOException("file object storage credentials are unavailable");
     private static string Bucket(string region) => "terrascale-" + region + "-files";
+    private static Unavailable Unconfigured => new("file object storage credentials are unavailable");
 
-    public ValueTask<FileSignedUrl> UploadAsync(string region, string key, FileObject file, CancellationToken cancellationToken)
+    public ValueTask<FileSignedUrlEntry> UploadAsync(string region, string key, FileObject file, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (_client is not { } client)
+        {
+            return ValueTask.FromResult<FileSignedUrlEntry>(Unconfigured);
+        }
         var request = new GetPreSignedUrlRequest
         {
             BucketName = Bucket(region),
@@ -52,7 +57,7 @@ internal sealed class S3FileObjectStore : IFileObjectStore, IDisposable
         };
         request.Headers.ContentLength = file.Size;
         request.Headers["x-amz-checksum-sha256"] = file.Sha256;
-        return ValueTask.FromResult(new FileSignedUrl(file.Id, Client.GetPreSignedURL(request), file.UploadExpiresAt,
+        return ValueTask.FromResult<FileSignedUrlEntry>(new FileSignedUrl(file.Id, client.GetPreSignedURL(request), file.UploadExpiresAt,
             new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 ["Content-Type"] = file.ContentType,
@@ -61,9 +66,13 @@ internal sealed class S3FileObjectStore : IFileObjectStore, IDisposable
             }));
     }
 
-    public ValueTask<FileSignedUrl> DownloadAsync(string region, string key, FileObject file, CancellationToken cancellationToken)
+    public ValueTask<FileSignedUrlEntry> DownloadAsync(string region, string key, FileObject file, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (_client is not { } client)
+        {
+            return ValueTask.FromResult<FileSignedUrlEntry>(Unconfigured);
+        }
         var expires = _time.GetUtcNow().AddSeconds(60);
         var request = new GetPreSignedUrlRequest
         {
@@ -78,15 +87,15 @@ internal sealed class S3FileObjectStore : IFileObjectStore, IDisposable
                 CacheControl = "private, no-store",
             },
         };
-        return ValueTask.FromResult(new FileSignedUrl(file.Id, Client.GetPreSignedURL(request), expires,
+        return ValueTask.FromResult<FileSignedUrlEntry>(new FileSignedUrl(file.Id, client.GetPreSignedURL(request), expires,
             new Dictionary<string, string>()));
     }
 
-    public async ValueTask<bool> VerifyAsync(string region, string key, FileObject file, CancellationToken cancellationToken)
+    public async ValueTask<FileVerify> VerifyAsync(string region, string key, FileObject file, CancellationToken cancellationToken)
     {
         try
         {
-            using var response = await Client.GetObjectAsync(new GetObjectRequest { BucketName = Bucket(region), Key = key }, cancellationToken).ConfigureAwait(false);
+            using var response = await _client!.GetObjectAsync(new GetObjectRequest { BucketName = Bucket(region), Key = key }, cancellationToken).ConfigureAwait(false);
             if (response.ContentLength != file.Size)
             {
                 return false;
@@ -102,7 +111,7 @@ internal sealed class S3FileObjectStore : IFileObjectStore, IDisposable
     {
         try
         {
-            _ = await Client.DeleteObjectAsync(new DeleteObjectRequest { BucketName = Bucket(region), Key = key }, cancellationToken).ConfigureAwait(false);
+            _ = await _client!.DeleteObjectAsync(new DeleteObjectRequest { BucketName = Bucket(region), Key = key }, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested) { throw Unanswered(error); }
     }
@@ -111,7 +120,7 @@ internal sealed class S3FileObjectStore : IFileObjectStore, IDisposable
     {
         try
         {
-            var response = await Client.ListObjectsV2Async(new ListObjectsV2Request { BucketName = Bucket(region), Prefix = prefix }, cancellationToken).ConfigureAwait(false);
+            var response = await _client!.ListObjectsV2Async(new ListObjectsV2Request { BucketName = Bucket(region), Prefix = prefix }, cancellationToken).ConfigureAwait(false);
             return new([.. (response.S3Objects ?? []).Select(stored => stored.Key)], response.IsTruncated == true);
         }
         catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested) { throw Unanswered(error); }
