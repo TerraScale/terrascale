@@ -1,6 +1,7 @@
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.TsAuth;
 
@@ -28,7 +29,7 @@ namespace TerraScale.Dashboard.Features.Auth
             return endpoint + "?" + string.Join("&", fields.Select(field => Uri.EscapeDataString(field.Key) + "=" + Uri.EscapeDataString(field.Value)));
         }
 
-        public async Task<SessionRecord> ExchangeAsync(string code, OidcFlow flow, DateTimeOffset? credentialExpiresAt, CancellationToken cancellationToken)
+        public async Task<ExchangeResult> ExchangeAsync(string code, OidcFlow flow, DateTimeOffset? credentialExpiresAt, CancellationToken cancellationToken)
         {
             if (string.IsNullOrWhiteSpace(code) || code.Length > 4096)
             {
@@ -44,8 +45,8 @@ namespace TerraScale.Dashboard.Features.Auth
             }
             catch (TsAuthException error) when (error.ErrorCode == "invalid_grant") { throw new SignInRejectedException(); }
             catch (TsAuthException error) when (error.ErrorCode == "invalid_request" && credentialExpiresAt is not null)
-            { throw new AccountAccessException("This token could not be created with that expiry. Choose a shorter expiry.", 422); }
-            return await SessionAsync(tokens, credentials, flow.Nonce, cancellationToken);
+            { return new Validation("This token could not be created with that expiry. Choose a shorter expiry."); }
+            return new ExchangeResult(await SessionAsync(tokens, credentials, flow.Nonce, cancellationToken));
         }
 
         public async Task<SessionRecord> RefreshAsync(SessionRecord session, CancellationToken cancellationToken)
@@ -223,4 +224,6 @@ namespace TerraScale.Dashboard.Features.Auth
             return Convert.ToBase64String(value).TrimEnd('=').Replace('+', '-').Replace('/', '_');
         }
     }
+
+    public readonly union ExchangeResult(SessionRecord, Validation);
 }
