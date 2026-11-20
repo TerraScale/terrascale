@@ -63,6 +63,7 @@ served() {
 
 journey() {
   local status=0
+  (cd "$e2e" && node --input-type=module -e "import { assertRunningBudget, productionAccountCreates } from './support/inbox-budget.mjs'; const budget = assertRunningBudget(); console.log('production inbox budget accounts=' + productionAccountCreates + ' slots=' + budget.slots + ' runMs=' + budget.runMs + ' suiteMs=' + budget.suiteMs + ' preflightMs=' + budget.preflightMs + ' quarantineMs=' + budget.quarantineMs + ' stepMinutes=' + budget.stepMinutes + ' jobMinutes=' + budget.jobMinutes);")
   isolated
   inbox
   served before
