@@ -1,11 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <!-- Build both supported targets with .NET 11, or .NET 10 LTS with an
-         older toolchain. Clear the inherited singular TargetFramework so
-         multi-target dispatch selects the configured frameworks. -->
-    <TargetFrameworks Condition="$([MSBuild]::VersionGreaterThanOrEquals('$(BundledNETCoreAppTargetFrameworkVersion)', '11.0'))">net10.0;net11.0</TargetFrameworks>
-    <TargetFrameworks Condition="'$(TargetFrameworks)' == ''">net10.0</TargetFrameworks>
-    <TargetFramework />
     <PackageId>TerraScale.DotNet</PackageId>
     <Version>0.0.21</Version>
     <Description>Official .NET SDK for TerraBase and ts-auth.</Description>
