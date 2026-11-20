@@ -1,8 +1,8 @@
 # Regional application images
 
-GitHub Actions publishes the same Linux arm64 manifest to GHCR and to
-`us-sanjose-1.ocir.io`, `eu-frankfurt-1.ocir.io` and
-`sa-saopaulo-1.ocir.io` during the registry migration.
+GitHub Actions publishes the same Linux arm64 manifest to GHCR and, in order,
+to `sa-saopaulo-1.ocir.io`, `eu-frankfurt-1.ocir.io` and
+`us-sanjose-1.ocir.io` during the registry migration.
 The production OCIR repository is `<namespace>/terrascale/<pkg>`, where the package is
 `terrabase`, `ts-auth` or `terrascale-dashboard`. `OCIR_NAMESPACE` is the
 repository variable identifying the OCI tenancy's registry namespace.
@@ -23,8 +23,8 @@ attachment, checks its subject and artifact type, downloads its layer and
 compares the bytes with the original signed bundle.
 
 Before regional publication, each publisher job exercises the same commands
-against the three production repositories in its local registry service, using
-its actual image and GitHub-signed bundles. This proves the registry transfer without
+against the three production repositories in its local registry service, in
+gru, fra, sjc order, using its actual image and GitHub-signed bundles. This proves the registry transfer without
 requiring OCI credentials on a development machine.
 
 The existing PR lint job runs a cheaper transport proof with a public arm64
@@ -44,12 +44,13 @@ All selection attachments must verify
 before any regional `:release` pointer moves. GHCR publication and its release
 pointer continue during migration.
 
-For TerraBase, auth and dashboard, `release-app.sh` selects every production
-`:release` tag at once. Each region's tag write and read-back share a
-two-minute deadline; an error or expiry reports that repository and fails
-selection. TerraBase requires an explicit `workflow_dispatch` release
+For TerraBase, auth and dashboard, `release-app.sh` selects the production
+`:release` tags in order: gru, then fra, then sjc. Each region's tag write
+and read-back share a two-minute deadline; an error or expiry reports that
+repository and stops selection before a later region or GHCR moves.
+TerraBase requires an explicit `workflow_dispatch` release
 selection; build-only publication does not move a release tag.
-Production pointers move together to the same digest, followed by the retained GHCR pointer. The separate
+Production pointers move to the same digest in that order, followed by the retained GHCR pointer. The separate
 `Wait for rollout` step observes all three production regions with one
 `release wait`, using its existing timeout. The orchestrator owns rollout order.
 The step summary records each region's latest fleet-ready digest projection,
