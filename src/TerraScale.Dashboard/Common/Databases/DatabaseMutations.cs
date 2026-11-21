@@ -95,22 +95,7 @@ namespace TerraScale.Dashboard.Common.Databases
 
         public static AccountAccessException ToError(Failure failure)
         {
-            return new(failure switch
-            {
-                NotFound error => error.Message ?? "Not found.",
-                Conflict error => error.Message,
-                PreconditionFailed error => error.Message,
-                Unauthorized error => error.Message ?? "Unauthorized.",
-                Forbidden error => error.Message,
-                QuotaExceeded error => error.Message,
-                Unavailable error => error.Message,
-                PayloadTooLarge error => error.Message,
-                UnsupportedMediaType error => error.Message,
-                RequestTimeout error => error.Message,
-                Gone error => error.Message,
-                OutcomeUnknown error => error.Message,
-                ValidationCase error => error.Message,
-            }, StatusOf(failure));
+            return new(MessageOf(failure), StatusOf(failure));
         }
 
         public static int StatusOf(Failure failure)

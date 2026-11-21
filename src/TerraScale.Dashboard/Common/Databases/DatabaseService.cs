@@ -51,8 +51,7 @@ namespace TerraScale.Dashboard.Common.Databases
             }
             if (placement.Count == 0)
             {
-                Failure refusal = new ValidationCase("Choose at least one region.");
-                return refusal;
+                return (Failure)new ValidationCase("Choose at least one region.");
             }
 
             return placement;
