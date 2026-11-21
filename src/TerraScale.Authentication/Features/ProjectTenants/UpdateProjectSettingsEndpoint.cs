@@ -31,7 +31,7 @@ public sealed partial class UpdateProjectSettingsEndpoint(TenantDirectory tenant
                 || branding.FooterLinks is { } links && (links.Count > 5 || links.Any(link => link is null || string.IsNullOrWhiteSpace(link.Label)
                     || link.Label.Length > 24 || link.Label.Any(char.IsControl) || !Https(link.Url))))
             {
-                return ErrorResults.ToResult(new Validation("Invalid branding: use a name of 1 to 64 characters, https URLs, #rrggbb colours, title_size 20 to 40, light/dark/system, at most five labelled footer links and email_message of at most 500 plain-text characters without controls except newline.", "invalid_request"));
+                return new Failure(new Validation("Invalid branding: use a name of 1 to 64 characters, https URLs, #rrggbb colours, title_size 20 to 40, light/dark/system, at most five labelled footer links and email_message of at most 500 plain-text characters without controls except newline.", "invalid_request"));
             }
         }
 
@@ -41,17 +41,17 @@ public sealed partial class UpdateProjectSettingsEndpoint(TenantDirectory tenant
                 || configuration.RequireMfa && !configuration.AllowTotp && !configuration.AllowPasskey || configuration.RedirectUrls is null
                 || configuration.RedirectUrls.Count > 100 || configuration.RedirectUrls.Any(value => !Redirect(value))))
         {
-            return ErrorResults.ToResult(new Validation("configuration requires at least one allowed factor when MFA is required, inactivity_timeout_minutes null or 15 to 43200, session_lifetime_seconds 300 to 2592000 and at most 100 exact https redirect URLs (http only on loopback), without userinfo or fragments.", "invalid_request"));
+            return new Failure(new Validation("configuration requires at least one allowed factor when MFA is required, inactivity_timeout_minutes null or 15 to 43200, session_lifetime_seconds 300 to 2592000 and at most 100 exact https redirect URLs (http only on loopback), without userinfo or fragments.", "invalid_request"));
         }
 
         if (request.AttackProtection is { BotChallenge: true } && !this.HttpContext.RequestServices.GetRequiredService<TurnstileKeys>().Configured)
         {
-            return ErrorResults.ToResult(new Validation("Bot challenge requires configured Cloudflare Turnstile site and secret keys.", "invalid_request"));
+            return new Failure(new Validation("Bot challenge requires configured Cloudflare Turnstile site and secret keys.", "invalid_request"));
         }
 
         if (request.Methods?.SignUpMode is not (null or "public" or "restricted" or "waitlist"))
         {
-            return ErrorResults.ToResult(new Validation("sign_up_mode must be public, restricted or waitlist.", "invalid_request"));
+            return new Failure(new Validation("sign_up_mode must be public, restricted or waitlist.", "invalid_request"));
         }
 
         var restrictions = request.Restrictions is { } sentRestrictions ? SignUpRestrictions.Normalize(sentRestrictions) : null;

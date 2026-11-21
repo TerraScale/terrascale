@@ -19,8 +19,8 @@ public sealed class DeleteProjectOrganizationEndpoint(ProjectOrganizationDirecto
         return await organizations.DeleteAsync(project, this.Org, cancellationToken) switch
         {
             Done => Results.NoContent(),
-            NotFound error => ErrorResults.ToResult(error),
-            Conflict error => ErrorResults.ToResult(error),
+            NotFound error => new Failure(error),
+            Conflict error => new Failure(error),
         };
     }
 }

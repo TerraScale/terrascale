@@ -20,9 +20,9 @@ public sealed class UpdateProjectOrganizationEndpoint(ProjectOrganizationDirecto
         return await organizations.UpdateAsync(project, this.Org, request, cancellationToken) switch
         {
             ProjectOrganizationBody saved => Results.Json(saved, ProjectOrganizationsJson.Default.ProjectOrganizationBody),
-            NotFound error => ErrorResults.ToResult(error),
-            Validation error => ErrorResults.ToResult(error),
-            Conflict error => ErrorResults.ToResult(error)
+            NotFound error => new Failure(error),
+            Validation error => new Failure(error),
+            Conflict error => new Failure(error)
         };
 
     }

@@ -20,7 +20,7 @@ public sealed class ListProjectOrganizationMembersEndpoint(ProjectOrganizationDi
         return await organizations.MembersAsync(project, this.Org, limit, after, cancellationToken) switch
         {
             ProjectMembershipPage page => Results.Json(page, ProjectOrganizationsJson.Default.ProjectMembershipPage),
-            NotFound error => ErrorResults.ToResult(error)
+            NotFound error => new Failure(error)
         };
 
     }

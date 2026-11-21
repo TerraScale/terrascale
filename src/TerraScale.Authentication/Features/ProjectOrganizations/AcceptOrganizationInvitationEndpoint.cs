@@ -37,9 +37,9 @@ public sealed class AcceptOrganizationInvitationEndpoint(ProjectOrganizationDire
         return await organizations.AcceptAsync(live.User, (await this.HttpContext.Request.ReadFormAsync(cancellationToken))["token"].ToString(), cancellationToken) switch
         {
             OrganizationClaims org => OrganizationPageModel.Render(this.HttpContext, new(tenant, "", org.Slug, Done: "Invitation accepted")),
-            NotFound => Results.NotFound(),
-            Forbidden => Results.StatusCode(403),
-            Conflict => Results.StatusCode(409),
+            NotFound error => ErrorResults.ToResult(error),
+            Forbidden error => ErrorResults.ToResult(error),
+            Conflict error => ErrorResults.ToResult(error),
         };
     }
 }

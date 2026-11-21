@@ -19,7 +19,7 @@ public sealed class VerifyUserApiKeyEndpoint(TenantDirectory tenants, PlatformAu
     {
         if (caller is not ProjectCaller.SecretKey)
         {
-            return ErrorResults.ToResult(new Forbidden("Your role does not allow this.", "forbidden_role"));
+            return new Failure(new Forbidden("Your role does not allow this.", "forbidden_role"));
         }
 
         var project = await this.AccessAsync(caller, Roles.Viewer, cancellationToken, TerraBaseScopes.AuthRead);
@@ -27,7 +27,7 @@ public sealed class VerifyUserApiKeyEndpoint(TenantDirectory tenants, PlatformAu
         return await keys.VerifyAsync(project, request.Key, cancellationToken) switch
         {
             VerifyUserApiKeyBody verified => Results.Json(verified, UserApiKeyJson.Default.VerifyUserApiKeyBody),
-            QuotaExceeded error => ErrorResults.ToResult(error),
+            QuotaExceeded error => new Failure(error),
         };
     }
 }

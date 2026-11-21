@@ -24,7 +24,7 @@ public sealed class ListProjectSessionsEndpoint(TenantDirectory tenants, Platfor
         {
             if (!PlatformDirectory.IsId(requested))
             {
-                return ErrorResults.ToResult(new Validation("user must be a user id."));
+                return new Failure(new Validation("user must be a user id."));
             }
 
             user = requested;

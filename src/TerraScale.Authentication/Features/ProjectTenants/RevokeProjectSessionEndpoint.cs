@@ -19,6 +19,6 @@ public sealed class RevokeProjectSessionEndpoint(TenantDirectory tenants, Platfo
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         return await this.Tenants.RevokeSessionAsync(projectId, this.RouteId("session"), cancellationToken)
             ? Results.NoContent()
-            : ErrorResults.ToResult(new NotFound("No such resource.", "not_found"));
+            : new Failure(new NotFound("No such resource.", "not_found"));
     }
 }

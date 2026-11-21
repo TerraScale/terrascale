@@ -24,7 +24,7 @@ public sealed class UpdateProjectClientEndpoint(TenantDirectory tenants, IOpenId
         var name = PlatformDirectory.Name(request.Name);
         if (name is null)
         {
-            return ErrorResults.ToResult(new Validation("name must be 1 to 128 characters with a letter or digit.", "invalid_request"));
+            return new Failure(new Validation("name must be 1 to 128 characters with a letter or digit.", "invalid_request"));
         }
 
         var origins = ClientOrigins.Validate(request.AllowedOrigins);
@@ -34,7 +34,7 @@ public sealed class UpdateProjectClientEndpoint(TenantDirectory tenants, IOpenId
             var redirect = ClientRedirect(value);
             if (redirect is null)
             {
-                return ErrorResults.ToResult(new Validation("Each redirect URI must be an absolute https URL, or http on a loopback host, without userinfo or fragments.", "invalid_request"));
+                return new Failure(new Validation("Each redirect URI must be an absolute https URL, or http on a loopback host, without userinfo or fragments.", "invalid_request"));
             }
 
             redirects.Add(redirect);
@@ -49,7 +49,7 @@ public sealed class UpdateProjectClientEndpoint(TenantDirectory tenants, IOpenId
         {
             if (!await OidcResults.AllowsRedirectAsync(settings, projectId, redirect, cancellationToken))
             {
-                return ErrorResults.ToResult(new Validation("Each redirect URI must also exactly match the project's redirect allowlist.", "invalid_request"));
+                return new Failure(new Validation("Each redirect URI must also exactly match the project's redirect allowlist.", "invalid_request"));
             }
         }
 
@@ -60,23 +60,23 @@ public sealed class UpdateProjectClientEndpoint(TenantDirectory tenants, IOpenId
         {
             if (await applications.FindByClientIdAsync(this.RouteId("client_id"), cancellationToken) is not OidcApplication application)
             {
-                throw PlatformDirectory.NotFound();
+                return new Failure(new NotFound("No such resource.", "not_found"));
             }
 
             var policy = MachineClients.Policy(application);
             if (policy is null && (request.AllowedScopes is not null || request.AllowedAudiences is not null || request.TokenLifetimeMinutes is not null))
             {
-                return ErrorResults.ToResult(new Validation("Machine policies require a machine app.", "invalid_request"));
+                return new Failure(new Validation("Machine policies require a machine app.", "invalid_request"));
             }
 
             if (policy is not null ? redirects.Count != 0 : redirects.Count == 0)
             {
-                return ErrorResults.ToResult(new Validation("Interactive apps need redirect URIs; machine apps need none.", "invalid_request"));
+                return new Failure(new Validation("Interactive apps need redirect URIs; machine apps need none.", "invalid_request"));
             }
 
             if (policy is not null && (origins is { Count: > 0 } || request.AllowAnonymous == true))
             {
-                return ErrorResults.ToResult(new Validation("Machine apps take no allowed_origins or allow_anonymous.", "invalid_request"));
+                return new Failure(new Validation("Machine apps take no allowed_origins or allow_anonymous.", "invalid_request"));
             }
 
             var descriptor = new OpenIddictApplicationDescriptor();

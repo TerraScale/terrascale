@@ -20,9 +20,9 @@ public sealed class CreateProjectOrganizationInvitationEndpoint(ProjectOrganizat
         return await organizations.InviteAsync(project, this.Org, request, cancellationToken) switch
         {
             ProjectOrganizationInvitationBody invite => Results.Json(invite, ProjectOrganizationsJson.Default.ProjectOrganizationInvitationBody, statusCode: 201),
-            NotFound error => ErrorResults.ToResult(error),
-            Validation error => ErrorResults.ToResult(error),
-            Conflict error => ErrorResults.ToResult(error)
+            NotFound error => new Failure(error),
+            Validation error => new Failure(error),
+            Conflict error => new Failure(error)
         };
 
     }

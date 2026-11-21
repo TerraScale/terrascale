@@ -18,8 +18,8 @@ public sealed class RevokeProjectInvitationEndpoint(TenantDirectory tenants, Pla
         return await invitations.RevokeAsync(projectId, this.RouteId("invitation"), cancellationToken) switch
         {
             Done => Results.NoContent(),
-            NotFound error => ErrorResults.ToResult(error),
-            Conflict error => ErrorResults.ToResult(error),
+            NotFound error => new Failure(error),
+            Conflict error => new Failure(error),
         };
     }
 }

@@ -36,7 +36,7 @@ public readonly union GetAgentResult(AgentBody, NotFound);
 
 public readonly union ShareOwnerEmailResult(AgentBody, NotFound);
 
-public readonly union AgentPolicySet(AgentPolicyBody, Validation, NotFound, Conflict);
+public readonly union AgentPolicySet(AgentPolicyBody, Validation, Conflict);
 
 public readonly union AgentCreated(AgentBody, Validation, NotFound, QuotaExceeded, Conflict);
 
@@ -46,7 +46,7 @@ public readonly union AgentKeyRevoked(Done, NotFound, Conflict);
 
 public readonly union AgentRevoked(Done, NotFound, Conflict);
 
-public readonly union AgentStored(Stored, NotFound, Conflict);
+public readonly union AgentStored(Stored, Conflict);
 
 public sealed record Stored;
 
@@ -77,7 +77,6 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
             [current is null ? Change.Insert(policy) : Change.Update(current, policy)], cancellationToken).ConfigureAwait(false) switch
         {
             Stored => new AgentPolicyBody(scopes),
-            NotFound missing => missing,
             Conflict refused => refused,
         };
     }
@@ -104,9 +103,9 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
         {
             key = AgentJwk.Parse(request.PublicJwk);
         }
-        catch (ApiException error) when (error.Code == "invalid_request")
+        catch (ApiException error) when (error.Status == StatusCodes.Status400BadRequest)
         {
-            return new Validation("Supply a name of 1 to 64 characters, 1 to 64 unique scopes from the project's agent policy, a public_jwk and an optional future expiry.", "invalid_request");
+            return new Validation(error.Message, error.Code);
         }
 
         var user = await data.ReadAsync((db, token) => db.Users.Where(row => row.InstanceId == project && row.Id == userId).WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
@@ -135,7 +134,6 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
                 .. Event(project, () => events.Created(project, userId, agent.Id, stored.Kid)), .. bound(stored)], cancellationToken, deadline).ConfigureAwait(false) switch
         {
             Stored => Body(agent, [stored], new(user.Value.Id, user.Value.AuthEpoch, stamp, false)),
-            NotFound missing => missing,
             Conflict refused => refused,
         };
     }
@@ -165,9 +163,9 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
         {
             key = AgentJwk.Parse(request.PublicJwk);
         }
-        catch (ApiException error) when (error.Code == "invalid_request")
+        catch (ApiException error) when (error.Status == StatusCodes.Status400BadRequest)
         {
-            return new Validation("Supply a name of 1 to 64 characters, 1 to 64 unique scopes from the project's agent policy, a public_jwk and an optional future expiry.", "invalid_request");
+            return new Validation(error.Message, error.Code);
         }
 
         var agent = await data.ReadAsync((db, token) => db.Agents.Where(row => row.ProjectId == project && row.Id == agentId).WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
@@ -196,7 +194,6 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
                 .. Event(project, () => events.KeyAdded(project, agent.Value.OwnerUserId, agentId, stored.Kid))], cancellationToken).ConfigureAwait(false) switch
         {
             Stored => KeyBody(stored),
-            NotFound missing => missing,
             Conflict refused => refused,
         };
     }
@@ -223,7 +220,6 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
                 .. Event(project, () => events.KeyRevoked(project, agent.Value.OwnerUserId, agentId, kid))], cancellationToken).ConfigureAwait(false) switch
         {
             Stored => new Done(),
-            NotFound missing => missing,
             Conflict refused => refused,
         };
     }
@@ -251,7 +247,6 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
                 .. Event(project, () => events.Revoked(project, agent.Value.OwnerUserId, agentId))], cancellationToken).ConfigureAwait(false) switch
         {
             Stored => new Done(),
-            NotFound missing => missing,
             Conflict refused => refused,
         };
     }
@@ -274,8 +269,6 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
             {
                 case Stored:
                     break;
-                case NotFound missing:
-                    return missing;
                 case Conflict refused:
                     return refused;
             }

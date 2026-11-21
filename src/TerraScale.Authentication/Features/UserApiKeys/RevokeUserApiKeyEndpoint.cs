@@ -18,8 +18,8 @@ public sealed class RevokeUserApiKeyEndpoint(TenantDirectory tenants, PlatformAu
         return await keys.RevokeAsync(project, this.RouteId("user"), this.RouteId("key"), caller.Id, cancellationToken) switch
         {
             Done => Results.NoContent(),
-            NotFound error => ErrorResults.ToResult(error),
-            Conflict error => ErrorResults.ToResult(error),
+            NotFound error => new Failure(error),
+            Conflict error => new Failure(error),
         };
     }
 }

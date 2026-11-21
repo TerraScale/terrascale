@@ -29,7 +29,7 @@ public sealed class RotateProjectClientEndpoint(TenantDirectory tenants, IOpenId
         var grace = TimeSpan.FromSeconds(body.GraceSeconds ?? 3600);
         if (grace < TimeSpan.Zero || grace > TimeSpan.FromDays(1))
         {
-            return ErrorResults.ToResult(new Validation("grace_seconds must be 0 to 86400 seconds.", "invalid_request"));
+            return new Failure(new Validation("grace_seconds must be 0 to 86400 seconds.", "invalid_request"));
         }
 
         _ = await proofs.ConsumeHeaderAsync(person, this.HttpContext.Request, "rotate_oauth_client", null, cancellationToken);
@@ -40,12 +40,12 @@ public sealed class RotateProjectClientEndpoint(TenantDirectory tenants, IOpenId
             if (await applications.FindByClientIdAsync(this.RouteId("client_id"), cancellationToken) is not OidcApplication application
                 || application.InstanceId != projectId)
             {
-                return ErrorResults.ToResult(new NotFound("No such resource.", "not_found"));
+                return new Failure(new NotFound("No such resource.", "not_found"));
             }
 
             if (application.ClientType != ClientTypes.Confidential)
             {
-                return ErrorResults.ToResult(new Validation("type must be confidential.", "invalid_request"));
+                return new Failure(new Validation("type must be confidential.", "invalid_request"));
             }
 
             application.PreviousSecretHash = grace > TimeSpan.Zero ? application.ClientSecret : null;

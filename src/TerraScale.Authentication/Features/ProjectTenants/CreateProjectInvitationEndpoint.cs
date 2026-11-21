@@ -21,8 +21,8 @@ public sealed class CreateProjectInvitationEndpoint(TenantDirectory tenants, Pla
         return await invitations.CreateAsync(projectId, request.Email, request.RedirectUrl, caller switch { ProjectCaller.SignedIn(var person) => person.Email, ProjectCaller.SecretKey(var key) => key.Name, _ => throw new UnreachableException() }, AuthEmails.Locale(this.HttpContext.Request), cancellationToken) switch
         {
             ProjectInvitationBody invitation => Results.Json(invitation, ProjectTenantJson.Default.ProjectInvitationBody, statusCode: 201),
-            Validation error => ErrorResults.ToResult(error),
-            Conflict error => ErrorResults.ToResult(error),
+            Validation error => new Failure(error),
+            Conflict error => new Failure(error),
         };
     }
 }

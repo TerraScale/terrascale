@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -14,7 +15,11 @@ public sealed class ListUserApiKeysEndpoint(TenantDirectory tenants, PlatformAut
     protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var project = await this.AccessAsync(caller, Roles.Viewer, cancellationToken);
-        _ = await this.Tenants.UserAsync(project, this.RouteId("user"), cancellationToken);
+        if (await this.Tenants.UserAsync(project, this.RouteId("user"), cancellationToken) is NotFound missing)
+        {
+            return new Failure(missing);
+        }
+
         return Results.Json(await keys.ListAsync(project, this.RouteId("user"), cancellationToken), UserApiKeyJson.Default.UserApiKeyPageBody);
     }
 }

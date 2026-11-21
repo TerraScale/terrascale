@@ -19,8 +19,8 @@ public sealed class VerifyProjectOrganizationDomainEndpoint(ProjectOrganizationD
         return await organizations.VerifyDomainAsync(project, this.Org, (string)this.HttpContext.GetRouteValue("domain")!, cancellationToken) switch
         {
             ProjectOrganizationDomainBody verified => Results.Json(verified, ProjectOrganizationsJson.Default.ProjectOrganizationDomainBody),
-            NotFound error => ErrorResults.ToResult(error),
-            Conflict error => ErrorResults.ToResult(error)
+            NotFound error => new Failure(error),
+            Conflict error => new Failure(error)
         };
 
     }

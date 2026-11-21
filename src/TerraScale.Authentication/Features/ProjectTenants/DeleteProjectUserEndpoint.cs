@@ -20,7 +20,7 @@ public sealed class DeleteProjectUserEndpoint(TenantDirectory tenants, Users use
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         if (await this.Tenants.UserAsync(projectId, this.RouteId("user"), cancellationToken) is NotFound missing)
         {
-            return ErrorResults.ToResult(missing);
+            return new Failure(missing);
         }
 
         await users.DeleteAsync(projectId, this.RouteId("user"), cancellationToken);

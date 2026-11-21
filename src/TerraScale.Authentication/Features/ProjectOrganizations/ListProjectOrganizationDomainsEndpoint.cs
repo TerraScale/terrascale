@@ -19,7 +19,7 @@ public sealed class ListProjectOrganizationDomainsEndpoint(ProjectOrganizationDi
         return await organizations.DomainsAsync(project, this.Org, cancellationToken) switch
         {
             ProjectOrganizationDomainPage page => Results.Json(page, ProjectOrganizationsJson.Default.ProjectOrganizationDomainPage),
-            NotFound error => ErrorResults.ToResult(error)
+            NotFound error => new Failure(error)
         };
 
     }

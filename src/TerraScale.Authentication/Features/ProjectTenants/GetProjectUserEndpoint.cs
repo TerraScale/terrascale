@@ -20,7 +20,7 @@ public sealed class GetProjectUserEndpoint(TenantDirectory tenants, PlatformAuth
         return await this.Tenants.UserAsync(projectId, this.RouteId("user"), cancellationToken) switch
         {
             UserRecord user => Results.Json(Map(user), ProjectTenantJson.Default.ProjectUserBody),
-            NotFound error => ErrorResults.ToResult(error),
+            NotFound error => new Failure(error),
         };
     }
 }

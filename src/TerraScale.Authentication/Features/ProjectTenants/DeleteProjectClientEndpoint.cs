@@ -19,6 +19,6 @@ public sealed class DeleteProjectClientEndpoint(TenantDirectory tenants, Platfor
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         return await this.Tenants.DeleteClientAsync(projectId, this.RouteId("client_id"), cancellationToken)
             ? Results.NoContent()
-            : ErrorResults.ToResult(new NotFound("No such resource.", "not_found"));
+            : new Failure(new NotFound("No such resource.", "not_found"));
     }
 }

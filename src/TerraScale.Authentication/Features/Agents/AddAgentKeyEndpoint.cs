@@ -19,9 +19,9 @@ public sealed class AddAgentKeyEndpoint(TenantDirectory tenants, PlatformAuthent
         return await agents.AddKeyAsync(project, this.RouteId("agent"), caller.Id, request, cancellationToken) switch
         {
             AgentKeyBody key => Results.Json(key, AgentJson.Default.AgentKeyBody, statusCode: 201),
-            Validation error => ErrorResults.ToResult(error),
-            NotFound error => ErrorResults.ToResult(error),
-            Conflict error => ErrorResults.ToResult(error),
+            Validation error => new Failure(error),
+            NotFound error => new Failure(error),
+            Conflict error => new Failure(error),
         };
     }
 }

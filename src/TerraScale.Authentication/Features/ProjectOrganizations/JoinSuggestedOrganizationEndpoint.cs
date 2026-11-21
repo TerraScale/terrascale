@@ -44,8 +44,8 @@ public sealed class JoinSuggestedOrganizationEndpoint(ProjectOrganizationDirecto
         return handled switch
         {
             Done => Results.Redirect(next ?? $"/ui/{tenant}/sign-in"),
-            NotFound => Results.NotFound(),
-            Conflict => Results.StatusCode(409),
+            NotFound error => ErrorResults.ToResult(error),
+            Conflict error => ErrorResults.ToResult(error),
         };
     }
 }

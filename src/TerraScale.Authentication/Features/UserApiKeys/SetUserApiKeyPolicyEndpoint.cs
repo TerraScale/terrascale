@@ -19,8 +19,8 @@ public sealed class SetUserApiKeyPolicyEndpoint(TenantDirectory tenants, Platfor
         return await keys.SetPolicyAsync(project, request.AllowedScopes, caller.Id, cancellationToken) switch
         {
             UserApiKeyPolicyBody policy => Results.Json(policy, UserApiKeyJson.Default.UserApiKeyPolicyBody),
-            Validation error => ErrorResults.ToResult(error),
-            Conflict error => ErrorResults.ToResult(error),
+            Validation error => new Failure(error),
+            Conflict error => new Failure(error),
         };
     }
 }

@@ -19,7 +19,7 @@ public sealed class GetProjectOrganizationEndpoint(ProjectOrganizationDirectory 
         var project = await this.AccessAsync(caller, Roles.Viewer, cancellationToken);
         var org = await organizations.ReadAsync(project, this.Org, cancellationToken);
         return org is null
-            ? ErrorResults.ToResult(ProjectOrganizationDirectory.NoSuchOrganization())
+            ? new Failure(ProjectOrganizationDirectory.NoSuchOrganization())
             : Results.Json(ProjectOrganizationDirectory.Body(org.Value), ProjectOrganizationsJson.Default.ProjectOrganizationBody);
     }
 }

@@ -19,6 +19,6 @@ public sealed class SignOutProjectUserEndpoint(TenantDirectory tenants, Sessions
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         return await sessions.RevokeAllAsync(project, this.RouteId("user"), cancellationToken)
             ? Results.NoContent()
-            : ErrorResults.ToResult(new NotFound("No such resource.", "not_found"));
+            : new Failure(new NotFound("No such resource.", "not_found"));
     }
 }

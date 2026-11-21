@@ -20,9 +20,9 @@ public sealed class ApproveProjectWaitlistEndpoint(TenantDirectory tenants, Plat
         return await invitations.DecideAsync(projectId, this.RouteId("entry"), true, caller switch { ProjectCaller.SignedIn(var person) => person.Email, ProjectCaller.SecretKey(var key) => key.Name, _ => throw new UnreachableException() }, AuthEmails.Locale(this.HttpContext.Request), cancellationToken) switch
         {
             Done => Results.NoContent(),
-            NotFound error => ErrorResults.ToResult(error),
-            Validation error => ErrorResults.ToResult(error),
-            Conflict error => ErrorResults.ToResult(error),
+            NotFound error => new Failure(error),
+            Validation error => new Failure(error),
+            Conflict error => new Failure(error),
         };
     }
 }

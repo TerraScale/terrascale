@@ -20,7 +20,7 @@ public sealed class DisableProjectUserEndpoint(TenantDirectory tenants, Platform
         return await this.Tenants.SetDisabledAsync(projectId, this.RouteId("user"), true, cancellationToken) switch
         {
             UserRecord user => Results.Json(Map(user), ProjectTenantJson.Default.ProjectUserBody),
-            NotFound error => ErrorResults.ToResult(error),
+            NotFound error => new Failure(error),
         };
     }
 }

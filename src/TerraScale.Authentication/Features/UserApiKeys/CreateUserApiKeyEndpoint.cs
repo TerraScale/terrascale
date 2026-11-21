@@ -21,11 +21,11 @@ public sealed class CreateUserApiKeyEndpoint(TenantDirectory tenants, PlatformAu
         return await keys.CreateAsync(project, this.RouteId("user"), caller.Id, request, null, cancellationToken) switch
         {
             UserApiKeyBody key => Results.Json(key, UserApiKeyJson.Default.UserApiKeyBody, statusCode: 201),
-            Validation error => ErrorResults.ToResult(error),
-            NotFound error => ErrorResults.ToResult(error),
-            Forbidden error => ErrorResults.ToResult(error),
-            QuotaExceeded error => ErrorResults.ToResult(error),
-            Conflict error => ErrorResults.ToResult(error),
+            Validation error => new Failure(error),
+            NotFound error => new Failure(error),
+            Forbidden error => new Failure(error),
+            QuotaExceeded error => new Failure(error),
+            Conflict error => new Failure(error),
         };
     }
 }

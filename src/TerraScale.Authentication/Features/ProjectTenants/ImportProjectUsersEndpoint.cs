@@ -34,7 +34,7 @@ public sealed class ImportProjectUsersEndpoint(TenantDirectory tenants, Platform
         var request = await this.BodyAsync(UserProfileJson.Default.ImportProjectUsersRequest, cancellationToken);
         if (request.Users is not { Count: > 0 and <= 500 })
         {
-            return ErrorResults.ToResult(new Validation("users must contain 1 to 500 rows.", "invalid_request"));
+            return new Failure(new Validation("users must contain 1 to 500 rows.", "invalid_request"));
         }
 
         List<ImportedProjectUser> items = [];

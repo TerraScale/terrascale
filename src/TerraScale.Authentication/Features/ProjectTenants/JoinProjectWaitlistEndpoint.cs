@@ -34,7 +34,7 @@ public sealed class JoinProjectWaitlistEndpoint(AuthOptions options, SignUpRestr
             return HostedAuth.TooMany(wait);
         }
 
-        await restrictions.JoinAsync(SignInFlow.Tenant(this.HttpContext), form.Email ?? "", cancellationToken);
+        _ = await restrictions.JoinAsync(SignInFlow.Tenant(this.HttpContext), form.Email ?? "", cancellationToken);
         var nonce = BrowserSecurity.NewNonce();
         BrowserSecurity.ApplyPageHeaders(this.HttpContext.Response, nonce);
         return WaitlistPage.Create(new(SignInFlow.Tenant(this.HttpContext), HostedTheme.Of(this.HttpContext), nonce, true));

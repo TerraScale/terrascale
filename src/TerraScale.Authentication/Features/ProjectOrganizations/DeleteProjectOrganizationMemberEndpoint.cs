@@ -20,9 +20,9 @@ public sealed class DeleteProjectOrganizationMemberEndpoint(ProjectOrganizationD
         {
             Done => Results.NoContent(),
             ProjectOrganizationMembership => Results.NoContent(),
-            NotFound error => ErrorResults.ToResult(error),
-            Validation error => ErrorResults.ToResult(error),
-            Conflict error => ErrorResults.ToResult(error),
+            NotFound error => new Failure(error),
+            Validation error => new Failure(error),
+            Conflict error => new Failure(error),
         };
     }
 }

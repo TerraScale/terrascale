@@ -19,8 +19,8 @@ public sealed class DeleteProjectOrganizationDomainEndpoint(ProjectOrganizationD
         return await organizations.DeleteDomainAsync(project, this.Org, (string)this.HttpContext.GetRouteValue("domain")!, cancellationToken) switch
         {
             Done => Results.NoContent(),
-            NotFound error => ErrorResults.ToResult(error),
-            Conflict error => ErrorResults.ToResult(error),
+            NotFound error => new Failure(error),
+            Conflict error => new Failure(error),
         };
     }
 }

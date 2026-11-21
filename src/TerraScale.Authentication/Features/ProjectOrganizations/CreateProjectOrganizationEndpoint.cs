@@ -20,8 +20,8 @@ public sealed class CreateProjectOrganizationEndpoint(ProjectOrganizationDirecto
         return await organizations.CreateAsync(project, request, cancellationToken) switch
         {
             ProjectOrganizationBody created => Results.Json(created, ProjectOrganizationsJson.Default.ProjectOrganizationBody, statusCode: 201),
-            Validation error => ErrorResults.ToResult(error),
-            Conflict error => ErrorResults.ToResult(error)
+            Validation error => new Failure(error),
+            Conflict error => new Failure(error)
         };
 
     }

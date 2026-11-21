@@ -19,9 +19,8 @@ public sealed class SetAgentPolicyEndpoint(TenantDirectory tenants, PlatformAuth
         return await agents.SetPolicyAsync(project, request.AllowedScopes, caller.Id, cancellationToken) switch
         {
             AgentPolicyBody policy => Results.Json(policy, AgentJson.Default.AgentPolicyBody),
-            Validation error => ErrorResults.ToResult(error),
-            NotFound error => ErrorResults.ToResult(error),
-            Conflict error => ErrorResults.ToResult(error),
+            Validation error => new Failure(error),
+            Conflict error => new Failure(error),
         };
     }
 }

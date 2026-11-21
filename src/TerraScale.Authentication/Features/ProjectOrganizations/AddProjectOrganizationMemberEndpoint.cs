@@ -20,9 +20,9 @@ public sealed class AddProjectOrganizationMemberEndpoint(ProjectOrganizationDire
         return await organizations.AddAsync(project, this.Org, request.UserId, request.Role, cancellationToken) switch
         {
             ProjectOrganizationMembership member => Results.Json(member, ProjectOrganizationsJson.Default.ProjectOrganizationMembership, statusCode: 201),
-            NotFound error => ErrorResults.ToResult(error),
-            Validation error => ErrorResults.ToResult(error),
-            Conflict error => ErrorResults.ToResult(error)
+            NotFound error => new Failure(error),
+            Validation error => new Failure(error),
+            Conflict error => new Failure(error)
         };
 
     }

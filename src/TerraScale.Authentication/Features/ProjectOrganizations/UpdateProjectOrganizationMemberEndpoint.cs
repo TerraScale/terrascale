@@ -21,9 +21,9 @@ public sealed class UpdateProjectOrganizationMemberEndpoint(ProjectOrganizationD
         {
             ProjectOrganizationMembership changed => Results.Json(changed, ProjectOrganizationsJson.Default.ProjectOrganizationMembership),
             Done => Results.NoContent(),
-            NotFound error => ErrorResults.ToResult(error),
-            Validation error => ErrorResults.ToResult(error),
-            Conflict error => ErrorResults.ToResult(error)
+            NotFound error => new Failure(error),
+            Validation error => new Failure(error),
+            Conflict error => new Failure(error)
         };
 
     }

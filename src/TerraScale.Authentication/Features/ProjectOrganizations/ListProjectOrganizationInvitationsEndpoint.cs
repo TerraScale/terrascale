@@ -20,7 +20,7 @@ public sealed class ListProjectOrganizationInvitationsEndpoint(ProjectOrganizati
         return await organizations.InvitationsAsync(project, this.Org, limit, after, cancellationToken) switch
         {
             ProjectOrganizationInvitationPage page => Results.Json(page, ProjectOrganizationsJson.Default.ProjectOrganizationInvitationPage),
-            NotFound error => ErrorResults.ToResult(error)
+            NotFound error => new Failure(error)
         };
 
     }

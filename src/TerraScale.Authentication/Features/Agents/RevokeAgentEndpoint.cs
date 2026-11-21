@@ -18,8 +18,8 @@ public sealed class RevokeAgentEndpoint(TenantDirectory tenants, PlatformAuthent
         return await agents.RevokeAsync(project, this.RouteId("agent"), null, caller.Id, cancellationToken) switch
         {
             Done => Results.NoContent(),
-            NotFound error => ErrorResults.ToResult(error),
-            Conflict error => ErrorResults.ToResult(error),
+            NotFound error => new Failure(error),
+            Conflict error => new Failure(error),
         };
     }
 }

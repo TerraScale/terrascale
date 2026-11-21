@@ -20,9 +20,9 @@ public sealed class AddProjectOrganizationDomainEndpoint(ProjectOrganizationDire
         return await organizations.AddDomainAsync(project, this.Org, request.Domain, cancellationToken) switch
         {
             ProjectOrganizationDomainBody added => Results.Json(added, ProjectOrganizationsJson.Default.ProjectOrganizationDomainBody, statusCode: 201),
-            NotFound error => ErrorResults.ToResult(error),
-            Validation error => ErrorResults.ToResult(error),
-            Conflict error => ErrorResults.ToResult(error)
+            NotFound error => new Failure(error),
+            Validation error => new Failure(error),
+            Conflict error => new Failure(error)
         };
 
     }

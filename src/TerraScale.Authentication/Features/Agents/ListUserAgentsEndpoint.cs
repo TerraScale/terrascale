@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -16,7 +17,11 @@ public sealed class ListUserAgentsEndpoint(TenantDirectory tenants, PlatformAuth
         var project = await this.AccessAsync(caller, Roles.Viewer, cancellationToken);
         var (limit, after) = this.Paging(50);
         var user = this.RouteId("user");
-        _ = await this.Tenants.UserAsync(project, user, cancellationToken);
+        if (await this.Tenants.UserAsync(project, user, cancellationToken) is NotFound missing)
+        {
+            return new Failure(missing);
+        }
+
         return Results.Json(await agents.ListAsync(project, user, limit, after, cancellationToken), AgentJson.Default.AgentPageBody);
     }
 }

@@ -24,7 +24,7 @@ public sealed class DeleteProjectProviderEndpoint(TenantDirectory tenants, Proje
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         if (this.HttpContext.GetRouteValue("provider") is not string name || !SocialProviders.Names.Contains(name))
         {
-            return ErrorResults.ToResult(new NotFound("No such resource.", "not_found"));
+            return new Failure(new NotFound("No such resource.", "not_found"));
         }
 
         var provider = name;

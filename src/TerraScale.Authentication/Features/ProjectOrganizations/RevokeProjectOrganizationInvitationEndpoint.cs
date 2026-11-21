@@ -19,8 +19,8 @@ public sealed class RevokeProjectOrganizationInvitationEndpoint(ProjectOrganizat
         return await organizations.RevokeInvitationAsync(project, this.Org, this.RouteId("invitation"), cancellationToken) switch
         {
             Done => Results.NoContent(),
-            NotFound error => ErrorResults.ToResult(error),
-            Conflict error => ErrorResults.ToResult(error),
+            NotFound error => new Failure(error),
+            Conflict error => new Failure(error),
         };
     }
 }
