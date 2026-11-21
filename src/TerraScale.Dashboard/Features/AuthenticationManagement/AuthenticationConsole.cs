@@ -1,4 +1,7 @@
+using System.Diagnostics;
+using System.Text.Json;
 using System.Text.RegularExpressions;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.NotFound;
@@ -122,7 +125,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                         await projects.UpdateSettingsAsync(session, project, new(OrganizationPicker: form.ContainsKey("organization_picker")), cancel);
                         break;
                     case ["settings"]:
-                        await projects.UpdateSettingsAsync(session, project, new(Methods(form["passcode"] == "on", form["password"] == "on", form["sign_up_mode"].ToString(), form["magic_link"] == "on", form["username"] == "on")), cancel);
+                        await projects.UpdateSettingsAsync(session, project, new(Validated(Methods(form["passcode"] == "on", form["password"] == "on", form["sign_up_mode"].ToString(), form["magic_link"] == "on", form["username"] == "on"))), cancel);
                         break;
                     case ["attack-protection"]:
                         await projects.UpdateSettingsAsync(session, project, new(AttackProtection: new(
@@ -130,14 +133,14 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                             form["account_lockout"] == "on", form["new_device_email"] == "on")), cancel);
                         break;
                     case ["branding"]:
-                        await projects.UpdateSettingsAsync(session, project, new(Branding: HostedBranding(form)), cancel);
+                        await projects.UpdateSettingsAsync(session, project, new(Branding: Validated(HostedBranding(form))), cancel);
                         break;
                     case ["mfa-sessions"]:
-                        await SaveSecurityAsync(projects, session, project, form, cancel);
+                        await projects.UpdateSettingsAsync(session, project, new(Configuration: Validated(await SecurityConfigurationAsync(projects, session, project, form, cancel))), cancel);
                         break;
                     case ["configuration"]:
                         var currentConfiguration = (await projects.GetSettingsAsync(session, project, cancel)).Configuration ?? new([]);
-                        var updatedConfiguration = Configuration(form["redirect_urls"], form["session_lifetime_seconds"]);
+                        var updatedConfiguration = Validated(Configuration(form["redirect_urls"], form["session_lifetime_seconds"]));
                         await projects.UpdateSettingsAsync(session, project, new(Configuration: currentConfiguration with
                         { RedirectUrls = updatedConfiguration.RedirectUrls, SessionLifetimeSeconds = updatedConfiguration.SessionLifetimeSeconds }), cancel);
                         break;
@@ -168,11 +171,11 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
 
                         break;
                     case ["providers", var provider]:
-                        await projects.SetProviderAsync(session, project, provider, Provider(provider, form["client_id"], form["client_secret"], form["issuer"], form["team_id"], form["key_id"], form["tenant"], provider == "oauth2" ? new TsAuthProjectOAuth2(form["authorize_url"].ToString(), form["token_url"].ToString(), form["userinfo_url"].ToString(), form["scopes"].ToString(), form["id_claim"].ToString(), form["email_claim"].ToString(), form["email_verified_claim"].ToString()) : null), cancel);
+                        await projects.SetProviderAsync(session, project, provider, Validated(Provider(provider, form["client_id"], form["client_secret"], form["issuer"], form["team_id"], form["key_id"], form["tenant"], provider == "oauth2" ? new TsAuthProjectOAuth2(form["authorize_url"].ToString(), form["token_url"].ToString(), form["userinfo_url"].ToString(), form["scopes"].ToString(), form["id_claim"].ToString(), form["email_claim"].ToString(), form["email_verified_claim"].ToString()) : null)), cancel);
                         break;
                     case ["providers", var provider, _]: await projects.DeleteProviderAsync(session, project, provider, cancel); break;
                     case ["clients"]:
-                        var request = NewClient(form["name"], form["type"], Lines(form["redirect_uris"]), form["allowed_scopes"], form["allowed_audiences"], form["token_lifetime_minutes"]);
+                        var request = Validated(NewClient(form["name"], form["type"], Lines(form["redirect_uris"]), form["allowed_scopes"], form["allowed_audiences"], form["token_lifetime_minutes"]));
                         var intent = StepUpFlow.Intent(http, context, "create_oauth_client");
                         if (intent is null)
                         {
@@ -182,7 +185,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                         var created = await projects.CreateClientAsync(session, project, request, intent.Challenge.Proof, cancel);
                         return await PageViewAsync(http, context, projects, "clients", created: created);
                     case ["clients", var id, "edit"]:
-                        var update = ClientUpdate(form["name"], Lines(form["redirect_uris"]), form["type"], form["allowed_scopes"], form["allowed_audiences"], form["token_lifetime_minutes"]);
+                        var update = Validated(ClientUpdate(form["name"], Lines(form["redirect_uris"]), form["type"], form["allowed_scopes"], form["allowed_audiences"], form["token_lifetime_minutes"]));
                         var editIntent = StepUpFlow.Intent(http, context, "update_oauth_client");
                         if (editIntent is null)
                         {
@@ -202,7 +205,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                         return await PageViewAsync(http, context, projects, "clients", rotated: rotated);
                     case ["clients", var id, "delete"]: await projects.DeleteClientAsync(session, project, id, cancel); break;
                     case ["webhooks"]:
-                        var webhook = NewWebhook(form["url"], form["event_types"].Select(value => (string?)value));
+                        var webhook = Validated(NewWebhook(form["url"], form["event_types"].Select(value => (string?)value)));
                         var createIntent = StepUpFlow.Intent(http, context, "create_webhook_endpoint");
                         if (createIntent is null)
                         {
@@ -227,8 +230,8 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                     case ["users", var id, "sign-out"]: await projects.SignOutUserAsync(session, project, id, cancel); break;
                     case ["users", var id, "profile"]:
                         await projects.UpdateUserAsync(session, project, id, new(Value(form["first_name"].ToString()), Value(form["last_name"].ToString()),
-                            Value(form["image_url"].ToString()), Value(form["external_id"].ToString()), ProfileMetadata(form["public_metadata"]),
-                            ProfileMetadata(form["private_metadata"]), ProfileMetadata(form["unsafe_metadata"])), cancel);
+                            Value(form["image_url"].ToString()), Value(form["external_id"].ToString()), Metadata(form["public_metadata"]),
+                            Metadata(form["private_metadata"]), Metadata(form["unsafe_metadata"])), cancel);
                         return HttpRedirects.SeeOther("/auth/users?user=" + Uri.EscapeDataString(id) + "&saved=1");
                     case ["users", var id, "api-keys", var keyId, "revoke"]:
                         await projects.RevokeUserApiKeyAsync(session, project, id, keyId, cancel);
@@ -272,13 +275,23 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         private static string[] RestrictionList(string? value) =>
             (value ?? "").Split(['\n', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-        public static TsAuthProjectMethods Methods(bool passcode, bool password, string signUpMode, bool magicLink = false, bool username = false)
+        internal static T Validated<T>(Valid<T> result)
         {
-            return passcode || password || magicLink ? new(passcode, password, signUpMode, magicLink, username) : throw new AccountAccessException("Keep email passcode, password or magic-link sign-in on.", 422);
+            return result switch
+            {
+                not null and T value => value,
+                Validation error => throw new AccountAccessException(error.Message, 422),
+                _ => throw new UnreachableException(),
+            };
+        }
+
+        public static Valid<TsAuthProjectMethods> Methods(bool passcode, bool password, string signUpMode, bool magicLink = false, bool username = false)
+        {
+            return passcode || password || magicLink ? new TsAuthProjectMethods(passcode, password, signUpMode, magicLink, username) : new Validation("Keep email passcode, password or magic-link sign-in on.");
         }
 
         // Empty values clear a branding field.
-        public static TsAuthProjectBranding Branding(string? name, string? logoUrl, string? themeColor)
+        public static Valid<TsAuthProjectBranding> Branding(string? name, string? logoUrl, string? themeColor)
         {
             static string? Clean(string? value)
             {
@@ -288,24 +301,24 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             var (title, logo, color) = (Clean(name), Clean(logoUrl), Clean(themeColor)?.ToLowerInvariant());
             if (title is { Length: > 64 } || title?.Any(char.IsControl) == true)
             {
-                throw new AccountAccessException("Use a name of up to 64 characters.", 422);
+                return new Validation("Use a name of up to 64 characters.");
             }
 
             if (logo is not null && !HttpsUrl(logo))
             {
-                throw new AccountAccessException("The logo must be an https URL.", 422);
+                return new Validation("The logo must be an https URL.");
             }
 
             if (color is not null && !Color().IsMatch(color))
             {
-                throw new AccountAccessException("The theme color must look like #2158e8.", 422);
+                return new Validation("The theme color must look like #2158e8.");
             }
 
-            return new(title, logo, color);
+            return new TsAuthProjectBranding(title, logo, color);
         }
 
         // A blank secret keeps the stored one; ts-auth requires it the first time. Never log the update.
-        public static TsAuthProjectProviderUpdate Provider(string provider, string? clientId, string? clientSecret, string? issuer, string? teamId, string? keyId, string? tenant = null, TsAuthProjectOAuth2? oauth2 = null)
+        public static Valid<TsAuthProjectProviderUpdate> Provider(string provider, string? clientId, string? clientSecret, string? issuer, string? teamId, string? keyId, string? tenant = null, TsAuthProjectOAuth2? oauth2 = null)
         {
             static string? Clean(string? value)
             {
@@ -315,73 +328,73 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             var (id, secret, url, team, key) = (Clean(clientId), Clean(clientSecret), Clean(issuer), Clean(teamId)?.ToUpperInvariant(), Clean(keyId)?.ToUpperInvariant());
             if (AuthenticationProvider.Find(provider) is not { } known)
             {
-                throw new AccountAccessException("Choose google, github, apple, microsoft, gitlab, linkedin, slack, discord, facebook, x, oidc or oauth2.", 422);
+                return new Validation("Choose google, github, apple, microsoft, gitlab, linkedin, slack, discord, facebook, x, oidc or oauth2.");
             }
 
             if (id is null or { Length: > 256 })
             {
-                throw new AccountAccessException($"Enter the {known.ClientIdLabel.ToLowerInvariant()} of up to 256 characters.", 422);
+                return new Validation($"Enter the {known.ClientIdLabel.ToLowerInvariant()} of up to 256 characters.");
             }
 
             if (secret is { Length: > 8192 })
             {
-                throw new AccountAccessException("The client secret is too long.", 422);
+                return new Validation("The client secret is too long.");
             }
 
             if (provider == "apple" && !(AppleId().IsMatch(team ?? "") && AppleId().IsMatch(key ?? "")))
             {
-                throw new AccountAccessException("The Apple team ID and key ID are 10 letters or digits.", 422);
+                return new Validation("The Apple team ID and key ID are 10 letters or digits.");
             }
 
             if (provider == "oidc" && !(Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps && uri.Query.Length == 0 && uri.Fragment.Length == 0))
             {
-                throw new AccountAccessException("The issuer must be an https URL without a query.", 422);
+                return new Validation("The issuer must be an https URL without a query.");
             }
 
             return provider switch
             {
-                "apple" => new(id, secret, TeamId: team, KeyId: key),
-                "oidc" => new(id, secret, Issuer: url),
-                "microsoft" => new(id, secret, Tenant: Clean(tenant) ?? "common"),
-                "oauth2" => new(id, secret, OAuth2: oauth2),
-                _ => new(id, secret)
+                "apple" => new TsAuthProjectProviderUpdate(id, secret, TeamId: team, KeyId: key),
+                "oidc" => new TsAuthProjectProviderUpdate(id, secret, Issuer: url),
+                "microsoft" => new TsAuthProjectProviderUpdate(id, secret, Tenant: Clean(tenant) ?? "common"),
+                "oauth2" => new TsAuthProjectProviderUpdate(id, secret, OAuth2: oauth2),
+                _ => new TsAuthProjectProviderUpdate(id, secret)
             };
         }
 
         [GeneratedRegex("^[A-Z0-9]{10}$")]
         private static partial Regex AppleId();
 
-        public static TsAuthProjectCreateOAuthClient NewClient(string? name, string? type, IEnumerable<string> redirectUris, string? scopes = null, string? audiences = null, string? minutes = null)
+        public static Valid<TsAuthProjectCreateOAuthClient> NewClient(string? name, string? type, IEnumerable<string> redirectUris, string? scopes = null, string? audiences = null, string? minutes = null)
         {
             var uris = redirectUris.Select(uri => uri.Trim()).Where(uri => uri.Length > 0).ToArray();
             if (string.IsNullOrWhiteSpace(name) || name.Trim().Length > 64)
             {
-                throw new AccountAccessException("Name the application in up to 64 characters.", 422);
+                return new Validation("Name the application in up to 64 characters.");
             }
 
             if (type is not ("public" or "confidential" or "machine"))
             {
-                throw new AccountAccessException("Choose a public, confidential or machine application.", 422);
+                return new Validation("Choose a public, confidential or machine application.");
             }
 
             if (type == "machine")
             {
                 var policy = MachinePolicy(scopes, audiences, minutes);
-                return new(name.Trim(), type, [], policy.Scopes, policy.Audiences, policy.Minutes);
+                return policy is Validation error ? new Valid<TsAuthProjectCreateOAuthClient>(error) : new NewClientPolicy(name.Trim(), type, AsPolicy(policy)).Client();
             }
 
             if (uris.Length is < 1 or > 10)
             {
-                throw new AccountAccessException("Add 1 to 10 redirect URIs, one per line.", 422);
+                return new Validation("Add 1 to 10 redirect URIs, one per line.");
             }
 
-            return new(name.Trim(), type, uris);
+            return new TsAuthProjectCreateOAuthClient(name.Trim(), type, uris);
         }
 
         public static readonly string[] LifecycleEvents =
             ["apiKey.created", "apiKey.revoked", "user.created", "user.signed_up", "user.signed_in", "user.disabled", "user.enabled", "user.deleted", "user.provider_linked", "user.provider_unlinked", "user.updated", "session.created", "session.revoked", "webhook.endpoint_disabled", "impersonation.started", "impersonation.ended"];
 
-        public static TsAuthCreateWebhookEndpoint NewWebhook(string? url, IEnumerable<string?> eventTypes)
+        public static Valid<TsAuthCreateWebhookEndpoint> NewWebhook(string? url, IEnumerable<string?> eventTypes)
         {
             var trimmed = url?.Trim();
             if (trimmed is not { Length: > 0 }
@@ -389,54 +402,78 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                 || uri.Scheme != Uri.UriSchemeHttps || uri.UserInfo.Length > 0 || uri.Fragment.Length > 0
                 || uri.AbsoluteUri.Length > 2048)
             {
-                throw new AccountAccessException("The URL must be an absolute https URL of up to 2048 characters.", 422);
+                return new Validation("The URL must be an absolute https URL of up to 2048 characters.");
             }
 
             var events = eventTypes.Where(value => value is not null).Select(value => value!).Distinct().ToArray();
             if (events.Length == 0)
             {
-                throw new AccountAccessException("Choose at least one lifecycle event.", 422);
+                return new Validation("Choose at least one lifecycle event.");
             }
 
             if (events.Any(value => !LifecycleEvents.Contains(value)))
             {
-                throw new AccountAccessException("Choose a valid lifecycle event.", 422);
+                return new Validation("Choose a valid lifecycle event.");
             }
 
-            return new(trimmed, events);
+            return new TsAuthCreateWebhookEndpoint(trimmed, events);
         }
 
-        public static TsAuthProjectClientUpdate ClientUpdate(string? name, IEnumerable<string> redirectUris, string? type = null, string? scopes = null, string? audiences = null, string? minutes = null)
+        public static Valid<TsAuthProjectClientUpdate> ClientUpdate(string? name, IEnumerable<string> redirectUris, string? type = null, string? scopes = null, string? audiences = null, string? minutes = null)
         {
             var uris = redirectUris.Select(uri => uri.Trim()).Where(uri => uri.Length > 0).ToArray();
             if (string.IsNullOrWhiteSpace(name) || name.Trim().Length > 64)
             {
-                throw new AccountAccessException("Name the application in up to 64 characters.", 422);
+                return new Validation("Name the application in up to 64 characters.");
             }
 
             if (type == "machine")
             {
                 var policy = MachinePolicy(scopes, audiences, minutes);
-                return new(name.Trim(), [], policy.Scopes, policy.Audiences, policy.Minutes);
+                return policy is Validation error ? new Valid<TsAuthProjectClientUpdate>(error) : new NewClientPolicy(name.Trim(), type, AsPolicy(policy)).Update();
             }
 
             if (uris.Length is < 1 or > 10)
             {
-                throw new AccountAccessException("Add 1 to 10 redirect URIs, one per line.", 422);
+                return new Validation("Add 1 to 10 redirect URIs, one per line.");
             }
 
-            return new(name.Trim(), uris);
+            return new TsAuthProjectClientUpdate(name.Trim(), uris);
         }
 
-        private static (IReadOnlyList<string> Scopes, IReadOnlyList<string> Audiences, int Minutes) MachinePolicy(string? scopes, string? audiences, string? minutes)
+        private static Valid<MachinePolicyResult> MachinePolicy(string? scopes, string? audiences, string? minutes)
         {
             var allowed = Lines(scopes);
             if (allowed.Length is < 1 or > 64 || !int.TryParse(minutes, out var lifetime) || lifetime is < 5 or > 60)
             {
-                throw new AccountAccessException("Enter 1 to 64 allowed scopes and a token lifetime from 5 to 60 minutes.", 422);
+                return new Validation("Enter 1 to 64 allowed scopes and a token lifetime from 5 to 60 minutes.");
             }
 
-            return (allowed, Lines(audiences), lifetime);
+            return new MachinePolicyResult(allowed, Lines(audiences), lifetime);
+        }
+
+        private sealed record NewClientPolicy(string Name, string Type, MachinePolicyResult Policy)
+        {
+            public TsAuthProjectCreateOAuthClient Client()
+            {
+                return new(Name, Type, [], Policy.Scopes, Policy.Audiences, Policy.Minutes);
+            }
+
+            public TsAuthProjectClientUpdate Update()
+            {
+                return new(Name, [], Policy.Scopes, Policy.Audiences, Policy.Minutes);
+            }
+        }
+
+        private sealed record MachinePolicyResult(IReadOnlyList<string> Scopes, IReadOnlyList<string> Audiences, int Minutes);
+
+        private static MachinePolicyResult AsPolicy(Valid<MachinePolicyResult> result)
+        {
+            return result switch
+            {
+                MachinePolicyResult value => value,
+                Validation => throw new UnreachableException(),
+            };
         }
 
         [GeneratedRegex("^#[0-9a-f]{6}$")]

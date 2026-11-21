@@ -1,12 +1,19 @@
+using System.Diagnostics;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.AuthenticationManagement
 {
     public static partial class AuthenticationConsole
     {
-        public static TsAuthProjectBranding HostedBranding(IFormCollection form)
+        public static Valid<TsAuthProjectBranding> HostedBranding(IFormCollection form)
         {
             var basic = Branding(form["name"], form["logo_url"], form["theme_color"]);
+            if (basic is Validation brandingError)
+            {
+                return brandingError;
+            }
+
             var mode = form["default_theme"].ToString();
             if (mode.Length == 0)
             {
@@ -15,74 +22,89 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
 
             if (mode is not ("light" or "dark" or "system"))
             {
-                throw new AccountAccessException("Choose light, dark or system for the default theme.", 422);
+                return new Validation("Choose light, dark or system for the default theme.");
             }
 
             var size = form["title_size"].ToString();
             var titleSize = size.Length == 0 ? 24 : int.TryParse(size, out var value) ? value : 0;
             if (titleSize is < 20 or > 40)
             {
-                throw new AccountAccessException("Title size must be 20 to 40 pixels.", 422);
+                return new Validation("Title size must be 20 to 40 pixels.");
             }
 
             var links = Lines(form["footer_links"]);
             if (links.Length > 5)
             {
-                throw new AccountAccessException("Add up to 5 footer links.", 422);
+                return new Validation("Add up to 5 footer links.");
             }
 
-            var footer = links.Select(line =>
+            List<TsAuthProjectFooterLink> footer = [];
+            foreach (var line in links)
             {
                 var pair = line.Split('|', 2, StringSplitOptions.TrimEntries);
                 if (pair.Length != 2 || pair[0].Length is < 1 or > 24 || pair[0].Any(char.IsControl) || !HttpsUrl(pair[1]))
                 {
-                    throw new AccountAccessException("Each footer link needs a label of 1 to 24 characters and an HTTPS URL: Label | URL.", 422);
+                    return new Validation("Each footer link needs a label of 1 to 24 characters and an HTTPS URL: Label | URL.");
                 }
 
-                return new TsAuthProjectFooterLink(pair[0], pair[1]);
-            }).ToArray();
+                footer.Add(new(pair[0], pair[1]));
+            }
+
             var message = form["email_message"].ToString().Replace("\r\n", "\n", StringComparison.Ordinal);
             if (message.Length > 500 || message.Any(character => char.IsControl(character) && character != '\n'))
             {
-                throw new AccountAccessException("Use a plain text email message of up to 500 characters, with only newlines as control characters.", 422);
+                return new Validation("Use a plain text email message of up to 500 characters, with only newlines as control characters.");
             }
 
-            return basic with
+            string? backgroundColor = null;
+            if (!string.IsNullOrWhiteSpace(form["background_color"]))
             {
-                TitleSize = titleSize,
-                DefaultTheme = mode,
-                BackgroundColor = OptionalColor(form["background_color"]),
-                TextColor = OptionalColor(form["text_color"]),
-                FooterLinks = footer,
-                EmailMessage = message.Length == 0 ? null : message
+                backgroundColor = form["background_color"].ToString().Trim().ToLowerInvariant();
+                if (!Color().IsMatch(backgroundColor))
+                {
+                    return new Validation("Colors must look like #2158e8.");
+                }
+            }
+
+            string? textColor = null;
+            if (!string.IsNullOrWhiteSpace(form["text_color"]))
+            {
+                textColor = form["text_color"].ToString().Trim().ToLowerInvariant();
+                if (!Color().IsMatch(textColor))
+                {
+                    return new Validation("Colors must look like #2158e8.");
+                }
+            }
+
+            return basic switch
+            {
+                TsAuthProjectBranding branding => branding with
+                {
+                    TitleSize = titleSize,
+                    DefaultTheme = mode,
+                    BackgroundColor = backgroundColor,
+                    TextColor = textColor,
+                    FooterLinks = footer,
+                    EmailMessage = message.Length == 0 ? null : message
+                },
+                Validation => throw new UnreachableException(),
             };
         }
 
-        public static TsAuthProjectConfiguration Configuration(string? redirects, string? lifetime)
+        public static Valid<TsAuthProjectConfiguration> Configuration(string? redirects, string? lifetime)
         {
             var urls = Lines(redirects);
             if (urls.Length > 100 || urls.Any(url => !AllowedUrl(url, true)))
             {
-                throw new AccountAccessException("Add up to 100 exact HTTPS redirect URLs (HTTP only on localhost or loopback), without fragments or credentials.", 422);
+                return new Validation("Add up to 100 exact HTTPS redirect URLs (HTTP only on localhost or loopback), without fragments or credentials.");
             }
 
             if (!int.TryParse(lifetime, out var seconds) || seconds is < 300 or > 2592000)
             {
-                throw new AccountAccessException("Session lifetime must be 300 to 2592000 seconds.", 422);
+                return new Validation("Session lifetime must be 300 to 2592000 seconds.");
             }
 
-            return new(urls, seconds);
-        }
-
-        private static string? OptionalColor(string? value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                return null;
-            }
-
-            var color = value.Trim().ToLowerInvariant();
-            return Color().IsMatch(color) ? color : throw new AccountAccessException("Colors must look like #2158e8.", 422);
+            return new TsAuthProjectConfiguration(urls, seconds);
         }
 
         private static string[] Lines(string? value)
