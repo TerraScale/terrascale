@@ -1,5 +1,6 @@
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.Oidc;
 using static OpenIddict.Abstractions.OpenIddictConstants;
@@ -20,31 +21,52 @@ public sealed class CreateProjectClientEndpoint(TenantDirectory tenants, IOpenId
         var person = caller.RequirePerson();
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(ProjectTenantJson.Default.CreateClientRequest, cancellationToken);
-        var name = PlatformDirectory.Name(request.Name) ?? throw Invalid("name must be 1 to 128 characters with a letter or digit.");
-        var type = request.Type is ClientTypes.Public or ClientTypes.Confidential or "machine" ? request.Type : throw Invalid("type must be public, confidential or machine.");
-        List<Uri> redirects = [.. (request.RedirectUris ?? []).Select(value => ClientRedirect(value) ?? throw Invalid("Each redirect URI must be an absolute https URL, or http on a loopback host, without userinfo or fragments."))];
+        var name = PlatformDirectory.Name(request.Name);
+        if (name is null)
+        {
+            return ErrorResults.ToResult(new Validation("name must be 1 to 128 characters with a letter or digit.", "invalid_request"));
+        }
+
+        if (request.Type is not (ClientTypes.Public or ClientTypes.Confidential or "machine"))
+        {
+            return ErrorResults.ToResult(new Validation("type must be public, confidential or machine.", "invalid_request"));
+        }
+
+        var type = request.Type;
+        List<Uri> redirects = [];
+        foreach (var value in request.RedirectUris ?? [])
+        {
+            var redirect = ClientRedirect(value);
+            if (redirect is null)
+            {
+                return ErrorResults.ToResult(new Validation("Each redirect URI must be an absolute https URL, or http on a loopback host, without userinfo or fragments.", "invalid_request"));
+            }
+
+            redirects.Add(redirect);
+        }
+
         var policy = type == "machine" ? MachineClients.Validate(request.AllowedScopes, request.AllowedAudiences, request.TokenLifetimeMinutes) : null;
         if (policy is null && (request.AllowedScopes is not null || request.AllowedAudiences is not null || request.TokenLifetimeMinutes is not null))
         {
-            throw Invalid("Machine policies require type machine.");
+            return ErrorResults.ToResult(new Validation("Machine policies require type machine.", "invalid_request"));
         }
 
         var origins = ClientOrigins.Validate(request.AllowedOrigins) ?? [];
         if (policy is not null && (origins.Count != 0 || request.AllowAnonymous == true))
         {
-            throw Invalid("Machine apps take no allowed_origins or allow_anonymous.");
+            return ErrorResults.ToResult(new Validation("Machine apps take no allowed_origins or allow_anonymous.", "invalid_request"));
         }
 
         if (policy is not null ? redirects.Count != 0 : redirects.Count is < 1 or > 10)
         {
-            throw Invalid("Interactive apps need 1 to 10 redirect URIs; machine apps need none.");
+            return ErrorResults.ToResult(new Validation("Interactive apps need 1 to 10 redirect URIs; machine apps need none.", "invalid_request"));
         }
 
         foreach (var redirect in request.RedirectUris ?? [])
         {
             if (!await OidcResults.AllowsRedirectAsync(settings, projectId, redirect, cancellationToken))
             {
-                throw Invalid("Each redirect URI must also exactly match the project's redirect allowlist.");
+                return ErrorResults.ToResult(new Validation("Each redirect URI must also exactly match the project's redirect allowlist.", "invalid_request"));
             }
         }
 
