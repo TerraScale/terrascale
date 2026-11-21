@@ -1,3 +1,5 @@
+using TerraBase.Errors;
+
 namespace TerraBase.Engine.Turso;
 
 internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int maxWriters)
@@ -111,13 +113,20 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
         }
     }
 
-    internal void OpenExternal(TursoDatabaseStore store)
+    internal readonly union ExternalOpen(Done, StorePaused);
+
+    internal ExternalOpen OpenExternal(TursoDatabaseStore store)
     {
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_stopped || store.Closed, store);
-            ThrowIfPaused(store);
+            if (_paused.TryGetValue(store, out var paused))
+            {
+                return new StorePaused(paused.Task);
+            }
+
             Opened(store);
+            return new Done();
         }
     }
 
@@ -158,16 +167,23 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
         }
     }
 
-    public TursoSession? Rent(TursoDatabaseStore store)
+    internal readonly union RentOutcome(TursoSession, OpenPending, StorePaused);
+
+    public RentOutcome Rent(TursoDatabaseStore store)
     {
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_stopped || store.Closed, store);
-            ThrowIfPaused(store);
+            if (_paused.TryGetValue(store, out var paused))
+            {
+                return new StorePaused(paused.Task);
+            }
+
             if (_readersPaused.TryGetValue(store, out var readers))
             {
-                throw new StorePausedException(readers.Task);
+                return new StorePaused(readers.Task);
             }
+
             for (var node = _idle.Last; node is not null; node = node.Previous)
             {
                 if (node.Value.Store == store)
@@ -180,18 +196,25 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
 
             _opening++;
             Opened(store);
-            return null;
+            return new OpenPending();
         }
     }
 
-    public void OpenNew(TursoDatabaseStore store)
+    internal readonly union OpenOutcome(Done, StorePaused);
+
+    public OpenOutcome OpenNew(TursoDatabaseStore store)
     {
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_stopped || store.Closed, store);
-            ThrowIfPaused(store);
+            if (_paused.TryGetValue(store, out var paused))
+            {
+                return new StorePaused(paused.Task);
+            }
+
             _opening++;
             Opened(store);
+            return new Done();
         }
     }
 
@@ -413,14 +436,6 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
         }
     }
 
-    private void ThrowIfPaused(TursoDatabaseStore store)
-    {
-        if (_paused.TryGetValue(store, out var paused))
-        {
-            throw new StorePausedException(paused.Task);
-        }
-    }
-
     private void CloseIdle(TursoDatabaseStore store)
     {
         var closing = new List<TursoSession>();
@@ -535,7 +550,6 @@ internal sealed class TursoSessionPool(int maxIdle, int maxIdlePerDatabase, int 
     }
 }
 
-internal sealed class StorePausedException(Task resumed) : Exception("the database is being rewritten")
-{
-    public Task Resumed { get; } = resumed;
-}
+internal sealed record OpenPending;
+
+internal sealed record StorePaused(Task Resumed);
