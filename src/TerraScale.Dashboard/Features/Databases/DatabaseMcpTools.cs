@@ -45,7 +45,10 @@ namespace TerraScale.Dashboard.Features.Databases
             await databases.SyncAsync(context, Cancellation);
             var db = DatabaseService.Database(context, databaseId);
             var output = await DatabaseOutput(db);
-            var placement = await databases.ConfiguredPlacementAsync(output.Placement, Cancellation);
+            var configured = await databases.ConfiguredPlacementAsync(output.Placement, Cancellation);
+            var placement = configured is not IReadOnlyList<DatabaseRegion> regions
+                ? throw DatabaseMutations.ToError(DatabaseMutations.RefusedConfigured(configured))
+                : regions;
             string? unavailable = null;
             bool? backupsEnabled = null;
             try

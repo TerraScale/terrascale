@@ -1,5 +1,6 @@
 using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard.Features.Databases
@@ -27,7 +28,9 @@ namespace TerraScale.Dashboard.Features.Databases
                 var clear = form["action"] == "clear";
                 if (!clear && string.IsNullOrWhiteSpace(form["ttlHours"]))
                 {
-                    throw new AccountAccessException("Enter a TTL in hours.", 422);
+                    return (DatabaseResults.WantsHtml(http) || http.Request.IsDatastarRequest)
+                        ? await DatabaseSettingsEndpoints.PageAsync(http, context, id, status: StatusCodes.Status422UnprocessableEntity, ttlHours: form["ttlHours"].ToString(), expiryError: "Enter a TTL in hours.")
+                        : DatabaseResults.ToResult(new Validation("Enter a TTL in hours."));
                 }
                 var saved = await databases.SetTtlAsync(context, id, clear ? null : DatabaseTtl.Hours(form["ttlHours"].ToString()), http.RequestAborted);
                 if (saved is DatabaseRecord database)

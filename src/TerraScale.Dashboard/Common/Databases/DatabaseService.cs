@@ -34,7 +34,9 @@ namespace TerraScale.Dashboard.Common.Databases
                 ?? throw new HttpRequestException("This database's region is not a TerraBase region.");
         }
 
-        internal async Task<IReadOnlyList<DatabaseRegion>> ConfiguredPlacementAsync(IEnumerable<string> codes, CancellationToken cancellationToken)
+        public readonly union ConfiguredPlacement(IReadOnlyList<DatabaseRegion>, Failure);
+
+        internal async Task<ConfiguredPlacement> ConfiguredPlacementAsync(IEnumerable<string> codes, CancellationToken cancellationToken)
         {
             var catalog = await backend.RegionsAsync(cancellationToken);
             var placement = new List<DatabaseRegion>();
@@ -49,7 +51,8 @@ namespace TerraScale.Dashboard.Common.Databases
             }
             if (placement.Count == 0)
             {
-                throw new AccountAccessException("Choose at least one region.", 422);
+                Failure refusal = new ValidationCase("Choose at least one region.");
+                return refusal;
             }
 
             return placement;

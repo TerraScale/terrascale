@@ -28,6 +28,15 @@ namespace TerraScale.Dashboard.Common.Databases
 
         public static PlacementResult PlacementRefused(Failure failure) => failure;
 
+        public static Failure RefusedConfigured(DatabaseService.ConfiguredPlacement placement)
+        {
+            return placement switch
+            {
+                Failure failure => failure,
+                IReadOnlyList<DatabaseRegion> => throw new UnreachableException()
+            };
+        }
+
         public static Failure RefusedConflict(ConflictListing listing)
         {
             return listing switch
