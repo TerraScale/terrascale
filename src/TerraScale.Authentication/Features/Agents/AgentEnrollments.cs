@@ -94,7 +94,7 @@ public sealed class AgentEnrollments(AuthData data, PlatformDirectory platform, 
         var tenant = Tenancy.IsProject(project) ? await platform.ProjectAsync(project, cancellationToken).ConfigureAwait(false) : null;
         if (Tenancy.IsProject(project) && tenant is null)
         {
-            return new NotFound();
+            return new NotFound("No such resource.");
         }
 
         if ((await limiter.AcquireDurableAsync(project, "agent-enrollment-ip", limiter.Fold(ip), StartsPerIp, LookupWindow, cancellationToken).ConfigureAwait(false)

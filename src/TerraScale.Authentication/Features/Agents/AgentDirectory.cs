@@ -111,7 +111,7 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
     {
         var agent = await data.ReadAsync((db, token) => db.Agents.SingleOrDefaultAsync(row => row.ProjectId == project && row.Id == agentId, token), cancellationToken).ConfigureAwait(false);
         return agent is null
-            ? new NotFound()
+            ? new NotFound("No such resource.")
             : (await this.BodiesAsync(project, [agent], cancellationToken).ConfigureAwait(false))[0];
     }
 
@@ -202,7 +202,7 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
             .SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
         if (agent is null)
         {
-            return new NotFound();
+            return new NotFound("No such resource.");
         }
 
         var shared = agent.Value with { ShareOwnerEmail = share };

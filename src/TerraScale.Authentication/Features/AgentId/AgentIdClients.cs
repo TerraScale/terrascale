@@ -70,7 +70,7 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
             cancellationToken).ConfigureAwait(false);
         if (user is null)
         {
-            return new NotFound();
+            return new NotFound("No such resource.");
         }
 
         var count = await data.ReadAsync((db, token) => db.AgentIdClients.CountAsync(row => row.OwnerUserId == owner.Id, token), cancellationToken).ConfigureAwait(false);
@@ -108,7 +108,7 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
         var owned = await this.OwnedAsync(proof.Caller.Id, clientId, cancellationToken).ConfigureAwait(false);
         if (owned is null)
         {
-            return new NotFound();
+            return new NotFound("No such resource.");
         }
 
         var client = owned;
@@ -140,7 +140,7 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
         var owned = await this.OwnedAsync(proof.Caller.Id, clientId, cancellationToken).ConfigureAwait(false);
         if (owned is null)
         {
-            return new NotFound();
+            return new NotFound("No such resource.");
         }
 
         return (await this.TrySaveAsync(proof, [Change.Delete(owned)], cancellationToken).ConfigureAwait(false)) switch
