@@ -1,5 +1,5 @@
 using TerraScale.Dashboard.Common.UI;
-using TerraScale.Dashboard.Common.Validation;
+using TerraScale.Dashboard.Errors;
 
 namespace TerraScale.Dashboard.Features.Onboarding
 {
@@ -89,10 +89,14 @@ namespace TerraScale.Dashboard.Features.Onboarding
                 return HttpRedirects.SeeOther("/login");
             }
 
-            try { return HttpRedirects.SeeOther(await service.SaveAsync(session, form, context.RequestAborted)); }
-            catch (OnboardingValidationException error)
+            try
             {
-                return await RenderAsync(context, sessions, accounts, service, backend, form, error.Message, 422);
+                return await service.SaveAsync(session, form, context.RequestAborted) switch
+                {
+                    string destination => HttpRedirects.SeeOther(destination),
+                    Validation invalid => await RenderAsync(context, sessions, accounts, service, backend, form, invalid.Message, 422),
+                    Forbidden refused => await RenderAsync(context, sessions, accounts, service, backend, form, refused.Message, 403)
+                };
             }
             catch (AccountAccessException error) { return await RenderAsync(context, sessions, accounts, service, backend, form, error.Message, error.StatusCode); }
         }
