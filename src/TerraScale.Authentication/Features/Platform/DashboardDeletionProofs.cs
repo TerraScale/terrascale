@@ -13,7 +13,7 @@ public sealed record DashboardDeletionList(IReadOnlyList<DashboardDeletionProof>
 
 public sealed record DashboardDeletionAcknowledgement(string Scope, string SubjectId, string? OrganizationId);
 
-public readonly union DeletionAcknowledgementResult(Done, NotFound, Conflict, Unavailable);
+public readonly union DeletionAcknowledgementResult(Done, NotFound, Conflict);
 
 public sealed record DeletionCursorRecord(string Name, string? After);
 

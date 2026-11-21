@@ -74,10 +74,13 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
 
     public const string DeletionAuthorizationHeader = "X-TerraScale-Deletion-Authorization";
 
+    internal static string? Proof(HttpRequest request) =>
+        request.Headers[Header].Count == 1 ? request.Headers[Header][0] : null;
+
     public async Task<UserRecord> ConsumeHeaderAsync(UserRecord caller, HttpRequest request, string purpose, string? organizationId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await this.ConsumeAsync(caller, request.Headers[Header].Count == 1 ? request.Headers[Header][0] : null, purpose, "ts-auth", null, cancellationToken, organizationId).ConfigureAwait(false) switch
+        return await this.ConsumeAsync(caller, Proof(request), purpose, "ts-auth", null, cancellationToken, organizationId).ConfigureAwait(false) switch
         {
             StepUpConsumption consumed => consumed.Caller,
             Forbidden => throw Required(),
@@ -87,7 +90,7 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
     internal async Task<PreparedStepUp?> PrepareHeaderAsync(UserRecord caller, HttpRequest request, string purpose, string? organizationId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await this.PrepareAsync(caller, request.Headers[Header].Count == 1 ? request.Headers[Header][0] : null, purpose, "ts-auth", null, cancellationToken, organizationId).ConfigureAwait(false);
+        return await this.PrepareAsync(caller, Proof(request), purpose, "ts-auth", null, cancellationToken, organizationId).ConfigureAwait(false);
     }
 
     public async Task<StepUpBodyResult> RequestAsync(UserRecord caller, StepUpRequest request, CancellationToken cancellationToken)
@@ -229,7 +232,7 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
             }
         }
 
-        return await this.ConsumeAsync(caller, request.Headers[Header].Count == 1 ? request.Headers[Header][0] : null, "delete_account", "ts-auth", receiptHash, cancellationToken).ConfigureAwait(false);
+        return await this.ConsumeAsync(caller, Proof(request), "delete_account", "ts-auth", receiptHash, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<StepUpUserResult> DeleteOrganizationAsync(UserRecord caller, HttpRequest request, string organizationId, CancellationToken cancellationToken)

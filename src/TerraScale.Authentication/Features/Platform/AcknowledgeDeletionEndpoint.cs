@@ -65,7 +65,6 @@ public sealed class AcknowledgeDeletionEndpoint(AuthData data, AuthOptions optio
             Done => TypedResults.NoContent(),
             NotFound failure => ErrorResults.ToResult(failure),
             Conflict failure => ErrorResults.ToResult(failure),
-            Unavailable failure => ErrorResults.ToResult(failure),
         };
     }
 }

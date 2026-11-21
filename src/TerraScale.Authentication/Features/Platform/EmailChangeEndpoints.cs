@@ -34,7 +34,6 @@ public sealed class RequestEmailChangeEndpoint(EmailChanges changes, StepUpProof
             Conflict failure => ErrorResults.ToResult(failure),
             QuotaExceeded failure => ErrorResults.ToResult(failure),
             Forbidden failure => ErrorResults.ToResult(failure),
-            Unavailable failure => ErrorResults.ToResult(failure),
         };
     }
 }

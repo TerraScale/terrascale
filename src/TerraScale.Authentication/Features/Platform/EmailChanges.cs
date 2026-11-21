@@ -26,7 +26,7 @@ public sealed record EmailChangeBody(
     [property: JsonPropertyName("new_email")] string NewEmail,
     [property: JsonPropertyName("expires_at")] DateTimeOffset ExpiresAt);
 
-public readonly union EmailChangeRequestResult(EmailChangeBody, Validation, Conflict, QuotaExceeded, Forbidden, Unavailable);
+public readonly union EmailChangeRequestResult(EmailChangeBody, Validation, Conflict, QuotaExceeded, Forbidden);
 
 public readonly union EmailChangeConfirmResult(Done, Forbidden, Conflict);
 
@@ -68,7 +68,7 @@ public sealed class EmailChanges(AuthData data, Credentials credentials, Users u
 
         using var codeSlot = mail.Reserve();
         using var noticeSlot = mail.Reserve();
-        return await proofs.ConsumeAsync(caller, request.Headers[StepUpProofs.Header].Count == 1 ? request.Headers[StepUpProofs.Header][0] : null,
+        return await proofs.ConsumeAsync(caller, StepUpProofs.Proof(request),
             "change_email", "ts-auth", null, cancellationToken).ConfigureAwait(false) switch
         {
             StepUpConsumption consumption => await this.IssueAsync(caller, consumption.Caller, normalized, proofs, codeSlot, noticeSlot, cancellationToken).ConfigureAwait(false),
@@ -86,7 +86,7 @@ public sealed class EmailChanges(AuthData data, Credentials credentials, Users u
         if (await proofs.RequirementsAsync(verified, cancellationToken).ConfigureAwait(false) is not { } requirements
             || !await data.SaveAsync([.. requirements, existing is null ? Change.Insert(record) : Change.Update(existing, record)], cancellationToken).ConfigureAwait(false))
         {
-            return PlatformFailures.Storage();
+            throw ApiException.Unavailable();
         }
 
         await codeSlot.EnqueueEmailAsync(AuthEmailKind.EmailChangeCode, new AuthEmailValues(normalized)

@@ -270,8 +270,7 @@ public sealed class StartOwnershipTransferEndpoint(PlatformDirectory platform, P
             throw Invalid("user_id must be a user id.");
         }
 
-        return await proofs.ConsumeAsync(caller,
-            this.HttpContext.Request.Headers[StepUpProofs.Header].Count == 1 ? this.HttpContext.Request.Headers[StepUpProofs.Header][0] : null,
+        return await proofs.ConsumeAsync(caller, StepUpProofs.Proof(this.HttpContext.Request),
             "start_ownership_transfer", "ts-auth", null, cancellationToken, this.RouteId("organization")) switch
         {
             StepUpConsumption consumption => await this.StartTransferAsync(consumption.Caller, nominee!, cancellationToken),

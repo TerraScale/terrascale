@@ -312,8 +312,7 @@ public abstract class ApiKeyEndpoint(ApiKeys keys, PlatformAuthentication authen
         }
 
         var proofs = this.HttpContext.RequestServices.GetRequiredService<StepUpProofs>();
-        return await proofs.ConsumeAsync(caller, this.HttpContext.Request.Headers[StepUpProofs.Header].Count == 1
-            ? this.HttpContext.Request.Headers[StepUpProofs.Header][0] : null, "rotate_api_key", "ts-auth", null, cancellationToken) switch
+        return await proofs.ConsumeAsync(caller, StepUpProofs.Proof(this.HttpContext.Request), "rotate_api_key", "ts-auth", null, cancellationToken) switch
         {
             StepUpConsumption rotation => await this.RotateAsync(rotation.Caller, ttl, cancellationToken),
             Forbidden failure => ErrorResults.ToResult(failure),
