@@ -45,11 +45,12 @@ namespace TerraScale.Dashboard.Features.Databases
                     return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "settings") + "?renamed=1") : Results.Json(database);
                 }
 
-                var status = DatabaseMutations.StatusOf(DatabaseMutations.RefusedMutation(renamed));
-                var message = status >= 500 ? "The rename result could not be confirmed. Reload Settings to check the current name before retrying." : DatabaseMutations.MessageOf(DatabaseMutations.RefusedMutation(renamed));
+                var failure = DatabaseMutations.RefusedMutation(renamed);
+                var status = DatabaseMutations.StatusOf(failure);
+                var message = status >= 500 ? "The rename result could not be confirmed. Reload Settings to check the current name before retrying." : DatabaseMutations.MessageOf(failure);
                 return (DatabaseResults.WantsHtml(http) || http.Request.IsDatastarRequest) && status != 404
                     ? await PageAsync(http, context, id, message, form["name"].ToString(), form["confirmName"].ToString(), status)
-                    : DatabaseResults.ToResult(DatabaseMutations.RefusedMutation(renamed));
+                    : DatabaseResults.PageFailureOf(http, context, failure);
             }
             catch (Exception error) when (!http.RequestAborted.IsCancellationRequested && (DatabaseResults.KnownFailure(error) || error is HttpRequestException or IOException or System.Text.Json.JsonException or OperationCanceledException))
             {

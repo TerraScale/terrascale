@@ -90,5 +90,10 @@ namespace TerraScale.Dashboard.Common.Databases
         {
             return Results.Problem(DatabaseMutations.MessageOf(failure), statusCode: DatabaseMutations.StatusOf(failure));
         }
+
+        internal static IResult PageFailureOf(HttpContext http, AccountContext context, Failure failure)
+        {
+            return WantsHtml(http) && failure is NotFound ? Features.NotFound.NotFoundEndpoints.Page(http, context) : ToResult(failure);
+        }
     }
 }

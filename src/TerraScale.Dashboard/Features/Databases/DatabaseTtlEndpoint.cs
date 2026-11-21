@@ -43,7 +43,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 var status = DatabaseMutations.StatusOf(failure);
                 return (DatabaseResults.WantsHtml(http) || http.Request.IsDatastarRequest) && status != 404
                     ? await DatabaseSettingsEndpoints.PageAsync(http, context, id, status: status, ttlHours: form["ttlHours"].ToString(), expiryError: status >= 500 ? "The expiry could not be confirmed. Reload Settings before retrying." : DatabaseMutations.MessageOf(failure))
-                    : DatabaseResults.ToResult(failure);
+                    : DatabaseResults.PageFailureOf(http, context, failure);
             }
             catch (Exception error) when (!http.RequestAborted.IsCancellationRequested && (DatabaseResults.KnownFailure(error) || error is HttpRequestException or IOException or System.Text.Json.JsonException or OperationCanceledException))
             {

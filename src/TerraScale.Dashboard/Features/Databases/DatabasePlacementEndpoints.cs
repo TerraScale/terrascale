@@ -44,7 +44,7 @@ namespace TerraScale.Dashboard.Features.Databases
                             : Results.Problem(pending.Message, statusCode: StatusCodes.Status503ServiceUnavailable,
                                 extensions: new Dictionary<string, object?> { ["code"] = RegionsCopying.Code });
                     case Failure failure when !(DatabaseResults.WantsHtml(http) || http.Request.IsDatastarRequest) || DatabaseMutations.StatusOf(failure) == 404:
-                        return DatabaseResults.ToResult(failure);
+                        return DatabaseResults.PageFailureOf(http, context, failure);
                     case Failure failure:
                         return await DatabaseEndpoints.DetailPageAsync(http, await databases.CurrentAsync(context, http.RequestAborted), id, "replication", backend, databases,
                             DatabaseMutations.MessageOf(failure), status: DatabaseMutations.StatusOf(failure), regions: new(asked, ""));

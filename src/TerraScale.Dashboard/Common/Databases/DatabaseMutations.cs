@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using TerraScale.Dashboard.Errors;
+using TerraScale.Dashboard.Features.Databases;
 using ValidationCase = TerraScale.Dashboard.Errors.Validation;
 
 namespace TerraScale.Dashboard.Common.Databases
@@ -26,6 +27,15 @@ namespace TerraScale.Dashboard.Common.Databases
         public static DatabaseDeletion DeletionRefused(Failure failure) => failure;
 
         public static PlacementResult PlacementRefused(Failure failure) => failure;
+
+        public static Failure RefusedConflict(ConflictListing listing)
+        {
+            return listing switch
+            {
+                ValidationCase failure => failure,
+                DatabaseConflictList => throw new UnreachableException()
+            };
+        }
 
         public static Failure RefusedMutation(DatabaseMutation mutation)
         {
@@ -57,7 +67,7 @@ namespace TerraScale.Dashboard.Common.Databases
 
         public static bool Mappable(AccountAccessException error)
         {
-            return error.StatusCode is 400 or 401 or 403 or 404 or 409 or 429 or 503;
+            return error.StatusCode is 401 or 403 or 404 or 409 or 429 or 503;
         }
 
         public static Failure ToFailure(AccountAccessException error)
@@ -70,7 +80,7 @@ namespace TerraScale.Dashboard.Common.Databases
                 409 => new Conflict(error.Message),
                 429 => new QuotaExceeded(error.Message),
                 503 => new Unavailable(error.Message),
-                _ => new ValidationCase(error.Message)
+                _ => throw new UnreachableException()
             };
         }
 

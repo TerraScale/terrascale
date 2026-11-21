@@ -179,7 +179,7 @@ namespace TerraScale.Dashboard.Features.Databases
                     var branchFailure = DatabaseMutations.RefusedMutation(refusal);
                     return WantsHtml(http) && DatabaseMutations.StatusOf(branchFailure) != 404
                         ? await DetailPageAsync(http, context, id, "branches", backend, databases, DatabaseMutations.MessageOf(branchFailure), false, DatabaseMutations.StatusOf(branchFailure), branchName: form["name"].ToString(), ttlHours: form["ttlHours"].ToString(), pointInTime: form["pointInTime"].ToString())
-                        : DatabaseResults.ToResult(branchFailure);
+                        : DatabaseResults.PageFailureOf(http, context, branchFailure);
                 }
                 var deleted = await databases.DeleteAsync(context, id, form.ContainsKey("confirmName") ? form["confirmName"].ToString() : form["confirm"].ToString(), http.RequestAborted);
                 if (deleted is Done)
@@ -190,7 +190,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 var deleteFailure = DatabaseMutations.RefusedDeletion(deleted);
                 return WantsHtml(http) && DatabaseMutations.StatusOf(deleteFailure) != 404
                     ? await DetailPageAsync(http, context, id, "danger", backend, databases, DatabaseMutations.MessageOf(deleteFailure), action == "delete", DatabaseMutations.StatusOf(deleteFailure))
-                    : DatabaseResults.ToResult(deleteFailure);
+                    : DatabaseResults.PageFailureOf(http, context, deleteFailure);
             }
             catch (Exception error) when (KnownFailure(error))
             {
@@ -319,7 +319,9 @@ namespace TerraScale.Dashboard.Features.Databases
                 {
                     var listing = await http.RequestServices.GetRequiredService<DatabaseConflicts>()
                         .ListAsync(context, database.Id, table, since, until, 50, before, http.RequestAborted);
-                    return new(listing, table, since, until, before);
+                    return listing is DatabaseConflictList conflicts
+                        ? new(conflicts, table, since, until, before)
+                        : new(null, table, since, until, before, DatabaseMutations.MessageOf(DatabaseMutations.RefusedConflict(listing)));
                 }
                 catch (Exception failure) when (failure is HttpRequestException or IOException or System.Text.Json.JsonException or InvalidOperationException
                     || KnownFailure(failure) || failure is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)

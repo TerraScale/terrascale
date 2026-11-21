@@ -28,7 +28,13 @@ namespace TerraScale.Dashboard.Features.Databases
         public Task<DatabaseConflictList> ListConflicts(string databaseId, string table = "", string since = "", string until = "", int limit = 50,
             string before = "", string? organizationId = null, string? projectId = null)
         {
-            return conflicts.ListAsync(Scope(organizationId, projectId), databaseId, table, since, until, limit, before, Cancellation);
+            return ConflictsAsync();
+
+            async Task<DatabaseConflictList> ConflictsAsync()
+            {
+                var listing = await conflicts.ListAsync(Scope(organizationId, projectId), databaseId, table, since, until, limit, before, Cancellation);
+                return listing is DatabaseConflictList result ? result : throw DatabaseMutations.ToError(DatabaseMutations.RefusedConflict(listing));
+            }
         }
 
         [McpAccess(McpAccess.Read)]
