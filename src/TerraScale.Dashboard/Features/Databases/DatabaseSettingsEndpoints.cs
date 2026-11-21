@@ -35,12 +35,21 @@ namespace TerraScale.Dashboard.Features.Databases
             var id = form["databaseId"].ToString();
             try
             {
-                var database = await databases.RenameAsync(context, id, form["name"].ToString(), form["confirmName"].ToString(), http.RequestAborted);
-                if (http.Request.IsDatastarRequest)
+                var renamed = await databases.RenameAsync(context, id, form["name"].ToString(), form["confirmName"].ToString(), http.RequestAborted);
+                if (renamed is DatabaseRecord database)
                 {
-                    return await PageAsync(http, await databases.CurrentAsync(context, http.RequestAborted), id, renamed: true);
+                    if (http.Request.IsDatastarRequest)
+                    {
+                        return await PageAsync(http, await databases.CurrentAsync(context, http.RequestAborted), id, renamed: true);
+                    }
+                    return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "settings") + "?renamed=1") : Results.Json(database);
                 }
-                return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "settings") + "?renamed=1") : Results.Json(database);
+
+                var status = DatabaseMutations.StatusOf(DatabaseMutations.RefusedMutation(renamed));
+                var message = status >= 500 ? "The rename result could not be confirmed. Reload Settings to check the current name before retrying." : DatabaseMutations.MessageOf(DatabaseMutations.RefusedMutation(renamed));
+                return (DatabaseResults.WantsHtml(http) || http.Request.IsDatastarRequest) && status != 404
+                    ? await PageAsync(http, context, id, message, form["name"].ToString(), form["confirmName"].ToString(), status)
+                    : DatabaseResults.ToResult(DatabaseMutations.RefusedMutation(renamed));
             }
             catch (Exception error) when (!http.RequestAborted.IsCancellationRequested && (DatabaseResults.KnownFailure(error) || error is HttpRequestException or IOException or System.Text.Json.JsonException or OperationCanceledException))
             {

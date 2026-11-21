@@ -69,7 +69,10 @@ namespace TerraScale.Dashboard.Features.Databases
         {
             var context = Scope(organizationId, projectId);
             DatabaseService.Scope(context);
-            return await DatabaseOutput(await databases.CreateAsync(context, name, string.IsNullOrEmpty(region) ? context.Project!.Region : region, Cancellation, ttlHours));
+            var created = await databases.CreateAsync(context, name, string.IsNullOrEmpty(region) ? context.Project!.Region : region, Cancellation, ttlHours);
+            return created is DatabaseRecord database
+                ? await DatabaseOutput(database)
+                : throw DatabaseMutations.ToError(DatabaseMutations.RefusedMutation(created));
         }
 
         [McpAccess(McpAccess.Write)]
@@ -82,7 +85,10 @@ namespace TerraScale.Dashboard.Features.Databases
                 var started = await recovery.StartForkAsync(context, databaseId, pointInTime, name, DatabaseTtl.Seconds(ttlHours), Cancellation);
                 return new McpRestoreStart(started.OperationId, started.Status, name.Trim());
             }
-            return await DatabaseOutput(await databases.BranchAsync(context, databaseId, name, Cancellation, ttlHours));
+            var branched = await databases.BranchAsync(context, databaseId, name, Cancellation, ttlHours);
+            return branched is DatabaseRecord database
+                ? await DatabaseOutput(database)
+                : throw DatabaseMutations.ToError(DatabaseMutations.RefusedMutation(branched));
         }
 
         [McpAccess(McpAccess.Destructive)]
@@ -93,7 +99,10 @@ namespace TerraScale.Dashboard.Features.Databases
             {
                 throw new AccountAccessException("Supply ttlHours or clear=true, exclusively.", 422);
             }
-            return await DatabaseOutput(await databases.SetTtlAsync(Scope(organizationId, projectId), databaseId, ttlHours, Cancellation));
+            var saved = await databases.SetTtlAsync(Scope(organizationId, projectId), databaseId, ttlHours, Cancellation);
+            return saved is DatabaseRecord database
+                ? await DatabaseOutput(database)
+                : throw DatabaseMutations.ToError(DatabaseMutations.RefusedMutation(saved));
         }
 
         [McpAccess(McpAccess.Destructive)]

@@ -29,12 +29,21 @@ namespace TerraScale.Dashboard.Features.Databases
                 {
                     throw new AccountAccessException("Enter a TTL in hours.", 422);
                 }
-                var database = await databases.SetTtlAsync(context, id, clear ? null : DatabaseTtl.Hours(form["ttlHours"].ToString()), http.RequestAborted);
-                if (http.Request.IsDatastarRequest)
+                var saved = await databases.SetTtlAsync(context, id, clear ? null : DatabaseTtl.Hours(form["ttlHours"].ToString()), http.RequestAborted);
+                if (saved is DatabaseRecord database)
                 {
-                    return await DatabaseSettingsEndpoints.PageAsync(http, await databases.CurrentAsync(context, http.RequestAborted), id, ttlHours: clear ? "" : form["ttlHours"].ToString(), expirySaved: true);
+                    if (http.Request.IsDatastarRequest)
+                    {
+                        return await DatabaseSettingsEndpoints.PageAsync(http, await databases.CurrentAsync(context, http.RequestAborted), id, ttlHours: clear ? "" : form["ttlHours"].ToString(), expirySaved: true);
+                    }
+                    return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "settings")) : Results.Json(database, DatabaseTtlJson.Default.DatabaseRecord);
                 }
-                return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "settings")) : Results.Json(database, DatabaseTtlJson.Default.DatabaseRecord);
+
+                var failure = DatabaseMutations.RefusedMutation(saved);
+                var status = DatabaseMutations.StatusOf(failure);
+                return (DatabaseResults.WantsHtml(http) || http.Request.IsDatastarRequest) && status != 404
+                    ? await DatabaseSettingsEndpoints.PageAsync(http, context, id, status: status, ttlHours: form["ttlHours"].ToString(), expiryError: status >= 500 ? "The expiry could not be confirmed. Reload Settings before retrying." : DatabaseMutations.MessageOf(failure))
+                    : DatabaseResults.ToResult(failure);
             }
             catch (Exception error) when (!http.RequestAborted.IsCancellationRequested && (DatabaseResults.KnownFailure(error) || error is HttpRequestException or IOException or System.Text.Json.JsonException or OperationCanceledException))
             {
