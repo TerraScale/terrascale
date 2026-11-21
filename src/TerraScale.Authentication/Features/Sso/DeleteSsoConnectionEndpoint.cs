@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Features.Sso;
@@ -14,9 +15,11 @@ public sealed class DeleteSsoConnectionEndpoint(SsoConnections connections, Plat
     }
 
     /// <inheritdoc />
-    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
-    {
-        await connections.DeleteAsync(await this.OrganizationAsync(caller, Roles.Owner, cancellationToken), caller.Id, cancellationToken);
-        return Results.NoContent();
-    }
+    protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken) =>
+        await connections.DeleteAsync(await this.OrganizationAsync(caller, Roles.Owner, cancellationToken), caller.Id, cancellationToken) switch
+        {
+            Done => Results.NoContent(),
+            NotFound failure => ErrorResults.ToResult(failure),
+            Conflict failure => ErrorResults.ToResult(failure),
+        };
 }
