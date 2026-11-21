@@ -1,6 +1,7 @@
 using Fido2NetLib;
 using Fido2NetLib.Objects;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Endpoints;
 
@@ -22,30 +23,47 @@ public sealed class PasskeyVerifyEndpoint(PasskeyCredentials passkeys, StepUpPro
     {
         var body = await this.BodyAsync(WebAuthnJson.Default.PasskeyVerifyRequest, cancellationToken);
         caller = await proofs.ConsumeHeaderAsync(caller, this.HttpContext.Request, "add_passkey", null, cancellationToken);
-        var raw = Map(body.Response);
-        var entry = raw is null ? null
-            : await passkeys.VerifyAsync(caller, body.Challenge, raw, body.Name is { Length: > 0 and <= 100 } ? body.Name : null, cancellationToken: cancellationToken).ConfigureAwait(false);
-        if (entry is null)
+        var mapped = Map(body.Response);
+        if (mapped is { Invalid: { } invalid })
         {
-            throw new ApiException(403, "passkey_denied", "The passkey registration failed verification; start again.");
+            return ErrorResults.ToResult(invalid);
         }
 
-        return Results.Json(new PasskeyEnrolledBody(entry.CredentialId, entry.Name, entry.Aaguid, entry.CreatedAt),
-            WebAuthnJson.Default.PasskeyEnrolledBody, statusCode: StatusCodes.Status201Created);
+        if (mapped is not { Response: { } raw })
+        {
+            return ErrorResults.ToResult(PasskeyCredentials.DeniedEnroll());
+        }
+
+        return await passkeys.VerifyAsync(caller, body.Challenge, raw, body.Name is { Length: > 0 and <= 100 } ? body.Name : null, cancellationToken: cancellationToken).ConfigureAwait(false) switch
+        {
+            PasskeyCredentialEntry entry => Results.Json(new PasskeyEnrolledBody(entry.CredentialId, entry.Name, entry.Aaguid, entry.CreatedAt),
+                WebAuthnJson.Default.PasskeyEnrolledBody, statusCode: StatusCodes.Status201Created),
+            Forbidden error => ErrorResults.ToResult(error),
+        };
     }
 
-    internal static AuthenticatorAttestationRawResponse? Map(PasskeyAttestationRequest? response)
+    internal static (AuthenticatorAttestationRawResponse? Response, Validation? Invalid) Map(PasskeyAttestationRequest? response)
     {
         if (response?.Response is not { } inner
             || response.RawId is not { Length: > 0 }
             || response.Type?.Equals("public-key", StringComparison.Ordinal) != true
             || inner.ClientDataJson is not { Length: > 0 } || inner.AttestationObject is not { Length: > 0 })
         {
-            return null;
+            return (null, null);
         }
 
-        AuthenticatorTransport[] transports = [.. (inner.Transports ?? []).Select(transport => Enum.TryParse<AuthenticatorTransport>(transport, ignoreCase: true, out var parsed) ? parsed : throw new ApiException(400, "invalid_request", "Unknown passkey transport."))];
-        return new AuthenticatorAttestationRawResponse
+        var invalid = new Validation("Unknown passkey transport.");
+        AuthenticatorTransport[] transports;
+        try
+        {
+            transports = [.. (inner.Transports ?? []).Select(transport => Enum.TryParse<AuthenticatorTransport>(transport, ignoreCase: true, out var parsed) ? parsed : throw new FormatException())];
+        }
+        catch (FormatException)
+        {
+            return (null, invalid);
+        }
+
+        return (new AuthenticatorAttestationRawResponse
         {
             Id = response.Id ?? string.Empty,
             RawId = PasskeyCredentials.Base64UrlDecode(response.RawId),
@@ -56,6 +74,6 @@ public sealed class PasskeyVerifyEndpoint(PasskeyCredentials passkeys, StepUpPro
                 AttestationObject = PasskeyCredentials.Base64UrlDecode(inner.AttestationObject),
                 Transports = transports,
             },
-        };
+        }, null);
     }
 }

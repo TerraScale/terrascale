@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.SignIn;
@@ -49,13 +50,13 @@ public sealed class PasskeyHostedRenameEndpoint(Sessions sessions, PasskeyCreden
             return await SecurityFlow.RefusedAsync(this.HttpContext, sessions, mfa, live.User, ("Passkey not renamed", "Reload the page and try again."), StatusCodes.Status409Conflict, cancellationToken);
         }
 
-        var entry = await passkeys.RenameAsync(live.User, id, name, cancellationToken).ConfigureAwait(false);
-        if (entry is null)
+        return await passkeys.RenameAsync(live.User, id, name, cancellationToken).ConfigureAwait(false) switch
         {
-            throw new ApiException(403, "passkey_denied", "Sign in again before renaming a passkey.");
-        }
-
-        return await SecurityFlow.PageAsync(this.HttpContext, mfa, live.User, null, cancellationToken,
-            notice: "Passkey renamed.", next: SignInFlow.SafeNext(this.HttpContext, form.Next));
+            PasskeyCredentialEntry => await SecurityFlow.PageAsync(this.HttpContext, mfa, live.User, null, cancellationToken,
+                notice: "Passkey renamed.", next: SignInFlow.SafeNext(this.HttpContext, form.Next)),
+            Forbidden error => ErrorResults.ToResult(error),
+            NotFound error => ErrorResults.ToResult(error),
+            Conflict error => ErrorResults.ToResult(error),
+        };
     }
 }

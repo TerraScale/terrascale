@@ -2,7 +2,9 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.Sso;
@@ -33,13 +35,24 @@ public sealed class PasskeyHostedVerifyEndpoint(Sessions sessions, PasskeyCreden
             return Results.NotFound();
         }
 
-        var pending = this.HttpContext.Request.Headers[RequiredMfaEnrollment.Header] is [{ } challenge]
-            ? await RequiredMfaEnrollment.ReadAsync(this.HttpContext, challenge, "passkey", cancellationToken) : null;
+        ChallengedSignIn? pending = null;
+        if (this.HttpContext.Request.Headers[RequiredMfaEnrollment.Header] is [{ } challenge])
+        {
+            switch (await RequiredMfaEnrollment.ReadAsync(this.HttpContext, challenge, "passkey", cancellationToken))
+            {
+                case ChallengedSignIn allowed:
+                    pending = allowed;
+                    break;
+                case Forbidden error:
+                    return ErrorResults.ToResult(error);
+            }
+        }
+
         var live = pending is null ? await SecurityFlow.LiveAsync(this.HttpContext, sessions, cancellationToken) : null;
         if (!SameOrigin(this.HttpContext, options)
             || pending is null && (live is null || !SecurityFlow.Recent(this.HttpContext, live.Value.Session, SecurityFlow.FactorEnrollmentWindow)))
         {
-            throw new ApiException(403, "passkey_denied", "Sign in again before enrolling a passkey.");
+            return ErrorResults.ToResult(new Forbidden("Sign in again before enrolling a passkey.", "passkey_denied"));
         }
 
         var caller = pending?.User ?? live!.Value.User;
@@ -51,29 +64,42 @@ public sealed class PasskeyHostedVerifyEndpoint(Sessions sessions, PasskeyCreden
         }
         catch (JsonException)
         {
-            throw new ApiException(403, "passkey_denied", "The passkey registration failed verification; start again.");
+            return ErrorResults.ToResult(PasskeyCredentials.DeniedEnroll());
         }
 
         if (pending is not null && !Tenancy.IsProject(caller.InstanceId)
             && !await this.HttpContext.RequestServices.GetRequiredService<SsoSignIn>().CanFinishAsync(this.HttpContext, caller, cancellationToken))
         {
-            throw new ApiException(403, "passkey_denied", "Start sign-in again before enrolling a passkey.");
+            return ErrorResults.ToResult(new Forbidden("Start sign-in again before enrolling a passkey.", "passkey_denied"));
         }
 
-        var raw = PasskeyVerifyEndpoint.Map(body.Response);
-        var entry = raw is null ? null
-            : await passkeys.VerifyAsync(caller, body.Challenge, raw, body.Name is { Length: > 0 and <= 100 } ? body.Name : null, pending, cancellationToken).ConfigureAwait(false);
-        if (entry is null)
+        var mapped = PasskeyVerifyEndpoint.Map(body.Response);
+        if (mapped is { Invalid: { } invalid })
         {
-            throw new ApiException(403, "passkey_denied", "The passkey registration failed verification; start again.");
+            return ErrorResults.ToResult(invalid);
         }
 
-        if (pending is not null)
+        if (mapped is not { Response: { } raw })
+        {
+            return ErrorResults.ToResult(PasskeyCredentials.DeniedEnroll());
+        }
+
+        PasskeyVerifyResult verified = await passkeys.VerifyAsync(caller, body.Challenge, raw, body.Name is { Length: > 0 and <= 100 } ? body.Name : null, pending, cancellationToken).ConfigureAwait(false);
+        return verified switch
+        {
+            PasskeyCredentialEntry entry => await Enrolled(this.HttpContext, sessions, caller, entry, pending is not null, cancellationToken),
+            Forbidden error => ErrorResults.ToResult(error),
+        };
+    }
+
+    private static async Task<IResult> Enrolled(HttpContext context, Sessions sessions, UserRecord caller, PasskeyCredentialEntry entry, bool finishEnrollment, CancellationToken cancellationToken)
+    {
+        if (finishEnrollment)
         {
             var session = await sessions.CreateAsync(caller with { MultiFactor = true, MfaMethod = "passkey" }, cancellationToken);
-            if (!await SignInFlow.EnrolledAsync(this.HttpContext, sessions, session, cancellationToken))
+            if (!await SignInFlow.EnrolledAsync(context, sessions, session, cancellationToken))
             {
-                throw new ApiException(403, "passkey_denied", "Start sign-in again before enrolling a passkey.");
+                return ErrorResults.ToResult(new Forbidden("Start sign-in again before enrolling a passkey.", "passkey_denied"));
             }
         }
 
