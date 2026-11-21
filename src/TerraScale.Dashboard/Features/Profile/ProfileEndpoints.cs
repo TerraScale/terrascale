@@ -114,6 +114,8 @@ namespace TerraScale.Dashboard.Features.Profile
             {
                 case Validation invalid:
                     return await InvalidAsync(http, sessions, context, invalid.Message, invalid.Code, 422, language, form);
+                case Done:
+                    break;
             }
             if (http.Request.IsDatastarRequest)
             {

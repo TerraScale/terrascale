@@ -75,7 +75,6 @@ namespace TerraScale.Dashboard.Features.Profile
             {
                 return await ViewAsync("", 200);
             }
-            // Auth has invalidated every grant. Do not attempt to revoke the old bearer again.
             await sessions.RevokeUserAsync(context.UserId, http.RequestAborted);
             await sessions.EndAsync(http);
             return HttpRedirects.SeeOther("/login?emailChanged=1");

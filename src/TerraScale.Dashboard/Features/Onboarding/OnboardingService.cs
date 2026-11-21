@@ -103,7 +103,6 @@ namespace TerraScale.Dashboard.Features.Onboarding
 
             if (selected.PriceCents == 0)
             {
-                // Free needs no checkout; the account proceeds to the project step.
                 await accounts.UpdateAccountAsync(session, account =>
                 {
                     if (account.OnboardingStep != "payment-method")
@@ -151,7 +150,6 @@ namespace TerraScale.Dashboard.Features.Onboarding
             {
                 return new Validation("Use a project name with 100 characters or fewer.");
             }
-            // The provisioner accepts only a region TerraBase reports as serving.
             var region = form["region"].ToString().Trim().ToUpperInvariant();
             return await SwitchToPersonalAsync(session, context.Account.PersonalOrganizationId, cancellationToken) switch
             {
