@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.SignIn;
@@ -17,23 +18,36 @@ public sealed record ProjectInvitationPageBody(IReadOnlyList<ProjectInvitationBo
 
 public sealed record WaitlistPageBody(IReadOnlyList<WaitlistRecord> Items, string? Next);
 
+public readonly union InvitationCreated(ProjectInvitationBody, Validation, Conflict);
+
+public readonly union InvitationRevoked(Done, NotFound, Conflict);
+
+public readonly union WaitlistDecided(Done, NotFound, Validation, Conflict);
+
+public readonly union Transacted(bool, Conflict);
+
 public sealed class ProjectInvitations(AuthData data, ProjectAuthSettings settings, SignInMail mail, AuthOptions options, TimeProvider clock)
 {
     public static readonly TimeSpan Lifetime = TimeSpan.FromDays(7);
 
-    public async Task<ProjectInvitationBody> CreateAsync(string projectId, string email, string? redirectUrl, string inviter, string locale, CancellationToken cancellationToken,
+    public async Task<InvitationCreated> CreateAsync(string projectId, string email, string? redirectUrl, string inviter, string locale, CancellationToken cancellationToken,
         Versioned<WaitlistRecord>? waitlist = null)
     {
-        var normalized = Users.NormalizeEmail(email) ?? throw new ApiException(400, "invalid_request", "Enter a valid email.");
+        var normalized = Users.NormalizeEmail(email);
+        if (normalized is null)
+        {
+            return new Validation("Enter a valid email.", "invalid_request");
+        }
+
         var (policy, version) = await settings.ReadVersionedAsync(projectId, cancellationToken);
         if (SignUpRestrictions.Blocked(policy.Restrictions ?? RestrictionsBody.Default, normalized))
         {
-            throw new ApiException(400, "signup_refused", "Sign-up is unavailable for this address.");
+            return new Validation("Sign-up is unavailable for this address.", "signup_refused");
         }
 
         if (redirectUrl is not null && !(policy.Configuration?.RedirectUrls.Contains(redirectUrl, StringComparer.Ordinal) ?? false))
         {
-            throw new ApiException(400, "invalid_request", "The redirect must match a project redirect URL.");
+            return new Validation("The redirect must match a project redirect URL.", "invalid_request");
         }
 
         using var reservation = mail.Reserve();
@@ -50,29 +64,35 @@ public sealed class ProjectInvitations(AuthData data, ProjectAuthSettings settin
             changes.Add(Change.Update(waitlist, waitlist.Value with { Status = "approved" }));
         }
 
+        Transacted committed;
         try
         {
-            await data.TransactAsync(async (db, probe) =>
+            committed = await data.TransactAsync(async (db, probe) =>
             {
                 if (waitlist is not null && await db.Users.AnyAsync(row => row.InstanceId == projectId && row.Email == normalized, probe))
                 {
-                    throw new ApiException(409, "conflict", "The waitlist address already has an account.");
+                    return new Transacted(new Conflict("The waitlist address already has an account.", "conflict"));
                 }
 
                 foreach (var change in changes)
                 {
                     if (!change.Apply(db))
                     {
-                        throw new ApiException(409, "conflict", "The project settings or waitlist entry changed.");
+                        return new Transacted(new Conflict("The project settings or waitlist entry changed.", "conflict"));
                     }
                 }
 
-                return true;
+                return new Transacted(true);
             }, cancellationToken);
         }
         catch (DbUpdateException error) when (AuthData.IsConflict(error))
         {
-            throw new ApiException(409, "conflict", "The project settings or waitlist entry changed.");
+            return new Conflict("The project settings or waitlist entry changed.", "conflict");
+        }
+
+        if (committed is Conflict refused)
+        {
+            return refused;
         }
 
         await reservation.EnqueueEmailAsync(AuthEmailKind.Invitation, new AuthEmailValues(normalized)
@@ -93,14 +113,23 @@ public sealed class ProjectInvitations(AuthData data, ProjectAuthSettings settin
         return new([.. rows.Take(limit).Select(this.Map)], rows.Count > limit ? rows[limit - 1].Id : null);
     }
 
-    public async Task RevokeAsync(string projectId, string id, CancellationToken cancellationToken)
+    public async Task<InvitationRevoked> RevokeAsync(string projectId, string id, CancellationToken cancellationToken)
     {
         var row = await data.ReadAsync((db, token) => db.ProjectInvitations.Where(row => row.ProjectId == projectId && row.Id == id)
-            .WithVersion().SingleOrDefaultAsync(token), cancellationToken) ?? throw new ApiException(404, "not_found", "Invitation not found.");
-        if (row.Value.Status == "pending" && !await data.SaveAsync(Change.Update(row, row.Value with { Status = "revoked" }), cancellationToken))
+            .WithVersion().SingleOrDefaultAsync(token), cancellationToken);
+        if (row is null)
         {
-            throw new ApiException(409, "conflict", "The invitation changed.");
+            return new NotFound("Invitation not found.", "not_found");
         }
+
+        if (row.Value.Status != "pending")
+        {
+            return new Done();
+        }
+
+        return await data.SaveAsync(Change.Update(row, row.Value with { Status = "revoked" }), cancellationToken)
+            ? new Done()
+            : new Conflict("The invitation changed.", "conflict");
     }
 
     public async Task<ProjectInvitationRecord?> LookupAsync(string projectId, string token, CancellationToken cancellationToken)
@@ -120,26 +149,36 @@ public sealed class ProjectInvitations(AuthData data, ProjectAuthSettings settin
     {
         var rows = await data.ReadAsync((db, token) => db.Waitlist.Where(row => row.ProjectId == projectId && (after == null || row.Id.CompareTo(after) > 0))
             .OrderBy(row => row.Id).Take(limit + 1).ToListAsync(token), cancellationToken);
-        return new([.. rows.Take(limit)], rows.Count > limit ? rows[limit - 1].Id : null);
+        return new([.. rows.Take(limit).Select(row => row)], rows.Count > limit ? rows[limit - 1].Id : null);
     }
 
-    public async Task DecideAsync(string projectId, string id, bool approve, string inviter, string locale, CancellationToken cancellationToken)
+    public async Task<WaitlistDecided> DecideAsync(string projectId, string id, bool approve, string inviter, string locale, CancellationToken cancellationToken)
     {
         var row = await data.ReadAsync((db, token) => db.Waitlist.Where(entry => entry.ProjectId == projectId && entry.Id == id)
-            .WithVersion().SingleOrDefaultAsync(token), cancellationToken) ?? throw new ApiException(404, "not_found", "Waitlist entry not found.");
+            .WithVersion().SingleOrDefaultAsync(token), cancellationToken);
+        if (row is null)
+        {
+            return new NotFound("Waitlist entry not found.", "not_found");
+        }
+
         if (row.Value.Status != "pending")
         {
-            throw new ApiException(409, "conflict", "The waitlist entry was already decided.");
+            return new Conflict("The waitlist entry was already decided.", "conflict");
         }
 
         if (approve)
         {
-            await this.CreateAsync(projectId, row.Value.Email, null, inviter, locale, cancellationToken, row);
+            return await this.CreateAsync(projectId, row.Value.Email, null, inviter, locale, cancellationToken, row) switch
+            {
+                ProjectInvitationBody => new Done(),
+                Validation invalid => invalid,
+                Conflict refused => refused,
+            };
         }
-        else if (!await data.SaveAsync(Change.Update(row, row.Value with { Status = "rejected" }), cancellationToken))
-        {
-            throw new ApiException(409, "conflict", "The waitlist entry changed.");
-        }
+
+        return await data.SaveAsync(Change.Update(row, row.Value with { Status = "rejected" }), cancellationToken)
+            ? new Done()
+            : new Conflict("The waitlist entry changed.", "conflict");
     }
 
     private ProjectInvitationBody Map(ProjectInvitationRecord row) =>

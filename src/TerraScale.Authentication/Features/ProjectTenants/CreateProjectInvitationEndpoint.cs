@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Platform;
 
@@ -17,7 +18,11 @@ public sealed class CreateProjectInvitationEndpoint(TenantDirectory tenants, Pla
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(ProjectTenantJson.Default.CreateProjectInvitationRequest, cancellationToken);
-        var invitation = await invitations.CreateAsync(projectId, request.Email, request.RedirectUrl, caller switch { ProjectCaller.SignedIn(var person) => person.Email, ProjectCaller.SecretKey(var key) => key.Name, _ => throw new UnreachableException() }, AuthEmails.Locale(this.HttpContext.Request), cancellationToken);
-        return Results.Json(invitation, ProjectTenantJson.Default.ProjectInvitationBody, statusCode: 201);
+        return await invitations.CreateAsync(projectId, request.Email, request.RedirectUrl, caller switch { ProjectCaller.SignedIn(var person) => person.Email, ProjectCaller.SecretKey(var key) => key.Name, _ => throw new UnreachableException() }, AuthEmails.Locale(this.HttpContext.Request), cancellationToken) switch
+        {
+            ProjectInvitationBody invitation => Results.Json(invitation, ProjectTenantJson.Default.ProjectInvitationBody, statusCode: 201),
+            Validation error => ErrorResults.ToResult(error),
+            Conflict error => ErrorResults.ToResult(error),
+        };
     }
 }
