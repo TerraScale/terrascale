@@ -12,11 +12,11 @@ internal sealed class StorageRefusals(IMeterFactory meters, ILogger<StorageRefus
     private readonly Counter<long> _answers = meters.Create(Telemetry.MeterName)
         .CreateCounter<long>("terrabase.storage.busy_answers", "{answer}", "Requests answered busy because storage refused them, by answer and refusing source.");
 
-    internal void Answered(string? database, string answer, StorageBusyException busy)
+    internal void Answered(string? database, string answer, string at)
     {
-        _answers.Add(1, new KeyValuePair<string, object?>("answer", answer), new KeyValuePair<string, object?>("at", busy.At));
+        _answers.Add(1, new KeyValuePair<string, object?>("answer", answer), new KeyValuePair<string, object?>("at", at));
         var key = database ?? "";
-        if (_sites.TryGetValue(key, out var site) && site == busy.At)
+        if (_sites.TryGetValue(key, out var site) && site == at)
         {
             return;
         }
@@ -26,7 +26,7 @@ internal sealed class StorageRefusals(IMeterFactory meters, ILogger<StorageRefus
             _sites.Clear();
         }
 
-        _sites[key] = busy.At;
-        logger.ZLogWarning($"Database {database:@Database} answered {answer:@Answer}: storage refused at {busy.At:@At}");
+        _sites[key] = at;
+        logger.ZLogWarning($"Database {database:@Database} answered {answer:@Answer}: storage refused at {at:@At}");
     }
 }

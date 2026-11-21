@@ -1,4 +1,5 @@
 using TerraBase.Engine.Revisions;
+using TerraBase.Errors;
 using TerraBase.Features.Qos;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -24,17 +25,31 @@ internal sealed partial class TursoStorageEngine : IDatabaseRevisions
         }
     }
 
-    public async ValueTask<RevisionPullResult?> PullAsync(TenantContext database, string? clientRevision, IRevisionPullSink sink, CancellationToken cancellationToken)
+    public async ValueTask<RevisionPullOutcome> PullAsync(TenantContext database, string? clientRevision, IRevisionPullSink sink, CancellationToken cancellationToken)
     {
         if (await OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not TursoDatabaseStore store)
         {
-            return null;
+            return new NotFound("the database is not stored on this node");
         }
 
-        Io.Admit();
+        if (!Io.TryAdmit(out var busy))
+        {
+            return new StorageRefused(busy.At);
+        }
+
         try
         {
-            return await Io.WithAdmissionAsync<RevisionPullResult?>(async () => await store.PullRevisionAsync(clientRevision, sink, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
+            return await Io.WithAdmissionAsync<RevisionPullOutcome>(async () =>
+            {
+                try
+                {
+                    return await store.PullRevisionAsync(clientRevision, sink, cancellationToken).ConfigureAwait(false);
+                }
+                catch (StorageBusyException error)
+                {
+                    return new StorageRefused(error.At);
+                }
+            }).ConfigureAwait(false);
         }
         finally
         {
@@ -42,19 +57,33 @@ internal sealed partial class TursoStorageEngine : IDatabaseRevisions
         }
     }
 
-    public async ValueTask<RevisionChecksums?> ChecksumAsync(TenantContext database, DatabaseRevision revision, ChecksumCursor? cursor, CancellationToken cancellationToken)
+    public async ValueTask<RevisionChecksumOutcome> ChecksumAsync(TenantContext database, DatabaseRevision revision, ChecksumCursor? cursor, CancellationToken cancellationToken)
     {
         if (await OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not TursoDatabaseStore store)
         {
-            return null;
+            return new NotFound("the database is not stored on this node");
         }
 
         using var tenant = QosContext.Enter(database);
         using var bulk = StorageWork.Bulk();
-        Io.Admit();
+        if (!Io.TryAdmit(out var busy))
+        {
+            return new StorageRefused(busy.At);
+        }
+
         try
         {
-            return await Io.WithAdmissionAsync<RevisionChecksums?>(async () => await store.ChecksumAsync(revision, cursor, cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
+            return await Io.WithAdmissionAsync<RevisionChecksumOutcome>(async () =>
+            {
+                try
+                {
+                    return await store.ChecksumAsync(revision, cursor, cancellationToken).ConfigureAwait(false);
+                }
+                catch (StorageBusyException error)
+                {
+                    return new StorageRefused(error.At);
+                }
+            }).ConfigureAwait(false);
         }
         finally
         {

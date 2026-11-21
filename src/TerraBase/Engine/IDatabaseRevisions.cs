@@ -1,4 +1,5 @@
 using TerraBase.Engine.Revisions;
+using TerraBase.Errors;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Engine;
@@ -7,9 +8,9 @@ internal interface IDatabaseRevisions
 {
     event Action<TenantContext>? Revised;
 
-    ValueTask<RevisionPullResult?> PullAsync(TenantContext database, string? clientRevision, IRevisionPullSink sink, CancellationToken cancellationToken);
+    ValueTask<RevisionPullOutcome> PullAsync(TenantContext database, string? clientRevision, IRevisionPullSink sink, CancellationToken cancellationToken);
 
-    ValueTask<RevisionChecksums?> ChecksumAsync(TenantContext database, DatabaseRevision revision, ChecksumCursor? cursor, CancellationToken cancellationToken);
+    ValueTask<RevisionChecksumOutcome> ChecksumAsync(TenantContext database, DatabaseRevision revision, ChecksumCursor? cursor, CancellationToken cancellationToken);
 
     ValueTask<IReadOnlyList<ReplicaPullObservation>> ReplicaStatusAsync(TenantContext database, IReadOnlyList<string> regions, CancellationToken cancellationToken);
 
@@ -22,6 +23,12 @@ internal interface IDatabaseRevisions
     ValueTask<bool> DrainWritersAsync(TenantContext database, CancellationToken cancellationToken);
     ValueTask<DatabaseRevision?> CurrentRevisionAsync(TenantContext database, CancellationToken cancellationToken);
 }
+
+internal readonly union RevisionPullOutcome(RevisionPullResult, NotFound, StorageRefused);
+
+internal readonly union RevisionChecksumOutcome(RevisionChecksums, NotFound, StorageRefused);
+
+internal sealed record StorageRefused(string At);
 
 internal interface IRevisionPullSink
 {

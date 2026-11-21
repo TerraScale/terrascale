@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.IO.Pipelines;
 using System.Net;
@@ -15,7 +16,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Sync;
 
 internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRevisions revisions, IReplicaPeers peers,
-    IStorageEngine engine, TerraBaseOptions options, InternalCredential credential, RegionalOwners owners, HomeLeaseGate leaseGate, RegionalHandoff handoff) : EndpointWithoutRequest<IResult>, IRevisionPullSink
+    IStorageEngine engine, TerraBaseOptions options, InternalCredential credential, RegionalOwners owners, HomeLeaseGate leaseGate, RegionalHandoff handoff, StorageRefusals refusals) : EndpointWithoutRequest<IResult>, IRevisionPullSink
 {
     private const string MediaType = PullAnswer.MediaType;
     private const int MaxBodyBytes = 64 * 1024;
@@ -157,10 +158,20 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
             peer = null;
         }
 
-        RevisionPullResult? answer;
+        RevisionPullResult? answer = null;
         try
         {
-            answer = await revisions.PullAsync(database, clientRevision.Length == 0 ? null : clientRevision, this, cancellationToken).ConfigureAwait(false);
+            switch (await revisions.PullAsync(database, clientRevision.Length == 0 ? null : clientRevision, this, cancellationToken).ConfigureAwait(false))
+            {
+                case RevisionPullResult pulled:
+                    answer = pulled;
+                    break;
+                case NotFound error:
+                    return ErrorResponse.From(error);
+                case StorageRefused busy:
+                    refusals.Answered(database.DatabaseId, "storage_busy", busy.At);
+                    return ErrorResponse.From(new Unavailable("storage is busy; retry later", "storage_busy"));
+            }
         }
         catch (Exception error) when (HttpContext.Response.HasStarted)
         {
@@ -175,7 +186,7 @@ internal sealed class PullUpdatesEndpoint(ITenantDirectory tenants, IDatabaseRev
 
         if (answer is null)
         {
-            return ErrorResponse.From(new NotFound("the database is not stored on this node"));
+            throw new UnreachableException();
         }
 
         if (_unreadableFormat is { } format)
