@@ -1,5 +1,6 @@
 using JsonResult = Microsoft.AspNetCore.Http.HttpResults.JsonHttpResult<TerraBase.Features.Sql.SqlErrorBody>;
 using Microsoft.AspNetCore.Authorization;
+using System.Diagnostics;
 using System.Globalization;
 using TerraBase.Configuration;
 using TerraBase.Engine;
@@ -282,25 +283,30 @@ internal sealed class SqlExecuteEndpoint(
                 return null;
             }
 
-            LocalCommit committed;
+            LocalCommitOutcome committedOutcome;
             try
             {
-                committed = await transaction.CommitAsync(homeDurable, cancellationToken);
+                committedOutcome = await transaction.CommitAsync(homeDurable, cancellationToken);
                 SqlRequestTiming.Mark(HttpContext, "ack");
                 foreach (var timing in transaction.Timings)
                 {
                     SqlRequestTiming.Record(HttpContext, timing.Key, timing.Value);
                 }
             }
-            catch (LocalWriteRefusedException refused)
+            catch (OperationCanceledException)
             {
-                return (null, refused.PublishId);
+                throw;
             }
-            catch (LocalOutcomeUnknownException)
+            if (committedOutcome is not LocalCommit committed)
             {
-                return (Error(new SqlBatchFailure(new SqlError(SqlErrors.Unavailable, "the write reached the push stream but its outcome is unknown; read it at the home"), 0)), null);
+                return committedOutcome switch
+                {
+                    LocalWriteRefused refused => (null, refused.PublishId),
+                    LocalOutcomeUnknown => (Error(new SqlBatchFailure(
+                        new SqlError(SqlErrors.Unavailable, "the write reached the push stream but its outcome is unknown; read it at the home"), 0)), null),
+                    LocalCommit => throw new UnreachableException(),
+                };
             }
-
             sql.RecordLocalWrites(database, results.Sum(result => result.RowsAffected));
             HttpContext.Response.Headers.CacheControl = "no-store";
             HttpContext.Response.Headers[RouteHeader] = route.Header;

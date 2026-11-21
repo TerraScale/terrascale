@@ -6,14 +6,12 @@ using TerraBase.Features.Sql;
 
 namespace TerraBase.Features.HomePush;
 
-internal sealed class LocalWriteRefusedException(string message, string? publishId = null) : InvalidOperationException(message)
-{
-    public string? PublishId { get; } = publishId;
-}
-
 internal static class PushChanges
 {
-    public static async ValueTask<List<RegionChange>> FromCapturedAsync(IReplicaWriter writer, IReadOnlyList<CapturedRowChange> captured, CancellationToken cancellationToken)
+    internal sealed record LocalWriteRefusedAtHome;
+
+    internal readonly union CapturedChanges(List<RegionChange>, LocalWriteRefusedAtHome);
+    public static async ValueTask<CapturedChanges> FromCapturedAsync(IReplicaWriter writer, IReadOnlyList<CapturedRowChange> captured, CancellationToken cancellationToken)
     {
         var keys = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
         var changes = new List<RegionChange>(captured.Count);
@@ -21,7 +19,17 @@ internal static class PushChanges
         {
             if (!keys.TryGetValue(change.Table, out var key))
             {
-                keys[change.Table] = key = await KeysAsync(writer, change.Table, cancellationToken).ConfigureAwait(false);
+                if (await KeysAsync(writer, change.Table, cancellationToken).ConfigureAwait(false) is not { } tableKey)
+                {
+                    return new LocalWriteRefusedAtHome();
+                }
+                keys[change.Table] = key = tableKey;
+            }
+
+            if (change.Type is not CapturedRowChange.Insert
+                && change.Columns.Where((column, index) => key.Contains(column, StringComparer.OrdinalIgnoreCase) && !Equals(change.Before![index], change.After![index])).Any())
+            {
+                return new LocalWriteRefusedAtHome();
             }
 
             changes.Add(change.Type switch
@@ -56,11 +64,6 @@ internal static class PushChanges
 
     private static RegionChange Update(CapturedRowChange change, string[] key)
     {
-        if (change.Columns.Where((column, index) => key.Contains(column, StringComparer.OrdinalIgnoreCase) && !Equals(change.Before![index], change.After![index])).Any())
-        {
-            throw new LocalWriteRefusedException("a primary key change commits at the database's home");
-        }
-
         var updated = change.Updated;
         return new RegionChange("update", change.Table,
             Pick(change.Columns, change.After!, column => key.Contains(column, StringComparer.OrdinalIgnoreCase)),
@@ -88,18 +91,18 @@ internal static class PushChanges
         return picked;
     }
 
-    private static async ValueTask<string[]> KeysAsync(IReplicaWriter writer, string table, CancellationToken cancellationToken)
+    private static async ValueTask<string[]?> KeysAsync(IReplicaWriter writer, string table, CancellationToken cancellationToken)
     {
         var info = await writer.ExecuteAsync(ApplySql.Statement($"PRAGMA table_info({ApplySql.Quote(table)})"), cancellationToken).ConfigureAwait(false);
         var keyed = info.Rows.Where(row => row[5] is long position && position > 0).OrderBy(row => (long)row[5]!).ToList();
         if (keyed.Count == 0)
         {
-            throw new LocalWriteRefusedException("a table without a declared primary key commits at the database's home");
+            return null;
         }
 
         if (keyed is [var only] && string.Equals(only[2] as string, "INTEGER", StringComparison.OrdinalIgnoreCase))
         {
-            throw new LocalWriteRefusedException("a table keyed by its rowid commits at the database's home");
+            return null;
         }
 
         return [.. keyed.Select(row => (string)row[1]!)];

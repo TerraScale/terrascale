@@ -31,8 +31,11 @@ internal sealed class TransactionCrypto(DataKeys? keys) : ITransactionCrypto
 
     public async Task<byte[]> SealAsync(TenantContext database, byte[] packed, CancellationToken cancellationToken)
     {
-        var store = keys ?? throw new LocalWriteRefusedException("durable local writes require the database key store");
-        var (id, dataKey) = await store.ForSealingAsync(BackupLayout.KeyScope(database), cancellationToken).ConfigureAwait(false);
+        var store = keys ?? throw new InvalidOperationException("durable local writes require the database key store");
+        if (await store.ForSealingAsync(BackupLayout.KeyScope(database), cancellationToken).ConfigureAwait(false) is not DataKey { Id: var id, Key: var dataKey })
+        {
+            throw new InvalidOperationException("durable local writes require the database key store");
+        }
         return Seal(database, packed, id, dataKey);
     }
 
@@ -70,14 +73,11 @@ internal sealed class TransactionCrypto(DataKeys? keys) : ITransactionCrypto
 
         var store = keys ?? throw new IOException("durable local writes require the database key store");
         byte[] dataKey;
-        try
-        {
-            dataKey = await store.GetAsync(BackupLayout.KeyScope(database), id, cancellationToken).ConfigureAwait(false);
-        }
-        catch (DatabaseShreddedException)
+        if (await store.GetAsync(BackupLayout.KeyScope(database), id, cancellationToken).ConfigureAwait(false) is not KeyBytes { Key: { } read })
         {
             return null;
         }
+        dataKey = read;
 
         var key = Derive(database, dataKey, sealedBody);
         var plain = new byte[sealedBody.Length - Overhead];
