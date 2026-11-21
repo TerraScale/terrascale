@@ -113,6 +113,7 @@ public static class Answers
         RequestTimeout => StatusCodes.Status408RequestTimeout,
         Gone => StatusCodes.Status410Gone,
         OutcomeUnknown => StatusCodes.Status503ServiceUnavailable,
+        Unprocessable => StatusCodes.Status422UnprocessableEntity,
     };
 }
 
