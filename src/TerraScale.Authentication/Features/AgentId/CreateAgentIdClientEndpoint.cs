@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Features.AgentId;
@@ -25,7 +26,13 @@ public sealed class CreateAgentIdClientEndpoint(PlatformAuthentication authentic
         }
 
         var proof = await proofs.PrepareHeaderAsync(owner, this.HttpContext.Request, "create_oauth_client", null, cancellationToken) ?? throw StepUpProofs.Required();
-        var client = await clients.CreateAsync(proof, name, redirects, cancellationToken);
-        return Results.Json(client, AgentIdClientJson.Default.AgentIdClientBody, statusCode: StatusCodes.Status201Created).WithLocation(Root + "/" + client.ClientId);
+        return await clients.CreateAsync(proof, name, redirects, cancellationToken) switch
+        {
+            AgentIdClientBody client => Results.Json(client, AgentIdClientJson.Default.AgentIdClientBody, statusCode: StatusCodes.Status201Created)
+                .WithLocation(Root + "/" + client.ClientId),
+            NotFound notFound => ErrorResults.ToResult(notFound),
+            Conflict conflict => ErrorResults.ToResult(conflict),
+            Forbidden forbidden => ErrorResults.ToResult(forbidden),
+        };
     }
 }

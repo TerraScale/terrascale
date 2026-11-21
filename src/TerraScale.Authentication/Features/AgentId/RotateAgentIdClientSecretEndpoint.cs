@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Http.Features;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Features.AgentId;
@@ -28,6 +29,12 @@ public sealed class RotateAgentIdClientSecretEndpoint(PlatformAuthentication aut
 
         var clientId = this.RouteId("client_id");
         var proof = await proofs.PrepareHeaderAsync(owner, sent, "rotate_oauth_client", null, cancellationToken) ?? throw StepUpProofs.Required();
-        return Results.Json(await clients.RotateAsync(proof, clientId, grace, cancellationToken), AgentIdClientJson.Default.AgentIdClientSecretBody);
+        return await clients.RotateAsync(proof, clientId, grace, cancellationToken) switch
+        {
+            AgentIdClientSecretBody rotated => Results.Json(rotated, AgentIdClientJson.Default.AgentIdClientSecretBody),
+            NotFound notFound => ErrorResults.ToResult(notFound),
+            Conflict conflict => ErrorResults.ToResult(conflict),
+            Forbidden forbidden => ErrorResults.ToResult(forbidden),
+        };
     }
 }
