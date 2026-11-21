@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Storage;
@@ -28,9 +29,16 @@ public sealed class SigningKeyRotation(AuthSchema schema, ClientRegistration cli
         {
             try
             {
-                if (await ring.RotateIfDueAsync(OidcIssuer.InstanceId, stoppingToken).ConfigureAwait(false))
+                switch (await ring.RotateIfDueAsync(OidcIssuer.InstanceId, stoppingToken).ConfigureAwait(false))
                 {
-                    this.Log(target => target.ZLogInformation($"Scheduled rotation added a signing key"));
+                    case Added:
+                        this.Log(target => target.ZLogInformation($"Scheduled rotation added a signing key"));
+                        break;
+                    case Conflict full:
+                        this.Log(target => target.ZLogWarning($"Scheduled signing key rotation failed: {full.Message:@Reason}; retrying at the next interval"));
+                        break;
+                    case Done:
+                        break;
                 }
             }
             // A failure while stopping is not reported: the timer wait below ends the loop. Rethrowing it would fault
