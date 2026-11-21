@@ -3,6 +3,8 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json.Serialization.Metadata;
 
+using TerraScale.DotNet.Errors;
+
 namespace TerraScale.DotNet;
 
 /// <summary>Platform management with user sign-in tokens, receipt-only account status, or service Basic credentials for deletion outbox operations.
@@ -18,7 +20,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
     }
 
     /// <summary>create_organization: POST /v1/terrascale/organizations.</summary>
-    public Task<TerraScaleAuthPlatformOrganization> CreateOrganizationAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformOrganization>> CreateOrganizationAsync(
         string accessToken,
         TerraScaleAuthPlatformCreateOrganization request,
         CancellationToken cancellationToken = default) =>
@@ -28,7 +30,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)201, 16 * 1024, cancellationToken);
 
     /// <summary>list_organizations: GET /v1/terrascale/organizations.</summary>
-    public Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformOrganization>> ListOrganizationsAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformOrganization>>> ListOrganizationsAsync(
         string accessToken,
         int? limit = null,
         string? after = null,
@@ -39,7 +41,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken);
 
     /// <summary>get_organization: GET /v1/terrascale/organizations/{organization}.</summary>
-    public Task<TerraScaleAuthPlatformOrganization> GetOrganizationAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformOrganization>> GetOrganizationAsync(
         string accessToken,
         string organizationId,
         CancellationToken cancellationToken = default) =>
@@ -49,7 +51,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken);
 
     /// <summary>rename_organization: PATCH /v1/terrascale/organizations/{organization}.</summary>
-    public Task<TerraScaleAuthPlatformOrganization> RenameOrganizationAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformOrganization>> RenameOrganizationAsync(
         string accessToken,
         string organizationId,
         TerraScaleAuthPlatformName request,
@@ -62,7 +64,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
     /// <summary>delete_organization: consumes the organization's approved delete_organization/ts-auth proof with POST /v1/terrascale/step-up/consume for this organization,
     /// then sends DELETE /v1/terrascale/organizations/{organization} with the same proof, which ts-auth spends. One call: pass the approved proof unconsumed, never consume it first.
     /// A refused or failed consume sends no DELETE. Neither request is retried; a later attempt needs a new proof.</summary>
-    public async Task DeleteOrganizationAsync(
+    public async Task<AuthOutcome> DeleteOrganizationAsync(
         string accessToken,
         string organizationId,
         string stepUpProof,
@@ -70,14 +72,18 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
     {
         var organization = Id(organizationId);
         var proof = Proof(stepUpProof);
-        await ConsumeStepUpAsync(accessToken, new(proof, "delete_organization", "ts-auth", null, organization), cancellationToken).ConfigureAwait(false);
-        await client.SendAuthenticatedForStatusAsync(HttpMethod.Delete, $"/v1/terrascale/organizations/{organization}",
+        var consumed = await ConsumeStepUpAsync(accessToken, new(proof, "delete_organization", "ts-auth", null, organization), cancellationToken).ConfigureAwait(false);
+        if (consumed is not Done)
+        {
+            return consumed is AuthRefused refused ? refused : new Done();
+        }
+        return await client.SendAuthenticatedForStatusAsync(HttpMethod.Delete, $"/v1/terrascale/organizations/{organization}",
             null, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformName,
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)204, 16 * 1024, cancellationToken, proof).ConfigureAwait(false);
     }
 
     /// <summary>list_members: GET /v1/terrascale/organizations/{organization}/members.</summary>
-    public Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformMember>> ListMembersAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformMember>>> ListMembersAsync(
         string accessToken,
         string organizationId,
         int? limit = null,
@@ -89,7 +95,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken);
 
     /// <summary>change_member_role: PUT /v1/terrascale/organizations/{organization}/members/{user}/role.</summary>
-    public Task<TerraScaleAuthPlatformMember> ChangeMemberRoleAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformMember>> ChangeMemberRoleAsync(
         string accessToken,
         string organizationId,
         string userId,
@@ -101,7 +107,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken);
 
     /// <summary>remove_member: DELETE /v1/terrascale/organizations/{organization}/members/{user}.</summary>
-    public Task RemoveMemberAsync(
+    public Task<AuthOutcome> RemoveMemberAsync(
         string accessToken,
         string organizationId,
         string userId,
@@ -111,7 +117,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)204, 16 * 1024, cancellationToken);
 
     /// <summary>leave_organization: POST /v1/terrascale/organizations/{organization}/leave.</summary>
-    public Task LeaveOrganizationAsync(
+    public Task<AuthOutcome> LeaveOrganizationAsync(
         string accessToken,
         string organizationId,
         CancellationToken cancellationToken = default) =>
@@ -124,7 +130,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
     /// access token of the caller's account on every device, including <paramref name="accessToken"/>; API keys stay valid.
     /// Sent once; repeating it is harmless but needs a new sign-in.
     /// </summary>
-    public Task SignOutEverywhereAsync(
+    public Task<AuthOutcome> SignOutEverywhereAsync(
         string accessToken,
         CancellationToken cancellationToken = default) =>
         client.SendAuthenticatedForStatusAsync(HttpMethod.Post, "/v1/terrascale/account/sign-out",
@@ -142,7 +148,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
     /// anything was removed the account and its organizations stay, though project closures already started finish on
     /// their own; once removals began, the deletion is paused until the cause is resolved.
     /// </summary>
-    public Task<TerraScaleAuthAccountDeletion> DeleteAccountWithProofAsync(
+    public Task<AuthResult<TerraScaleAuthAccountDeletion>> DeleteAccountWithProofAsync(
         string accessToken,
         string stepUpProof,
         string? deletionReceipt = null,
@@ -151,12 +157,12 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
 
     /// <summary>
     /// delete_account: DELETE /v1/terrascale/account with the exact receipt authorized by ConsumeStepUpAsync or DeleteAccountWithProofAsync.
-    /// Returns true only for 204 (completed), false only for 202 (pending). Authentication failures are errors.
+    /// Done only for 204 (completed), InProgress only for 202 (pending); authentication failures are refusals.
     /// Generate the receipt from 32 cryptographically random bytes encoded as 43 unpadded base64url characters;
     /// retain it securely before sending, then use <see cref="AccountDeletionCompletedAsync"/> after sign-in revocation.
     /// Requires both the receipt and operation grant in X-TerraScale-Deletion-Authorization; never replays the original proof. Each call is sent once.
     /// </summary>
-    public Task<bool> DeleteAccountAsync(
+    public Task<AuthCompletion> DeleteAccountAsync(
         string accessToken,
         string deletionReceipt,
         string deletionAuthorization,
@@ -166,12 +172,12 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
 
     /// <summary>
     /// account_deletion_status: GET /v1/terrascale/account/deletion using only X-TerraScale-Deletion-Receipt, without a bearer or API key.
-    /// Returns true only for 204 (completed), false only for 202 (pending). Unknown receipts (404), authentication
-    /// failures (401), and other unexpected responses throw <see cref="TerraScaleAuthException"/>.
+    /// Done only for 204 (completed), InProgress only for 202 (pending). Unknown receipts (404) and authentication
+    /// failures (401) are refusals.
     /// This read neither creates a deletion nor exposes user data. Use an HttpClient without default Authorization.
     /// Each call is sent once.
     /// </summary>
-    public Task<bool> AccountDeletionCompletedAsync(
+    public Task<AuthCompletion> AccountDeletionCompletedAsync(
         string deletionReceipt,
         CancellationToken cancellationToken = default) =>
         client.SendForAccountDeletionAsync(HttpMethod.Get, "/v1/terrascale/account/deletion",
@@ -180,12 +186,12 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
     /// <summary>
     /// account_deletion_status: GET /v1/terrascale/account/deletion?organization={organization} using only the receipt.
     /// Returns true only for 204: the account deletion completed and this candidate organization's atomic deletion fence
-    /// exists. False (202) can mean incomplete deletion or a retained shared organization; it does not promise eventual
-    /// removal. Unknown receipts or noncandidate organizations (404) throw <see cref="TerraScaleAuthException"/>.
+    /// exists. InProgress (202) can mean incomplete deletion or a retained shared organization; it does not promise eventual
+    /// removal. Unknown receipts or noncandidate organizations (404) are refusals.
     /// Remove a local organization only after its explicit true result. No bearer or API key is sent; default
     /// HttpClient Authorization is rejected. Each call is sent once.
     /// </summary>
-    public Task<bool> AccountDeletionOrganizationCompletedAsync(
+    public Task<AuthCompletion> AccountDeletionOrganizationCompletedAsync(
         string deletionReceipt,
         string organizationId,
         CancellationToken cancellationToken = default) =>
@@ -193,7 +199,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             null, deletionReceipt, cancellationToken);
 
     /// <summary>create_project: POST /v1/terrascale/organizations/{organization}/projects.</summary>
-    public Task<TerraScaleAuthPlatformProject> CreateProjectAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformProject>> CreateProjectAsync(
         string accessToken,
         string organizationId,
         TerraScaleAuthPlatformName request,
@@ -204,7 +210,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)201, 16 * 1024, cancellationToken);
 
     /// <summary>list_projects: GET /v1/terrascale/organizations/{organization}/projects.</summary>
-    public Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformProject>> ListProjectsAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformProject>>> ListProjectsAsync(
         string accessToken,
         string organizationId,
         int? limit = null,
@@ -216,7 +222,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken);
 
     /// <summary>get_project: GET /v1/terrascale/organizations/{organization}/projects/{project}.</summary>
-    public Task<TerraScaleAuthPlatformProject> GetProjectAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformProject>> GetProjectAsync(
         string accessToken,
         string organizationId,
         string projectId,
@@ -227,7 +233,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken);
 
     /// <summary>rename_project: PATCH /v1/terrascale/organizations/{organization}/projects/{project}.</summary>
-    public Task<TerraScaleAuthPlatformProject> RenameProjectAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformProject>> RenameProjectAsync(
         string accessToken,
         string organizationId,
         string projectId,
@@ -244,7 +250,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
     /// background, and calling again resumes it). 409 <c>not_empty</c>, <c>closure_conflict</c>, <c>binding_conflict</c> or
     /// <c>platform_project_protected</c> (TerraScale's own projects) changes nothing.
     /// </summary>
-    public Task<bool> DeleteProjectAsync(
+    public Task<AuthCompletion> DeleteProjectAsync(
         string accessToken,
         string organizationId,
         string projectId,
@@ -253,7 +259,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), cancellationToken);
 
     /// <summary>list_project_members: GET /v1/terrascale/organizations/{organization}/projects/{project}/members.</summary>
-    public Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformProjectMember>> ListProjectMembersAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformProjectMember>>> ListProjectMembersAsync(
         string accessToken,
         string organizationId,
         string projectId,
@@ -266,7 +272,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken);
 
     /// <summary>set_project_member_role: PUT /v1/terrascale/organizations/{organization}/projects/{project}/members/{user}.</summary>
-    public Task<TerraScaleAuthPlatformProjectMember> SetProjectMemberRoleAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformProjectMember>> SetProjectMemberRoleAsync(
         string accessToken,
         string organizationId,
         string projectId,
@@ -279,7 +285,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken);
 
     /// <summary>remove_project_member: DELETE /v1/terrascale/organizations/{organization}/projects/{project}/members/{user}.</summary>
-    public Task RemoveProjectMemberAsync(
+    public Task<AuthOutcome> RemoveProjectMemberAsync(
         string accessToken,
         string organizationId,
         string projectId,
@@ -290,7 +296,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)204, 16 * 1024, cancellationToken);
 
     /// <summary>create_organization_api_key: POST /v1/terrascale/organizations/{organization}/api-keys.</summary>
-    public Task<TerraScaleAuthPlatformApiKeySecret> CreateOrganizationApiKeyAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformApiKeySecret>> CreateOrganizationApiKeyAsync(
         string accessToken,
         string organizationId,
         TerraScaleAuthPlatformCreateApiKey request,
@@ -301,7 +307,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)201, 16 * 1024, cancellationToken);
 
     /// <summary>list_organization_api_keys: GET /v1/terrascale/organizations/{organization}/api-keys.</summary>
-    public Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformApiKey>> ListOrganizationApiKeysAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformApiKey>>> ListOrganizationApiKeysAsync(
         string accessToken,
         string organizationId,
         int? limit = null,
@@ -313,7 +319,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken);
 
     /// <summary>get_organization_api_key: GET /v1/terrascale/organizations/{organization}/api-keys/{key}.</summary>
-    public Task<TerraScaleAuthPlatformApiKey> GetOrganizationApiKeyAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformApiKey>> GetOrganizationApiKeyAsync(
         string accessToken,
         string organizationId,
         string keyId,
@@ -324,7 +330,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken);
 
     /// <summary>revoke_organization_api_key: DELETE /v1/terrascale/organizations/{organization}/api-keys/{key}.</summary>
-    public Task RevokeOrganizationApiKeyAsync(
+    public Task<AuthOutcome> RevokeOrganizationApiKeyAsync(
         string accessToken,
         string organizationId,
         string keyId,
@@ -334,7 +340,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)204, 16 * 1024, cancellationToken);
 
     /// <summary>rotate_organization_api_key: POST /v1/terrascale/organizations/{organization}/api-keys/{key}/rotate. Requires a fresh purpose-bound ts-auth proof.</summary>
-    public Task<TerraScaleAuthPlatformApiKeySecret> RotateOrganizationApiKeyAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformApiKeySecret>> RotateOrganizationApiKeyAsync(
         string accessToken,
         string organizationId,
         string keyId,
@@ -347,7 +353,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken, Proof(stepUpProof));
 
     /// <summary>create_project_api_key: POST /v1/terrascale/organizations/{organization}/projects/{project}/api-keys.</summary>
-    public Task<TerraScaleAuthPlatformApiKeySecret> CreateProjectApiKeyAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformApiKeySecret>> CreateProjectApiKeyAsync(
         string accessToken,
         string organizationId,
         string projectId,
@@ -359,7 +365,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)201, 16 * 1024, cancellationToken);
 
     /// <summary>list_project_api_keys: GET /v1/terrascale/organizations/{organization}/projects/{project}/api-keys.</summary>
-    public Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformApiKey>> ListProjectApiKeysAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformApiKey>>> ListProjectApiKeysAsync(
         string accessToken,
         string organizationId,
         string projectId,
@@ -372,7 +378,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken);
 
     /// <summary>get_project_api_key: GET /v1/terrascale/organizations/{organization}/projects/{project}/api-keys/{key}.</summary>
-    public Task<TerraScaleAuthPlatformApiKey> GetProjectApiKeyAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformApiKey>> GetProjectApiKeyAsync(
         string accessToken,
         string organizationId,
         string projectId,
@@ -384,7 +390,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken);
 
     /// <summary>revoke_project_api_key: DELETE /v1/terrascale/organizations/{organization}/projects/{project}/api-keys/{key}.</summary>
-    public Task RevokeProjectApiKeyAsync(
+    public Task<AuthOutcome> RevokeProjectApiKeyAsync(
         string accessToken,
         string organizationId,
         string projectId,
@@ -395,7 +401,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)204, 16 * 1024, cancellationToken);
 
     /// <summary>rotate_project_api_key: POST /v1/terrascale/organizations/{organization}/projects/{project}/api-keys/{key}/rotate. Requires a fresh purpose-bound ts-auth proof.</summary>
-    public Task<TerraScaleAuthPlatformApiKeySecret> RotateProjectApiKeyAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformApiKeySecret>> RotateProjectApiKeyAsync(
         string accessToken,
         string organizationId,
         string projectId,
@@ -409,7 +415,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken, Proof(stepUpProof));
 
     /// <summary>create_invitation: POST /v1/terrascale/organizations/{organization}/invitations.</summary>
-    public Task<TerraScaleAuthPlatformCreatedInvitation> CreateInvitationAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformCreatedInvitation>> CreateInvitationAsync(
         string accessToken,
         string organizationId,
         TerraScaleAuthPlatformCreateInvitation request,
@@ -420,7 +426,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)201, 16 * 1024, cancellationToken);
 
     /// <summary>list_invitations: GET /v1/terrascale/organizations/{organization}/invitations.</summary>
-    public Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformInvitation>> ListInvitationsAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformInvitation>>> ListInvitationsAsync(
         string accessToken,
         string organizationId,
         int? limit = null,
@@ -433,7 +439,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken);
 
     /// <summary>revoke_invitation: DELETE /v1/terrascale/organizations/{organization}/invitations/{invitation}.</summary>
-    public Task RevokeInvitationAsync(
+    public Task<AuthOutcome> RevokeInvitationAsync(
         string accessToken,
         string organizationId,
         string invitationId,
@@ -443,7 +449,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)204, 16 * 1024, cancellationToken);
 
     /// <summary>lookup_invitation: POST /v1/terrascale/invitations/lookup.</summary>
-    public Task<TerraScaleAuthPlatformInvitationLookup> LookupInvitationAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformInvitationLookup>> LookupInvitationAsync(
         string accessToken,
         TerraScaleAuthPlatformInvitationToken request,
         CancellationToken cancellationToken = default) =>
@@ -453,7 +459,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken);
 
     /// <summary>accept_invitation: POST /v1/terrascale/invitations/accept.</summary>
-    public Task<TerraScaleAuthPlatformAcceptedInvitation> AcceptInvitationAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformAcceptedInvitation>> AcceptInvitationAsync(
         string accessToken,
         TerraScaleAuthPlatformInvitationToken request,
         CancellationToken cancellationToken = default) =>
@@ -463,7 +469,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken);
 
     /// <summary>decline_invitation: POST /v1/terrascale/invitations/decline.</summary>
-    public Task DeclineInvitationAsync(
+    public Task<AuthOutcome> DeclineInvitationAsync(
         string accessToken,
         TerraScaleAuthPlatformInvitationToken request,
         CancellationToken cancellationToken = default) =>
@@ -472,7 +478,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)204, 16 * 1024, cancellationToken);
 
     /// <summary>start_ownership_transfer: POST /v1/terrascale/organizations/{organization}/ownership-transfer. Requires a fresh purpose-bound ts-auth proof.</summary>
-    public Task<TerraScaleAuthPlatformOwnershipTransfer> StartOwnershipTransferAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformOwnershipTransfer>> StartOwnershipTransferAsync(
         string accessToken,
         string organizationId,
         TerraScaleAuthPlatformStartOwnershipTransfer request,
@@ -484,7 +490,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)201, 16 * 1024, cancellationToken, Proof(stepUpProof));
 
     /// <summary>get_ownership_transfer: GET /v1/terrascale/organizations/{organization}/ownership-transfer.</summary>
-    public Task<TerraScaleAuthPlatformOwnershipTransfer> GetOwnershipTransferAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformOwnershipTransfer>> GetOwnershipTransferAsync(
         string accessToken,
         string organizationId,
         CancellationToken cancellationToken = default) =>
@@ -494,7 +500,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken);
 
     /// <summary>cancel_ownership_transfer: DELETE /v1/terrascale/organizations/{organization}/ownership-transfer.</summary>
-    public Task CancelOwnershipTransferAsync(
+    public Task<AuthOutcome> CancelOwnershipTransferAsync(
         string accessToken,
         string organizationId,
         CancellationToken cancellationToken = default) =>
@@ -503,7 +509,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)204, 16 * 1024, cancellationToken);
 
     /// <summary>confirm_ownership_transfer: POST /v1/terrascale/organizations/{organization}/ownership-transfer/confirm.</summary>
-    public Task<TerraScaleAuthPlatformMember> ConfirmOwnershipTransferAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformMember>> ConfirmOwnershipTransferAsync(
         string accessToken,
         string organizationId,
         CancellationToken cancellationToken = default) =>
@@ -513,7 +519,7 @@ public sealed partial class TerraScaleAuthPlatformClient(TerraScaleAuthClient cl
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken);
 
     /// <summary>list_audit_events: GET /v1/terrascale/organizations/{organization}/audit-events.</summary>
-    public Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformAuditEvent>> ListAuditEventsAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformAuditEvent>>> ListAuditEventsAsync(
         string accessToken,
         string organizationId,
         int? limit = null,

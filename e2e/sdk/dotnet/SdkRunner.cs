@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraScale.DotNet;
+using TerraScale.DotNet.Errors;
 using TerraScale.DotNet.TerraBase;
 
 [assembly: SupportedOSPlatform("linux")]
@@ -115,21 +116,25 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
         var read = Required("E2E_AUTH_READ_KEY");
         var write = Required("E2E_AUTH_WRITE_KEY");
         var user = Required("E2E_AUTH_USER");
-        var listed = await auth.Projects.ListUsersAsync(read, project, cancellationToken: cancellationToken);
+        var listed = Ok(await auth.Projects.ListUsersAsync(read, project, cancellationToken: cancellationToken));
         Same(listed.Items.Any(item => item.Id == user) ? "found" : "missing", "found", "read key lists user");
-        var refusal = await RefusedAsync<TerraScaleAuthException>(() => auth.Projects.DisableUserAsync(read, project, user, cancellationToken));
-        Same(((int?)refusal.StatusCode)?.ToString(CultureInfo.InvariantCulture) ?? "missing", "403", "read key cannot disable");
-        Same((await auth.Projects.DisableUserAsync(write, project, user, cancellationToken)).Disabled ? "disabled" : "enabled", "disabled", "write key disables");
-        Same((await auth.Projects.EnableUserAsync(write, project, user, cancellationToken)).Disabled ? "disabled" : "enabled", "enabled", "write key enables");
-        var key = await auth.Projects.CreateUserApiKeyAsync(write, project, user, new("journey", ["invoices:read"]), cancellationToken);
-        var secret = key.Key ?? throw new InvalidOperationException("The key secret is missing.");
+        var refusal = await auth.Projects.DisableUserAsync(read, project, user, cancellationToken) switch
+        {
+            AuthRefused refused => refused,
+            _ => null,
+        };
+        Same(refusal is not null && (int?)refusal.Status is 403 ? "403" : "missing", "403", "read key cannot disable");
+        Same(Ok(await auth.Projects.DisableUserAsync(write, project, user, cancellationToken)).Disabled ? "disabled" : "enabled", "disabled", "write key disables");
+        Same(Ok(await auth.Projects.EnableUserAsync(write, project, user, cancellationToken)).Disabled ? "disabled" : "enabled", "enabled", "write key enables");
+        var keyRecord = Ok(await auth.Projects.CreateUserApiKeyAsync(write, project, user, new("journey", ["invoices:read"]), cancellationToken));
+        var secret = keyRecord.Key ?? throw new InvalidOperationException("The key secret is missing.");
         RegisterSecret("user-api-key-dotnet", secret);
-        var keys = await auth.Projects.ListUserApiKeysAsync(read, project, user, cancellationToken);
-        Same(keys.Items.Any(item => item.Id == key.Id) ? "found" : "missing", "found", "list user key");
-        var verified = await auth.Projects.VerifyUserApiKeyAsync(read, project, new(secret), cancellationToken);
+        var keys = Ok(await auth.Projects.ListUserApiKeysAsync(read, project, user, cancellationToken));
+        Same(keys.Items.Any(item => item.Id == keyRecord.Id) ? "found" : "missing", "found", "list user key");
+        var verified = Ok(await auth.Projects.VerifyUserApiKeyAsync(read, project, new(secret), cancellationToken));
         Same(verified.Valid && verified.UserId == user && verified.Scopes is ["invoices:read"] ? "valid" : "invalid", "valid", "verify user key");
-        await auth.Projects.RevokeUserApiKeyAsync(write, project, user, key.Id, cancellationToken);
-        Same((await auth.Projects.VerifyUserApiKeyAsync(read, project, new(secret), cancellationToken)).Valid ? "valid" : "invalid", "invalid", "revoked user key");
+        await auth.Projects.RevokeUserApiKeyAsync(write, project, user, keyRecord.Id, cancellationToken);
+        Same(Ok(await auth.Projects.VerifyUserApiKeyAsync(read, project, new(secret), cancellationToken)).Valid ? "valid" : "invalid", "invalid", "revoked user key");
 
     }
 
@@ -138,18 +143,18 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
         using var http = new HttpClient();
         var auth = new TerraScaleAuthClient(http, new TerraScaleAuthClientOptions { BaseAddress = new Uri("https://auth.terrascale.tech"), InstanceSlug = "terrascale" }).Projects;
         var write = Required("E2E_AUTH_WRITE_KEY");
-        var created = await auth.CreateUserAsync(write, project, new($"profile-dotnet-{run}@example.com", FirstName: "SDK",
-            PublicMetadata: JsonElement.Parse("""{"keep":1,"remove":true}""")), cancellationToken);
+        var created = Ok(await auth.CreateUserAsync(write, project, new($"profile-dotnet-{run}@example.com", FirstName: "SDK",
+            PublicMetadata: JsonElement.Parse("""{"keep":1,"remove":true}""")), cancellationToken));
         Same(created.FirstName ?? throw new InvalidOperationException("Missing first name"), "SDK", "created profile");
-        var changed = await auth.UpdateUserAsync(write, project, created.Id, new(PublicMetadata: JsonElement.Parse("""{"remove":null,"added":"yes"}"""),
-            PrivateMetadata: JsonElement.Parse("""{"backend":true}""")), cancellationToken);
+        var changed = Ok(await auth.UpdateUserAsync(write, project, created.Id, new(PublicMetadata: JsonElement.Parse("""{"remove":null,"added":"yes"}"""),
+            PrivateMetadata: JsonElement.Parse("""{"backend":true}""")), cancellationToken));
         Same(changed.PublicMetadata.GetProperty("keep").GetRawText(), "1", "metadata preserved");
         Same(changed.PublicMetadata.TryGetProperty("remove", out _) ? "present" : "absent", "absent", "metadata removed");
         Same(changed.PublicMetadata.GetProperty("added").GetString() ?? throw new InvalidOperationException("Missing metadata"), "yes", "metadata added");
-        var imported = await auth.ImportUsersAsync(write, project, new([
+        var imported = Ok(await auth.ImportUsersAsync(write, project, new([
             new($"import-dotnet-{run}@example.com", true, Text(op, "password_hash")),
             new($"invalid-dotnet-{run}@example.com", false, "malformed")
-        ]), cancellationToken);
+        ]), cancellationToken));
         Same(imported.Items.Count.ToString(CultureInfo.InvariantCulture), "1", "import valid row");
         Same(imported.Errors.Single().Index.ToString(CultureInfo.InvariantCulture), "1", "refuse malformed row");
         await auth.DeleteUserAsync(write, project, imported.Items[0].User.Id, cancellationToken);
@@ -163,14 +168,14 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
         var read = Required("E2E_AUTH_READ_KEY");
         var write = Required("E2E_AUTH_WRITE_KEY");
         var user = Required("E2E_AUTH_USER");
-        var created = await auth.CreateOrganizationAsync(write, project, new("SDK organization", table.Replace('_', '-'), user, null, null, null, null, "off"), cancellationToken);
+        var created = Ok(await auth.CreateOrganizationAsync(write, project, new("SDK organization", table.Replace('_', '-'), user, null, null, null, null, "off"), cancellationToken));
         try
         {
-            Same((await auth.GetOrganizationAsync(read, project, created.Id, cancellationToken)).Id, created.Id, "organization read");
-            Same((await auth.ListOrganizationsAsync(read, project, cancellationToken: cancellationToken)).Items.Any(item => item.Id == created.Id) ? "true" : "false", "true", "organization listed");
-            Same((await auth.ListOrganizationMembersAsync(read, project, created.Id, cancellationToken: cancellationToken)).Items.Any(item => item.UserId == user && item.Role == "admin") ? "true" : "false", "true", "initial admin");
+            Same(Ok(await auth.GetOrganizationAsync(read, project, created.Id, cancellationToken)).Id, created.Id, "organization read");
+            Same(Ok(await auth.ListOrganizationsAsync(read, project, cancellationToken: cancellationToken)).Items.Any(item => item.Id == created.Id) ? "true" : "false", "true", "organization listed");
+            Same(Ok(await auth.ListOrganizationMembersAsync(read, project, created.Id, cancellationToken: cancellationToken)).Items.Any(item => item.UserId == user && item.Role == "admin") ? "true" : "false", "true", "initial admin");
             await auth.CreateOrganizationInvitationAsync(write, project, created.Id, new("org-" + run + "@example.com", "member"), cancellationToken);
-            Same((await auth.ListOrganizationInvitationsAsync(read, project, created.Id, cancellationToken: cancellationToken)).Items.Any(item => item.Status == "pending") ? "true" : "false", "true", "invitation listed");
+            Same(Ok(await auth.ListOrganizationInvitationsAsync(read, project, created.Id, cancellationToken: cancellationToken)).Items.Any(item => item.Status == "pending") ? "true" : "false", "true", "invitation listed");
         }
         finally
         {
@@ -360,7 +365,7 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
         using var http = new HttpClient(TerraBaseHttp.CreateHandler());
         var auth = new TerraScaleAuthClient(http, new TerraScaleAuthClientOptions { BaseAddress = new Uri("https://auth.terrascale.tech"), InstanceSlug = "terrascale" });
         var keyId = apiKey.StartsWith("sk_", StringComparison.Ordinal) ? apiKey[3..29] : apiKey[..26];
-        var token = await auth.Oidc.RequestClientCredentialsTokenAsync(keyId, apiKey, project: project, cancellationToken: cancellationToken);
+        var token = Ok(await auth.Oidc.RequestClientCredentialsTokenAsync(keyId, apiKey, project: project, cancellationToken: cancellationToken));
         RegisterSecret("rules-token-dotnet", token.AccessToken);
         var db = new TerraBaseDatabaseClient(http, new TerraBaseDatabaseClientOptions { AccessTokenProvider = _ => ValueTask.FromResult(token.AccessToken) })
             .Database(project, Required("TERRASCALE_DATABASE_NAME"));
@@ -372,8 +377,8 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
         var got = await db.GetRulesAsync(cancellationToken);
         if (got.Version != deployed.Version || got.Tables[table].Read != "row.id = auth.uid AND auth.claims.plan = 'pro'") throw new InvalidOperationException("Rules read differs.");
         var user = Required("E2E_AUTH_USER");
-        var custom = await auth.Projects.MintCustomTokenAsync(Required("E2E_AUTH_MINT_KEY"), project, user,
-            Required("E2E_DATABASE_ID"), new Dictionary<string, JsonElement> { ["plan"] = JsonElement.Parse("\"pro\"") }, cancellationToken);
+        var custom = Ok(await auth.Projects.MintCustomTokenAsync(Required("E2E_AUTH_MINT_KEY"), project, user,
+            Required("E2E_DATABASE_ID"), new Dictionary<string, JsonElement> { ["plan"] = JsonElement.Parse("\"pro\"") }, cancellationToken));
         RegisterSecret("custom-token-dotnet", custom.AccessToken);
         if (custom.TokenType != "Bearer" || custom.ExpiresIn != 300) throw new InvalidOperationException("Custom token lifetime differs.");
         await Db.ExecuteAsync($"INSERT INTO {table}(rowid,id,label) VALUES (700002,'other','hidden')", cancellationToken: cancellationToken);
@@ -436,7 +441,7 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
         using var http = new HttpClient(TerraBaseHttp.CreateHandler());
         var auth = new TerraScaleAuthClient(http, new TerraScaleAuthClientOptions { BaseAddress = new Uri("https://auth.terrascale.tech"), InstanceSlug = "terrascale" });
         var keyId = apiKey.StartsWith("sk_", StringComparison.Ordinal) ? apiKey[3..29] : apiKey[..26];
-        var token = await auth.Oidc.RequestClientCredentialsTokenAsync(keyId, apiKey, project: project, cancellationToken: cancellationToken);
+        var token = Ok(await auth.Oidc.RequestClientCredentialsTokenAsync(keyId, apiKey, project: project, cancellationToken: cancellationToken));
         RegisterSecret("function-token-dotnet", token.AccessToken);
         var functions = new TerraBaseDatabaseClient(http, new TerraBaseDatabaseClientOptions { AccessTokenProvider = _ => ValueTask.FromResult(token.AccessToken) })
             .Database(project, Required("TERRASCALE_DATABASE_NAME"));
@@ -699,6 +704,13 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
 
         return Encoding.UTF8.GetString(buffer.WrittenSpan);
     }
+
+    private static T Ok<T>(AuthResult<T> result) => result switch
+    {
+        T value => value,
+        AuthRefused refused => throw new InvalidOperationException($"ts-auth refused: {(int?)refused.Status} {refused.ErrorCode}"),
+        null => throw new InvalidOperationException("ts-auth returned no result."),
+    };
 
     private static void Same(string actual, string expected, string what)
     {

@@ -1,46 +1,54 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json.Serialization.Metadata;
+using TerraScale.DotNet.Errors;
 
 namespace TerraScale.DotNet;
 
 public sealed partial class TerraScaleAuthClient
 {
 
-    internal Task<T> GetMetadataAsync<T>(string route, JsonTypeInfo<T> responseType, CancellationToken caller) =>
+    internal Task<AuthResult<T>> GetMetadataAsync<T>(string route, JsonTypeInfo<T> responseType, CancellationToken caller) =>
         WithDeadlineAsync(token => GetMetadataCoreAsync(route, responseType, token), caller);
 
-    internal Task<T> SendOAuthFormAsync<T>(string route, IReadOnlyList<KeyValuePair<string, string>> values,
+    internal Task<AuthResult<T>> SendOAuthFormAsync<T>(string route, IReadOnlyList<KeyValuePair<string, string>> values,
         AuthenticationHeaderValue? authorization, JsonTypeInfo<T> responseType, CancellationToken caller) =>
         WithDeadlineAsync(token => SendOAuthFormCoreAsync(route, values, authorization, responseType, token), caller);
 
-    internal Task SendOAuthFormForSuccessAsync(string route, IReadOnlyList<KeyValuePair<string, string>> values,
+    internal Task<AuthOutcome> SendOAuthFormForSuccessAsync(string route, IReadOnlyList<KeyValuePair<string, string>> values,
         AuthenticationHeaderValue? authorization, CancellationToken caller) =>
         WithDeadlineAsync(token => SendOAuthFormForSuccessCoreAsync(route, values, authorization, token), caller);
 
-    internal Task<T> GetWithBearerAsync<T>(string route, string accessToken, JsonTypeInfo<T> responseType, CancellationToken caller) =>
+    internal Task<AuthResult<T>> GetWithBearerAsync<T>(string route, string accessToken, JsonTypeInfo<T> responseType, CancellationToken caller) =>
         WithDeadlineAsync(token => GetWithBearerCoreAsync(route, accessToken, responseType, token), caller);
 
-    internal Task<TResponse> SendAuthenticatedJsonAsync<TRequest, TResponse>(HttpMethod method, string route, TRequest? body,
+    internal Task<AuthResult<TResponse>> SendAuthenticatedJsonAsync<TRequest, TResponse>(HttpMethod method, string route, TRequest? body,
         JsonTypeInfo<TRequest> requestType, JsonTypeInfo<TResponse> responseType, AuthenticationHeaderValue authorization,
         HttpStatusCode expectedStatus, int maxRequestBytes, CancellationToken caller, string? stepUpProof = null) where TRequest : class =>
         WithDeadlineAsync(token => SendAuthenticatedJsonCoreAsync(method, route, body, requestType, responseType, authorization, expectedStatus, maxRequestBytes, token, stepUpProof), caller);
 
-    internal Task SendAuthenticatedForStatusAsync<TRequest>(HttpMethod method, string route, TRequest? body,
+    internal Task<AuthOutcome> SendAuthenticatedForStatusAsync<TRequest>(HttpMethod method, string route, TRequest? body,
         JsonTypeInfo<TRequest> requestType, AuthenticationHeaderValue authorization, HttpStatusCode expectedStatus,
         int maxRequestBytes, CancellationToken caller, string? stepUpProof = null) where TRequest : class =>
         WithDeadlineAsync(token => SendAuthenticatedForStatusCoreAsync(method, route, body, requestType, authorization, expectedStatus, maxRequestBytes, token, stepUpProof), caller);
 
-    internal Task<bool> SendAuthenticatedForDeletionAsync(string route, AuthenticationHeaderValue authorization, CancellationToken caller) =>
+    internal Task<AuthCompletion> SendAuthenticatedForDeletionAsync(string route, AuthenticationHeaderValue authorization, CancellationToken caller) =>
         WithDeadlineAsync(token => SendAuthenticatedForDeletionCoreAsync(route, authorization, token), caller);
 
-    internal Task<bool> SendForAccountDeletionAsync(HttpMethod method, string route, AuthenticationHeaderValue? authorization, string receipt, CancellationToken caller, string? deletionAuthorization = null) =>
+    internal Task<AuthCompletion> SendForAccountDeletionAsync(HttpMethod method, string route, AuthenticationHeaderValue? authorization, string receipt, CancellationToken caller, string? deletionAuthorization = null) =>
         WithDeadlineAsync(token => SendForAccountDeletionCoreAsync(method, route, authorization, receipt, token, deletionAuthorization), caller);
 
+    internal Task<AuthResult<TerraScaleAuthAccountDeletion>> SendAccountDeletionWithProofAsync(AuthenticationHeaderValue authorization,
+        string stepUpProof, string? deletionReceipt, CancellationToken caller) =>
+        WithDeadlineAsync(token => SendAccountDeletionWithProofCoreAsync(authorization, stepUpProof, deletionReceipt, token), caller);
 
 
-    private static Task WithDeadlineAsync(Func<CancellationToken, Task> operation, CancellationToken caller) =>
-        WithDeadlineAsync(async token => { await operation(token).ConfigureAwait(false); return true; }, caller);
+
+    private static Task<AuthOutcome> WithDeadlineAsync(Func<CancellationToken, Task<AuthOutcome>> operation, CancellationToken caller) =>
+        WithDeadlineAsync<AuthOutcome>(async token => { await operation(token).ConfigureAwait(false); return new Done(); }, caller);
+
+    private static Task<AuthCompletion> WithDeadlineAsync(Func<CancellationToken, Task<AuthCompletion>> operation, CancellationToken caller) =>
+        WithDeadlineAsync<AuthCompletion>(async token => await operation(token).ConfigureAwait(false), caller);
 
     private static async Task<T> WithDeadlineAsync<T>(Func<CancellationToken, Task<T>> operation, CancellationToken caller)
     {

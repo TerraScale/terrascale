@@ -4,6 +4,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraScale.DotNet;
+using TerraScale.DotNet.Errors;
 using TerraScale.DotNet.TerraBase;
 
 if (args.Length != 5)
@@ -16,9 +17,19 @@ const string CliClient = "00000000000000000000000007";
 var (tokenFile, organization, project, database, region) = (args[0], args[1], args[2], args[3], args[4]);
 using var http = new HttpClient(TerraBaseHttp.CreateHandler());
 var auth = new TerraScaleAuthClient(http, new TerraScaleAuthClientOptions { BaseAddress = new Uri("https://auth.terrascale.tech"), InstanceSlug = "terrascale" });
-var signIn = await auth.Oidc.RefreshTokenAsync(CliClient, File.ReadAllText(tokenFile).Trim());
+var signIn = await auth.Oidc.RefreshTokenAsync(CliClient, File.ReadAllText(tokenFile).Trim()) switch
+{
+    TerraScaleAuthTokenResponse answered => answered,
+    AuthRefused refreshRefused => throw new InvalidOperationException($"ts-auth refused the refresh: {(int?)refreshRefused.Status} {refreshRefused.ErrorCode}"),
+    null => throw new InvalidOperationException("ts-auth returned no token."),
+};
 File.WriteAllText(tokenFile, signIn.RefreshToken ?? throw new InvalidOperationException("ts-auth returned no refresh token."));
-var projectToken = await auth.Oidc.ExchangePublicClientTokenAsync(CliClient, signIn.AccessToken, organization, project);
+var projectToken = await auth.Oidc.ExchangePublicClientTokenAsync(CliClient, signIn.AccessToken, organization, project) switch
+{
+    TerraScaleAuthTokenResponse answered => answered,
+    AuthRefused exchangeRefused => throw new InvalidOperationException($"ts-auth refused the exchange: {(int?)exchangeRefused.Status} {exchangeRefused.ErrorCode}"),
+    null => throw new InvalidOperationException("ts-auth returned no token."),
+};
 
 var sql = new TerraBaseSqlClient(http, new TerraBaseSqlClientOptions { Region = region, AccessTokenProvider = _ => ValueTask.FromResult(projectToken.AccessToken) });
 var db = sql.Database(project, database);

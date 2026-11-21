@@ -31,7 +31,7 @@ of URLs, logs, browser storage, and client-visible responses. The dashboard keep
 its receipt server-side. Status exposes no user data and performs no deletion.
 
 The account methods return `true` only for 204 and `false` only for 202. A 404 means the
-receipt is unknown and throws `TerraScaleAuthException`; a 401 also throws.
+receipt is unknown and a 401 are refused as an `AuthRefused` result.
 Neither response proves completion. Other unexpected successes also throw.
 Calls are cancellation-aware, bounded by the SDK request deadline, and sent once;
 the caller controls subsequent polling. Paid cancellation behavior is unchanged.

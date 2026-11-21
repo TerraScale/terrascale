@@ -22,7 +22,7 @@ It sends one `POST /v1/{slug}/deletions/{proof.Id}/acknowledge`, with JSON
 `{scope,subjectId,organizationId}` (including null for account, never `id`).
 Only 204 succeeds. The producer compares the exact proof atomically and handles
 matching repeat acknowledgements idempotently; the SDK never retries a request.
-A 401 or 404 throws `TerraScaleAuthException` and does not prove acknowledgement.
+A 401 or 404 is refused as an `AuthRefused` result and does not prove acknowledgement.
 
 These operations require authorized service client credentials. They use neither
 user bearers, deletion receipts nor the configured management API key. Keep client

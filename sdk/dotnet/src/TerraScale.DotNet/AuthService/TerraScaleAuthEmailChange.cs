@@ -1,6 +1,8 @@
 using System.Net;
 using System.Text.Json.Serialization;
 
+using TerraScale.DotNet.Errors;
+
 namespace TerraScale.DotNet;
 
 /// <summary>The new sign-in address to verify.</summary>
@@ -25,7 +27,7 @@ public sealed partial class TerraScaleAuthPlatformClient
     /// any pending change. Throws email_taken, step_up_required, invalid_request or rate_limited on refusal.
     /// Keep the proof server-side; never automatically retry an uncertain response.
     /// </summary>
-    public Task<TerraScaleAuthEmailChange> RequestEmailChangeAsync(string accessToken,
+    public Task<AuthResult<TerraScaleAuthEmailChange>> RequestEmailChangeAsync(string accessToken,
         TerraScaleAuthEmailChangeRequest request, string stepUpProof, CancellationToken cancellationToken = default) =>
         client.SendAuthenticatedJsonAsync(HttpMethod.Post, "/v1/terrascale/account/email-change",
             request ?? throw new ArgumentNullException(nameof(request)), TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthEmailChangeRequest,
@@ -37,7 +39,7 @@ public sealed partial class TerraScaleAuthPlatformClient
     /// session and sign-in token, including accessToken: discard local sessions and sign in with the new address.
     /// Expired, canceled, replaced or invalid codes fail with email_change_denied; conflicts fail with email_taken.
     /// </summary>
-    public Task ConfirmEmailChangeAsync(string accessToken, TerraScaleAuthEmailChangeConfirmation request,
+    public Task<AuthOutcome> ConfirmEmailChangeAsync(string accessToken, TerraScaleAuthEmailChangeConfirmation request,
         CancellationToken cancellationToken = default) =>
         client.SendAuthenticatedForStatusAsync(HttpMethod.Post, "/v1/terrascale/account/email-change/confirm",
             request ?? throw new ArgumentNullException(nameof(request)), TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthEmailChangeConfirmation,

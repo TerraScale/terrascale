@@ -1,13 +1,15 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
+using TerraScale.DotNet.Errors;
+
 namespace TerraScale.DotNet;
 
 public sealed partial class TerraScaleAuthOidcClient
 {
     /// <summary>Starts the shipped public CLI device flow. Open the returned verification URI and approve explicitly.
     /// No sign-in, approval, polling or email request runs in the background.</summary>
-    public Task<TerraScaleAuthDeviceAuthorization> StartDeviceAuthorizationAsync(
+    public Task<AuthResult<TerraScaleAuthDeviceAuthorization>> StartDeviceAuthorizationAsync(
         string clientId, string? scope = null, CancellationToken cancellationToken = default)
     {
         var form = PublicForm(clientId);
@@ -18,7 +20,7 @@ public sealed partial class TerraScaleAuthOidcClient
 
     /// <summary>Redeems one device code after approval. Sends once; authorization_pending and slow_down remain typed
     /// OAuth failures. Respect the original ExpiresIn and Interval; this call never starts a new authorization.</summary>
-    public Task<TerraScaleAuthTokenResponse> ExchangeDeviceCodeAsync(
+    public Task<AuthResult<TerraScaleAuthTokenResponse>> ExchangeDeviceCodeAsync(
         string clientId, string deviceCode, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(deviceCode);
@@ -31,7 +33,7 @@ public sealed partial class TerraScaleAuthOidcClient
 
     /// <summary>Redeems a public application's authorization code using its original registered redirect URI and PKCE
     /// verifier. The CLI has no code grant or callback; use its device flow instead. Sends once without a secret.</summary>
-    public Task<TerraScaleAuthTokenResponse> ExchangePublicAuthorizationCodeAsync(
+    public Task<AuthResult<TerraScaleAuthTokenResponse>> ExchangePublicAuthorizationCodeAsync(
         string clientId, string code, string redirectUri, string codeVerifier, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(code);
@@ -48,7 +50,7 @@ public sealed partial class TerraScaleAuthOidcClient
 
     /// <summary>Rotates a public client's refresh token without a client secret. Persist the returned token atomically;
     /// never replay the old token after success or an uncertain outcome. No automatic renewal or retry occurs.</summary>
-    public Task<TerraScaleAuthTokenResponse> RefreshTokenAsync(
+    public Task<AuthResult<TerraScaleAuthTokenResponse>> RefreshTokenAsync(
         string clientId, string refreshToken, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(refreshToken);
@@ -61,7 +63,7 @@ public sealed partial class TerraScaleAuthOidcClient
 
     /// <summary>Revokes a public client's token/sign-in without a client secret. Unknown tokens also succeed.
     /// Existing resource tokens remain usable until their own expiry.</summary>
-    public Task RevokeTokenAsync(string clientId, string token, CancellationToken cancellationToken = default)
+    public Task<AuthOutcome> RevokeTokenAsync(string clientId, string token, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(token);
         var form = PublicForm(clientId);
@@ -71,7 +73,7 @@ public sealed partial class TerraScaleAuthOidcClient
 
     /// <summary>Exchanges this public client's sign-in token for its user's current organization/project authority.
     /// Scope is space-delimited; null requests allowed scopes. Database restriction is unsupported by this grant.</summary>
-    public Task<TerraScaleAuthTokenResponse> ExchangePublicClientTokenAsync(
+    public Task<AuthResult<TerraScaleAuthTokenResponse>> ExchangePublicClientTokenAsync(
         string clientId, string subjectToken, string organizationId, string? projectId = null,
         string? scope = null, CancellationToken cancellationToken = default)
     {

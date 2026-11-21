@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+using TerraScale.DotNet.Errors;
 
 namespace TerraScale.DotNet;
 
@@ -9,7 +10,9 @@ namespace TerraScale.DotNet;
 /// Entry point for ts-auth management API and OIDC operations against one
 /// ts-auth instance. Built over a caller-owned <see cref="HttpClient"/>; the
 /// underlying handler must disable automatic redirects. Every operation is sent
-/// once; ts-auth operations have no automatic retry or mutation replay.
+/// once; ts-auth operations have no automatic retry or mutation replay. Expected
+/// failures return <see cref="AuthRefused"/>; guards throw <see cref="ArgumentException"/>,
+/// cancellation propagates and a missed deadline throws <see cref="TimeoutException"/>.
 /// </summary>
 public sealed partial class TerraScaleAuthClient
 {
@@ -72,7 +75,7 @@ public sealed partial class TerraScaleAuthClient
 
 
     /// <summary>One unauthenticated GET for OIDC metadata.</summary>
-    private async Task<TResponse> GetMetadataCoreAsync<TResponse>(
+    private async Task<AuthResult<TResponse>> GetMetadataCoreAsync<TResponse>(
         string requestUri,
         JsonTypeInfo<TResponse> responseTypeInfo,
         CancellationToken cancellationToken)
@@ -88,7 +91,7 @@ public sealed partial class TerraScaleAuthClient
 
     /// <summary>One OAuth token form POST with client
     /// authentication and the flat RFC 6749 error shape.</summary>
-    private async Task<TResponse> SendOAuthFormCoreAsync<TResponse>(
+    private async Task<AuthResult<TResponse>> SendOAuthFormCoreAsync<TResponse>(
         string requestUri,
         IReadOnlyList<KeyValuePair<string, string>> formValues,
         AuthenticationHeaderValue? authorization,
@@ -101,13 +104,13 @@ public sealed partial class TerraScaleAuthClient
             CreateFormBodyFactory(formValues),
             authorization is null ? RequestAuthentication.None : new RequestAuthentication(authorization),
             cancellationToken).ConfigureAwait(false);
-        await RequireStatusAsync(response, HttpStatusCode.OK, cancellationToken).ConfigureAwait(false);
-        return await ReadJsonAsync(response, responseTypeInfo, cancellationToken).ConfigureAwait(false);
+        var status = await RequireStatusAsync(response, HttpStatusCode.OK, cancellationToken).ConfigureAwait(false);
+        return status is not null ? await ReadJsonAsync(response, responseTypeInfo, cancellationToken).ConfigureAwait(false) : status;
     }
 
     /// <summary>One OAuth form POST whose success body is empty (revocation,
     /// RFC 7009: unknown tokens also succeed).</summary>
-    private async Task SendOAuthFormForSuccessCoreAsync(
+    private async Task<AuthOutcome> SendOAuthFormForSuccessCoreAsync(
         string requestUri,
         IReadOnlyList<KeyValuePair<string, string>> formValues,
         AuthenticationHeaderValue? authorization,
@@ -121,12 +124,13 @@ public sealed partial class TerraScaleAuthClient
             cancellationToken).ConfigureAwait(false);
         if ((int)response.StatusCode < 200 || (int)response.StatusCode > 299)
         {
-            throw await TerraScaleAuthErrors.CreateAsync(response, cancellationToken).ConfigureAwait(false);
+            return await TerraScaleAuthErrors.CreateAsync(response, cancellationToken).ConfigureAwait(false);
         }
+        return new Done();
     }
 
     /// <summary>One bearer-authenticated GET with a caller-provided access token (userinfo).</summary>
-    private async Task<TResponse> GetWithBearerCoreAsync<TResponse>(
+    private async Task<AuthResult<TResponse>> GetWithBearerCoreAsync<TResponse>(
         string requestUri,
         string accessToken,
         JsonTypeInfo<TResponse> responseTypeInfo,
@@ -142,7 +146,7 @@ public sealed partial class TerraScaleAuthClient
         return await ReadJsonAsync(response, responseTypeInfo, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<TResponse> SendAuthenticatedJsonCoreAsync<TRequest, TResponse>(
+    private async Task<AuthResult<TResponse>> SendAuthenticatedJsonCoreAsync<TRequest, TResponse>(
         HttpMethod method, string route, TRequest? body, JsonTypeInfo<TRequest> requestType,
         JsonTypeInfo<TResponse> responseType, AuthenticationHeaderValue authorization,
         HttpStatusCode expectedStatus, int maxRequestBytes, CancellationToken cancellationToken, string? stepUpProof = null)
@@ -151,11 +155,11 @@ public sealed partial class TerraScaleAuthClient
         using var response = await SendRequestAsync(method, route,
             body is null ? null : CreateJsonBodyFactory(body, requestType, maxRequestBytes),
             new RequestAuthentication(authorization), cancellationToken, stepUpProof: stepUpProof).ConfigureAwait(false);
-        await RequireStatusAsync(response, expectedStatus, cancellationToken).ConfigureAwait(false);
-        return await ReadJsonAsync(response, responseType, cancellationToken).ConfigureAwait(false);
+        var status = await RequireStatusAsync(response, expectedStatus, cancellationToken).ConfigureAwait(false);
+        return status is not null ? await ReadJsonAsync(response, responseType, cancellationToken).ConfigureAwait(false) : status;
     }
 
-    private async Task SendAuthenticatedForStatusCoreAsync<TRequest>(
+    private async Task<AuthOutcome> SendAuthenticatedForStatusCoreAsync<TRequest>(
         HttpMethod method, string route, TRequest? body, JsonTypeInfo<TRequest> requestType,
         AuthenticationHeaderValue authorization, HttpStatusCode expectedStatus,
         int maxRequestBytes, CancellationToken cancellationToken, string? stepUpProof = null)
@@ -164,24 +168,23 @@ public sealed partial class TerraScaleAuthClient
         using var response = await SendRequestAsync(method, route,
             body is null ? null : CreateJsonBodyFactory(body, requestType, maxRequestBytes),
             new RequestAuthentication(authorization), cancellationToken, stepUpProof: stepUpProof).ConfigureAwait(false);
-        await RequireStatusAsync(response, expectedStatus, cancellationToken).ConfigureAwait(false);
+        var status = await RequireStatusAsync(response, expectedStatus, cancellationToken).ConfigureAwait(false);
+        return status is not null ? status : new Done();
     }
 
-    // A deletion that ts-auth may finish in the background: true for 204 (done), false for 202 (pending; repeating the
-    // request resumes it). Any other success status is not evidence either way.
-    private async Task<bool> SendAuthenticatedForDeletionCoreAsync(string route, AuthenticationHeaderValue authorization, CancellationToken cancellationToken)
+    private async Task<AuthCompletion> SendAuthenticatedForDeletionCoreAsync(string route, AuthenticationHeaderValue authorization, CancellationToken cancellationToken)
     {
         using var response = await SendRequestAsync(HttpMethod.Delete, route, null, new RequestAuthentication(authorization), cancellationToken).ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.Accepted)
         {
-            return false;
+            return new InProgress();
         }
 
-        await RequireStatusAsync(response, HttpStatusCode.NoContent, cancellationToken).ConfigureAwait(false);
-        return true;
+        var status = await RequireStatusAsync(response, HttpStatusCode.NoContent, cancellationToken).ConfigureAwait(false);
+        return status is not null ? status : new Done();
     }
 
-    private async Task<bool> SendForAccountDeletionCoreAsync(HttpMethod method, string route,
+    private async Task<AuthCompletion> SendForAccountDeletionCoreAsync(HttpMethod method, string route,
         AuthenticationHeaderValue? authorization, string deletionReceipt, CancellationToken cancellationToken, string? deletionAuthorization)
     {
         ValidateDeletionReceipt(deletionReceipt);
@@ -191,14 +194,14 @@ public sealed partial class TerraScaleAuthClient
             cancellationToken, deletionReceipt, deletionAuthorization: deletionAuthorization).ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.Accepted)
         {
-            return false;
+            return new InProgress();
         }
 
-        await RequireStatusAsync(response, HttpStatusCode.NoContent, cancellationToken).ConfigureAwait(false);
-        return true;
+        var status = await RequireStatusAsync(response, HttpStatusCode.NoContent, cancellationToken).ConfigureAwait(false);
+        return status is not null ? status : new Done();
     }
 
-    internal async Task<TerraScaleAuthAccountDeletion> SendAccountDeletionWithProofAsync(AuthenticationHeaderValue authorization,
+    private async Task<AuthResult<TerraScaleAuthAccountDeletion>> SendAccountDeletionWithProofCoreAsync(AuthenticationHeaderValue authorization,
         string stepUpProof, string? deletionReceipt, CancellationToken cancellationToken)
     {
         if (deletionReceipt is not null) ValidateDeletionReceipt(deletionReceipt);
@@ -207,13 +210,16 @@ public sealed partial class TerraScaleAuthClient
         using var response = await SendRequestAsync(HttpMethod.Delete, "/v1/terrascale/account", null,
             new RequestAuthentication(authorization), deadline.Token, deletionReceipt, stepUpProof).ConfigureAwait(false);
         if (response.StatusCode != HttpStatusCode.Accepted)
-            await RequireStatusAsync(response, HttpStatusCode.NoContent, deadline.Token).ConfigureAwait(false);
+        {
+            var status = await RequireStatusAsync(response, HttpStatusCode.NoContent, deadline.Token).ConfigureAwait(false);
+            if (status is not null) return status;
+        }
         string? grant = null;
         if (deletionReceipt is not null && response.Headers.TryGetValues("X-TerraScale-Deletion-Authorization", out var values))
         {
             var grants = values.ToArray();
             if (grants.Length != 1 || !TerraScaleAuthPlatformClient.IsCapability(grants[0]))
-                throw new TerraScaleAuthException(response.StatusCode, "ts-auth returned an invalid deletion grant.", "invalid_response", null, response);
+                return TerraScaleAuthErrors.InvalidResponse(response, "ts-auth returned an invalid deletion grant.");
             grant = grants[0];
         }
         return new TerraScaleAuthAccountDeletion(response.StatusCode == HttpStatusCode.NoContent, grant);
@@ -230,17 +236,19 @@ public sealed partial class TerraScaleAuthClient
         }
     }
 
-    private static async Task RequireStatusAsync(HttpResponseMessage response, HttpStatusCode expected, CancellationToken cancellationToken)
+    private static async Task<AuthRefused?> RequireStatusAsync(HttpResponseMessage response, HttpStatusCode expected, CancellationToken cancellationToken)
     {
         if ((int)response.StatusCode < 200 || (int)response.StatusCode > 299)
         {
-            throw await TerraScaleAuthErrors.CreateAsync(response, cancellationToken).ConfigureAwait(false);
+            return await TerraScaleAuthErrors.CreateAsync(response, cancellationToken).ConfigureAwait(false);
         }
 
         if (response.StatusCode != expected)
         {
-            throw new TerraScaleAuthException(response.StatusCode, "ts-auth returned an unexpected success status.", "invalid_response", TerraScaleAuthErrors.ResolveRetryAfter(response), response);
+            return TerraScaleAuthErrors.InvalidResponse(response, "ts-auth returned an unexpected success status.");
         }
+
+        return null;
     }
 
     private static Func<HttpContent?> CreateJsonBodyFactory<TRequest>(TRequest body, JsonTypeInfo<TRequest> typeInfo, int maximumBytes = MaxOperationBytes)
@@ -327,29 +335,29 @@ public sealed partial class TerraScaleAuthClient
 
     private static void ThrowUnknownAuthenticationKind() => throw new InvalidOperationException("Unknown ts-auth request authentication kind.");
 
-    private static async Task<TResponse> ReadJsonAsync<TResponse>(
+    private static async Task<AuthResult<TResponse>> ReadJsonAsync<TResponse>(
         HttpResponseMessage response,
         JsonTypeInfo<TResponse> responseTypeInfo,
         CancellationToken cancellationToken)
     {
         if ((int)response.StatusCode < 200 || (int)response.StatusCode > 299)
         {
-            throw await TerraScaleAuthErrors.CreateAsync(response, cancellationToken).ConfigureAwait(false);
+            return await TerraScaleAuthErrors.CreateAsync(response, cancellationToken).ConfigureAwait(false);
         }
 
         var media = response.Content.Headers.ContentType;
         if (!string.Equals(media?.MediaType, "application/json", StringComparison.OrdinalIgnoreCase)
             || media?.CharSet is { } charset && !string.Equals(charset.Trim('"'), "utf-8", StringComparison.OrdinalIgnoreCase))
         {
-            throw new TerraScaleAuthException(response.StatusCode, "ts-auth returned an unexpected response media type.", "invalid_response", TerraScaleAuthErrors.ResolveRetryAfter(response), response);
+            return TerraScaleAuthErrors.InvalidResponse(response, "ts-auth returned an unexpected response media type.");
         }
 
         // Bound successful bodies before deserialization, including unknown-length responses.
         using var destination = new BoundedHttpBodyStream(MaxResponseBytes,
-            () => new TerraScaleAuthException(response.StatusCode, "ts-auth response exceeds the byte limit.", "invalid_response", TerraScaleAuthErrors.ResolveRetryAfter(response), response), cancellationToken);
+            () => new InvalidDataException(), cancellationToken);
         if (response.Content.Headers.ContentLength > MaxResponseBytes)
         {
-            throw new TerraScaleAuthException(response.StatusCode, "ts-auth response exceeds the byte limit.", "invalid_response", TerraScaleAuthErrors.ResolveRetryAfter(response), response);
+            return TerraScaleAuthErrors.InvalidResponse(response, "ts-auth response exceeds the byte limit.");
         }
         try
         {
@@ -358,7 +366,7 @@ public sealed partial class TerraScaleAuthClient
         catch (Exception exception) when (exception is IOException or HttpRequestException)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            throw new TerraScaleAuthException(response.StatusCode, "ts-auth response body could not be read.", "invalid_response", TerraScaleAuthErrors.ResolveRetryAfter(response), response);
+            return TerraScaleAuthErrors.InvalidResponse(response, "ts-auth response body could not be read.");
         }
         cancellationToken.ThrowIfCancellationRequested();
         TResponse? payload;
@@ -370,18 +378,10 @@ public sealed partial class TerraScaleAuthClient
         {
             // Raw JsonException internals (paths, fragments of the body) never
             // escape to SDK consumers.
-            throw new TerraScaleAuthException(
-                response.StatusCode,
-                "ts-auth returned an invalid response body.",
-                errorCode: "invalid_response",
-                retryAfter: TerraScaleAuthErrors.ResolveRetryAfter(response), response: response);
+            return TerraScaleAuthErrors.InvalidResponse(response, "ts-auth returned an invalid response body.");
         }
 
-        return payload ?? throw new TerraScaleAuthException(
-            response.StatusCode,
-            "ts-auth returned an empty response body.",
-            errorCode: null,
-            retryAfter: TerraScaleAuthErrors.ResolveRetryAfter(response), response: response);
+        return payload is not null ? payload : TerraScaleAuthErrors.InvalidResponse(response, "ts-auth returned an empty response body.");
     }
 
     private readonly record struct RequestAuthentication(RequestAuthenticationKind Kind, AuthenticationHeaderValue? Header = null)
