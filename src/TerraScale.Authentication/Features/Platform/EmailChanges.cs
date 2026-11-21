@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.RateLimiting;
@@ -25,6 +26,10 @@ public sealed record EmailChangeBody(
     [property: JsonPropertyName("new_email")] string NewEmail,
     [property: JsonPropertyName("expires_at")] DateTimeOffset ExpiresAt);
 
+public readonly union EmailChangeRequestResult(EmailChangeBody, Validation, Conflict, QuotaExceeded, Forbidden, Unavailable);
+
+public readonly union EmailChangeConfirmResult(Done, Forbidden, Conflict);
+
 internal sealed record EmailChangeRecord(string InstanceId, string UserId, long AuthEpoch, string? AuthStamp, string NewEmail,
     string CodeHash, string CancelHash, DateTimeOffset ExpiresAt, int FailedAttempts, IReadOnlyList<CredentialBinding> Bindings);
 
@@ -40,30 +45,37 @@ public sealed class EmailChanges(AuthData data, Credentials credentials, Users u
 
     private readonly byte[] digestKey = HKDF.DeriveKey(HashAlgorithmName.SHA256, options.MasterKey, 32, info: "ts-auth email change digests"u8.ToArray());
 
-    public async Task<EmailChangeBody> RequestAsync(UserRecord caller, HttpRequest request, string newEmail, StepUpProofs proofs, CancellationToken cancellationToken)
+    public async Task<EmailChangeRequestResult> RequestAsync(UserRecord caller, HttpRequest request, string newEmail, StepUpProofs proofs, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(caller);
         ArgumentNullException.ThrowIfNull(proofs);
         if (Users.NormalizeEmail(newEmail) is not { } normalized || normalized == caller.Email)
         {
-            throw new ApiException(400, "invalid_request", "new_email must be a valid address other than the current one.");
+            return new Validation("new_email must be a valid address other than the current one.");
         }
 
         if (await users.FindByEmailAsync(caller.InstanceId, normalized, cancellationToken).ConfigureAwait(false) is not null)
         {
-            throw Taken();
+            return EmailTaken();
         }
 
         if (!await limiter.TryAcquireAsync(caller.InstanceId, "email-change", caller.Id, MaxRequests, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false)
             || !await limiter.TryAcquireAsync(caller.InstanceId, "email-change-target", normalized, MaxRequests, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false)
             || !await limiter.TryAcquireAsync(caller.InstanceId, "email-change-global", caller.InstanceId, MaxGlobalRequests, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false))
         {
-            throw new ApiException(429, "rate_limited", "Too many email change requests; retry later.");
+            return new QuotaExceeded("Too many email change requests; retry later.", "rate_limited");
         }
 
         using var codeSlot = mail.Reserve();
         using var noticeSlot = mail.Reserve();
-        var verified = await proofs.ConsumeHeaderAsync(caller, request, "change_email", null, cancellationToken).ConfigureAwait(false);
+        var consumed = await proofs.ConsumeAsync(caller, request.Headers[StepUpProofs.Header].Count == 1 ? request.Headers[StepUpProofs.Header][0] : null,
+            "change_email", "ts-auth", null, cancellationToken).ConfigureAwait(false);
+        if (consumed is not StepUpConsumption consumption)
+        {
+            return new Forbidden("A fresh, approved, purpose-bound single-use proof is required.", "step_up_required");
+        }
+
+        var verified = consumption.Caller;
         var code = Tokens.RandomDigits(6)!;
         var cancel = Tokens.RandomToken(43);
         var record = new EmailChangeRecord(caller.InstanceId, caller.Id, caller.AuthEpoch, caller.AuthStamp, normalized,
@@ -72,7 +84,7 @@ public sealed class EmailChanges(AuthData data, Credentials credentials, Users u
         if (await proofs.RequirementsAsync(verified, cancellationToken).ConfigureAwait(false) is not { } requirements
             || !await data.SaveAsync([.. requirements, existing is null ? Change.Insert(record) : Change.Update(existing, record)], cancellationToken).ConfigureAwait(false))
         {
-            throw ApiException.Unavailable();
+            return PlatformFailures.Storage();
         }
 
         await codeSlot.EnqueueEmailAsync(AuthEmailKind.EmailChangeCode, new AuthEmailValues(normalized)
@@ -92,7 +104,7 @@ public sealed class EmailChanges(AuthData data, Credentials credentials, Users u
         return new EmailChangeBody(normalized, record.ExpiresAt);
     }
 
-    public async Task ConfirmAsync(UserRecord caller, string code, CancellationToken cancellationToken)
+    public async Task<EmailChangeConfirmResult> ConfirmAsync(UserRecord caller, string code, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(caller);
         for (var round = 0; round < MaxAttempts + 2; round++)
@@ -101,7 +113,7 @@ public sealed class EmailChanges(AuthData data, Credentials credentials, Users u
                 || current.Record.AuthEpoch != caller.AuthEpoch || current.Record.AuthStamp != caller.AuthStamp
                 || current.Record.FailedAttempts >= MaxAttempts)
             {
-                throw Denied();
+                return Denied();
             }
 
             var record = current.Record;
@@ -109,7 +121,7 @@ public sealed class EmailChanges(AuthData data, Credentials credentials, Users u
             {
                 if (await data.SaveAsync(Change.Update(record with { FailedAttempts = record.FailedAttempts + 1 }, current.Version), cancellationToken).ConfigureAwait(false))
                 {
-                    throw Denied();
+                    return Denied();
                 }
 
                 continue;
@@ -119,23 +131,23 @@ public sealed class EmailChanges(AuthData data, Credentials credentials, Users u
             if (record.Bindings.Count == 0 || !await credentials.AreCurrentAsync(caller.InstanceId, record.Bindings, cancellationToken).ConfigureAwait(false)
                 || await credentials.RequireAsync(caller.InstanceId, lineage, cancellationToken).ConfigureAwait(false) is not { } requirements)
             {
-                throw Denied();
+                return Denied();
             }
 
             // Consuming the row, reserving the address and advancing the epoch commit together; a replay finds no row.
             // The user write itself is versioned, so its own state binding is not asserted separately.
-            var changed = await users.ChangeEmailAsync(caller.InstanceId, caller.Id, record.AuthEpoch, record.AuthStamp, record.NewEmail,
+            var changed = await users.ChangeEmailAsync(caller.InstanceId, caller.Id, caller.AuthEpoch, caller.AuthStamp, record.NewEmail,
                 [Change.Delete(record, current.Version), .. requirements],
                 cancellationToken).ConfigureAwait(false);
             if (changed == true)
             {
-                return;
+                return new Done();
             }
 
-            throw changed == false ? Taken() : Denied();
+            return changed == false ? EmailTaken() : Denied();
         }
 
-        throw Denied();
+        return Denied();
     }
 
     public async Task<bool> CancelAsync(string userId, string token, CancellationToken cancellationToken)
@@ -173,9 +185,9 @@ public sealed class EmailChanges(AuthData data, Credentials credentials, Users u
         Convert.ToHexStringLower(HMACSHA256.HashData(this.digestKey, Encoding.UTF8.GetBytes(string.Create(CultureInfo.InvariantCulture,
             $"{caller.InstanceId.Length}:{caller.InstanceId}{caller.Id.Length}:{caller.Id}{newEmail.Length}:{newEmail}{code}"))));
 
-    private static ApiException Denied() => new(403, "email_change_denied", "No matching pending email change; request a new one.");
+    private static Forbidden Denied() => new("No matching pending email change; request a new one.", "email_change_denied");
 
-    private static ApiException Taken() => new(409, "email_taken", "Another account already uses that email address.");
+    private static Conflict EmailTaken() => new("Another account already uses that email address.", "email_taken");
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]

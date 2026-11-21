@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Endpoints;
 
@@ -33,25 +34,33 @@ public sealed class AccountDeletionStatusEndpoint(AccountDeletion accounts) : En
         this.HttpContext.Response.Headers.CacheControl = "no-store";
         try
         {
-            var hash = DeletionReceiptHeader.Read(this.HttpContext.Request, required: true)!;
-            var query = this.HttpContext.Request.Query;
-            string? organization = null;
-            if (query.TryGetValue("organization", out var values))
+            return await (DeletionReceiptHeader.Read(this.HttpContext.Request, required: true) switch
             {
-                if (values.Count != 1 || !PlatformDirectory.IsId(values[0]!))
-                {
-                    throw new ApiException(StatusCodes.Status400BadRequest, "invalid_request", "organization must be one canonical ULID.");
-                }
-
-                organization = values[0];
-            }
-
-            return await accounts.StatusAsync(hash, organization, cancellationToken) ? Results.NoContent() : Results.Accepted();
+                Validation missing => ValueTask.FromResult(ErrorResults.ToResult(missing)),
+                string receipt => new ValueTask<IResult>(this.StatusAsync(receipt, cancellationToken)),
+            });
         }
         catch (Exception error) when (error is HttpRequestException or TimeoutException)
         {
             throw ApiException.Unavailable(error);
         }
+    }
+
+    private async Task<IResult> StatusAsync(string hash, CancellationToken cancellationToken)
+    {
+        var query = this.HttpContext.Request.Query;
+        string? organization = null;
+        if (query.TryGetValue("organization", out var values))
+        {
+            if (values.Count != 1 || !PlatformDirectory.IsId(values[0]!))
+            {
+                return ErrorResults.ToResult(new Validation("organization must be one canonical ULID."));
+            }
+
+            organization = values[0];
+        }
+
+        return await accounts.StatusAsync(hash, organization, cancellationToken) ? Results.NoContent() : Results.Accepted();
     }
 }
 
@@ -59,14 +68,14 @@ internal static class DeletionReceiptHeader
 {
     internal const string Name = "X-TerraScale-Deletion-Receipt";
 
-    internal static string? Read(HttpRequest request, bool required = false)
+    internal static Valid<string> Read(HttpRequest request, bool required = false)
     {
         if (!request.Headers.TryGetValue(Name, out var values) && !required)
         {
-            return null;
+            return string.Empty;
         }
 
-        return values.Count == 1 ? Hash(values[0]) : throw new ApiException(400, "invalid_request", "Present one deletion receipt.");
+        return values.Count == 1 ? Hash(values[0]) : new Validation("Present one deletion receipt.");
     }
 
     internal static string Hash(string? value)

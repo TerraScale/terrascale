@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Security;
@@ -55,6 +56,12 @@ internal sealed record PreparedStepUp(UserRecord Caller, StepUpRecord Record, IR
     public override string ToString() => nameof(PreparedStepUp);
 }
 
+public readonly union StepUpBodyResult(StepUpBody, Validation, QuotaExceeded, Forbidden, Unavailable);
+
+public readonly union StepUpConsumptionResult(StepUpConsumption, Forbidden);
+
+public readonly union StepUpUserResult(UserRecord, Forbidden);
+
 public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOptions options, TimeProvider clock, AttemptLimiter limiter)
 {
     public const int MaxRequests = 10;
@@ -70,16 +77,19 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
     public async Task<UserRecord> ConsumeHeaderAsync(UserRecord caller, HttpRequest request, string purpose, string? organizationId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return (await this.ConsumeAsync(caller, request.Headers[Header].Count == 1 ? request.Headers[Header][0] : null, purpose, "ts-auth", null, cancellationToken, organizationId).ConfigureAwait(false)).Caller;
+        return await this.ConsumeAsync(caller, request.Headers[Header].Count == 1 ? request.Headers[Header][0] : null, purpose, "ts-auth", null, cancellationToken, organizationId).ConfigureAwait(false) switch
+        {
+            StepUpConsumption consumed => consumed.Caller,
+            Forbidden => throw Required(),
+        };
     }
-
     internal async Task<PreparedStepUp?> PrepareHeaderAsync(UserRecord caller, HttpRequest request, string purpose, string? organizationId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         return await this.PrepareAsync(caller, request.Headers[Header].Count == 1 ? request.Headers[Header][0] : null, purpose, "ts-auth", null, cancellationToken, organizationId).ConfigureAwait(false);
     }
 
-    public async Task<StepUpBody> RequestAsync(UserRecord caller, StepUpRequest request, CancellationToken cancellationToken)
+    public async Task<StepUpBodyResult> RequestAsync(UserRecord caller, StepUpRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(caller);
         ArgumentNullException.ThrowIfNull(request);
@@ -90,20 +100,20 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
             || callback.AbsolutePath != "/auth/step-up/callback" || callback.Query.Length != 0 || callback.Fragment.Length != 0 || callback.UserInfo.Length != 0
             || options.DashboardClient?.RedirectUris.Any(uri => uri.GetLeftPart(UriPartial.Authority) == callback.GetLeftPart(UriPartial.Authority)) != true)
         {
-            throw new ApiException(400, "invalid_request", "Use a supported purpose/audience and the registered dashboard origin's /auth/step-up/callback.");
+            return new Validation("Use a supported purpose/audience and the registered dashboard origin's /auth/step-up/callback.");
         }
 
         return await this.IssueAsync(caller, request.Purpose, request.Audience, callback, request.OrganizationId, cancellationToken).ConfigureAwait(false);
     }
 
-    internal Task<StepUpBody> RequestAgentApprovalAsync(UserRecord caller, string enrollmentId, string returnPath, CancellationToken cancellationToken) =>
+    internal Task<StepUpBodyResult> RequestAgentApprovalAsync(UserRecord caller, string enrollmentId, string returnPath, CancellationToken cancellationToken) =>
         this.IssueAsync(caller, ApproveAgent, "ts-auth", new Uri(options.PublicOrigin, returnPath), enrollmentId, cancellationToken);
 
-    private async Task<StepUpBody> IssueAsync(UserRecord caller, string purpose, string audience, Uri returnUri, string? binding, CancellationToken cancellationToken)
+    private async Task<StepUpBodyResult> IssueAsync(UserRecord caller, string purpose, string audience, Uri returnUri, string? binding, CancellationToken cancellationToken)
     {
         if (!await limiter.TryAcquireAsync(caller.InstanceId, "step-up-issuance", caller.Id, MaxRequests, RequestWindow, cancellationToken).ConfigureAwait(false))
         {
-            throw new ApiException(429, "rate_limited", "Too many verification requests; retry after fifteen minutes.");
+            return new QuotaExceeded("Too many verification requests; retry after fifteen minutes.", "rate_limited");
         }
 
         var id = AuthIds.New();
@@ -112,7 +122,7 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
             purpose, audience, returnUri.AbsoluteUri, clock.GetUtcNow().AddMinutes(5), OrganizationId: binding);
         if (!await data.SaveAsync([Change.Assert(caller), Change.Insert(record)], cancellationToken).ConfigureAwait(false))
         {
-            throw Required();
+            return PlatformFailures.Storage();
         }
 
         return new StepUpBody(secret, new Uri(options.PublicOrigin, $"/ui/{caller.InstanceId}/step-up/{id}").AbsoluteUri, record.ExpiresAt);
@@ -129,8 +139,9 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
 
     internal async Task<bool> AdvanceAsync(UserRecord caller, StepUpRecord record, string version, CancellationToken cancellationToken)
     {
-        if (record.ExpiresAt <= clock.GetUtcNow()
-            || await this.RequirementsAsync(Merge(caller, record.Bindings ?? []), cancellationToken).ConfigureAwait(false) is not { } requirements)
+        var verified = Merge(caller, record.Bindings ?? []);
+        if (record.ExpiresAt <= clock.GetUtcNow() || verified is null
+            || await this.RequirementsAsync(verified, cancellationToken).ConfigureAwait(false) is not { } requirements)
         {
             return false;
         }
@@ -139,18 +150,18 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
             && record.ExpiresAt > clock.GetUtcNow();
     }
 
-    public async Task<StepUpConsumption> ConsumeAsync(UserRecord caller, string? proof, string purpose, string audience, string? receiptHash, CancellationToken cancellationToken, string? organizationId = null)
+    public async Task<StepUpConsumptionResult> ConsumeAsync(UserRecord caller, string? proof, string purpose, string audience, string? receiptHash, CancellationToken cancellationToken, string? organizationId = null)
     {
         ArgumentNullException.ThrowIfNull(caller);
         if (await this.PrepareAsync(caller, proof, purpose, audience, receiptHash, cancellationToken, organizationId).ConfigureAwait(false) is not { } prepared)
         {
-            throw Required();
+            return StepUpRequired();
         }
 
         if (prepared.Record.ExpiresAt <= clock.GetUtcNow() || !await data.SaveAsync(prepared.Operations, cancellationToken).ConfigureAwait(false)
             || prepared.Record.ExpiresAt <= clock.GetUtcNow())
         {
-            throw Required();
+            return StepUpRequired();
         }
 
         return new StepUpConsumption(prepared.Caller, prepared.Authorization);
@@ -171,7 +182,7 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
         }
 
         var verified = Merge(caller, current.Record.Bindings ?? []);
-        if (await this.RequirementsAsync(verified, cancellationToken).ConfigureAwait(false) is not { } requirements)
+        if (verified is null || await this.RequirementsAsync(verified, cancellationToken).ConfigureAwait(false) is not { } requirements)
         {
             return null;
         }
@@ -188,7 +199,7 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
         return new PreparedStepUp(verified, current.Record, operations, authorization);
     }
 
-    public async Task<StepUpConsumption> DeleteAsync(UserRecord caller, HttpRequest request, string? receiptHash, CancellationToken cancellationToken)
+    public async Task<StepUpConsumptionResult> DeleteAsync(UserRecord caller, HttpRequest request, string? receiptHash, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(caller);
         ArgumentNullException.ThrowIfNull(request);
@@ -203,20 +214,24 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
                 && Tokens.FixedTimeEquals(grant.AuthorizationHash, Tokens.Sha256Hex(authorization))
                 && await credentials.AreCurrentAsync(caller.InstanceId, grant.Bindings, cancellationToken).ConfigureAwait(false))
             {
-                return new StepUpConsumption(Merge(caller, grant.Bindings), null);
+                var continued = Merge(caller, grant.Bindings);
+                if (continued is not null)
+                {
+                    return new StepUpConsumption(continued, null);
+                }
             }
         }
 
         return await this.ConsumeAsync(caller, request.Headers[Header].Count == 1 ? request.Headers[Header][0] : null, "delete_account", "ts-auth", receiptHash, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<UserRecord> DeleteOrganizationAsync(UserRecord caller, HttpRequest request, string organizationId, CancellationToken cancellationToken)
+    public async Task<StepUpUserResult> DeleteOrganizationAsync(UserRecord caller, HttpRequest request, string organizationId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(caller);
         ArgumentNullException.ThrowIfNull(request);
         if (request.Headers[Header] is not [string { Length: 70 } proof] || proof[26] != '.' || !PlatformDirectory.IsId(proof[..26]))
         {
-            throw Required();
+            return StepUpRequired();
         }
 
         var id = proof[..26];
@@ -227,26 +242,26 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
             || !Tokens.FixedTimeEquals(record.TokenHash, Tokens.Sha256Hex(proof))
             || record.ExpiresAt <= clock.GetUtcNow())
         {
-            throw Required();
+            return StepUpRequired();
         }
 
         var verified = Merge(caller, bindings);
-        if (await this.RequirementsAsync(verified, cancellationToken).ConfigureAwait(false) is not { } requirements
+        if (verified is null || await this.RequirementsAsync(verified, cancellationToken).ConfigureAwait(false) is not { } requirements
             || !await data.SaveAsync([.. requirements, Change.Delete(current)], cancellationToken).ConfigureAwait(false)
             || record.ExpiresAt <= clock.GetUtcNow())
         {
-            throw Required();
+            return StepUpRequired();
         }
 
         return verified;
     }
 
-    private static UserRecord Merge(UserRecord caller, IReadOnlyList<CredentialBinding> fresh)
+    private static UserRecord? Merge(UserRecord caller, IReadOnlyList<CredentialBinding> fresh)
     {
         var bindings = caller.AuthenticationBindings.Concat(fresh).Distinct().ToArray();
         if (bindings.Length > Credentials.MaxLineage)
         {
-            throw Required();
+            return null;
         }
 
         return caller with { AuthenticationBindings = bindings, StepUpBindings = fresh };
@@ -274,6 +289,8 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
     }
 
     internal static ApiException Required() => new(403, "step_up_required", "A fresh, approved, purpose-bound single-use proof is required.");
+
+    internal static Forbidden StepUpRequired() => new("A fresh, approved, purpose-bound single-use proof is required.", "step_up_required");
     private static bool Pair(string purpose, string audience) => audience switch
     {
         "ts-dashboard" => purpose is "delete_account" or "create_pat",

@@ -146,8 +146,14 @@ public sealed class AgentEnrollments(AuthData data, PlatformDirectory platform, 
 
         if (await proofs.PrepareAsync(approver.User, stepUpProof, StepUpProofs.ApproveAgent, "ts-auth", null, cancellationToken, enrollment.Id).ConfigureAwait(false) is not { } stepUp)
         {
-            return new AgentStepUpRequired(await proofs.RequestAgentApprovalAsync(approver.User, enrollment.Id, PagePath(enrollment.ProjectId) + "?user_code=" + view.UserCode,
-                cancellationToken).ConfigureAwait(false));
+            var approval = await proofs.RequestAgentApprovalAsync(approver.User, enrollment.Id, PagePath(enrollment.ProjectId) + "?user_code=" + view.UserCode,
+                cancellationToken).ConfigureAwait(false);
+            if (approval is not StepUpBody body)
+            {
+                return new AgentDecisionRefused(NothingAllowed);
+            }
+
+            return new AgentStepUpRequired(body);
         }
 
         var deadline = new[] { enrollment.ExpiresAt, stepUp.Record.ExpiresAt, approver.Session.ExpiresAt }.Min();

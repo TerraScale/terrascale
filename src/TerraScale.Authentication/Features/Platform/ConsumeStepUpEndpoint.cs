@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 
 namespace TerraScale.Authentication.Features.Platform;
 
@@ -31,8 +32,13 @@ public sealed class ConsumeStepUpEndpoint(StepUpProofs proofs, PlatformAuthentic
             throw Invalid("Use ts-dashboard create_pat, or delete_account with its operation_receipt, without an organization_id.");
         }
 
-        var consumed = await proofs.ConsumeAsync(caller, body.Proof, body.Purpose, body.Audience,
-            body.OperationReceipt is null ? null : DeletionReceiptHeader.Hash(body.OperationReceipt), cancellationToken, body.OrganizationId);
-        return consumed.OperationGrant is { } grant ? Results.Json(new StepUpGrantBody(grant), StepUpJson.Default.StepUpGrantBody) : Results.NoContent();
+        return await proofs.ConsumeAsync(caller, body.Proof, body.Purpose, body.Audience,
+            body.OperationReceipt is null ? null : DeletionReceiptHeader.Hash(body.OperationReceipt), cancellationToken, body.OrganizationId) switch
+        {
+            StepUpConsumption consumed => consumed.OperationGrant is { } grant
+                ? Results.Json(new StepUpGrantBody(grant), StepUpJson.Default.StepUpGrantBody)
+                : Results.NoContent(),
+            Forbidden failure => ErrorResults.ToResult(failure),
+        };
     }
 }

@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http.Features;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 
 namespace TerraScale.Authentication.Features.Platform;
 
@@ -310,7 +311,15 @@ public abstract class ApiKeyEndpoint(ApiKeys keys, PlatformAuthentication authen
             throw Invalid("previous_secret_ttl must be 0 to 86400 seconds.");
         }
 
-        caller = await this.HttpContext.RequestServices.GetRequiredService<StepUpProofs>().ConsumeHeaderAsync(caller, this.HttpContext.Request, "rotate_api_key", null, cancellationToken);
+        var proofs = this.HttpContext.RequestServices.GetRequiredService<StepUpProofs>();
+        var verified = await proofs.ConsumeAsync(caller, this.HttpContext.Request.Headers[StepUpProofs.Header].Count == 1
+            ? this.HttpContext.Request.Headers[StepUpProofs.Header][0] : null, "rotate_api_key", "ts-auth", null, cancellationToken);
+        if (verified is not StepUpConsumption rotation)
+        {
+            return ErrorResults.ToResult(StepUpProofs.StepUpRequired());
+        }
+
+        caller = rotation.Caller;
         var (key, secret) = await keys.RotateAsync(caller, this.RouteId("organization"), this.ProjectId(), this.KeyId(), ttl, cancellationToken);
         var used = await keys.LastUsedAsync([key], cancellationToken);
         return Results.Json(new ApiKeySecretBody(this.Map(key, used.TryGetValue(key.Id, out var at) ? at : null), secret), PlatformApiJson.Default.ApiKeySecretBody);
