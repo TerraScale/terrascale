@@ -1,13 +1,11 @@
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
+using TerraBase.Errors;
 
 namespace TerraBase.Primitives;
 
-public sealed class JsonValidationException(string message, bool tooLarge = false) : Exception(message)
-{
-    public bool TooLarge { get; } = tooLarge;
-}
+internal readonly union JsonText(string, PayloadTooLarge, Validation);
 
 internal static class StrictJson
 {
@@ -42,68 +40,81 @@ internal static class StrictJson
         }
     }
 
-    public static string Read(ReadOnlyMemory<byte> json, bool requireObject)
+    public static JsonText Read(ReadOnlyMemory<byte> json, bool requireObject)
     {
         if (json.Length > MaxBytes)
         {
-            throw new JsonValidationException("a JSON value is at most 1 MiB", tooLarge: true);
+            return new PayloadTooLarge("a JSON value is at most 1 MiB");
         }
 
+        string text;
         try
         {
-            var text = Utf8.GetString(json.Span);
+            text = Utf8.GetString(json.Span);
             using var parsed = JsonDocument.Parse(json, new JsonDocumentOptions { AllowDuplicateProperties = false, MaxDepth = 64 });
             if (requireObject && parsed.RootElement.ValueKind != JsonValueKind.Object)
             {
-                throw new JsonValidationException("the value must be a JSON object");
+                return new Validation("the value must be a JSON object");
             }
 
-            ValidateValue(parsed.RootElement);
-            return text;
+            if (ValidateValue(parsed.RootElement) is { } refused)
+            {
+                return refused;
+            }
         }
         catch (Exception error) when (error is JsonException or DecoderFallbackException or InvalidOperationException)
         {
-            throw new JsonValidationException("the value must be valid UTF-8 JSON without duplicate members or lone surrogate escapes");
+            return new Validation("the value must be valid UTF-8 JSON without duplicate members or lone surrogate escapes");
         }
+
+        return text;
     }
 
-    public static void ValidateValue(JsonElement value, int maxValues = 4096)
+    public static Validation? ValidateValue(JsonElement value, int maxValues = 4096)
     {
         var nodes = 0;
-        Validate(value, 1, ref nodes, maxValues);
+        return Validate(value, 1, ref nodes, maxValues);
     }
 
-    private static void Validate(JsonElement value, int depth, ref int nodes, int maxValues = 4096)
+    private static Validation? Validate(JsonElement value, int depth, ref int nodes, int maxValues = 4096)
     {
         if (++nodes > maxValues)
         {
-            throw new JsonValidationException($"a JSON value holds at most {maxValues} values");
+            return new Validation($"a JSON value holds at most {maxValues} values");
         }
 
         switch (value.ValueKind)
         {
             case JsonValueKind.Object or JsonValueKind.Array when depth > 16:
-                throw new JsonValidationException("a JSON value nests at most 16 levels");
+                return new Validation("a JSON value nests at most 16 levels");
             case JsonValueKind.Object:
                 foreach (var member in value.EnumerateObject())
                 {
                     _ = member.Name;
-                    Validate(member.Value, depth + 1, ref nodes, maxValues);
+                    if (Validate(member.Value, depth + 1, ref nodes, maxValues) is { } refused)
+                    {
+                        return refused;
+                    }
                 }
 
-                break;
+                return null;
             case JsonValueKind.Array:
                 foreach (var item in value.EnumerateArray())
                 {
-                    Validate(item, depth + 1, ref nodes, maxValues);
+                    if (Validate(item, depth + 1, ref nodes, maxValues) is { } refused)
+                    {
+                        return refused;
+                    }
                 }
 
-                break;
+                return null;
             case JsonValueKind.String:
                 _ = value.GetString();
-                break;
+                return null;
             case JsonValueKind.Number when !ExactNumber.TryParse(JsonMarshal.GetRawUtf8Value(value), out _):
-                throw new JsonValidationException("numbers have at most 128 significant digits and a magnitude of 0 or 1e-307 to below 1e308");
+                return new Validation("numbers have at most 128 significant digits and a magnitude of 0 or 1e-307 to below 1e308");
+            default:
+                return null;
         }
     }
 }

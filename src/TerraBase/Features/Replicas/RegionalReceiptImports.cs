@@ -55,8 +55,10 @@ internal sealed partial class RegionalReceiptImports(IMeterFactory meters, ILogg
             {
                 return false;
             }
-            _ = StrictJson.Read(record.Json, requireObject: true);
-            _ = StrictJson.Read(authorities[0].Json, requireObject: true);
+            if (StrictJson.Read(record.Json, requireObject: true) is not string || StrictJson.Read(authorities[0].Json, requireObject: true) is not string)
+            {
+                return false;
+            }
             if (kind == Purges)
             {
                 var receipt = JsonSerializer.Deserialize(record.Json, ManagementJsonContext.Default.DatabasePurgeReceipt);
@@ -70,7 +72,7 @@ internal sealed partial class RegionalReceiptImports(IMeterFactory meters, ILogg
                 && record.Kind == ProjectClosure.Receipts(closureReceipt.ProjectId)
                 && (closureReceipt.Confirms(closure, record.Id) || closureReceipt.Refuses(closure, record.Id));
         }
-        catch (Exception error) when (error is JsonException or JsonValidationException)
+        catch (Exception error) when (error is JsonException)
         {
             return false;
         }

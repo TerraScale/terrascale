@@ -6,14 +6,13 @@ using TerraBase.Features.Sql;
 
 namespace TerraBase.Features.HomePush;
 
-internal sealed class LocalWriteRefusedException(string message, string? publishId = null) : InvalidOperationException(message)
-{
-    public string? PublishId { get; } = publishId;
-}
+internal readonly union TableKeys(string[], LocalWriteRefused);
+
+internal readonly union CapturedChanges(IReadOnlyList<RegionChange>, LocalWriteRefused);
 
 internal static class PushChanges
 {
-    public static async ValueTask<List<RegionChange>> FromCapturedAsync(IReplicaWriter writer, IReadOnlyList<CapturedRowChange> captured, CancellationToken cancellationToken)
+    public static async ValueTask<CapturedChanges> FromCapturedAsync(IReplicaWriter writer, IReadOnlyList<CapturedRowChange> captured, CancellationToken cancellationToken)
     {
         var keys = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
         var changes = new List<RegionChange>(captured.Count);
@@ -21,15 +20,30 @@ internal static class PushChanges
         {
             if (!keys.TryGetValue(change.Table, out var key))
             {
-                keys[change.Table] = key = await KeysAsync(writer, change.Table, cancellationToken).ConfigureAwait(false);
+                switch (await KeysAsync(writer, change.Table, cancellationToken).ConfigureAwait(false))
+                {
+                    case LocalWriteRefused refused:
+                        return refused;
+                    case string[] columns:
+                        keys[change.Table] = key = columns;
+                        break;
+                    default:
+                        throw new UnreachableException();
+                }
             }
 
-            changes.Add(change.Type switch
+            RegionChange? built = change.Type switch
             {
                 CapturedRowChange.Insert => new RegionChange("insert", change.Table, null, Pick(change.Columns, change.After!, _ => true)),
                 CapturedRowChange.Delete => new RegionChange("delete", change.Table, Pick(change.Columns, change.Before!, column => key.Contains(column, StringComparer.OrdinalIgnoreCase)), null),
                 _ => Update(change, key),
-            });
+            };
+            if (built is null)
+            {
+                return new LocalWriteRefused("a primary key change commits at the database's home");
+            }
+
+            changes.Add(built);
         }
 
         return changes;
@@ -54,13 +68,12 @@ internal static class PushChanges
 
     private static object? Value(JsonElement value) => SqlJson.Value(value) is SqlValue sql ? SqlSession.Bound(sql) : throw new UnreachableException("a captured value is not a SQL value");
 
-    private static RegionChange Update(CapturedRowChange change, string[] key)
+    private static RegionChange? Update(CapturedRowChange change, string[] key)
     {
         if (change.Columns.Where((column, index) => key.Contains(column, StringComparer.OrdinalIgnoreCase) && !Equals(change.Before![index], change.After![index])).Any())
         {
-            throw new LocalWriteRefusedException("a primary key change commits at the database's home");
+            return null;
         }
-
         var updated = change.Updated;
         return new RegionChange("update", change.Table,
             Pick(change.Columns, change.After!, column => key.Contains(column, StringComparer.OrdinalIgnoreCase)),
@@ -88,20 +101,20 @@ internal static class PushChanges
         return picked;
     }
 
-    private static async ValueTask<string[]> KeysAsync(IReplicaWriter writer, string table, CancellationToken cancellationToken)
+    private static async ValueTask<TableKeys> KeysAsync(IReplicaWriter writer, string table, CancellationToken cancellationToken)
     {
         var info = await writer.ExecuteAsync(ApplySql.Statement($"PRAGMA table_info({ApplySql.Quote(table)})"), cancellationToken).ConfigureAwait(false);
         var keyed = info.Rows.Where(row => row[5] is long position && position > 0).OrderBy(row => (long)row[5]!).ToList();
         if (keyed.Count == 0)
         {
-            throw new LocalWriteRefusedException("a table without a declared primary key commits at the database's home");
+            return new LocalWriteRefused("a table without a declared primary key commits at the database's home");
         }
 
         if (keyed is [var only] && string.Equals(only[2] as string, "INTEGER", StringComparison.OrdinalIgnoreCase))
         {
-            throw new LocalWriteRefusedException("a table keyed by its rowid commits at the database's home");
+            return new LocalWriteRefused("a table keyed by its rowid commits at the database's home");
         }
 
-        return [.. keyed.Select(row => (string)row[1]!)];
+        return new TableKeys([.. keyed.Select(row => (string)row[1]!)]);
     }
 }

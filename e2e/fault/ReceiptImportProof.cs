@@ -59,7 +59,7 @@ internal static class ReceiptImportProof
             {
                 await ImportAsync(bad);
             }
-            catch (Exception error) when (error is InvalidDataException or JsonValidationException)
+            catch (Exception error) when (error is InvalidDataException)
             {
                 var kind = name.StartsWith("purge", StringComparison.Ordinal) || name is "absent-holder" or "absent-authority" or "absent-database" or "malformed" or "duplicate" or "conflict-count"
                     ? "database_purge_receipts" : "project_closure_receipts";

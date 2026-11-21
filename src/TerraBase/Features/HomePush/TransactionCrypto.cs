@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using TerraBase.Errors;
 using TerraBase.Features.Backup;
 using TerraBase.Tenancy;
 
@@ -10,9 +11,11 @@ internal interface ITransactionCrypto
     bool Seals { get; }
 
     Task PrepareAsync(TenantContext database, CancellationToken cancellationToken);
-    Task<byte[]> SealAsync(TenantContext database, byte[] packed, CancellationToken cancellationToken);
+    Task<SealedPayload> SealAsync(TenantContext database, byte[] packed, CancellationToken cancellationToken);
     Task<byte[]?> OpenAsync(TenantContext database, byte[] sealedBody, CancellationToken cancellationToken);
 }
+
+internal readonly union SealedPayload(byte[], Unavailable);
 
 internal sealed class TransactionCrypto(DataKeys? keys) : ITransactionCrypto
 {
@@ -29,10 +32,14 @@ internal sealed class TransactionCrypto(DataKeys? keys) : ITransactionCrypto
         }
     }
 
-    public async Task<byte[]> SealAsync(TenantContext database, byte[] packed, CancellationToken cancellationToken)
+    public async Task<SealedPayload> SealAsync(TenantContext database, byte[] packed, CancellationToken cancellationToken)
     {
-        var store = keys ?? throw new LocalWriteRefusedException("durable local writes require the database key store");
-        var (id, dataKey) = await store.ForSealingAsync(BackupLayout.KeyScope(database), cancellationToken).ConfigureAwait(false);
+        if (keys is null)
+        {
+            return new Unavailable("durable local writes require the database key store");
+        }
+
+        var (id, dataKey) = await keys.ForSealingAsync(BackupLayout.KeyScope(database), cancellationToken).ConfigureAwait(false);
         return Seal(database, packed, id, dataKey);
     }
 

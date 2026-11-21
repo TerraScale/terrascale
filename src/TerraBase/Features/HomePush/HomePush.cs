@@ -38,18 +38,22 @@ internal interface ILocalWrites
     ValueTask<bool> AppliedAsync(string origin, TenantContext database, ulong sequence, CancellationToken cancellationToken);
 }
 
+internal sealed record LocalCommitted(string? Id, HomeApplyResult? Home);
+
+internal sealed record LocalWriteRefused(string Message, string? PublishId = null);
+
+internal sealed record LocalOutcomeUnknown(string Message, Exception Error);
+
+internal readonly union LocalCommitOutcome(LocalCommitted, LocalWriteRefused, LocalOutcomeUnknown);
+
 internal interface ILocalTransaction : IAsyncDisposable
 {
     IReadOnlyList<KeyValuePair<string, double>> Timings { get; }
 
     ValueTask<SqlStatementResult> ExecuteAsync(SqlStatement statement, CancellationToken cancellationToken);
 
-    ValueTask<LocalCommit> CommitAsync(bool homeDurable, CancellationToken cancellationToken);
+    ValueTask<LocalCommitOutcome> CommitAsync(bool homeDurable, CancellationToken cancellationToken);
 }
-
-internal sealed record LocalCommit(string? Id, HomeApplyResult? Home);
-
-internal sealed class LocalOutcomeUnknownException(string message, Exception inner) : Exception(message, inner);
 
 internal sealed record DrainedPush(string Region, HomeApplyResult Result, ulong Sequence);
 
@@ -911,36 +915,58 @@ internal partial class HomePush(
 
         public ValueTask<SqlStatementResult> ExecuteAsync(SqlStatement statement, CancellationToken cancellationToken) => writer.ExecuteAsync(statement, cancellationToken);
 
-        public async ValueTask<LocalCommit> CommitAsync(bool homeDurable, CancellationToken cancellationToken)
+        public async ValueTask<LocalCommitOutcome> CommitAsync(bool homeDurable, CancellationToken cancellationToken)
         {
             var started = Stopwatch.GetTimestamp();
             var captured = await writer.CaptureAsync(cancellationToken).ConfigureAwait(false);
             if (captured.Count == 0)
             {
                 await writer.CommitAsync(cancellationToken).ConfigureAwait(false);
-                return new LocalCommit(null, null);
+                return new LocalCommitted(null, null);
             }
 
             if (captured.Count > HomeApplier.MaxChanges)
             {
-                throw new LocalWriteRefusedException("a transaction of more than 1024 row changes commits at the database's home");
+                return new LocalWriteRefused("a transaction of more than 1024 row changes commits at the database's home");
             }
 
-            var changes = await PushChanges.FromCapturedAsync(writer, captured, cancellationToken).ConfigureAwait(false);
+            List<RegionChange> changes;
+            switch (await PushChanges.FromCapturedAsync(writer, captured, cancellationToken).ConfigureAwait(false))
+            {
+                case LocalWriteRefused refused:
+                    return refused;
+                case IReadOnlyList<RegionChange> captured2:
+                    changes = [.. captured2];
+                    break;
+                default:
+                    throw new UnreachableException();
+            }
+
             Record("local_capture", ref started);
             if (await push.Clock.IssueAsync(cancellationToken).ConfigureAwait(false) is not { } stamp)
             {
-                throw new LocalWriteRefusedException("the origin clock is not known to be good; the write commits at the database's home");
+                return new LocalWriteRefused("the origin clock is not known to be good; the write commits at the database's home");
             }
 
             Record("local_hlc", ref started);
 
             var transaction = new RegionTransaction(Ulid.NewUlid().ToString(), push.Region, stamp, changes);
-            var payload = await push.Crypto.SealAsync(database, Encode(transaction), cancellationToken).ConfigureAwait(false);
+            byte[] payload;
+            switch (await push.Crypto.SealAsync(database, Encode(transaction), cancellationToken).ConfigureAwait(false))
+            {
+                case Unavailable unavailable:
+                    return new LocalWriteRefused(unavailable.Message);
+                case byte[] sealedPayload:
+                    payload = sealedPayload;
+                    break;
+                default:
+                    throw new UnreachableException();
+            }
+
             Record("local_seal", ref started);
             if (payload.Length > MaxPayloadBytes)
             {
-                throw new LocalWriteRefusedException("a transaction larger than 8 MiB commits at the database's home");
+                return new LocalWriteRefused("a transaction larger than 8 MiB commits at the database's home");
             }
 
             var homeApplied = push._overlay.Add(database, 0, transaction);
@@ -954,7 +980,7 @@ internal partial class HomePush(
             catch (Exception error) when (error is NatsException or TimeoutException)
             {
                 push._overlay.Drop(database, transaction.Id!);
-                throw new LocalWriteRefusedException("the push stream did not store the transaction; it commits at the database's home", transaction.Id);
+                return new LocalWriteRefused("the push stream did not store the transaction; it commits at the database's home", transaction.Id);
             }
             catch
             {
@@ -972,7 +998,7 @@ internal partial class HomePush(
             }
             catch (Exception error) when (error is not OperationCanceledException)
             {
-                throw new LocalOutcomeUnknownException("the transaction reached the push stream but its local commit failed; the home applies it", error);
+                return new LocalOutcomeUnknown("the transaction reached the push stream but its local commit failed; the home applies it", error);
             }
 
             await writer.DisposeAsync().ConfigureAwait(false);
@@ -981,18 +1007,18 @@ internal partial class HomePush(
             push.RecordPublished(database, transaction.Id!, home, epoch, acknowledged.Seq);
             if (!homeDurable && held)
             {
-                return new LocalCommit(transaction.Id, null);
+                return new LocalCommitted(transaction.Id, null);
             }
 
             try
             {
                 var result = await homeApplied.WaitAsync(HomeWait, push.Time, cancellationToken).ConfigureAwait(false);
                 Record("home_wait", ref started);
-                return new LocalCommit(transaction.Id, result);
+                return new LocalCommitted(transaction.Id, result);
             }
             catch (TimeoutException error)
             {
-                throw new LocalOutcomeUnknownException("the home has not answered the transaction yet; it stays in the push stream and applies there", error);
+                return new LocalOutcomeUnknown("the home has not answered the transaction yet; it stays in the push stream and applies there", error);
             }
         }
 

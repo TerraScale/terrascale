@@ -122,7 +122,7 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
             {
                 if (socket is not null)
                 {
-                    await SendAsync(socket, new ShapeHintFrame("error", Code: "invalid_key"), stop.Token).ConfigureAwait(false);
+                    _ = await SendAsync(socket, new ShapeHintFrame("error", Code: "invalid_key"), stop.Token).ConfigureAwait(false);
                     return TypedResults.Empty;
                 }
 
@@ -137,7 +137,7 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
             {
                 if (socket is not null)
                 {
-                    await SendAsync(socket, new ShapeHintFrame("error", Code: "shape_busy", RetryAfter: 1), stop.Token).ConfigureAwait(false);
+                    _ = await SendAsync(socket, new ShapeHintFrame("error", Code: "shape_busy", RetryAfter: 1), stop.Token).ConfigureAwait(false);
                     return TypedResults.Empty;
                 }
 
@@ -149,7 +149,7 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
             {
                 if (socket is not null)
                 {
-                    await SendAsync(socket, new ShapeHintFrame("error", Code: "must_refetch"), stop.Token).ConfigureAwait(false);
+                    _ = await SendAsync(socket, new ShapeHintFrame("error", Code: "must_refetch"), stop.Token).ConfigureAwait(false);
                     return TypedResults.Empty;
                 }
 
@@ -157,7 +157,10 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
             }
 
             socket ??= await AcceptAsync().ConfigureAwait(false);
-            await SendAsync(socket, new ShapeHintFrame("ready"), stop.Token).ConfigureAwait(false);
+            if (!await SendAsync(socket, new ShapeHintFrame("ready"), stop.Token).ConfigureAwait(false))
+            {
+                return TypedResults.Empty;
+            }
             using var disconnected = CancellationTokenSource.CreateLinkedTokenSource(stop.Token);
             var receive = ReceiveCloseAsync(socket, disconnected);
             var announced = ShapeProvisional.Empty;
@@ -168,7 +171,7 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
                     var read = await live.WaitAsync(shape.Scope, shape.Lineage, offset, announced, disconnected.Token).ConfigureAwait(false);
                     if (read is not ShapeBody body)
                     {
-                        await SendAsync(socket, new ShapeHintFrame("error", Code: read is MustRefetch ? "must_refetch" : "unavailable", RetryAfter: 1), disconnected.Token).ConfigureAwait(false);
+                        _ = await SendAsync(socket, new ShapeHintFrame("error", Code: read is MustRefetch ? "must_refetch" : "unavailable", RetryAfter: 1), disconnected.Token).ConfigureAwait(false);
                         break;
                     }
 
@@ -177,14 +180,18 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
                         var current = await CheckAccessAsync(stop, null).ConfigureAwait(false);
                         if (current is not ResolvedShape checkedShape || checkedShape.Lineage != shape.Lineage)
                         {
-                            await SendAsync(socket, new ShapeHintFrame("error", Code: "must_refetch"), disconnected.Token).ConfigureAwait(false);
+                            _ = await SendAsync(socket, new ShapeHintFrame("error", Code: "must_refetch"), disconnected.Token).ConfigureAwait(false);
                             break;
                         }
 
                         var at = offset.ToString(CultureInfo.InvariantCulture);
                         if (body.Local is { } local && local != announced && body.NextOffset == at)
                         {
-                            await SendAsync(socket, new ShapeHintFrame("provisional", shape.Lineage.Handle, at, at, Local: local), disconnected.Token).ConfigureAwait(false);
+                            if (!await SendAsync(socket, new ShapeHintFrame("provisional", shape.Lineage.Handle, at, at, Local: local), disconnected.Token).ConfigureAwait(false))
+                            {
+                                break;
+                            }
+
                             announced = local;
                             continue;
                         }
@@ -196,7 +203,11 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
                         }
 
                         var manifest = body.Manifest ?? new ShapeMirrorManifest(shape.Lineage.Handle, []);
-                        await SendAsync(socket, new ShapeHintFrame("new_data", shape.Lineage.Handle, at, body.NextOffset, manifest), disconnected.Token).ConfigureAwait(false);
+                        if (!await SendAsync(socket, new ShapeHintFrame("new_data", shape.Lineage.Handle, at, body.NextOffset, manifest), disconnected.Token).ConfigureAwait(false))
+                        {
+                            break;
+                        }
+
                         offset = next;
                     }
                 }
@@ -274,13 +285,21 @@ internal sealed class GetShapeHintEndpoint(ITenantDirectory tenants, IShapeLinea
         };
     }
 
-    private async Task SendAsync(WebSocket socket, ShapeHintFrame frame, CancellationToken cancellationToken)
+    private async ValueTask<bool> SendAsync(WebSocket socket, ShapeHintFrame frame, CancellationToken cancellationToken)
     {
         using var admission = memory.TryReserve(64 * 1024) ?? throw new QosMemoryException();
         var bytes = JsonSerializer.SerializeToUtf8Bytes(frame, ShapeHintJsonContext.Default.ShapeHintFrame);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(5));
-        await socket.SendAsync(bytes, WebSocketMessageType.Text, true, deadline.Token).ConfigureAwait(false);
+        try
+        {
+            await socket.SendAsync(bytes, WebSocketMessageType.Text, true, deadline.Token).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
+        {
+            return false;
+        }
     }
 
     private static async Task ReceiveCloseAsync(WebSocket socket, CancellationTokenSource disconnected)
