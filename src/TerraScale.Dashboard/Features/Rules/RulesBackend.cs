@@ -50,13 +50,15 @@ namespace TerraScale.Dashboard.Features.Rules
             return await VersionsAsync(target.Client, target.ProjectId, target.Database);
         }
 
-        public async Task<Valid<TerraBaseRulesDeploy>> DeployAsync(AccountContext context, DatabaseRecord database, string? version, string source, CancellationToken cancellationToken)
-        {
-            if (Parse(source) is not JsonElement rules)
+        public Task<Valid<TerraBaseRulesDeploy>> DeployAsync(AccountContext context, DatabaseRecord database, string? version, string source, CancellationToken cancellationToken) =>
+            Parse(source) switch
             {
-                return new Validation("Rules must be a JSON object.");
-            }
+                JsonElement rules => DeployValidatedAsync(context, database, version, rules, cancellationToken),
+                Validation invalid => Task.FromResult<Valid<TerraBaseRulesDeploy>>(invalid),
+            };
 
+        private async Task<Valid<TerraBaseRulesDeploy>> DeployValidatedAsync(AccountContext context, DatabaseRecord database, string? version, JsonElement rules, CancellationToken cancellationToken)
+        {
             var target = await ClientAsync(context, database, true, cancellationToken);
             return await DeployAsync(target.Client, target.ProjectId, target.Database, version, rules);
         }

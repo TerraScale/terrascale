@@ -188,8 +188,8 @@ namespace TerraScale.Dashboard.Features.Rules
                                 comparison = new(versions.FirstOrDefault(item => item.Version == older.Version) ?? new(older.Version, older.UpdatedAt, older.UpdatedBy, ""),
                                     RulesDiff.Lines(RulesBackend.Source(older.Tables), RulesBackend.Source(current.Tables)));
                                 break;
-                            case Errors.NotFound:
-                                error = "This rules version does not exist.";
+                            case Errors.NotFound missing:
+                                error = missing.Message ?? "This rules version does not exist.";
                                 status = 404;
                                 break;
                         }
