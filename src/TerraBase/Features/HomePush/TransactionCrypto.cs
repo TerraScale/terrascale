@@ -39,8 +39,11 @@ internal sealed class TransactionCrypto(DataKeys? keys) : ITransactionCrypto
             return new Unavailable("durable local writes require the database key store");
         }
 
-        var (id, dataKey) = await keys.ForSealingAsync(BackupLayout.KeyScope(database), cancellationToken).ConfigureAwait(false);
-        return Seal(database, packed, id, dataKey);
+        return await keys.ForSealingAsync(BackupLayout.KeyScope(database), cancellationToken).ConfigureAwait(false) switch
+        {
+            DataKey dataKey => Seal(database, packed, dataKey.Id, dataKey.Key),
+            Shredded => new Unavailable("durable local writes require the database key store"),
+        };
     }
 
     internal static byte[] Seal(TenantContext database, byte[] packed, string id, byte[] dataKey)
@@ -77,14 +80,11 @@ internal sealed class TransactionCrypto(DataKeys? keys) : ITransactionCrypto
 
         var store = keys ?? throw new IOException("durable local writes require the database key store");
         byte[] dataKey;
-        try
-        {
-            dataKey = await store.GetAsync(BackupLayout.KeyScope(database), id, cancellationToken).ConfigureAwait(false);
-        }
-        catch (DatabaseShreddedException)
+        if (await store.GetAsync(BackupLayout.KeyScope(database), id, cancellationToken).ConfigureAwait(false) is not KeyBytes { Key: { } read })
         {
             return null;
         }
+        dataKey = read;
 
         var key = Derive(database, dataKey, sealedBody);
         var plain = new byte[sealedBody.Length - Overhead];

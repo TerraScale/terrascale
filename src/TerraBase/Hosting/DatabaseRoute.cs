@@ -23,6 +23,7 @@ internal static class DatabaseRoute
 
     public const string JsonMediaType = "application/json";
     public static readonly NotFound UnknownDatabase = new("the database does not exist", "unknown_database");
+    public const string CopyFaulted = "copy_faulted";
 
     public static string Project(HttpContext context) => context.RouteValue("project");
     public static string Database(HttpContext context) => context.RouteValue("database");
@@ -96,7 +97,7 @@ internal static class DatabaseRoute
         if (await faults.RefusedAsync(SystemDatabase.Identity, Ulid.Empty, cancellationToken).ConfigureAwait(false)
             || incarnation is { } pin && await faults.RefusedAsync(tenant, pin, cancellationToken).ConfigureAwait(false))
         {
-            throw new StorageCopyFaultedException("this database copy requires storage recovery");
+            return new Unavailable("this database copy requires storage recovery", CopyFaulted);
         }
 
         context.Features.Set(tenant);

@@ -283,26 +283,36 @@ internal sealed class SqlExecuteEndpoint(
                 return null;
             }
 
-            var committedOutcome = await transaction.CommitAsync(homeDurable, cancellationToken);
-            if (committedOutcome is LocalWriteRefused refused)
+            LocalCommitted committed;
+            try
             {
-                return (null, refused.PublishId);
-            }
+                var committedOutcome = await transaction.CommitAsync(homeDurable, cancellationToken);
+                SqlRequestTiming.Mark(HttpContext, "ack");
+                foreach (var timing in transaction.Timings)
+                {
+                    SqlRequestTiming.Record(HttpContext, timing.Key, timing.Value);
+                }
 
-            if (committedOutcome is LocalOutcomeUnknown)
-            {
-                return (Error(new SqlBatchFailure(new SqlError(SqlErrors.Unavailable, "the write reached the push stream but its outcome is unknown; read it at the home"), 0)), null);
-            }
+                if (committedOutcome is LocalWriteRefused refused)
+                {
+                    return (null, refused.PublishId);
+                }
 
-            if (committedOutcome is not LocalCommitted committed)
-            {
-                throw new UnreachableException();
-            }
+                if (committedOutcome is LocalOutcomeUnknown)
+                {
+                    return (Error(new SqlBatchFailure(new SqlError(SqlErrors.Unavailable, "the write reached the push stream but its outcome is unknown; read it at the home"), 0)), null);
+                }
 
-            SqlRequestTiming.Mark(HttpContext, "ack");
-            foreach (var timing in transaction.Timings)
+                if (committedOutcome is not LocalCommitted outcome)
+                {
+                    throw new UnreachableException();
+                }
+
+                committed = outcome;
+            }
+            catch (OperationCanceledException)
             {
-                SqlRequestTiming.Record(HttpContext, timing.Key, timing.Value);
+                throw;
             }
 
             sql.RecordLocalWrites(database, results.Sum(result => result.RowsAffected));

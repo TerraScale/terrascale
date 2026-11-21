@@ -658,7 +658,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         _logger.ZLogWarning(error, $"Continuous backup of {file.Prefix:@File} failed; the next pass retries");
     }
     private static bool GenerationLost(Exception error) =>
-        error is DatabaseShreddedException or InvalidDataException { Message: DataKeys.MissingKeyMessage };
+        error is InvalidDataException { Message: DataKeys.MissingKeyMessage };
 
     private string ScratchFile(string extension) => Path.Combine(_scratch, EntityIds.New().ToString() + extension);
     private static void DeleteSnapshot(string path) => BackupReader.Delete(path);

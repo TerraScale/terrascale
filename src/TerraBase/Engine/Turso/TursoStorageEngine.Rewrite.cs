@@ -184,7 +184,7 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
                             store.Rewritten(target);
                             store.NoteCopyFault("a healthy rewrite's rename may not be durable");
                             await store.RecordCopyFaultAsync(store.CopyFault!).ConfigureAwait(false);
-                            throw new RewriteUncertainException(error);
+                            return new RewriteUncertain(error);
                         }
 
                         if (replaced is { } replaceRefused)
@@ -214,7 +214,7 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
                         ? "the off-writer rewrite stopped under storage or memory pressure"
                         : "the off-writer rewrite exceeded its total deadline", budget.Reason);
                 }
-                catch (Exception error) when (error is not (RewriteUncertainException or OperationCanceledException))
+                catch (Exception error) when (error is not OperationCanceledException)
                 {
                     return new RewriteRefused("the rewrite failed; the old file stays in place", new Safety());
                 }
@@ -254,6 +254,11 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
         {
             _rewriteRefused.Add(1, new KeyValuePair<string, object?>("reason", refused.Reason.Label));
             _logger.ZLogInformation($"Healthy rewrite refused: {refused.Reason.Label} ({refused.Message})");
+        }
+        else if (outcome is RewriteUncertain uncertain)
+        {
+            _rewriteRefused.Add(1, new KeyValuePair<string, object?>("reason", "Uncertain"));
+            _logger.ZLogError(uncertain.Cause, $"the rewritten file is in place but its rename may not be durable; storage failed closed");
         }
 
         return outcome;

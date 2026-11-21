@@ -70,10 +70,6 @@ internal static class PushChanges
 
     private static RegionChange? Update(CapturedRowChange change, string[] key)
     {
-        if (change.Columns.Where((column, index) => key.Contains(column, StringComparer.OrdinalIgnoreCase) && !Equals(change.Before![index], change.After![index])).Any())
-        {
-            return null;
-        }
         var updated = change.Updated;
         return new RegionChange("update", change.Table,
             Pick(change.Columns, change.After!, column => key.Contains(column, StringComparer.OrdinalIgnoreCase)),

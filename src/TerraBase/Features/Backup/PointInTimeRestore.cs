@@ -354,9 +354,13 @@ internal sealed class PointInTimeRestore(
 
             restored = builtBackup;
         }
-        catch (DatabaseShreddedException error)
+        catch (InvalidDataException error) when (error.Message == DataKeys.MissingKeyMessage)
         {
-            return Shredded(error.ShreddedAt);
+            if (await backup.Keys.ShreddedAsync(BackupLayout.KeyScope(source), cancellationToken).ConfigureAwait(false) is { } race)
+            {
+                return Shredded(race.ShreddedAt);
+            }
+            return new Conflict("continuous backup of this database cannot be read: an object fails authentication or its integrity check", "backup_unreadable");
         }
 
         return restored;

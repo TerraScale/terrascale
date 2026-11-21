@@ -5,12 +5,6 @@ namespace TerraBase.Features.Backup;
 
 internal sealed record ShredRecord(string DatabaseId, DateTimeOffset ShreddedAt);
 
-internal sealed class DatabaseShreddedException(DateTimeOffset? shreddedAt)
-    : IOException("the database was deleted and its backup data keys destroyed")
-{
-    public DateTimeOffset? ShreddedAt { get; } = shreddedAt;
-}
-
 internal static class ShredRecords
 {
     private const int MaxBytes = 4096;

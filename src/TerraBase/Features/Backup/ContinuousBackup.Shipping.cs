@@ -321,11 +321,15 @@ internal sealed partial class ContinuousBackup
     }
     private async Task<(BackupScratchStream Content, string KeyId)> SealAsync(ShippedFile file, string key, Stream content, CancellationToken cancellationToken)
     {
-        if (file.GenerationKey is { } generationKey)
+        if (file.GenerationKey is { } generationKey
+            && await file.Target.Keys.GetAsync(file.Scope, generationKey, cancellationToken).ConfigureAwait(false) is not KeyBytes)
         {
-            _ = await file.Target.Keys.GetAsync(file.Scope, generationKey, cancellationToken).ConfigureAwait(false);
+            throw new InvalidDataException(DataKeys.MissingKeyMessage);
         }
-        var (keyId, dataKey) = await file.Target.Keys.CurrentAsync(file.Scope, cancellationToken).ConfigureAwait(false);
+        if (await file.Target.Keys.CurrentAsync(file.Scope, cancellationToken).ConfigureAwait(false) is not DataKey { Id: var keyId, Key: var dataKey })
+        {
+            throw new InvalidDataException(DataKeys.MissingKeyMessage);
+        }
         var bytes = checked(content.Length + (content.Length / (1 << 20) + 1) * 24 + 62);
         var sealedObject = new BackupScratchStream(ScratchFile(".sealed"), null, bytes);
         try

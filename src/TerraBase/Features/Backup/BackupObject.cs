@@ -66,7 +66,7 @@ internal static class BackupObject
     }
 
     public static async Task ReadAsync(
-        Stream sealedObject, Stream output, string objectKey, Func<string, Task<byte[]>> dataKey, CancellationToken cancellationToken)
+        Stream sealedObject, Stream output, string objectKey, Func<string, Task<DataKeyRead>> dataKey, CancellationToken cancellationToken)
     {
         var header = new byte[HeaderBytes];
         if (await sealedObject.ReadAtLeastAsync(header, HeaderBytes, throwOnEndOfStream: false, cancellationToken).ConfigureAwait(false) < HeaderBytes
@@ -75,7 +75,10 @@ internal static class BackupObject
             throw new InvalidDataException("not a TerraBase backup object of format 1");
         }
 
-        var key = await dataKey(Encoding.ASCII.GetString(header, 4, KeyIdBytes)).ConfigureAwait(false);
+        if (await dataKey(Encoding.ASCII.GetString(header, 4, KeyIdBytes)).ConfigureAwait(false) is not KeyBytes { Key: { } key })
+        {
+            throw new InvalidDataException(DataKeys.MissingKeyMessage);
+        }
 
         using var aes = new AesGcm(Derive(key, header, objectKey), TagBytes);
         var chunk = ArrayPool<byte>.Shared.Rent(8 + MaxStored + TagBytes);
