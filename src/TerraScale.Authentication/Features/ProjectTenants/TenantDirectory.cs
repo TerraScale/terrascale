@@ -83,11 +83,17 @@ public sealed class TenantDirectory(AuthData data, Users users, Sessions session
         return PlatformDirectory.Paged([.. rows.Select(row => row.User with { LinkedProviders = [.. row.Links.Select(link => link.Identity)] })], limit, user => user.Id);
     }
 
-    public async Task<Found<UserRecord>> UserAsync(string projectId, string userId, CancellationToken cancellationToken) =>
-        await users.GetAsync(projectId, userId, cancellationToken).ConfigureAwait(false) ?? new NotFound("No such resource.", "not_found");
+    public async Task<Found<UserRecord>> UserAsync(string projectId, string userId, CancellationToken cancellationToken)
+    {
+        var user = await users.GetAsync(projectId, userId, cancellationToken).ConfigureAwait(false);
+        return user is null ? new NotFound("No such resource.", "not_found") : user;
+    }
 
-    public async Task<Found<UserRecord>> SetDisabledAsync(string projectId, string userId, bool disabled, CancellationToken cancellationToken) =>
-        await users.SetDisabledAsync(projectId, userId, disabled, cancellationToken).ConfigureAwait(false) ?? new NotFound("No such resource.", "not_found");
+    public async Task<Found<UserRecord>> SetDisabledAsync(string projectId, string userId, bool disabled, CancellationToken cancellationToken)
+    {
+        var user = await users.SetDisabledAsync(projectId, userId, disabled, cancellationToken).ConfigureAwait(false);
+        return user is null ? new NotFound("No such resource.", "not_found") : user;
+    }
 
     public async Task<Page<ProjectSession>> SessionsAsync(string projectId, string? userId, int limit, string? after, CancellationToken cancellationToken)
     {

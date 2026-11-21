@@ -18,11 +18,11 @@ public sealed class DeleteProjectUserEndpoint(TenantDirectory tenants, Users use
     protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
-        _ = await this.Tenants.UserAsync(projectId, this.RouteId("user"), cancellationToken) switch
+        if (await this.Tenants.UserAsync(projectId, this.RouteId("user"), cancellationToken) is NotFound missing)
         {
-            UserRecord user => user,
-            NotFound error => error,
-        };
+            return ErrorResults.ToResult(missing);
+        }
+
         await users.DeleteAsync(projectId, this.RouteId("user"), cancellationToken);
         return Results.NoContent();
     }
