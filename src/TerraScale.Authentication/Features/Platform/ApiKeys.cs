@@ -134,7 +134,7 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
         ArgumentNullException.ThrowIfNull(caller);
         if (await limiter.AcquireAsync(Instance, "api-key-create", caller.Id, CreationsPerUserPerHour, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false) is { } wait)
         {
-            return (Failure)new QuotaExceeded("Too many API keys created; retry after the Retry-After delay.", "rate_limited", wait);
+            return (Failure)new QuotaExceeded("Too many API keys created; retry after the Retry-After delay.", "rate_limited", RetryAfter: wait);
         }
 
         return await directory.CommitAsync(async () =>

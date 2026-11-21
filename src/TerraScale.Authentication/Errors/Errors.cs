@@ -19,7 +19,7 @@ public sealed record Unauthorized(string? Message = null, string Code = "unautho
 
 public sealed record Forbidden(string Message, string Code = "forbidden", IReadOnlyDictionary<string, string>? Details = null);
 
-public sealed record QuotaExceeded(string Message, string Code = "quota_exceeded", TimeSpan? RetryAfter = null);
+public sealed record QuotaExceeded(string Message, string Code = "quota_exceeded", IReadOnlyDictionary<string, string>? Details = null, TimeSpan? RetryAfter = null);
 
 public sealed record Unavailable(string Message, string Code = "unavailable", IReadOnlyDictionary<string, string>? Details = null);
 

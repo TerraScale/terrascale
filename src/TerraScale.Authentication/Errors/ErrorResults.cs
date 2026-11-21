@@ -14,7 +14,7 @@ internal static class ErrorResults
         PreconditionFailed e => Result(StatusCodes.Status412PreconditionFailed, e.Message, e.Code),
         Unauthorized e => Result(StatusCodes.Status401Unauthorized, e.Message ?? "Unauthorized.", e.Code),
         Forbidden e => Result(StatusCodes.Status403Forbidden, e.Message, e.Code),
-        QuotaExceeded e => Result(StatusCodes.Status429TooManyRequests, e.Message, e.Code, retryAfter: e.RetryAfter),
+        QuotaExceeded e => Result(StatusCodes.Status429TooManyRequests, e.Message, e.Code, details: e.Details, retryAfter: e.RetryAfter),
         Unavailable e => Result(StatusCodes.Status503ServiceUnavailable, e.Message, e.Code, e.Details),
         PayloadTooLarge e => Result(StatusCodes.Status413PayloadTooLarge, e.Message, e.Code),
         UnsupportedMediaType e => Result(StatusCodes.Status415UnsupportedMediaType, e.Message, e.Code),
