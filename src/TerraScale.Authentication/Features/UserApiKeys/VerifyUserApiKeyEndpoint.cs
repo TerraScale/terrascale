@@ -1,5 +1,6 @@
 using TerraScale.Authentication.Contracts;
 using TerraScale.DotNet;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -18,7 +19,7 @@ public sealed class VerifyUserApiKeyEndpoint(TenantDirectory tenants, PlatformAu
     {
         if (caller is not ProjectCaller.SecretKey)
         {
-            throw PlatformDirectory.Forbidden();
+            return ErrorResults.ToResult(new Forbidden("Your role does not allow this.", "forbidden_role"));
         }
 
         var project = await this.AccessAsync(caller, Roles.Viewer, cancellationToken, TerraBaseScopes.AuthRead);

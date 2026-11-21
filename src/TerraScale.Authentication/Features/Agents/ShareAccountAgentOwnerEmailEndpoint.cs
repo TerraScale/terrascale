@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.AgentId;
 using TerraScale.Authentication.Features.Platform;
 
@@ -16,10 +17,26 @@ public sealed class ShareAccountAgentOwnerEmailEndpoint(PlatformAuthentication a
 
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        var owner = AgentIdClients.Owner(caller);
+        return AgentIdClients.Owner(caller) switch
+        {
+            UserRecord owner => await this.ShareAsync(owner, cancellationToken),
+            Forbidden forbidden => ErrorResults.ToResult(forbidden),
+        };
+    }
+
+    private async Task<IResult> ShareAsync(UserRecord owner, CancellationToken cancellationToken)
+    {
         var agentId = this.RouteId("agent");
         var request = await this.BodyAsync(AgentJson.Default.AgentSharingRequest, cancellationToken);
-        var share = request.ShareOwnerEmail ?? throw Invalid("share_owner_email must be true or false.");
-        return Results.Json(await agents.ShareOwnerEmailAsync(owner.InstanceId, agentId, owner.Id, share, cancellationToken), AgentJson.Default.AgentBody);
+        if (request.ShareOwnerEmail is not { } share)
+        {
+            return ErrorResults.ToResult(new Validation("share_owner_email must be true or false."));
+        }
+
+        return await agents.ShareOwnerEmailAsync(owner.InstanceId, agentId, owner.Id, share, cancellationToken) switch
+        {
+            AgentBody agent => Results.Json(agent, AgentJson.Default.AgentBody),
+            NotFound notFound => ErrorResults.ToResult(notFound),
+        };
     }
 }

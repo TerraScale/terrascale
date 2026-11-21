@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.SignIn;
 
@@ -17,7 +18,12 @@ public sealed class StartAgentEnrollmentEndpoint(PlatformAuthentication authenti
     {
         var project = this.TenantId();
         var request = await this.BodyAsync(AgentEnrollmentJson.Default.StartAgentEnrollmentRequest, cancellationToken);
-        return Results.Json(await enrollments.StartAsync(project, SignInFlow.Ip(this.HttpContext), request, cancellationToken), AgentEnrollmentJson.Default.AgentEnrollmentBody,
-            statusCode: StatusCodes.Status201Created);
+        return await enrollments.StartAsync(project, SignInFlow.Ip(this.HttpContext), request, cancellationToken) switch
+        {
+            AgentEnrollmentBody started => Results.Json(started, AgentEnrollmentJson.Default.AgentEnrollmentBody, statusCode: StatusCodes.Status201Created),
+            Validation invalid => ErrorResults.ToResult(invalid),
+            NotFound notFound => ErrorResults.ToResult(notFound),
+            Conflict conflict => ErrorResults.ToResult(conflict),
+        };
     }
 }

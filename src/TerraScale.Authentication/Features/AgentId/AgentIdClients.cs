@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Storage;
@@ -38,7 +39,17 @@ public sealed record AgentIdClientBody(string ClientId, string Name, IReadOnlyLi
 
 public sealed record AgentIdClientPageBody(IReadOnlyList<AgentIdClientBody> Items);
 
+public readonly union CreateAgentIdClientResult(AgentIdClientBody, NotFound, Conflict, Forbidden);
+
+public readonly union RotateAgentIdClientResult(AgentIdClientSecretBody, NotFound, Conflict, Forbidden);
+
+public readonly union DeleteAgentIdClientResult(Done, NotFound, Conflict, Forbidden);
+
 public sealed record AgentIdClientSecretBody(string ClientId, string ClientSecret, DateTimeOffset? PreviousSecretExpiresAt);
+
+public readonly union OwnerCheck(UserRecord, Forbidden);
+
+public readonly union StepUpSave(Done, Forbidden, Conflict);
 
 public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<AgentIdClients> logger)
 {
@@ -50,23 +61,37 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
 
     public static readonly TimeSpan MaxGrace = TimeSpan.FromDays(1);
 
-    internal async Task<AgentIdClientBody> CreateAsync(PreparedStepUp proof, string name, IReadOnlyList<string> redirectUris, CancellationToken cancellationToken)
+    internal async Task<CreateAgentIdClientResult> CreateAsync(PreparedStepUp proof, string name, IReadOnlyList<string> redirectUris, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(proof);
         var owner = proof.Caller;
         using var home = HomeReads.Begin();
         var user = await data.ReadAsync((db, token) => db.Users.Where(row => row.InstanceId == owner.InstanceId && row.Id == owner.Id).WithVersion().SingleOrDefaultAsync(token),
-            cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+            cancellationToken).ConfigureAwait(false);
+        if (user is null)
+        {
+            return new NotFound("No such resource.");
+        }
+
         var count = await data.ReadAsync((db, token) => db.AgentIdClients.CountAsync(row => row.OwnerUserId == owner.Id, token), cancellationToken).ConfigureAwait(false);
         if (count >= MaxPerAccount)
         {
-            throw new ApiException(409, "client_limit", $"An account can have at most {MaxPerAccount} Sign in as agent clients; delete one first.");
+            return new Conflict($"An account can have at most {MaxPerAccount} Sign in as agent clients; delete one first.", "client_limit");
         }
 
         var secret = Tokens.RandomToken(48);
         var client = new AgentIdClientRecord(AuthIds.New(), owner.Id, name, redirectUris, Tokens.Sha256Hex(secret), clock.GetUtcNow());
-        await this.SaveAsync(proof, [Change.Insert(client), Change.Update(user, user.Value)], cancellationToken).ConfigureAwait(false);
-        logger.ZLogInformation($"Sign in as agent client {client.Id} created by {owner.Id}");
+        return (await this.TrySaveAsync(proof, [Change.Insert(client), Change.Update(user, user.Value)], cancellationToken).ConfigureAwait(false)) switch
+        {
+            Done => this.Created(client, secret, owner.Id),
+            Conflict conflict => conflict,
+            Forbidden forbidden => forbidden,
+        };
+    }
+
+    private AgentIdClientBody Created(AgentIdClientRecord client, string secret, string owner)
+    {
+        logger.ZLogInformation($"Sign in as agent client {client.Id} created by {owner}");
         return Body(client) with { ClientSecret = secret };
     }
 
@@ -77,10 +102,16 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
             .ConfigureAwait(false)).Select(Body)]);
     }
 
-    internal async Task<AgentIdClientSecretBody> RotateAsync(PreparedStepUp proof, string clientId, TimeSpan grace, CancellationToken cancellationToken)
+    internal async Task<RotateAgentIdClientResult> RotateAsync(PreparedStepUp proof, string clientId, TimeSpan grace, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(proof);
-        var client = await this.OwnedAsync(proof.Caller.Id, clientId, cancellationToken).ConfigureAwait(false);
+        var owned = await this.OwnedAsync(proof.Caller.Id, clientId, cancellationToken).ConfigureAwait(false);
+        if (owned is null)
+        {
+            return new NotFound("No such resource.");
+        }
+
+        var client = owned;
         var secret = Tokens.RandomToken(48);
         var expires = grace > TimeSpan.Zero ? clock.GetUtcNow() + grace : (DateTimeOffset?)null;
         var rotated = client.Value with
@@ -89,17 +120,41 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
             PreviousSecretDigest = expires is null ? null : client.Value.SecretDigest,
             PreviousSecretExpiresAt = expires,
         };
-        await this.SaveAsync(proof, [Change.Update(client, rotated)], cancellationToken).ConfigureAwait(false);
-        logger.ZLogInformation($"Sign in as agent client {clientId} secret rotated by {proof.Caller.Id}");
+        return (await this.TrySaveAsync(proof, [Change.Update(client, rotated)], cancellationToken).ConfigureAwait(false)) switch
+        {
+            Done => Rotated(clientId, secret, expires, proof.Caller.Id),
+            Conflict conflict => conflict,
+            Forbidden forbidden => forbidden,
+        };
+    }
+
+    private AgentIdClientSecretBody Rotated(string clientId, string secret, DateTimeOffset? expires, string actor)
+    {
+        logger.ZLogInformation($"Sign in as agent client {clientId} secret rotated by {actor}");
         return new(clientId, secret, expires);
     }
 
-    internal async Task DeleteAsync(PreparedStepUp proof, string clientId, CancellationToken cancellationToken)
+    internal async Task<DeleteAgentIdClientResult> DeleteAsync(PreparedStepUp proof, string clientId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(proof);
-        var client = await this.OwnedAsync(proof.Caller.Id, clientId, cancellationToken).ConfigureAwait(false);
-        await this.SaveAsync(proof, [Change.Delete(client)], cancellationToken).ConfigureAwait(false);
-        logger.ZLogInformation($"Sign in as agent client {clientId} deleted by {proof.Caller.Id}");
+        var owned = await this.OwnedAsync(proof.Caller.Id, clientId, cancellationToken).ConfigureAwait(false);
+        if (owned is null)
+        {
+            return new NotFound("No such resource.");
+        }
+
+        return (await this.TrySaveAsync(proof, [Change.Delete(owned)], cancellationToken).ConfigureAwait(false)) switch
+        {
+            Done => Deleted(clientId, proof.Caller.Id),
+            Conflict conflict => conflict,
+            Forbidden forbidden => forbidden,
+        };
+    }
+
+    private DeleteAgentIdClientResult Deleted(string clientId, string actor)
+    {
+        logger.ZLogInformation($"Sign in as agent client {clientId} deleted by {actor}");
+        return new Done();
     }
 
     public async Task<AgentIdRegistration?> FindAsync(string clientId, CancellationToken cancellationToken)
@@ -126,14 +181,13 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
             select new AgentIdOwnerEmail(agent.ShareOwnerEmail, owner.Email, owner.EmailVerified)).SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
     }
 
-    public static UserRecord Owner(UserRecord caller)
+    public static OwnerCheck Owner(UserRecord caller)
     {
         ArgumentNullException.ThrowIfNull(caller);
         return caller.ActingAgentId is null && caller.InstanceId == PlatformTenant.Id
             ? caller
-            : throw new ApiException(403, "owner_required", "Only the account itself, not an agent acting for it, can do this.");
+            : new Forbidden("Only the account itself, not an agent acting for it, can do this.", "owner_required");
     }
-
     public static string? RedirectUri(string? value) =>
         value is { Length: > 0 and <= AgentIdClientRecord.MaxRedirectUriLength } && Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps
             && uri.UserInfo.Length == 0 && uri.Fragment.Length == 0 && uri.HostNameType is UriHostNameType.Dns or UriHostNameType.IPv4 or UriHostNameType.IPv6
@@ -162,24 +216,23 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
         Version = string.Create(CultureInfo.InvariantCulture, $"agentid-client:{client.Id}"),
     };
 
-    private async Task<Versioned<AgentIdClientRecord>> OwnedAsync(string ownerId, string clientId, CancellationToken cancellationToken)
+    private async Task<Versioned<AgentIdClientRecord>?> OwnedAsync(string ownerId, string clientId, CancellationToken cancellationToken)
     {
         using var home = HomeReads.Begin();
         return await data.ReadAsync((db, token) => db.AgentIdClients.Where(row => row.Id == clientId && row.OwnerUserId == ownerId).WithVersion().SingleOrDefaultAsync(token),
-            cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+            cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task SaveAsync(PreparedStepUp proof, IReadOnlyList<Change> changes, CancellationToken cancellationToken)
+    private async Task<StepUpSave> TrySaveAsync(PreparedStepUp proof, IReadOnlyList<Change> changes, CancellationToken cancellationToken)
     {
         if (proof.Record.ExpiresAt <= clock.GetUtcNow())
         {
-            throw StepUpProofs.Required();
+            return new Forbidden("A fresh, approved, purpose-bound single-use proof is required.", "step_up_required");
         }
 
-        if (!await data.SaveAsync([.. proof.Operations, .. changes], cancellationToken).ConfigureAwait(false))
-        {
-            throw new ApiException(409, "version_conflict", "The client, the account or its step-up proof changed; try again.");
-        }
+        return await data.SaveAsync([.. proof.Operations, .. changes], cancellationToken).ConfigureAwait(false)
+            ? new Done()
+            : new Conflict("The client, the account or its step-up proof changed; try again.", "version_conflict");
     }
 
     private static AgentIdClientBody Body(AgentIdClientRecord client) =>

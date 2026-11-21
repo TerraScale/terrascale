@@ -52,15 +52,19 @@ public abstract class AgentIdAuthorizeEndpoint(AgentIdTransactions transactions,
         List<KeyValuePair<string, StringValues>> parameters = HttpMethods.IsPost(this.HttpContext.Request.Method)
             ? [.. await this.HttpContext.Request.ReadFormAsync(cancellationToken)]
             : [.. this.HttpContext.Request.Query];
-        var browser = this.HttpContext.Request.GetTypedHeaders().Accept.Any(media => media.MediaType.Equals("text/html", StringComparison.OrdinalIgnoreCase));
         try
         {
-            await transactions.LimitAsync("agentid-authorize", SignInFlow.Ip(this.HttpContext), clientId, cancellationToken);
+            if (await transactions.LimitAsync("agentid-authorize", SignInFlow.Ip(this.HttpContext), clientId, cancellationToken) is { } limited)
+            {
+                return HostedAuth.TooMany(limited);
+            }
         }
-        catch (ApiException error) when (error.RetryAfter is { } wait)
+        catch (ApiException unavailable) when (unavailable.RetryAfter is { } wait)
         {
             return HostedAuth.TooMany(wait);
         }
+
+        var browser = this.HttpContext.Request.GetTypedHeaders().Accept.Any(media => media.MediaType.Equals("text/html", StringComparison.OrdinalIgnoreCase));
 
         var transaction = await transactions.OpenAsync(AgentIdTransactions.RequestHash(parameters), clientId, cancellationToken);
         this.HttpContext.Response.Headers.CacheControl = "no-store";
