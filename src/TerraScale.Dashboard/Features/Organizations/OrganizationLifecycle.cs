@@ -8,7 +8,7 @@ namespace TerraScale.Dashboard.Features.Organizations
 {
     using NotFound = TerraScale.Dashboard.Errors.NotFound;
 
-    public readonly union LeaveResult(Done, Conflict, Forbidden);
+    public readonly union LeaveResult(Done, Conflict);
 
     public sealed class OrganizationLifecycleService(OrganizationStore organizations, AccountService accounts, ITsAuthPlatform platform, IAuthStepUpGateway stepUp, TimeProvider time)
     {

@@ -63,7 +63,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
                 case InvalidInvitation error:
                     return await Error(error.Message, 422);
                 case NotFound error:
-                    return await Error(error.Message ?? "Not found.", 404);
+                    return await Error(error.Message!, 404);
                 case Conflict error:
                     return await Error(error.Message, 409);
                 case Unavailable:

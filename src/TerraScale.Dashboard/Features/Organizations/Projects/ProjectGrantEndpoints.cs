@@ -39,7 +39,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
                 {
                     TsAuthPlatformPage<TsAuthPlatformProjectMember> listed => Page(http, context, listed.Items, listed.Next, previous: after is not null,
                         notice: http.Request.Query["changed"] == "1" ? "Explicit project grant updated." : ""),
-                    NotFound error => Page(http, context, [], error: error.Message ?? "Not found.", status: 404),
+                    NotFound error => Page(http, context, [], error: error.Message!, status: 404),
                     Validation error => Page(http, context, [], error: error.Message, status: 400),
                     Unavailable => Page(http, context, [], error: "Project grants could not be loaded. Reload this page to retry.", status: 503),
                 };
@@ -71,7 +71,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
                     var items = reloaded switch
                     {
                         TsAuthPlatformPage<TsAuthPlatformProjectMember> page => page.Items,
-                        NotFound failure => throw new AccountAccessException(failure.Message ?? "Not found.", 404),
+                        NotFound failure => throw new AccountAccessException(failure.Message!, 404),
                         Validation failure => throw new AccountAccessException(failure.Message, 400),
                         Unavailable => throw new IOException("The project grant page is invalid."),
                     };
@@ -135,7 +135,14 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
 
                 if (http.Request.IsDatastarRequest)
                 {
-                    return await PatchAsync(http, context, grants, notice: "Explicit project grant updated.");
+                    context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, requireProject: true, reload: true);
+                    return await grants.ReadAsync(context, null, http.RequestAborted) switch
+                    {
+                        TsAuthPlatformPage<TsAuthPlatformProjectMember> page => await PatchedAsync(http, context, page.Items, "Explicit project grant updated."),
+                        NotFound => await Error("The project or target user is unavailable. New grants require an existing organization member; otherwise ask an organization admin about a project invitation. Invitations are not available here.", 404),
+                        Validation failure => await Error(failure.Message, 400),
+                        Unavailable => await Error("The grant change could not be confirmed. Reload project grants before trying again.", 503),
+                    };
                 }
                 return HttpRedirects.SeeOther(WorkspaceUrl.For(context, "/project/members?changed=1", replace: true));
             }
@@ -155,17 +162,8 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
             return page;
         }
 
-        private static async Task<IResult> PatchAsync(HttpContext http, AccountContext context, ProjectGrantService grants, string notice = "")
+        private static async Task<IResult> PatchedAsync(HttpContext http, AccountContext context, IReadOnlyList<TsAuthPlatformProjectMember> items, string notice)
         {
-            context = await AccountScope.RefreshAsync(http.RequestServices.GetRequiredService<AccountService>(), context, http.RequestAborted, requireProject: true, reload: true);
-            var read = await grants.ReadAsync(context, null, http.RequestAborted);
-            var items = read switch
-            {
-                TsAuthPlatformPage<TsAuthPlatformProjectMember> page => page.Items,
-                NotFound failure => throw new AccountAccessException(failure.Message ?? "Not found.", 404),
-                Validation failure => throw new AccountAccessException(failure.Message, 400),
-                Unavailable => throw new IOException("The project grant page is invalid."),
-            };
             http.Response.Headers.CacheControl = "no-store";
             var shell = ShellModel.For(http, context, "Project grants") with { ReturnUrl = WorkspaceUrl.For(context, "/project/members", replace: true) };
             await DatastarEvents.PatchElementsAsync(http, ProjectGrantPageView.Create(new(shell, items, null, "", false, "", "viewer", notice, "")));

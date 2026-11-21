@@ -286,7 +286,12 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
                     switch (OrganizationSsoService.Parse(form))
                     {
                         case Validation error:
-                            throw new AccountAccessException(error.Message, 422);
+                            if (http.Request.IsDatastarRequest)
+                            {
+                                await OrganizationEndpoints.PatchAsync(http, context, placement, error.Message, "sso");
+                                return Results.Empty;
+                            }
+                            return await OrganizationEndpoints.PageAsync(http, context, placement, error.Message, 422, "sso");
                         case SsoUpdate update:
                             await sso.SaveAsync(context, update, http.RequestAborted);
                             break;

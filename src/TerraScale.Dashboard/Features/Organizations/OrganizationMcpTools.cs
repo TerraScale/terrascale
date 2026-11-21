@@ -79,8 +79,6 @@ namespace TerraScale.Dashboard.Features.Organizations
             {
                 case Conflict error:
                     throw new AccountAccessException(error.Message, 409);
-                case Forbidden error:
-                    throw new AccountAccessException(error.Message);
                 case Done:
                     break;
             }
@@ -254,7 +252,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             {
                 PendingInvitation pending => pending.Organization,
                 Validation error => throw new AccountAccessException(error.Message, 400),
-                NotFound error => throw new AccountAccessException(error.Message ?? "Not found.", 404),
+                NotFound error => throw new AccountAccessException(error.Message!, 404),
                 Forbidden error => throw new AccountAccessException(error.Message),
             };
             return new OrganizationInvitationResponse(organization.Id, organization.Name, action.Trim().ToLowerInvariant());

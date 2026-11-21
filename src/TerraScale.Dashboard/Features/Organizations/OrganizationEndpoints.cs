@@ -233,8 +233,6 @@ namespace TerraScale.Dashboard.Features.Organizations
                     {
                         case Conflict error:
                             return await PageAsync(http, context, placement, error.Message, 409, "danger");
-                        case Forbidden error:
-                            return await PageAsync(http, context, placement, error.Message, 403, "danger");
                         case Done:
                             break;
                     }

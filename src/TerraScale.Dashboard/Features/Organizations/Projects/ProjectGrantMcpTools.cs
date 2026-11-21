@@ -29,7 +29,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             {
                 TsAuthPlatformPage<TsAuthPlatformProjectMember> listed => new ProjectGrantMcpPage(context.Organization!.Id, context.Project!.Id,
                     [.. listed.Items.Select(GrantView)], listed.Next),
-                NotFound error => throw new AccountAccessException(error.Message ?? "Not found.", 404),
+                NotFound error => throw new AccountAccessException(error.Message!, 404),
                 Validation error => throw new AccountAccessException(error.Message, 400),
                 Unavailable => throw new AccountAccessException("The organization provider could not complete this request. Reload it and try again.", 502),
             };

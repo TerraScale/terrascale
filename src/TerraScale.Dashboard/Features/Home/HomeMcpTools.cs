@@ -27,7 +27,7 @@ namespace TerraScale.Dashboard.Features.Home
             return overview switch
             {
                 HomeMcpOverview value => value,
-                NotFound error => throw new AccountAccessException(error.Message ?? "Not found.", 404),
+                NotFound error => throw new AccountAccessException(error.Message!, 404),
             };
         }
 
