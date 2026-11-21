@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Text.Json.Serialization;
 using System.Text.Json;
 using ModelContextProtocol.Server;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Platform.Mcp;
 
 namespace TerraScale.Dashboard.Features.Data
@@ -54,7 +55,13 @@ namespace TerraScale.Dashboard.Features.Data
         [McpServerTool(Name = "save_query", Title = "Save query", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Save a read-only SQL query for everyone in the project. Requires write access.")]
         public async Task<McpSavedQuery> SaveQuery(string name, string sql, string? organizationId = null, string? projectId = null)
         {
-            return SavedQueryOutput(await saved.SaveAsync(Scope(organizationId, projectId), "", name, sql, Cancellation));
+            return await saved.SaveAsync(Scope(organizationId, projectId), "", name, sql, Cancellation) switch
+            {
+                SavedQuery query => SavedQueryOutput(query),
+                Forbidden failure => throw new AccountAccessException(failure.Message),
+                Validation failure => throw new AccountAccessException(failure.Message, 422),
+                Conflict failure => throw new AccountAccessException(failure.Message, 409),
+            };
         }
 
         [McpAccess(McpAccess.Destructive)]

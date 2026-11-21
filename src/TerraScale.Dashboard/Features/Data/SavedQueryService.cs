@@ -1,11 +1,15 @@
 using System.Text;
 using Microsoft.EntityFrameworkCore;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Features.Data
 {
+    using NotFound = TerraScale.Dashboard.Errors.NotFound;
     public sealed record SavedQuery(string Id, string Name, string Sql, string DatabaseId, DateTimeOffset CreatedAt);
+    public readonly union SavedQueryResult(SavedQuery, Validation, Conflict, Forbidden);
+    public readonly union SavedQueryDeleted(Done, NotFound, Forbidden);
 
     public sealed class SavedQueryService(IDbContextFactory<DashboardDbContext> storage, TimeProvider time, AccountService accounts)
     {
@@ -37,7 +41,7 @@ namespace TerraScale.Dashboard.Features.Data
             return [.. rows.Select(row => new SavedQuery(row.Id, row.Name, row.Sql, row.DatabaseId, new DateTimeOffset(row.CreatedAt))).OrderBy(query => query.Name, StringComparer.Ordinal)];
         }
 
-        public async Task<SavedQuery> SaveAsync(AccountContext context, string databaseId, string name, string sql, CancellationToken cancellationToken)
+        public async Task<SavedQueryResult> SaveAsync(AccountContext context, string databaseId, string name, string sql, CancellationToken cancellationToken)
         {
             context = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);
             if (databaseId.Length > 0)
@@ -47,24 +51,24 @@ namespace TerraScale.Dashboard.Features.Data
 
             if (!context.CanWriteProjectData)
             {
-                throw new AccountAccessException("Write access is required.");
+                return new Forbidden("Write access is required.");
             }
 
             name = name.Trim();
             if (name.Length == 0 || Encoding.UTF8.GetByteCount(name) > 128)
             {
-                throw new AccountAccessException("Saved query names use 1–128 characters.", 422);
+                return new Validation("Saved query names use 1–128 characters.");
             }
 
             sql = sql.Trim();
             if (SqlValidation.Diagnostics(sql).FirstOrDefault(item => item.Severity == "error") is { } problem)
             {
-                throw new AccountAccessException(problem.Message, 422);
+                return new Validation(problem.Message);
             }
 
             if (!SqlValidation.StartsWithCommand(sql))
             {
-                throw new AccountAccessException("Start the saved query with a SQL command such as SELECT or WITH.", 422);
+                return new Validation("Start the saved query with a SQL command such as SELECT or WITH.");
             }
 
             var query = new SavedQuery(AccountService.NewId(), name, sql, databaseId, time.GetUtcNow());
@@ -86,13 +90,13 @@ namespace TerraScale.Dashboard.Features.Data
             }
             catch (DbUpdateException error) when (error.InnerException is TerraBaseSqlException { Code: TerraBaseSqlErrorCodes.UniqueViolation })
             {
-                throw new AccountAccessException("A saved query with this name already exists. Choose another name or delete the existing query.", 409);
+                return new Conflict("A saved query with this name already exists. Choose another name or delete the existing query.");
             }
 
             return query;
         }
 
-        public async Task DeleteAsync(AccountContext context, string databaseId, string id, CancellationToken cancellationToken)
+        public async Task<SavedQueryDeleted> DeleteAsync(AccountContext context, string databaseId, string id, CancellationToken cancellationToken)
         {
             context = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);
             if (databaseId.Length > 0)
@@ -102,15 +106,14 @@ namespace TerraScale.Dashboard.Features.Data
 
             if (!context.CanWriteProjectData)
             {
-                throw new AccountAccessException("Write access is required.");
+                return new Forbidden("Write access is required.");
             }
 
             var scope = DatabaseService.Scope(context);
             await using var db = await storage.CreateDbContextAsync(cancellationToken);
-            if (await db.SavedQueries.Where(row => row.Id == id && row.OrganizationId == scope.OrganizationId && row.ProjectId == scope.ProjectId).ExecuteDeleteAsync(cancellationToken) == 0)
-            {
-                throw new AccountAccessException("Saved query is unavailable.", 404);
-            }
+            return await db.SavedQueries.Where(row => row.Id == id && row.OrganizationId == scope.OrganizationId && row.ProjectId == scope.ProjectId).ExecuteDeleteAsync(cancellationToken) == 0
+                ? new NotFound("Saved query is unavailable.")
+                : new Done();
         }
     }
 }
