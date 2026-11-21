@@ -1,8 +1,10 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.TsAuth;
@@ -19,16 +21,19 @@ namespace TerraScale.Dashboard.Features.Support
 
     public sealed record SupportDraft(string OrganizationId, string ProjectId, string DatabaseId, string Severity, string Subject, string Message, string RequestId, string RelatedRequestId = "");
 
+    public sealed record SupportMailAccepted(string Status);
+
+    public readonly union SupportMailResult(SupportMailAccepted, QuotaExceeded, Validation);
+
     public interface ISupportMail
     {
-        // accepted, retryable, unknown or rejected; throws AccountAccessException for a refusal the user can act on.
-        Task<string> SendAsync(SupportRequest request, CancellationToken cancellationToken);
+        Task<SupportMailResult> SendAsync(SupportRequest request, CancellationToken cancellationToken);
     }
 
     // ts-auth owns the support mailbox address, the requester's reply address and the per-user hourly limit.
     public sealed class SupportMail(IHttpClientFactory http, IDashboardIdentity identity) : ISupportMail
     {
-        public async Task<string> SendAsync(SupportRequest request, CancellationToken cancellationToken)
+        public async Task<SupportMailResult> SendAsync(SupportRequest request, CancellationToken cancellationToken)
         {
             var credentials = await identity.ReadAsync(cancellationToken);
             using var message = new HttpRequestMessage(HttpMethod.Post, new Uri(TsAuthOrigin.Value, "v1/terrascale/email/support")) { Content = JsonContent.Create(request) };
@@ -37,12 +42,12 @@ namespace TerraScale.Dashboard.Features.Support
             using var response = await http.CreateClient("platform").SendAsync(message, cancellationToken);
             if (response.StatusCode == HttpStatusCode.TooManyRequests)
             {
-                throw new AccountAccessException("You sent too many support requests this hour. Email support@terrascale.tech instead.", 429);
+                return new QuotaExceeded("You sent too many support requests this hour. Email support@terrascale.tech instead.");
             }
 
             if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.UnprocessableEntity)
             {
-                throw new AccountAccessException("Check the organization, project and message, then send again.", 422);
+                return new Validation("Check the organization, project and message, then send again.");
             }
 
             if (!response.IsSuccessStatusCode)
@@ -52,7 +57,7 @@ namespace TerraScale.Dashboard.Features.Support
 
             var body = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
             return body.TryGetProperty("status", out var value) && value.GetString() is "accepted" or "retryable" or "unknown" or "rejected"
-                ? value.GetString()! : throw new IOException("Support email response is invalid.");
+                ? new SupportMailAccepted(value.GetString()!) : throw new IOException("Support email response is invalid.");
         }
     }
 
@@ -79,45 +84,63 @@ namespace TerraScale.Dashboard.Features.Support
 
             var draft = new SupportDraft(form["organizationId"].ToString(), form["projectId"].ToString(), form["databaseId"].ToString(),
                 form["severity"].ToString(), form["subject"].ToString().Trim(), form["message"].ToString().Trim(), form["requestId"].ToString(), form["relatedRequestId"].ToString());
+            var organization = context.Organizations.FirstOrDefault(item => item.Id == draft.OrganizationId && item.RoleFor(context.UserId) != "");
+            if (organization is null)
+            {
+                return await RefusedAsync(http, context, draft, "Choose one of your organizations.", 422);
+            }
+
+            var project = draft.ProjectId.Length == 0 ? null : organization.Projects.GetValueOrDefault(draft.ProjectId);
+            if (draft.ProjectId.Length > 0 && project is null)
+            {
+                return await RefusedAsync(http, context, draft, "Choose a project in the selected organization.", 422);
+            }
+
+            if (draft.DatabaseId.Length > 0 && project?.Databases.ContainsKey(draft.DatabaseId) != true)
+            {
+                return await RefusedAsync(http, context, draft, "Choose a database in the selected project.", 422);
+            }
+
+            if (draft.Severity is not ("low" or "normal" or "high" or "urgent"))
+            {
+                return await RefusedAsync(http, context, draft, "Choose a severity.", 422);
+            }
+
+            if (draft.Subject.Length is 0 or > 150 || draft.Subject.Any(char.IsControl))
+            {
+                return await RefusedAsync(http, context, draft, "Enter a one-line subject of at most 150 characters.", 422);
+            }
+
+            if (draft.Message.Length == 0 || draft.Message.Length + (draft.RelatedRequestId.Length == 0 ? 0 : 39) > 8000)
+            {
+                return await RefusedAsync(http, context, draft, "Describe the problem in at most 8000 characters.", 422);
+            }
+
+            if (!TerraScale.Dashboard.Common.Accounts.TerraScaleIds.IsValid(draft.RequestId))
+            {
+                return await RefusedAsync(http, context, draft, "Reload the page and send again.", 422);
+            }
+
+            if (draft.RelatedRequestId.Length > 0 && !TerraScale.Dashboard.Common.Accounts.TerraScaleIds.IsValid(draft.RelatedRequestId))
+            {
+                return await RefusedAsync(http, context, draft, "Enter a 26-character request ULID.", 422);
+            }
+
             try
             {
-                var organization = context.Organizations.FirstOrDefault(item => item.Id == draft.OrganizationId && item.RoleFor(context.UserId) != "")
-                    ?? throw new AccountAccessException("Choose one of your organizations.", 422);
-                var project = draft.ProjectId.Length == 0 ? null : organization.Projects.GetValueOrDefault(draft.ProjectId)
-                    ?? throw new AccountAccessException("Choose a project in the selected organization.", 422);
-                if (draft.DatabaseId.Length > 0 && project?.Databases.ContainsKey(draft.DatabaseId) != true)
-                {
-                    throw new AccountAccessException("Choose a database in the selected project.", 422);
-                }
-
-                if (draft.Severity is not ("low" or "normal" or "high" or "urgent"))
-                {
-                    throw new AccountAccessException("Choose a severity.", 422);
-                }
-
-                if (draft.Subject.Length is 0 or > 150 || draft.Subject.Any(char.IsControl))
-                {
-                    throw new AccountAccessException("Enter a one-line subject of at most 150 characters.", 422);
-                }
-
-                if (draft.Message.Length == 0 || draft.Message.Length + (draft.RelatedRequestId.Length == 0 ? 0 : 39) > 8000)
-                {
-                    throw new AccountAccessException("Describe the problem in at most 8000 characters.", 422);
-                }
-
-                if (!TerraScale.Dashboard.Common.Accounts.TerraScaleIds.IsValid(draft.RequestId))
-                {
-                    throw new AccountAccessException("Reload the page and send again.", 422);
-                }
-
-                if (draft.RelatedRequestId.Length > 0 && !TerraScale.Dashboard.Common.Accounts.TerraScaleIds.IsValid(draft.RelatedRequestId))
-                {
-                    throw new AccountAccessException("Enter a 26-character request ULID.", 422);
-                }
-
-                var status = await mail.SendAsync(new(draft.RequestId, context.UserId, organization.Id, project?.Id, draft.DatabaseId.Length == 0 ? null : draft.DatabaseId,
+                var delivery = await mail.SendAsync(new(draft.RequestId, context.UserId, organization.Id, project?.Id, draft.DatabaseId.Length == 0 ? null : draft.DatabaseId,
                     PlanCatalog.For(organization)?.Key ?? "free", draft.Severity, draft.Subject, draft.Message + (draft.RelatedRequestId.Length == 0 ? "" : "\nRequest ID: " + draft.RelatedRequestId)), http.RequestAborted);
-                if (status != "accepted")
+                if (delivery is not SupportMailAccepted accepted)
+                {
+                    return delivery switch
+                    {
+                        QuotaExceeded error => await RefusedAsync(http, context, draft, error.Message, 429),
+                        Validation error => await RefusedAsync(http, context, draft, error.Message, 422),
+                        SupportMailAccepted => throw new UnreachableException(),
+                    };
+                }
+
+                if (accepted.Status != "accepted")
                 {
                     throw new AccountAccessException("Your request could not be delivered. Send again, or email support@terrascale.tech.", 503);
                 }
@@ -140,19 +163,23 @@ namespace TerraScale.Dashboard.Features.Support
                     logger.ASupportRequestCouldNotBe(error.GetType().Name);
                 }
 
-                var page = new SupportPage(ShellModel.For(http, context, "Support"),
-                    error is AccountAccessException access ? access.Message : "Support email is unavailable. Send again, or email support@terrascale.tech.")
-                { Draft = draft };
-                if (http.Request.Headers["Datastar-Request"] == "true")
-                {
-                    await DatastarEvents.PatchElementsAsync(http, SupportContent.Create(page));
-                    return Results.Empty;
-                }
-
-                var slice = SupportView.Create(page);
-                slice.StatusCode = error is AccountAccessException { StatusCode: var code } ? code : 503;
-                return slice;
+                return await RefusedAsync(http, context, draft, error is AccountAccessException access ? access.Message : "Support email is unavailable. Send again, or email support@terrascale.tech.",
+                    error is AccountAccessException { StatusCode: var code } ? code : 503);
             }
+        }
+
+        private static async Task<IResult> RefusedAsync(HttpContext http, AccountContext context, SupportDraft draft, string message, int status)
+        {
+            var page = new SupportPage(ShellModel.For(http, context, "Support"), message) { Draft = draft };
+            if (http.Request.Headers["Datastar-Request"] == "true")
+            {
+                await DatastarEvents.PatchElementsAsync(http, SupportContent.Create(page));
+                return Results.Empty;
+            }
+
+            var slice = SupportView.Create(page);
+            slice.StatusCode = status;
+            return slice;
         }
     }
 }
