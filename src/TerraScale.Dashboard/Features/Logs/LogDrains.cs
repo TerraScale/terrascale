@@ -1,12 +1,15 @@
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Features.Logs
 {
+    using NotFound = TerraScale.Dashboard.Errors.NotFound;
+
     public sealed record LogDrain(string ProjectId, string OrganizationId, string Revision, string Url, string? HeaderName, DateTimeOffset CreatedAt,
         DateTimeOffset? LastSuccessAt, DateTimeOffset? LastErrorAt, int? LastErrorStatus, DateTimeOffset? LastGapAt);
 
@@ -14,6 +17,10 @@ namespace TerraScale.Dashboard.Features.Logs
     {
         Task<DatabaseLogBatch> ReadAsync(string projectId, string databaseId, string after, CancellationToken cancellationToken);
     }
+
+    public readonly union LogDrainSaved(Done, Validation, Forbidden, NotFound);
+
+    public readonly union LogDrainDeleted(Done, Forbidden, NotFound);
 
     public sealed partial class LogDrains(IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, ILogDrainSource source, ICustomerDelivery delivery, IDashboardIdentity identity,
         TimeProvider clock, ILogger<LogDrains> logger, BackgroundJobs jobs, BillingSchemaGate gate)
@@ -26,16 +33,30 @@ namespace TerraScale.Dashboard.Features.Logs
             return await db.LogDrains.AsNoTracking().SingleOrDefaultAsync(row => row.ProjectId == projectId, cancellationToken) is { } row ? Drain(row) : null;
         }
 
-        public async Task SaveAsync(AccountContext context, string? url, string? headerName, string? headerValue, CancellationToken cancellationToken)
+        public async Task<LogDrainSaved> SaveAsync(AccountContext context, string? url, string? headerName, string? headerValue, CancellationToken cancellationToken)
         {
-            var (organization, project) = Owner(context);
-            var target = CustomerUrls.Validate(url).OriginalString;
+            if (Owner(context) is not { } owner)
+            {
+                return SaveRefused(context);
+            }
+
+            var (organization, project) = owner;
+            string target;
+            try
+            {
+                target = CustomerUrls.Validate(url).OriginalString;
+            }
+            catch (ArgumentException error) when (error.Message == CustomerUrls.Rule)
+            {
+                return new Validation(error.Message);
+            }
+
             var name = headerName?.Trim() is { Length: > 0 } text ? text : null;
             var value = headerValue?.Trim() is { Length: > 0 } secret ? secret : null;
             if (name is not null && (name.Length > 64 || !HeaderToken().IsMatch(name) || ReservedHeaders.Contains(name.ToLowerInvariant())) ||
                 value is not null && (name is null || value.Length > 4096 || value.Any(char.IsControl)))
             {
-                throw new ArgumentException("Use a header name of letters, digits and dashes and a value of up to 4096 characters without line breaks.");
+                return new Validation("Use a header name of letters, digits and dashes and a value of up to 4096 characters without line breaks.");
             }
 
             var key = (await identity.ReadAsync(cancellationToken)).SessionEncryptionKey;
@@ -48,7 +69,7 @@ namespace TerraScale.Dashboard.Features.Logs
                 var keep = header is null && name is not null && row?.HeaderName == name;
                 if (name is not null && header is null && !keep)
                 {
-                    throw new ArgumentException("Enter the header value.");
+                    return new Validation("Enter the header value.");
                 }
 
                 if (row is null)
@@ -87,7 +108,7 @@ namespace TerraScale.Dashboard.Features.Logs
                 try
                 {
                     await db.SaveChangesAsync(cancellationToken);
-                    return;
+                    return new Done();
                 }
                 catch (DbUpdateException error) when (attempt < 2 && (error is DbUpdateConcurrencyException || error.InnerException is TerraBaseSqlException { Code: TerraBaseSqlErrorCodes.UniqueViolation }))
                 {
@@ -96,13 +117,19 @@ namespace TerraScale.Dashboard.Features.Logs
             }
         }
 
-        public async Task DeleteAsync(AccountContext context, CancellationToken cancellationToken)
+        public async Task<LogDrainDeleted> DeleteAsync(AccountContext context, CancellationToken cancellationToken)
         {
-            var (organization, project) = Owner(context);
+            if (Owner(context) is not { } owner)
+            {
+                return DeleteRefused(context);
+            }
+
+            var (organization, project) = owner;
             await using var db = await storage.CreateDbContextAsync(cancellationToken);
             await db.LogDrains.Where(row => row.ProjectId == project.Id && row.OrganizationId == organization.Id).ExecuteDeleteAsync(cancellationToken);
             var prefix = "log-drain/" + project.Id + "/";
             await db.BackgroundJobs.Where(row => row.Id.StartsWith(prefix)).ExecuteDeleteAsync(cancellationToken);
+            return new Done();
         }
 
         public async Task RunOnceAsync(CancellationToken cancellationToken)
@@ -302,19 +329,23 @@ namespace TerraScale.Dashboard.Features.Logs
             return new { key, value = new { intValue = value.ToString(CultureInfo.InvariantCulture) } };
         }
 
-        private static (OrganizationRecord Organization, ProjectRecord Project) Owner(AccountContext context)
+        private static (OrganizationRecord Organization, ProjectRecord Project)? Owner(AccountContext context)
         {
-            if (context.Organization is not { } organization || context.Project is not { } project)
-            {
-                throw new AccountAccessException("Select a project.", 404);
-            }
+            return context.Organization is not { } organization || context.Project is not { } project || context.Role != "owner" ? null : (organization, project);
+        }
 
-            if (context.Role != "owner")
-            {
-                throw new AccountAccessException("Only organization owners manage the log drain.");
-            }
+        private static LogDrainSaved SaveRefused(AccountContext context)
+        {
+            return context.Organization is null || context.Project is null
+                ? new LogDrainSaved(new NotFound("Select a project."))
+                : new LogDrainSaved(new Forbidden("Only organization owners manage the log drain."));
+        }
 
-            return (organization, project);
+        private static LogDrainDeleted DeleteRefused(AccountContext context)
+        {
+            return context.Organization is null || context.Project is null
+                ? new LogDrainDeleted(new NotFound("Select a project."))
+                : new LogDrainDeleted(new Forbidden("Only organization owners manage the log drain."));
         }
 
         private static LogDrain Drain(LogDrainRow row)

@@ -1,4 +1,4 @@
-using TerraScale.Dashboard.Features.Organizations;
+using TerraScale.Dashboard.Errors;
 
 namespace TerraScale.Dashboard.Features.Settings
 {
@@ -33,14 +33,18 @@ namespace TerraScale.Dashboard.Features.Settings
     }
     public sealed record ProjectSettings(string ProjectId, string ProjectName, int AuditRetentionDays, bool CanManage, bool ProjectCanBeDeleted);
 
-    public sealed class SettingsService(AccountService accounts, ISettingsBackend backend, OrganizationLifecycleService lifecycle, TimeProvider time)
+    public readonly union SettingsRead(ProjectSettings, Forbidden);
+
+    public readonly union AuditRetentionSaved(Done, Validation, Forbidden);
+
+    public sealed class SettingsService(AccountService accounts, ISettingsBackend backend, TimeProvider time)
     {
-        public async Task<ProjectSettings> ReadAsync(AccountContext context, CancellationToken cancellationToken)
+        public async Task<SettingsRead> ReadAsync(AccountContext context, CancellationToken cancellationToken)
         {
-            context = await FreshAsync(context, false, cancellationToken);
+            context = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);
             if (!context.CanManage)
             {
-                throw new AccountAccessException("Organization management is required to read audit retention.");
+                return new Forbidden("Organization management is required to read audit retention.");
             }
 
             var days = await backend.AuditRetentionAsync(context, cancellationToken);
@@ -49,14 +53,20 @@ namespace TerraScale.Dashboard.Features.Settings
                 throw new IOException("The provider returned an invalid audit retention policy.");
             }
 
-            return new(context.Project!.Id, context.Project.Name, days, context.CanManage, !context.Project.IsDefault && context.Organization!.Projects.Count > 1);
+            return new ProjectSettings(context.Project!.Id, context.Project.Name, days, context.CanManage, !context.Project.IsDefault && context.Organization!.Projects.Count > 1);
         }
-        public async Task SetAuditRetentionAsync(AccountContext context, int days, CancellationToken cancellationToken)
+
+        public async Task<AuditRetentionSaved> SetAuditRetentionAsync(AccountContext context, int days, CancellationToken cancellationToken)
         {
-            context = await FreshAsync(context, true, cancellationToken);
+            context = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);
+            if (!context.CanManage)
+            {
+                return new Forbidden("Organization management is required.");
+            }
+
             if (days is < 1 or > 90)
             {
-                throw new AccountAccessException("Audit retention must be from 1 to 90 days.", 400);
+                return new Validation("Audit retention must be from 1 to 90 days.");
             }
 
             var confirmed = await backend.SetAuditRetentionAsync(context, days, cancellationToken);
@@ -74,36 +84,7 @@ namespace TerraScale.Dashboard.Features.Settings
 
                 org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, "settings.audit_retention_updated", days.ToString(System.Globalization.CultureInfo.InvariantCulture), "setting", time.GetUtcNow()));
             }, cancellationToken);
-        }
-        public async Task DeleteProjectAsync(AccountContext context, string projectId, string confirmation, CancellationToken cancellationToken)
-        {
-            context = await FreshAsync(context, true, cancellationToken);
-            if (context.Project!.Id != projectId)
-            {
-                throw new AccountAccessException("Enter the selected project name exactly to confirm deletion.", 400);
-            }
-
-            if (confirmation.Trim() != context.Project.Name)
-            {
-                throw new AccountAccessException("Enter the selected project name exactly to confirm deletion.", 400);
-            }
-
-            if (context.Project.IsDefault || context.Organization!.Projects.Count <= 1)
-            {
-                throw new AccountAccessException("The default or last project cannot be deleted.", 409);
-            }
-
-            await lifecycle.DeleteProjectAsync(context, projectId, confirmation, cancellationToken);
-        }
-        private async Task<AccountContext> FreshAsync(AccountContext context, bool manage, CancellationToken cancellationToken)
-        {
-            var fresh = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);
-            if (manage && !fresh.CanManage)
-            {
-                throw new AccountAccessException("Organization management is required.");
-            }
-
-            return fresh;
+            return new Done();
         }
     }
 }
