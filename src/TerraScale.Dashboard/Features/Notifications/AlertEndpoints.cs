@@ -1,10 +1,14 @@
+using System.Diagnostics;
 using System.Text.Json;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Datastar;
 
 namespace TerraScale.Dashboard.Features.Notifications
 {
+    using NotFound = TerraScale.Dashboard.Errors.NotFound;
+
     public sealed record AlertsPage(ShellModel Shell, IReadOnlyList<AlertRule> Rules, string Error = "", AlertRule? Created = null, string? Secret = null)
     {
         public bool CanManage => Shell.Context.Role == "owner";
@@ -65,24 +69,55 @@ namespace TerraScale.Dashboard.Features.Notifications
                 var id = http.Request.RouteValues["id"]?.ToString() ?? "";
                 if (action == "delete")
                 {
-                    await rules.DeleteAsync(context, id, http.RequestAborted);
+                    var deleted = await rules.DeleteAsync(context, id, http.RequestAborted);
+                    if (deleted is not Done)
+                    {
+                        return deleted switch
+                        {
+                            NotFound error => await PageAsync(http, context, rules, error.Message ?? "Alert rule is unavailable.", 404),
+                            Forbidden error => await PageAsync(http, context, rules, error.Message, 403),
+                            Validation error => await PageAsync(http, context, rules, error.Message, 422),
+                            Done => throw new UnreachableException(),
+                        };
+                    }
                 }
                 else if (action == "threshold")
                 {
-                    await rules.UpdateThresholdAsync(context, id, form["threshold"], http.RequestAborted);
+                    var updated = await rules.UpdateThresholdAsync(context, id, form["threshold"], http.RequestAborted);
+                    if (updated is not Done)
+                    {
+                        return updated switch
+                        {
+                            NotFound error => await PageAsync(http, context, rules, error.Message ?? "Alert rule is unavailable.", 404),
+                            Forbidden error => await PageAsync(http, context, rules, error.Message, 403),
+                            Validation error => await PageAsync(http, context, rules, error.Message, 422),
+                            Done => throw new UnreachableException(),
+                        };
+                    }
                 }
                 else
                 {
-                    var (rule, secret) = await rules.CreateAsync(context, form, http.RequestAborted);
-                    if (secret is not null)
+                    var created = await rules.CreateAsync(context, form, http.RequestAborted);
+                    if (created is not AlertRuleWithSecret rule)
                     {
-                        await flows.HoldAlertSecretAsync(http, context, rule.Name, secret);
+                        return created switch
+                        {
+                            Validation error => await PageAsync(http, context, rules, error.Message, 422),
+                            Conflict error => await PageAsync(http, context, rules, error.Message, 409),
+                            NotFound error => await PageAsync(http, context, rules, error.Message ?? "Select a project.", 404),
+                            Forbidden error => await PageAsync(http, context, rules, error.Message, 403),
+                            AlertRuleWithSecret => throw new UnreachableException(),
+                        };
+                    }
+
+                    if (rule.Secret is not null)
+                    {
+                        await flows.HoldAlertSecretAsync(http, context, rule.Rule.Name, secret: rule.Secret);
                     }
 
                     return HttpRedirects.SeeOther("/notifications/alerts");
                 }
             }
-            catch (AccountAccessException error) { return await PageAsync(http, context, rules, error.Message, error.StatusCode); }
             catch (ArgumentException error) { return await PageAsync(http, context, rules, error.Message, 422); }
             if (http.Request.IsDatastarRequest)
             {
