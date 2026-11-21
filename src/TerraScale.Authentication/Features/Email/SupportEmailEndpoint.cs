@@ -115,7 +115,7 @@ public sealed class SupportEmailEndpoint(AuthData data, PlatformDirectory direct
         }
         if (!await limiter.TryAcquireAsync(OidcIssuer.InstanceId, "support", user.Id, PerUserPerHour, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false))
         {
-            throw new ApiException(StatusCodes.Status429TooManyRequests, "rate_limited", "Too many support requests; retry within the hour or email support@terrascale.tech.");
+            return ErrorResults.ToResult(new QuotaExceeded("Too many support requests; retry within the hour or email support@terrascale.tech.", "rate_limited"));
         }
         var delivery = new SupportEmailDelivery(OidcIssuer.InstanceId, request.RequestId, user.Id, "sending");
         var reserved = Change.Insert(delivery);

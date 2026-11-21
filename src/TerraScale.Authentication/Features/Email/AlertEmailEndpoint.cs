@@ -59,8 +59,8 @@ public sealed partial class AlertEmailEndpoint(PlatformDirectory directory, Owne
             request.DatabaseName is { } database && !DatabaseName().IsMatch(database) ||
             request.Threshold is not { } threshold || !double.IsFinite(threshold) || request.Value is not { } value || !double.IsFinite(value))
         {
-            throw new ApiException(StatusCodes.Status400BadRequest, "invalid_request",
-                "organizationId, projectId and alertId must be ULIDs; state firing or resolved; ruleName 1 to 100 characters; a known metric; databaseName null or a database name; threshold and value finite numbers.");
+            return ErrorResults.ToResult(new Validation(
+                "organizationId, projectId and alertId must be ULIDs; state firing or resolved; ruleName 1 to 100 characters; a known metric; databaseName null or a database name; threshold and value finite numbers."));
         }
         var organization = request.OrganizationId!;
         if (await directory.OrganizationAsync(organization, cancellationToken).ConfigureAwait(false) is null ||
