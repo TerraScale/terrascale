@@ -11,13 +11,15 @@ public sealed record Validation(string Message, string Code = "invalid_request",
 
 public sealed record ValidationDetail(string Path, string Keyword);
 
+public sealed record Unprocessable(string Message, string Code = "invalid_request");
+
 public sealed record PreconditionFailed(string Message, string Code = "precondition_failed");
 
 public sealed record Unauthorized(string? Message = null, string Code = "unauthorized");
 
 public sealed record Forbidden(string Message, string Code = "forbidden", IReadOnlyDictionary<string, string>? Details = null);
 
-public sealed record QuotaExceeded(string Message, string Code = "quota_exceeded");
+public sealed record QuotaExceeded(string Message, string Code = "quota_exceeded", TimeSpan? RetryAfter = null);
 
 public sealed record Unavailable(string Message, string Code = "unavailable", IReadOnlyDictionary<string, string>? Details = null);
 
@@ -33,7 +35,7 @@ public sealed record OutcomeUnknown(string Message, string Region, string Machin
 
 public sealed record Done;
 
-public readonly union Failure(NotFound, Conflict, Validation, PreconditionFailed, Unauthorized, Forbidden, QuotaExceeded, Unavailable, PayloadTooLarge, UnsupportedMediaType, RequestTimeout, Gone, OutcomeUnknown);
+public readonly union Failure(NotFound, Conflict, Validation, PreconditionFailed, Unauthorized, Forbidden, QuotaExceeded, Unavailable, PayloadTooLarge, UnsupportedMediaType, RequestTimeout, Gone, OutcomeUnknown, Unprocessable);
 
 public readonly union Valid<T>(T, Validation);
 

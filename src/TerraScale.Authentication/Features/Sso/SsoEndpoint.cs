@@ -79,7 +79,7 @@ public abstract class SsoEndpoint(PlatformDirectory platform, PlatformAuthentica
     {
         ArgumentNullException.ThrowIfNull(caller);
         var organizationId = this.RouteId("organization");
-        PlatformDirectory.RequireRole(await platform.OrganizationAccessAsync(caller.Id, organizationId, cancellationToken), minimum);
+        PlatformDirectory.RequireRole(await platform.RequireOrganizationAsync(caller.Id, organizationId, cancellationToken).ConfigureAwait(false), minimum);
         return organizationId;
     }
 

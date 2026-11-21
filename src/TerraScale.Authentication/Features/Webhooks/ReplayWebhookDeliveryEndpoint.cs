@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -16,7 +17,11 @@ public sealed class ReplayWebhookDeliveryEndpoint(TenantDirectory tenants, Platf
     protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
-        await history.ReplayAsync(projectId, this.RouteId("id"), this.RouteId("delivery"), cancellationToken);
-        return Results.NoContent();
+        return await history.ReplayAsync(projectId, this.RouteId("id"), this.RouteId("delivery"), cancellationToken) switch
+        {
+            Done => Results.NoContent(),
+            NotFound failure => ErrorResults.ToResult(failure),
+            Conflict failure => ErrorResults.ToResult(failure),
+        };
     }
 }

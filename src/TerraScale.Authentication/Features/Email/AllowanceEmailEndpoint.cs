@@ -57,11 +57,11 @@ public sealed class AllowanceEmailEndpoint(PlatformDirectory directory, OwnerDel
             request.Threshold is not (80 or 100) || request.Used < 0 || request.Allowance <= 0 ||
             (decimal)request.Used * 100 < (decimal)request.Allowance * request.Threshold)
         {
-            throw new ApiException(StatusCodes.Status422UnprocessableEntity, "invalid_request", "An observed current-month allowance threshold is required.");
+            return ErrorResults.ToResult(new Unprocessable("An observed current-month allowance threshold is required."));
         }
         if (await directory.OrganizationAsync(request.OrganizationId, cancellationToken).ConfigureAwait(false) is null)
         {
-            throw PlatformDirectory.NotFound();
+            return ErrorResults.ToResult(new NotFound("No such resource."));
         }
 
         var result = await deliveries.SendAsync("allowance", $"{request.OrganizationId}/{month}/{request.Metric}/{request.Threshold}", request.OrganizationId!, Message(request),

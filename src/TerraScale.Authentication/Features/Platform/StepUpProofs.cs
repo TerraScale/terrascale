@@ -300,6 +300,8 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
 
     internal static ApiException Required() => new(403, "step_up_required", "A fresh, approved, purpose-bound single-use proof is required.");
 
+    internal static Forbidden RequiredFailure() => new("A fresh, approved, purpose-bound single-use proof is required.", "step_up_required");
+
     internal static Forbidden StepUpRequired() => new("A fresh, approved, purpose-bound single-use proof is required.", "step_up_required");
     private static bool Pair(string purpose, string audience) => audience switch
     {

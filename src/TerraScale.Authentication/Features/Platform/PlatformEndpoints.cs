@@ -143,11 +143,19 @@ public sealed class CreateOrganizationEndpoint(PlatformDirectory platform, Platf
             throw Invalid("idempotency_key must be at most 128 characters.");
         }
 
-        var name = PlatformDirectory.Name(request.Name) ?? throw Invalid("name must be 1 to 128 characters with a letter or digit.");
+        var name = PlatformDirectory.Name(request.Name);
+        if (name is null)
+        {
+            throw Invalid("name must be 1 to 128 characters with a letter or digit.");
+        }
+
         var organization = await platform.CreateOrganizationAsync(caller, name, request.IdempotencyKey, cancellationToken);
-        var access = await platform.OrganizationAccessAsync(caller.Id, organization.Id, cancellationToken);
-        return Results.Json(Map(organization, access.Role), PlatformApiJson.Default.OrganizationBody, statusCode: StatusCodes.Status201Created)
-            .WithLocation($"{Organizations}/{organization.Id}");
+        return await platform.OrganizationAccessAsync(caller.Id, organization.Id, cancellationToken) switch
+        {
+            OrganizationAccess access => Results.Json(Map(organization, access.Role), PlatformApiJson.Default.OrganizationBody, statusCode: StatusCodes.Status201Created)
+                .WithLocation($"{Organizations}/{organization.Id}"),
+            Failure failure => ErrorResults.ToResult(failure),
+        };
     }
 }
 
@@ -183,8 +191,11 @@ public sealed class GetOrganizationEndpoint(PlatformDirectory platform, Platform
     /// <inheritdoc />
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        var access = await platform.OrganizationAccessAsync(caller.Id, this.RouteId("organization"), cancellationToken);
-        return Results.Json(Map(access.Organization.Value, access.Role), PlatformApiJson.Default.OrganizationBody);
+        return await platform.OrganizationAccessAsync(caller.Id, this.RouteId("organization"), cancellationToken) switch
+        {
+            OrganizationAccess access => Results.Json(Map(access.Organization.Value, access.Role), PlatformApiJson.Default.OrganizationBody),
+            Failure failure => ErrorResults.ToResult(failure),
+        };
     }
 }
 
@@ -201,10 +212,21 @@ public sealed class RenameOrganizationEndpoint(PlatformDirectory platform, Platf
     /// <inheritdoc />
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        var name = PlatformDirectory.Name((await this.BodyAsync(PlatformApiJson.Default.NameRequest, cancellationToken)).Name) ?? throw Invalid("name must be 1 to 128 characters with a letter or digit.");
-        var organization = await platform.RenameOrganizationAsync(caller.Id, this.RouteId("organization"), name, cancellationToken);
-        var access = await platform.OrganizationAccessAsync(caller.Id, organization.Id, cancellationToken);
-        return Results.Json(Map(organization, access.Role), PlatformApiJson.Default.OrganizationBody);
+        var name = PlatformDirectory.Name((await this.BodyAsync(PlatformApiJson.Default.NameRequest, cancellationToken)).Name);
+        if (name is null)
+        {
+            throw Invalid("name must be 1 to 128 characters with a letter or digit.");
+        }
+
+        return await platform.RenameOrganizationAsync(caller.Id, this.RouteId("organization"), name, cancellationToken) switch
+        {
+            OrganizationRecord organization => await platform.OrganizationAccessAsync(caller.Id, organization.Id, cancellationToken) switch
+            {
+                OrganizationAccess access => Results.Json(Map(organization, access.Role), PlatformApiJson.Default.OrganizationBody),
+                Failure failure => ErrorResults.ToResult(failure),
+            },
+            Failure failure => ErrorResults.ToResult(failure),
+        };
     }
 }
 
@@ -223,9 +245,17 @@ public sealed class SetMfaPolicyEndpoint(PlatformDirectory platform, PlatformAut
     /// <inheritdoc />
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        var require = (await this.BodyAsync(PlatformApiJson.Default.MfaPolicyRequest, cancellationToken)).RequireMfa ?? throw Invalid("require_mfa must be true or false.");
-        var organization = await platform.SetMfaPolicyAsync(caller.Id, this.RouteId("organization"), require, cancellationToken);
-        return Results.Json(Map(organization, Roles.Owner), PlatformApiJson.Default.OrganizationBody);
+        var require = (await this.BodyAsync(PlatformApiJson.Default.MfaPolicyRequest, cancellationToken)).RequireMfa;
+        if (require is null)
+        {
+            throw Invalid("require_mfa must be true or false.");
+        }
+
+        return await platform.SetMfaPolicyAsync(caller.Id, this.RouteId("organization"), require.Value, cancellationToken) switch
+        {
+            OrganizationRecord organization => Results.Json(Map(organization, Roles.Owner), PlatformApiJson.Default.OrganizationBody),
+            Failure failure => ErrorResults.ToResult(failure),
+        };
     }
 }
 
@@ -290,7 +320,10 @@ public sealed class DeleteOrganizationEndpoint(PlatformDirectory platform, Platf
 
     private async Task<IResult> DeleteOrganizationAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        await platform.DeleteOrganizationAsync(caller.Id, this.RouteId("organization"), cancellationToken);
+        if (await platform.DeleteOrganizationAsync(caller.Id, this.RouteId("organization"), cancellationToken) is Failure failure)
+        {
+            return ErrorResults.ToResult(failure);
+        }
         return Results.NoContent();
     }
 }
@@ -309,8 +342,11 @@ public sealed class ListMembersEndpoint(PlatformDirectory platform, PlatformAuth
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
         var (limit, after) = this.Paging();
-        var page = await platform.MembersAsync(caller.Id, this.RouteId("organization"), limit, after, cancellationToken);
-        return Results.Json(new MemberPageBody([.. page.Items.Select(item => Map(item.Member, item.Email))], page.Next), PlatformApiJson.Default.MemberPageBody);
+        return await platform.MembersAsync(caller.Id, this.RouteId("organization"), limit, after, cancellationToken) switch
+        {
+            Page<(MembershipRecord Member, string Email)> page => Results.Json(new MemberPageBody([.. page.Items.Select(item => Map(item.Member, item.Email))], page.Next), PlatformApiJson.Default.MemberPageBody),
+            Failure failure => ErrorResults.ToResult(failure),
+        };
     }
 }
 
@@ -333,8 +369,11 @@ public sealed class ChangeMemberRoleEndpoint(PlatformDirectory platform, Platfor
             throw Invalid("role must be viewer, member, admin or owner.");
         }
 
-        var (member, email) = await platform.ChangeRoleAsync(caller.Id, this.RouteId("organization"), this.RouteId("user"), role, cancellationToken);
-        return Results.Json(Map(member, email), PlatformApiJson.Default.MemberBody);
+        return await platform.ChangeRoleAsync(caller.Id, this.RouteId("organization"), this.RouteId("user"), role, cancellationToken) switch
+        {
+            MemberEmail member => Results.Json(Map(member.Member, member.Email), PlatformApiJson.Default.MemberBody),
+            Failure failure => ErrorResults.ToResult(failure),
+        };
     }
 }
 
@@ -351,7 +390,11 @@ public sealed class RemoveMemberEndpoint(PlatformDirectory platform, PlatformAut
     /// <inheritdoc />
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        await platform.RemoveAsync(caller.Id, this.RouteId("organization"), this.RouteId("user"), cancellationToken);
+        if (await platform.RemoveAsync(caller.Id, this.RouteId("organization"), this.RouteId("user"), cancellationToken) is Failure failure)
+        {
+            return ErrorResults.ToResult(failure);
+        }
+
         return Results.NoContent();
     }
 }
@@ -369,7 +412,11 @@ public sealed class LeaveOrganizationEndpoint(PlatformDirectory platform, Platfo
     /// <inheritdoc />
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        await platform.RemoveAsync(caller.Id, this.RouteId("organization"), caller.Id, cancellationToken);
+        if (await platform.RemoveAsync(caller.Id, this.RouteId("organization"), caller.Id, cancellationToken) is Failure failure)
+        {
+            return ErrorResults.ToResult(failure);
+        }
+
         return Results.NoContent();
     }
 }
@@ -431,10 +478,18 @@ public sealed class CreateProjectEndpoint(PlatformDirectory platform, PlatformAu
     /// <inheritdoc />
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        var name = PlatformDirectory.Name((await this.BodyAsync(PlatformApiJson.Default.NameRequest, cancellationToken)).Name) ?? throw Invalid("name must be 1 to 128 characters with a letter or digit.");
-        var project = await platform.CreateProjectAsync(caller.Id, this.RouteId("organization"), name, cancellationToken);
-        return Results.Json(Map(project, Roles.Admin), PlatformApiJson.Default.ProjectBody, statusCode: StatusCodes.Status201Created)
-            .WithLocation($"{Organizations}/{project.OrganizationId}/projects/{project.Id}");
+        var name = PlatformDirectory.Name((await this.BodyAsync(PlatformApiJson.Default.NameRequest, cancellationToken)).Name);
+        if (name is null)
+        {
+            throw Invalid("name must be 1 to 128 characters with a letter or digit.");
+        }
+
+        return await platform.CreateProjectAsync(caller.Id, this.RouteId("organization"), name, cancellationToken) switch
+        {
+            ProjectRecord project => Results.Json(Map(project, Roles.Admin), PlatformApiJson.Default.ProjectBody, statusCode: StatusCodes.Status201Created)
+                .WithLocation($"{Organizations}/{project.OrganizationId}/projects/{project.Id}"),
+            Failure failure => ErrorResults.ToResult(failure),
+        };
     }
 }
 
@@ -452,8 +507,11 @@ public sealed class ListProjectsEndpoint(PlatformDirectory platform, PlatformAut
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
         var (limit, after) = this.Paging();
-        var page = await platform.ProjectsAsync(caller.Id, this.RouteId("organization"), limit, after, cancellationToken);
-        return Results.Json(new ProjectPageBody([.. page.Items.Select(item => Map(item.Project, item.Role))], page.Next), PlatformApiJson.Default.ProjectPageBody);
+        return await platform.ProjectsAsync(caller.Id, this.RouteId("organization"), limit, after, cancellationToken) switch
+        {
+            Page<(ProjectRecord Project, string Role)> page => Results.Json(new ProjectPageBody([.. page.Items.Select(item => Map(item.Project, item.Role))], page.Next), PlatformApiJson.Default.ProjectPageBody),
+            Failure failure => ErrorResults.ToResult(failure),
+        };
     }
 }
 
@@ -470,8 +528,11 @@ public sealed class GetProjectEndpoint(PlatformDirectory platform, PlatformAuthe
     /// <inheritdoc />
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        var access = await platform.ProjectAccessAsync(caller.Id, this.RouteId("organization"), this.RouteId("project"), cancellationToken);
-        return Results.Json(Map(access.Project.Value, access.Role), PlatformApiJson.Default.ProjectBody);
+        return await platform.ProjectAccessAsync(caller.Id, this.RouteId("organization"), this.RouteId("project"), cancellationToken) switch
+        {
+            ProjectAccess access => Results.Json(Map(access.Project.Value, access.Role), PlatformApiJson.Default.ProjectBody),
+            Failure failure => ErrorResults.ToResult(failure),
+        };
     }
 }
 
@@ -488,9 +549,17 @@ public sealed class RenameProjectEndpoint(PlatformDirectory platform, PlatformAu
     /// <inheritdoc />
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        var name = PlatformDirectory.Name((await this.BodyAsync(PlatformApiJson.Default.NameRequest, cancellationToken)).Name) ?? throw Invalid("name must be 1 to 128 characters with a letter or digit.");
-        var access = await platform.RenameProjectAsync(caller.Id, this.RouteId("organization"), this.RouteId("project"), name, cancellationToken);
-        return Results.Json(Map(access.Project.Value, access.Role), PlatformApiJson.Default.ProjectBody);
+        var name = PlatformDirectory.Name((await this.BodyAsync(PlatformApiJson.Default.NameRequest, cancellationToken)).Name);
+        if (name is null)
+        {
+            throw Invalid("name must be 1 to 128 characters with a letter or digit.");
+        }
+
+        return await platform.RenameProjectAsync(caller.Id, this.RouteId("organization"), this.RouteId("project"), name, cancellationToken) switch
+        {
+            ProjectAccess access => Results.Json(Map(access.Project.Value, access.Role), PlatformApiJson.Default.ProjectBody),
+            Failure failure => ErrorResults.ToResult(failure),
+        };
     }
 }
 
@@ -510,8 +579,11 @@ public sealed class SetProjectAllowedCidrsEndpoint(PlatformDirectory platform, P
         var body = await this.BodyAsync(PlatformApiJson.Default.AllowedCidrsRequest, cancellationToken);
         var cidrs = (body.AllowedCidrs is null ? null : ApiKeys.NormalizeCidrs(body.AllowedCidrs))
             ?? throw Invalid("allowed_cidrs must be up to 32 IPv4 or IPv6 CIDRs or addresses.");
-        var access = await platform.SetProjectAllowedCidrsAsync(caller.Id, this.RouteId("organization"), this.RouteId("project"), cidrs, cancellationToken);
-        return Results.Json(Map(access.Project.Value, access.Role), PlatformApiJson.Default.ProjectBody);
+        return await platform.SetProjectAllowedCidrsAsync(caller.Id, this.RouteId("organization"), this.RouteId("project"), cidrs, cancellationToken) switch
+        {
+            ProjectAccess access => Results.Json(Map(access.Project.Value, access.Role), PlatformApiJson.Default.ProjectBody),
+            Failure failure => ErrorResults.ToResult(failure),
+        };
     }
 }
 
@@ -545,8 +617,11 @@ public sealed class ListProjectMembersEndpoint(PlatformDirectory platform, Platf
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
         var (limit, after) = this.Paging();
-        var page = await platform.ProjectMembersAsync(caller.Id, this.RouteId("organization"), this.RouteId("project"), limit, after, cancellationToken);
-        return Results.Json(new ProjectMemberPageBody([.. page.Items.Select(item => Map(item.Member, item.Email))], page.Next), PlatformApiJson.Default.ProjectMemberPageBody);
+        return await platform.ProjectMembersAsync(caller.Id, this.RouteId("organization"), this.RouteId("project"), limit, after, cancellationToken) switch
+        {
+            Page<(ProjectMemberRecord Member, string Email)> page => Results.Json(new ProjectMemberPageBody([.. page.Items.Select(item => Map(item.Member, item.Email))], page.Next), PlatformApiJson.Default.ProjectMemberPageBody),
+            Failure failure => ErrorResults.ToResult(failure),
+        };
     }
 }
 
@@ -569,8 +644,11 @@ public sealed class SetProjectMemberRoleEndpoint(PlatformDirectory platform, Pla
             throw Invalid("role must be viewer, member or admin.");
         }
 
-        var (member, email) = await platform.SetProjectRoleAsync(caller.Id, this.RouteId("organization"), this.RouteId("project"), this.RouteId("user"), role, cancellationToken);
-        return Results.Json(Map(member, email), PlatformApiJson.Default.ProjectMemberBody);
+        return await platform.SetProjectRoleAsync(caller.Id, this.RouteId("organization"), this.RouteId("project"), this.RouteId("user"), role, cancellationToken) switch
+        {
+            ProjectMemberEmail member => Results.Json(Map(member.Member, member.Email), PlatformApiJson.Default.ProjectMemberBody),
+            Failure failure => ErrorResults.ToResult(failure),
+        };
     }
 }
 
@@ -587,7 +665,11 @@ public sealed class RemoveProjectMemberEndpoint(PlatformDirectory platform, Plat
     /// <inheritdoc />
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        await platform.RemoveProjectRoleAsync(caller.Id, this.RouteId("organization"), this.RouteId("project"), this.RouteId("user"), cancellationToken);
+        if (await platform.RemoveProjectRoleAsync(caller.Id, this.RouteId("organization"), this.RouteId("project"), this.RouteId("user"), cancellationToken) is Failure failure)
+        {
+            return ErrorResults.ToResult(failure);
+        }
+
         return Results.NoContent();
     }
 }

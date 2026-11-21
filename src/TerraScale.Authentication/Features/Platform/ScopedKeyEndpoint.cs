@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Endpoints;
@@ -118,9 +119,12 @@ public sealed class ScopedKeyEndpoint(ApiKeys keys, PlatformDirectory directory,
             expiresAt = end;
         }
 
-        var (key, minted) = await keys.CreateScopedAsync(parent, ApiKeys.Generation(secret), project, body.Database!, scopes, expiresAt, cancellationToken).ConfigureAwait(false);
-        return Results.Json(new ScopedKeyBody(minted, key.Id, project, body.Database!, body.Access!, expiresAt), PlatformApiJson.Default.ScopedKeyBody,
-            statusCode: StatusCodes.Status201Created);
+        return await keys.CreateScopedAsync(parent, ApiKeys.Generation(secret), project, body.Database!, scopes, expiresAt, cancellationToken).ConfigureAwait(false) switch
+        {
+            ApiKeyIssued issued => Results.Json(new ScopedKeyBody(issued.Secret, issued.Key.Id, project, body.Database!, body.Access!, expiresAt), PlatformApiJson.Default.ScopedKeyBody,
+                statusCode: StatusCodes.Status201Created),
+            Failure failure => ErrorResults.ToResult(failure),
+        };
     }
 
     private static string? Credential(HttpRequest request)

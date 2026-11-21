@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -31,9 +32,14 @@ public sealed class CreateWebhookEndpointEndpoint(TenantDirectory tenants, Platf
         }
 
         _ = await proofs.ConsumeHeaderAsync(caller.Person, this.HttpContext.Request, "create_webhook_endpoint", null, cancellationToken);
-        var (endpoint, secret) = await webhooks.CreateAsync(projectId, uri.AbsoluteUri, [.. events], cancellationToken);
-        return Results.Json(new WebhookEndpointBody(endpoint.Id, endpoint.Url, endpoint.EventTypes, endpoint.CreatedAt, secret),
-            WebhooksJson.Default.WebhookEndpointBody, statusCode: StatusCodes.Status201Created)
-            .WithLocation($"/v1/{projectId}/webhook-endpoints/{endpoint.Id}");
+        return await webhooks.CreateAsync(projectId, uri.AbsoluteUri, [.. events], cancellationToken) switch
+        {
+            WebhookEndpointSecret issued => Results.Json(new WebhookEndpointBody(issued.Endpoint.Id, issued.Endpoint.Url, issued.Endpoint.EventTypes, issued.Endpoint.CreatedAt, issued.Secret),
+                WebhooksJson.Default.WebhookEndpointBody, statusCode: StatusCodes.Status201Created)
+                .WithLocation($"/v1/{projectId}/webhook-endpoints/{issued.Endpoint.Id}"),
+            NotFound failure => ErrorResults.ToResult(failure),
+            Conflict failure => ErrorResults.ToResult(failure),
+            Forbidden failure => ErrorResults.ToResult(failure),
+        };
     }
 }

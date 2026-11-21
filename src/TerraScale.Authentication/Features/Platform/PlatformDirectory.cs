@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Errors;
@@ -43,6 +44,16 @@ public sealed record ProjectAccess(Versioned<MembershipRecord>? Membership, Vers
 }
 
 public sealed record Page<T>(IReadOnlyList<T> Items, string? Next);
+
+public sealed record MemberEmail(MembershipRecord Member, string Email);
+
+public sealed record ProjectMemberEmail(ProjectMemberRecord Member, string Email);
+
+internal sealed record LiveTransfer(OwnershipTransferRecord Transfer, Versioned<MembershipRecord> Starter);
+
+public readonly union OrganizationAccessResult(OrganizationAccess, Failure);
+
+public readonly union ProjectAccessResult(ProjectAccess, Failure);
 
 public sealed class PlatformDirectory(AuthData data, Users users, TotpCredentials mfa, PasskeyCredentials passkeys, TimeProvider clock, ILogger<PlatformDirectory> logger)
 {
@@ -121,14 +132,21 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
         return new(organizations, next);
     }
 
-    public Task<OrganizationAccess> OrganizationAccessAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
+    public Task<OrganizationAccessResult> OrganizationAccessAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
         this.OrganizationAccessAsync(userId, organizationId, requireMfa: true, cancellationToken);
 
-    private async Task<OrganizationAccess> OrganizationAccessAsync(string userId, string organizationId, bool requireMfa, CancellationToken cancellationToken)
+    internal async Task<OrganizationAccess> RequireOrganizationAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
+        await this.OrganizationAccessAsync(userId, organizationId, requireMfa: true, cancellationToken).ConfigureAwait(false) switch
+        {
+            OrganizationAccess access => access,
+            Failure failure => throw ToException(failure),
+        };
+
+    private async Task<OrganizationAccessResult> OrganizationAccessAsync(string userId, string organizationId, bool requireMfa, CancellationToken cancellationToken)
     {
         if (!IsId(organizationId))
         {
-            throw NotFound();
+            return NotFoundFailure();
         }
 
         var row = await data.ReadAsync((db, token) => (
@@ -145,26 +163,38 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
         if (row is null || membership is null
             || membership.Value.Role is null && !await this.CollaboratesAsync(userId, organizationId, null, cancellationToken).ConfigureAwait(false))
         {
-            throw NotFound();
+            return NotFoundFailure();
         }
 
         if (requireMfa)
         {
-            await this.RequireMfaAsync(row.Organization, userId, cancellationToken).ConfigureAwait(false);
+            if (await this.RequireMfaAsync(row.Organization, userId, cancellationToken).ConfigureAwait(false) is { } mfa)
+            {
+                return mfa;
+            }
         }
 
-        return new(new(row.Organization, row.Version), membership);
+        return new OrganizationAccess(new(row.Organization, row.Version), membership);
     }
 
-    public Task<OrganizationRecord> SetMfaPolicyAsync(string userId, string organizationId, bool require, CancellationToken cancellationToken) =>
+    public Task<PlanOutcome<OrganizationRecord>> SetMfaPolicyAsync(string userId, string organizationId, bool require, CancellationToken cancellationToken) =>
         this.CommitAsync(async () =>
         {
-            var access = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
-            RequireRole(access, Roles.Owner);
+            var read = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
+            if (read is not OrganizationAccess access)
+            {
+                return Refused<OrganizationRecord>(RefusalOf(read));
+            }
+
+            if (RoleRefusal(access, Roles.Owner) is { } forbidden)
+            {
+                return Refused<OrganizationRecord>(forbidden);
+            }
+
             if (require && !(await mfa.StatusAsync(Instance, userId, cancellationToken).ConfigureAwait(false)).Enabled
                 && !await passkeys.EnrolledAsync(Instance, userId, cancellationToken).ConfigureAwait(false))
             {
-                throw Conflict("mfa_not_enrolled", "Turn on two-factor authentication for your own account first.");
+                return Refused<OrganizationRecord>(new Conflict("Turn on two-factor authentication for your own account first.", "mfa_not_enrolled"));
             }
 
             var changed = access.Organization.Value with { RequireMfa = require };
@@ -193,20 +223,31 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
         }
     }
 
-    private async Task RequireMfaAsync(OrganizationRecord organization, string userId, CancellationToken cancellationToken)
+    private async Task<Failure?> RequireMfaAsync(OrganizationRecord organization, string userId, CancellationToken cancellationToken)
     {
         if (organization.RequireMfa && !(await mfa.StatusAsync(Instance, userId, cancellationToken).ConfigureAwait(false)).Enabled
             && !await passkeys.EnrolledAsync(Instance, userId, cancellationToken).ConfigureAwait(false))
         {
-            throw new ApiException(StatusCodes.Status403Forbidden, MfaRequiredCode, "This organization requires two-factor authentication. Turn it on at /ui/terrascale/security.");
+            return new Forbidden("This organization requires two-factor authentication. Turn it on at /ui/terrascale/security.", MfaRequiredCode);
         }
+
+        return null;
     }
 
-    public Task<OrganizationRecord> RenameOrganizationAsync(string userId, string organizationId, string name, CancellationToken cancellationToken) =>
+    public Task<PlanOutcome<OrganizationRecord>> RenameOrganizationAsync(string userId, string organizationId, string name, CancellationToken cancellationToken) =>
         this.CommitAsync(async () =>
         {
-            var access = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
-            RequireRole(access, Roles.Admin);
+            var read = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
+            if (read is not OrganizationAccess access)
+            {
+                return Refused<OrganizationRecord>(RefusalOf(read));
+            }
+
+            if (RoleRefusal(access, Roles.Admin) is { } forbidden)
+            {
+                return Refused<OrganizationRecord>(forbidden);
+            }
+
             var renamed = access.Organization.Value with { Name = name };
             return new Plan<OrganizationRecord>(
             [
@@ -216,31 +257,49 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
             ], renamed);
         }, cancellationToken);
 
-    public Task DeleteOrganizationAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
+    public Task<PlanOutcome<Done>> DeleteOrganizationAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
         this.DeleteOrganizationAsync(userId, organizationId, closingAccount: false, cancellationToken);
 
-    internal Task DeleteOrganizationAsync(string userId, string organizationId, bool closingAccount, CancellationToken cancellationToken) =>
+    internal Task<PlanOutcome<Done>> DeleteOrganizationAsync(string userId, string organizationId, bool closingAccount, CancellationToken cancellationToken) =>
         this.CommitAsync(async () =>
         {
-            var access = await this.OrganizationAccessAsync(userId, organizationId, requireMfa: !closingAccount, cancellationToken).ConfigureAwait(false);
-            RequireRole(access, Roles.Owner);
-            if (access.Organization.Value.Projects > 0)
+            var read = await this.OrganizationAccessAsync(userId, organizationId, requireMfa: !closingAccount, cancellationToken).ConfigureAwait(false);
+            if (read is not OrganizationAccess access)
             {
-                throw Conflict("not_empty", "Delete the organization's projects first.");
+                return Refused<Done>(RefusalOf(read));
             }
 
-            return new Plan<bool>(
+            if (RoleRefusal(access, Roles.Owner) is { } forbidden)
+            {
+                return Refused<Done>(forbidden);
+            }
+
+            if (access.Organization.Value.Projects > 0)
+            {
+                return Refused<Done>(new Conflict("Delete the organization's projects first.", "not_empty"));
+            }
+
+            return new Plan<Done>(
             [
                 Authority(access),
                 Change.Delete(access.Organization),
                 DeletionJob.Enqueue(Instance, "organization", organizationId, clock),
-            ], true);
+            ], new Done());
         }, cancellationToken);
 
-    public async Task<Page<(MembershipRecord Member, string Email)>> MembersAsync(string userId, string organizationId, int limit, string? after, CancellationToken cancellationToken)
+    public async Task<PlanOutcome<Page<(MembershipRecord Member, string Email)>>> MembersAsync(string userId, string organizationId, int limit, string? after, CancellationToken cancellationToken)
     {
-        var access = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
-        RequireRole(access, Roles.Viewer);
+        var read = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
+        if (read is not OrganizationAccess access)
+        {
+            return RefusalOf(read);
+        }
+
+        if (RoleRefusal(access, Roles.Viewer) is { } forbidden)
+        {
+            return forbidden;
+        }
+
         var from = Cursor(after);
         var rows = await data.ReadAsync((db, token) => db.Memberships
             .Where(member => member.OrganizationId == organizationId && member.Role != null && string.Compare(member.UserId, from) > 0)
@@ -251,22 +310,31 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
         return Paged([.. rows.Select(row => (row.Member, row.Email))], limit, row => row.Member.UserId);
     }
 
-    public async Task<(MembershipRecord Member, string Email)> ChangeRoleAsync(string userId, string organizationId, string memberId, string role, CancellationToken cancellationToken)
+    public async Task<PlanOutcome<MemberEmail>> ChangeRoleAsync(string userId, string organizationId, string memberId, string role, CancellationToken cancellationToken)
     {
         var changed = await this.CommitAsync(async () =>
         {
-            var access = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
-            RequireRole(access, Roles.Admin);
+            var read = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
+            if (read is not OrganizationAccess access)
+            {
+                return Refused<MembershipRecord>(RefusalOf(read));
+            }
+
+            if (RoleRefusal(access, Roles.Admin) is { } forbidden)
+            {
+                return Refused<MembershipRecord>(forbidden);
+            }
+
             var member = memberId == userId ? access.Membership : await this.MembershipAsync(organizationId, memberId, cancellationToken).ConfigureAwait(false);
             if (member?.Value.Role is not { } current)
             {
-                throw NotFound();
+                return Refused<MembershipRecord>(NotFoundFailure());
             }
 
             var owners = current == Roles.Owner || role == Roles.Owner;
-            if (owners)
+            if (owners && RoleRefusal(access, Roles.Owner) is { } ownerForbidden)
             {
-                RequireRole(access, Roles.Owner);
+                return Refused<MembershipRecord>(ownerForbidden);
             }
 
             if (current == role)
@@ -278,12 +346,12 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
             var count = organization.Owners + (role == Roles.Owner ? 1 : 0) - (current == Roles.Owner ? 1 : 0);
             if (count < 1)
             {
-                throw Conflict("last_owner", "An organization keeps at least one owner.");
+                return Refused<MembershipRecord>(new Conflict("An organization keeps at least one owner.", "last_owner"));
             }
 
-            if (Roles.Rank(role) > Roles.Rank(current))
+            if (Roles.Rank(role) > Roles.Rank(current) && await this.FencedAsync(organizationId, null, memberId, cancellationToken).ConfigureAwait(false))
             {
-                await this.FenceAsync(organizationId, null, memberId, cancellationToken).ConfigureAwait(false);
+                return Refused<MembershipRecord>(UnavailableFailure());
             }
 
             var updated = member.Value with { Role = role };
@@ -296,29 +364,43 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
                 this.Audit(organizationId, userId, "member.role_changed", memberId, role),
             ], updated);
         }, cancellationToken).ConfigureAwait(false);
-        return (await this.WithEmailsAsync([changed], member => member.UserId, cancellationToken).ConfigureAwait(false)).Single();
+        return changed switch
+        {
+            MembershipRecord record => new MemberEmail(record, (await this.WithEmailsAsync([record], member => member.UserId, cancellationToken).ConfigureAwait(false)).Single().Email),
+            Failure failure => failure,
+        };
     }
 
-    public Task RemoveAsync(string userId, string organizationId, string memberId, CancellationToken cancellationToken) =>
+    public Task<PlanOutcome<Done>> RemoveAsync(string userId, string organizationId, string memberId, CancellationToken cancellationToken) =>
         this.CommitAsync(async () =>
         {
             var leaving = userId == memberId;
-            var access = await this.OrganizationAccessAsync(userId, organizationId, requireMfa: !leaving, cancellationToken).ConfigureAwait(false);
-            if (!leaving)
+            var read = await this.OrganizationAccessAsync(userId, organizationId, requireMfa: !leaving, cancellationToken).ConfigureAwait(false);
+            if (read is not OrganizationAccess access)
             {
-                RequireRole(access, Roles.Admin);
+                return Refused<Done>(RefusalOf(read));
             }
 
-            var member = leaving ? access.Membership : await this.MembershipAsync(organizationId, memberId, cancellationToken).ConfigureAwait(false) ?? throw NotFound();
-            var owner = member.Value.Role == Roles.Owner;
-            if (owner && !leaving)
+            if (!leaving && RoleRefusal(access, Roles.Admin) is { } adminForbidden)
             {
-                RequireRole(access, Roles.Owner);
+                return Refused<Done>(adminForbidden);
+            }
+
+            var member = leaving ? access.Membership : await this.MembershipAsync(organizationId, memberId, cancellationToken).ConfigureAwait(false);
+            if (member is null)
+            {
+                return Refused<Done>(NotFoundFailure());
+            }
+
+            var owner = member.Value.Role == Roles.Owner;
+            if (owner && !leaving && RoleRefusal(access, Roles.Owner) is { } ownerForbidden)
+            {
+                return Refused<Done>(ownerForbidden);
             }
 
             if (owner && access.Organization.Value.Owners <= 1)
             {
-                throw Conflict("last_owner", "An organization keeps at least one owner.");
+                return Refused<Done>(new Conflict("An organization keeps at least one owner.", "last_owner"));
             }
 
             var changes = new List<Change>();
@@ -336,7 +418,7 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
 
             changes.AddRange((await this.GrantsAsync(memberId, organizationId, cancellationToken).ConfigureAwait(false)).Select(grant => Change.Delete(grant)));
             changes.Add(this.Audit(organizationId, userId, leaving ? "member.left" : "member.removed", memberId));
-            return new Plan<bool>(changes, true);
+            return new Plan<Done>(changes, new Done());
         }, cancellationToken);
 
     internal async Task<(IReadOnlyList<string> Sole, IReadOnlyList<string> Shared)> AccountScopeAsync(string userId, CancellationToken cancellationToken)
@@ -382,12 +464,25 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
             ? Change.Assert(membership)
             : null;
 
-    public Task<ProjectRecord> CreateProjectAsync(string userId, string organizationId, string name, CancellationToken cancellationToken) =>
+    public Task<PlanOutcome<ProjectRecord>> CreateProjectAsync(string userId, string organizationId, string name, CancellationToken cancellationToken) =>
         this.CommitAsync(async () =>
         {
-            var access = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
-            RequireRole(access, Roles.Member);
-            await this.FenceAsync(organizationId, null, null, cancellationToken).ConfigureAwait(false);
+            var read = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
+            if (read is not OrganizationAccess access)
+            {
+                return Refused<ProjectRecord>(RefusalOf(read));
+            }
+
+            if (RoleRefusal(access, Roles.Member) is { } forbidden)
+            {
+                return Refused<ProjectRecord>(forbidden);
+            }
+
+            if (await this.FencedAsync(organizationId, null, null, cancellationToken).ConfigureAwait(false))
+            {
+                return Refused<ProjectRecord>(UnavailableFailure());
+            }
+
             var now = clock.GetUtcNow();
             var project = new ProjectRecord(AuthIds.New(), Instance, organizationId, name, userId, now);
             var grant = new ProjectMemberRecord(Instance, organizationId, project.Id, userId, Roles.Admin, now);
@@ -402,9 +497,14 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
             ], project, token => this.NameTakenAsync(organizationId, null, name, token));
         }, cancellationToken);
 
-    public async Task<Page<(ProjectRecord Project, string Role)>> ProjectsAsync(string userId, string organizationId, int limit, string? after, CancellationToken cancellationToken)
+    public async Task<PlanOutcome<Page<(ProjectRecord Project, string Role)>>> ProjectsAsync(string userId, string organizationId, int limit, string? after, CancellationToken cancellationToken)
     {
-        var access = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
+        var read = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
+        if (read is not OrganizationAccess access)
+        {
+            return RefusalOf(read);
+        }
+
         var from = Cursor(after);
         if (access.Role is { } role)
         {
@@ -430,14 +530,21 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
         return Paged([.. grants.Select(row => (row.Project, row.Role))], limit, row => row.Project.Id);
     }
 
-    public Task<ProjectAccess> ProjectAccessAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken) =>
+    public Task<ProjectAccessResult> ProjectAccessAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken) =>
         this.ProjectAccessAsync(userId, organizationId, projectId, requireMfa: true, cancellationToken);
 
-    private async Task<ProjectAccess> ProjectAccessAsync(string userId, string organizationId, string projectId, bool requireMfa, CancellationToken cancellationToken)
+    internal async Task<ProjectAccess> RequireProjectAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken) =>
+        await this.ProjectAccessAsync(userId, organizationId, projectId, requireMfa: true, cancellationToken).ConfigureAwait(false) switch
+        {
+            ProjectAccess access => access,
+            Failure failure => throw ToException(failure),
+        };
+
+    private async Task<ProjectAccessResult> ProjectAccessAsync(string userId, string organizationId, string projectId, bool requireMfa, CancellationToken cancellationToken)
     {
         if (!IsId(organizationId) || !IsId(projectId))
         {
-            throw NotFound();
+            return NotFoundFailure();
         }
 
         var row = await data.ReadAsync((db, token) => (
@@ -460,23 +567,39 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
         var granted = row?.Grant is { } given ? new Versioned<ProjectMemberRecord>(given, row.GrantVersion!) : null;
         if (row is null || member?.Value.Role is null && granted is null)
         {
-            throw NotFound();
+            return NotFoundFailure();
         }
 
         if (requireMfa)
         {
-            await this.RequireMfaAsync(row.Organization, userId, cancellationToken).ConfigureAwait(false);
+            if (await this.RequireMfaAsync(row.Organization, userId, cancellationToken).ConfigureAwait(false) is { } mfa)
+            {
+                return mfa;
+            }
         }
 
-        return new(member, new(row.Organization, row.OrganizationVersion), new(row.Project, row.ProjectVersion), granted);
+        return new ProjectAccess(member, new(row.Organization, row.OrganizationVersion), new(row.Project, row.ProjectVersion), granted);
     }
 
-    public Task<ProjectAccess> RenameProjectAsync(string userId, string organizationId, string projectId, string name, CancellationToken cancellationToken) =>
+    public Task<PlanOutcome<ProjectAccess>> RenameProjectAsync(string userId, string organizationId, string projectId, string name, CancellationToken cancellationToken) =>
         this.CommitAsync(async () =>
         {
-            var access = await this.ProjectAccessAsync(userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
-            RequireRole(access, Roles.Admin);
-            await this.FenceAsync(organizationId, projectId, null, cancellationToken).ConfigureAwait(false);
+            var read = await this.ProjectAccessAsync(userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
+            if (read is not ProjectAccess access)
+            {
+                return Refused<ProjectAccess>(RefusalOf(read));
+            }
+
+            if (RoleRefusal(access, Roles.Admin) is { } forbidden)
+            {
+                return Refused<ProjectAccess>(forbidden);
+            }
+
+            if (await this.FencedAsync(organizationId, projectId, null, cancellationToken).ConfigureAwait(false))
+            {
+                return Refused<ProjectAccess>(UnavailableFailure());
+            }
+
             var renamed = access.Project.Value with { Name = name };
             return new Plan<ProjectAccess>(
             [
@@ -486,12 +609,25 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
             ], access with { Project = access.Project with { Value = renamed } }, token => this.NameTakenAsync(organizationId, projectId, name, token));
         }, cancellationToken);
 
-    public Task<ProjectAccess> SetProjectAllowedCidrsAsync(string userId, string organizationId, string projectId, IReadOnlyList<string> allowedCidrs, CancellationToken cancellationToken) =>
+    public Task<PlanOutcome<ProjectAccess>> SetProjectAllowedCidrsAsync(string userId, string organizationId, string projectId, IReadOnlyList<string> allowedCidrs, CancellationToken cancellationToken) =>
         this.CommitAsync(async () =>
         {
-            var access = await this.ProjectAccessAsync(userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
-            RequireRole(access, Roles.Admin);
-            await this.FenceAsync(organizationId, projectId, null, cancellationToken).ConfigureAwait(false);
+            var read = await this.ProjectAccessAsync(userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
+            if (read is not ProjectAccess access)
+            {
+                return Refused<ProjectAccess>(RefusalOf(read));
+            }
+
+            if (RoleRefusal(access, Roles.Admin) is { } forbidden)
+            {
+                return Refused<ProjectAccess>(forbidden);
+            }
+
+            if (await this.FencedAsync(organizationId, projectId, null, cancellationToken).ConfigureAwait(false))
+            {
+                return Refused<ProjectAccess>(UnavailableFailure());
+            }
+
             var changed = access.Project.Value with { AllowedCidrs = allowedCidrs };
             return new Plan<ProjectAccess>(
             [
@@ -503,13 +639,22 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
 
     internal async Task<Versioned<ClosureJob>> RequestProjectClosureAsync(string userId, string organizationId, string projectId, string? accountId, CancellationToken cancellationToken)
     {
-        await this.CommitAsync(async () =>
+        return await this.CommitAsync(async () =>
         {
-            var access = await this.ProjectAccessAsync(userId, organizationId, projectId, requireMfa: accountId is null, cancellationToken).ConfigureAwait(false);
-            RequireRole(access, Roles.Admin);
+            var read = await this.ProjectAccessAsync(userId, organizationId, projectId, requireMfa: accountId is null, cancellationToken).ConfigureAwait(false);
+            if (read is not ProjectAccess access)
+            {
+                return Refused<bool>(RefusalOf(read));
+            }
+
+            if (RoleRefusal(access, Roles.Admin) is { } forbidden)
+            {
+                return Refused<bool>(forbidden);
+            }
+
             if (projectId is PlatformBootstrap.AuthProjectId or PlatformBootstrap.DashboardProjectId)
             {
-                throw PlatformProjectProtected();
+                return Refused<bool>(PlatformProjectRefusal());
             }
 
             var account = accountId is null ? null : await this.ClosureAsync("account", accountId, cancellationToken).ConfigureAwait(false);
@@ -545,9 +690,12 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
             }
 
             return new Plan<bool>(changes, true);
-        }, cancellationToken).ConfigureAwait(false);
-        return await this.ClosureAsync("project", projectId, cancellationToken).ConfigureAwait(false)
-            is { } job && job.Value.OrganizationId == organizationId ? job : throw ApiException.Unavailable();
+        }, cancellationToken).ConfigureAwait(false) switch
+        {
+            bool done => done && await this.ClosureAsync("project", projectId, cancellationToken).ConfigureAwait(false)
+                is { } job && job.Value.OrganizationId == organizationId ? job : throw ApiException.Unavailable(),
+            Failure failure => throw ToException(failure),
+        };
     }
 
     internal async Task<Versioned<ClosureJob>?> ClosureAsync(string scope, string subjectId, CancellationToken cancellationToken)
@@ -659,7 +807,7 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
     {
         ArgumentNullException.ThrowIfNull(job);
         var (projectId, organizationId) = (job.Value.SubjectId, job.Value.OrganizationId!);
-        var removed = await this.CommitAsync(async () =>
+        var removedOutcome = await this.CommitAsync(async () =>
         {
             if (await this.ClosureAsync("project", projectId, cancellationToken).ConfigureAwait(false) is not { } current || !current.Value.Same(job.Value))
             {
@@ -681,7 +829,12 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
 
             return new Plan<bool>(changes, true);
         }, cancellationToken).ConfigureAwait(false);
-        if (!removed)
+        if (removedOutcome is Failure removedFailure)
+        {
+            throw ToException(removedFailure);
+        }
+
+        if (removedOutcome is not bool removed || !removed)
         {
             return false;
         }
@@ -709,9 +862,14 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
         }
     }
 
-    public async Task<Page<(ProjectMemberRecord Member, string Email)>> ProjectMembersAsync(string userId, string organizationId, string projectId, int limit, string? after, CancellationToken cancellationToken)
+    public async Task<PlanOutcome<Page<(ProjectMemberRecord Member, string Email)>>> ProjectMembersAsync(string userId, string organizationId, string projectId, int limit, string? after, CancellationToken cancellationToken)
     {
-        _ = await this.ProjectAccessAsync(userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
+        var read = await this.ProjectAccessAsync(userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
+        if (read is not ProjectAccess)
+        {
+            return RefusalOf(read);
+        }
+
         var from = Cursor(after);
         var rows = await data.ReadAsync((db, token) => db.ProjectMembers
             .Where(grant => grant.ProjectId == projectId && string.Compare(grant.UserId, from) > 0)
@@ -722,24 +880,33 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
         return Paged([.. rows.Select(row => (row.Grant, row.Email))], limit, row => row.Grant.UserId);
     }
 
-    public async Task<(ProjectMemberRecord Member, string Email)> SetProjectRoleAsync(string userId, string organizationId, string projectId, string memberId, string role, CancellationToken cancellationToken)
+    public async Task<PlanOutcome<ProjectMemberEmail>> SetProjectRoleAsync(string userId, string organizationId, string projectId, string memberId, string role, CancellationToken cancellationToken)
     {
         var granted = await this.CommitAsync(async () =>
         {
-            var access = await this.ProjectAccessAsync(userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
-            RequireRole(access, Roles.Admin);
+            var read = await this.ProjectAccessAsync(userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
+            if (read is not ProjectAccess access)
+            {
+                return Refused<ProjectMemberRecord>(RefusalOf(read));
+            }
+
+            if (RoleRefusal(access, Roles.Admin) is { } forbidden)
+            {
+                return Refused<ProjectMemberRecord>(forbidden);
+            }
+
             var self = memberId == userId;
             var member = self ? access.Membership : await this.MembershipAsync(organizationId, memberId, cancellationToken).ConfigureAwait(false);
             var existing = self ? access.Grant : await this.ProjectMemberAsync(projectId, memberId, cancellationToken).ConfigureAwait(false);
             if (member is null || existing is null && member.Value.Role is null)
             {
-                throw NotFound();
+                return Refused<ProjectMemberRecord>(NotFoundFailure());
             }
 
             var lowers = existing is not null && Roles.Rank(role) < Roles.Rank(existing.Value.Role);
-            if (!lowers)
+            if (!lowers && await this.FencedAsync(organizationId, projectId, memberId, cancellationToken).ConfigureAwait(false))
             {
-                await this.FenceAsync(organizationId, projectId, memberId, cancellationToken).ConfigureAwait(false);
+                return Refused<ProjectMemberRecord>(UnavailableFailure());
             }
 
             var grant = existing is null ? new ProjectMemberRecord(Instance, organizationId, projectId, memberId, role, clock.GetUtcNow()) : existing.Value with { Role = role };
@@ -752,16 +919,34 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
                 this.Audit(organizationId, userId, "project_member.role_set", memberId, $"{projectId}/{role}"),
             ], grant);
         }, cancellationToken).ConfigureAwait(false);
-        return (await this.WithEmailsAsync([granted], grant => grant.UserId, cancellationToken).ConfigureAwait(false)).Single();
+        return granted switch
+        {
+            ProjectMemberRecord record => new ProjectMemberEmail(record, (await this.WithEmailsAsync([record], item => item.UserId, cancellationToken).ConfigureAwait(false)).Single().Email),
+            Failure failure => failure,
+        };
     }
 
-    public Task RemoveProjectRoleAsync(string userId, string organizationId, string projectId, string memberId, CancellationToken cancellationToken) =>
+    public Task<PlanOutcome<Done>> RemoveProjectRoleAsync(string userId, string organizationId, string projectId, string memberId, CancellationToken cancellationToken) =>
         this.CommitAsync(async () =>
         {
-            var access = await this.ProjectAccessAsync(userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
-            RequireRole(access, Roles.Admin);
+            var read = await this.ProjectAccessAsync(userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
+            if (read is not ProjectAccess access)
+            {
+                return Refused<Done>(RefusalOf(read));
+            }
+
+            if (RoleRefusal(access, Roles.Admin) is { } forbidden)
+            {
+                return Refused<Done>(forbidden);
+            }
+
             var self = memberId == userId;
-            var existing = (self ? access.Grant : await this.ProjectMemberAsync(projectId, memberId, cancellationToken).ConfigureAwait(false)) ?? throw NotFound();
+            var existing = self ? access.Grant : await this.ProjectMemberAsync(projectId, memberId, cancellationToken).ConfigureAwait(false);
+            if (existing is null)
+            {
+                return Refused<Done>(NotFoundFailure());
+            }
+
             var member = self ? access.Membership : await this.MembershipAsync(organizationId, memberId, cancellationToken).ConfigureAwait(false);
             List<Change> changes = [Authority(access, Roles.Admin), Change.Delete(existing)];
             if (member is not null)
@@ -772,7 +957,7 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
             }
 
             changes.Add(this.Audit(organizationId, userId, "project_member.removed", memberId, projectId));
-            return new Plan<bool>(changes, true);
+            return new Plan<Done>(changes, new Done());
         }, cancellationToken);
 
     public async Task<bool> AddMemberAsync(string organizationId, string userId, string role, CancellationToken cancellationToken)
@@ -858,27 +1043,47 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
         ];
     }
 
-    public async Task<OwnershipTransferRecord> TransferAsync(string userId, string organizationId, CancellationToken cancellationToken)
+    public async Task<PlanOutcome<OwnershipTransferRecord>> TransferAsync(string userId, string organizationId, CancellationToken cancellationToken)
     {
-        var access = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
-        RequireRole(access, Roles.Viewer);
-        return (await this.LiveTransferAsync(access.Organization, cancellationToken).ConfigureAwait(false) ?? throw NotFound()).Transfer;
+        var read = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
+        if (read is not OrganizationAccess access)
+        {
+            return RefusalOf(read);
+        }
+
+        if (RoleRefusal(access, Roles.Viewer) is { } forbidden)
+        {
+            return forbidden;
+        }
+
+        return await this.LiveTransferAsync(access.Organization, cancellationToken).ConfigureAwait(false) is { } live
+            ? live.Transfer
+            : NotFoundFailure();
     }
 
-    public Task<OwnershipTransferRecord> StartTransferAsync(string userId, string organizationId, string nomineeId, CancellationToken cancellationToken) =>
+    public Task<PlanOutcome<OwnershipTransferRecord>> StartTransferAsync(string userId, string organizationId, string nomineeId, CancellationToken cancellationToken) =>
         this.CommitAsync(async () =>
         {
-            var access = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
-            RequireRole(access, Roles.Owner);
+            var read = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
+            if (read is not OrganizationAccess access)
+            {
+                return Refused<OwnershipTransferRecord>(RefusalOf(read));
+            }
+
+            if (RoleRefusal(access, Roles.Owner) is { } forbidden)
+            {
+                return Refused<OwnershipTransferRecord>(forbidden);
+            }
+
             var nominee = await this.MembershipAsync(organizationId, nomineeId, cancellationToken).ConfigureAwait(false);
             if (nominee?.Value.Role is not { } role)
             {
-                throw NotFound();
+                return Refused<OwnershipTransferRecord>(NotFoundFailure());
             }
 
             if (role == Roles.Owner)
             {
-                throw new ApiException(StatusCodes.Status400BadRequest, "invalid_request", "The nominee is already an owner.");
+                return Refused<OwnershipTransferRecord>(new Validation("The nominee is already an owner."));
             }
 
             var now = clock.GetUtcNow();
@@ -892,38 +1097,66 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
             ], transfer);
         }, cancellationToken);
 
-    public Task CancelTransferAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
+    public Task<PlanOutcome<Done>> CancelTransferAsync(string userId, string organizationId, CancellationToken cancellationToken) =>
         this.CommitAsync(async () =>
         {
-            var access = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
-            RequireRole(access, Roles.Viewer);
-            var live = await this.LiveTransferAsync(access.Organization, cancellationToken).ConfigureAwait(false) ?? throw NotFound();
-            var nominee = live.Transfer.ToUserId == userId;
-            if (!nominee)
+            var read = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
+            if (read is not OrganizationAccess access)
             {
-                RequireRole(access, Roles.Owner);
+                return Refused<Done>(RefusalOf(read));
             }
 
-            return new Plan<bool>(
+            if (RoleRefusal(access, Roles.Viewer) is { } forbidden)
+            {
+                return Refused<Done>(forbidden);
+            }
+
+            var live = await this.LiveTransferAsync(access.Organization, cancellationToken).ConfigureAwait(false);
+            if (live is null)
+            {
+                return Refused<Done>(NotFoundFailure());
+            }
+
+            var nominee = live.Transfer.ToUserId == userId;
+            if (!nominee && RoleRefusal(access, Roles.Owner) is { } ownerForbidden)
+            {
+                return Refused<Done>(ownerForbidden);
+            }
+
+            return new Plan<Done>(
             [
                 Authority(access),
                 Change.Update(access.Organization, access.Organization.Value with { Transfer = null }),
                 this.Audit(organizationId, userId, "ownership.transfer_cancelled", live.Transfer.ToUserId),
-            ], true);
+            ], new Done());
         }, cancellationToken);
 
-    public async Task<(MembershipRecord Member, string Email)> ConfirmTransferAsync(string userId, string organizationId, CancellationToken cancellationToken)
+    public async Task<PlanOutcome<MemberEmail>> ConfirmTransferAsync(string userId, string organizationId, CancellationToken cancellationToken)
     {
         var confirmed = await this.CommitAsync(async () =>
         {
-            var access = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
-            var live = await this.LiveTransferAsync(access.Organization, cancellationToken).ConfigureAwait(false) ?? throw NotFound();
-            if (live.Transfer.ToUserId != userId)
+            var read = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
+            if (read is not OrganizationAccess access)
             {
-                throw Forbidden();
+                return Refused<MembershipRecord>(RefusalOf(read));
             }
 
-            await this.FenceAsync(organizationId, null, userId, cancellationToken).ConfigureAwait(false);
+            var live = await this.LiveTransferAsync(access.Organization, cancellationToken).ConfigureAwait(false);
+            if (live is null)
+            {
+                return Refused<MembershipRecord>(NotFoundFailure());
+            }
+
+            if (live.Transfer.ToUserId != userId)
+            {
+                return Refused<MembershipRecord>(ForbiddenFailure());
+            }
+
+            if (await this.FencedAsync(organizationId, null, userId, cancellationToken).ConfigureAwait(false))
+            {
+                return Refused<MembershipRecord>(UnavailableFailure());
+            }
+
             var owner = access.Membership.Value with { Role = Roles.Owner };
             return new Plan<MembershipRecord>(
             [
@@ -933,13 +1166,26 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
                 this.Audit(organizationId, userId, "ownership.transfer_confirmed", userId),
             ], owner);
         }, cancellationToken).ConfigureAwait(false);
-        return (await this.WithEmailsAsync([confirmed], member => member.UserId, cancellationToken).ConfigureAwait(false)).Single();
+        return confirmed switch
+        {
+            MembershipRecord record => new MemberEmail(record, (await this.WithEmailsAsync([record], member => member.UserId, cancellationToken).ConfigureAwait(false)).Single().Email),
+            Failure failure => failure,
+        };
     }
 
-    public async Task<Page<AuditEventRecord>> AuditEventsAsync(string userId, string organizationId, int limit, string? after, CancellationToken cancellationToken)
+    public async Task<PlanOutcome<Page<AuditEventRecord>>> AuditEventsAsync(string userId, string organizationId, int limit, string? after, CancellationToken cancellationToken)
     {
-        var access = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
-        RequireRole(access, Roles.Admin);
+        var read = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
+        if (read is not OrganizationAccess access)
+        {
+            return RefusalOf(read);
+        }
+
+        if (RoleRefusal(access, Roles.Admin) is { } forbidden)
+        {
+            return forbidden;
+        }
+
         var before = after is null ? null : Cursor(after);
         var rows = await data.ReadAsync((db, token) => db.AuditEvents
             .Where(item => item.OrganizationId == organizationId && (before == null || string.Compare(item.Id, before) < 0))
@@ -970,16 +1216,74 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
         }
     }
 
+    internal static Failure? RoleRefusal(OrganizationAccess access, string minimum) =>
+        Roles.Rank(access.Role) < Roles.Rank(minimum) ? ForbiddenFailure() : (Failure?)null;
+
+    internal static Failure? RoleRefusal(ProjectAccess access, string minimum) =>
+        Roles.Rank(access.Role) < Roles.Rank(minimum) ? ForbiddenFailure() : (Failure?)null;
+
+    internal static Failure RefusalOf(OrganizationAccessResult access) => access switch
+    {
+        Failure failure => failure,
+        OrganizationAccess => throw new UnreachableException(),
+    };
+
+    internal static Failure RefusalOf(ProjectAccessResult access) => access switch
+    {
+        Failure failure => failure,
+        ProjectAccess => throw new UnreachableException(),
+    };
+
+    internal static Failure RefusalOf(AuthorityCheck check) => check switch
+    {
+        Failure failure => failure,
+        InvitationAuthority => throw new UnreachableException(),
+    };
+
+    internal static Failure RefusalOf(KeyAuthorization authorization) => authorization switch
+    {
+        Failure failure => failure,
+        KeyAuthority => throw new UnreachableException(),
+    };
+
+    internal static Failure RefusalOf(Invitations.Decidable decidable) => decidable switch
+    {
+        Failure failure => failure,
+        Versioned<InvitationRecord> => throw new UnreachableException(),
+    };
+
+    internal static Plan<T> Refused<T>(Failure refusal) => new([], default!, Refusal: refusal);
+
     internal static ApiException NotFound() => new(StatusCodes.Status404NotFound, "not_found", "No such resource.");
 
     internal static ApiException Forbidden() => new(StatusCodes.Status403Forbidden, "forbidden_role", "Your role does not allow this.");
 
     internal static ApiException Conflict(string code, string message) => new(StatusCodes.Status409Conflict, code, message);
 
+    internal static ApiException ToException(Failure failure) => failure switch
+    {
+        NotFound e => new(StatusCodes.Status404NotFound, e.Code, e.Message ?? "No such resource."),
+        Forbidden e => new(StatusCodes.Status403Forbidden, e.Code, e.Message),
+        Conflict e => new(StatusCodes.Status409Conflict, e.Code, e.Message),
+        Validation e => new(StatusCodes.Status400BadRequest, e.Code, e.Message),
+        Unprocessable e => new(StatusCodes.Status422UnprocessableEntity, e.Code, e.Message),
+        QuotaExceeded e => e.RetryAfter is { } wait ? ApiException.RateLimited(e.Message, wait) : new ApiException(StatusCodes.Status429TooManyRequests, e.Code, e.Message),
+        Unavailable e => new(StatusCodes.Status503ServiceUnavailable, e.Code, e.Message),
+        _ => throw new UnreachableException(),
+    };
+
     internal static ApiException PlatformProjectProtected() =>
         Conflict("platform_project_protected", "This project holds a TerraScale service's own database and cannot be deleted.");
 
-    internal static NotFound NotFoundFailure() => new("No such resource.", "not_found");
+    internal static Failure PlatformProjectRefusal() =>
+        new Conflict("This project holds a TerraScale service's own database and cannot be deleted.", "platform_project_protected");
+
+    internal static Failure NotFoundFailure() => new NotFound("No such resource.", "not_found");
+
+    internal static Failure ForbiddenFailure() => new Forbidden("Your role does not allow this.", "forbidden_role");
+
+    internal static Failure UnavailableFailure() => new Unavailable("The storage engine is unavailable; retry shortly.", "temporarily_unavailable",
+        new Dictionary<string, string> { ["retry_after"] = "2" });
 
     internal static Change Authority(OrganizationAccess access)
     {
@@ -1003,12 +1307,17 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
     internal static Page<T> Paged<T>(IReadOnlyList<T> rows, int limit, Func<T, string> key) =>
         rows.Count > limit ? new([.. rows.Take(limit)], key(rows[limit - 1])) : new(rows, null);
 
-    internal async Task<T> CommitAsync<T>(Func<Task<Plan<T>>> plan, CancellationToken cancellationToken)
+    internal async Task<PlanOutcome<T>> CommitAsync<T>(Func<Task<Plan<T>>> plan, CancellationToken cancellationToken)
     {
         using var home = HomeReads.Begin();
         for (var attempt = 0; attempt < Attempts; attempt++)
         {
             var next = await plan().ConfigureAwait(false);
+            if (next.Refusal is { } refused)
+            {
+                return refused;
+            }
+
             if (next.Operations.Count == 0 || await data.SaveAsync(next.Operations, cancellationToken).ConfigureAwait(false))
             {
                 return next.Result;
@@ -1016,7 +1325,7 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
 
             if (next.Taken is not null && await next.Taken(cancellationToken).ConfigureAwait(false))
             {
-                throw next.TakenError ?? Conflict("name_taken", "The organization already has a project with this name.");
+                return next.TakenError ?? new Conflict("The organization already has a project with this name.", "name_taken");
             }
         }
 
@@ -1035,14 +1344,17 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
 
     internal async Task FenceAsync(string? organizationId, string? projectId, string? userId, CancellationToken cancellationToken)
     {
-        if (await data.ReadAsync((db, token) => db.ClosureJobs.AnyAsync(job => job.InstanceId == Instance
-            && (job.Scope == "organization" && job.SubjectId == organizationId
-                || job.Scope == "project" && job.SubjectId == projectId
-                || job.Scope == "account" && job.SubjectId == userId), token), cancellationToken).ConfigureAwait(false))
+        if (await this.FencedAsync(organizationId, projectId, userId, cancellationToken).ConfigureAwait(false))
         {
             throw ApiException.Unavailable();
         }
     }
+
+    internal async Task<bool> FencedAsync(string? organizationId, string? projectId, string? userId, CancellationToken cancellationToken) =>
+        await data.ReadAsync((db, token) => db.ClosureJobs.AnyAsync(job => job.InstanceId == Instance
+            && (job.Scope == "organization" && job.SubjectId == organizationId
+                || job.Scope == "project" && job.SubjectId == projectId
+                || job.Scope == "account" && job.SubjectId == userId), token), cancellationToken).ConfigureAwait(false);
 
     internal Task<Versioned<OrganizationRecord>?> OrganizationAsync(string organizationId, CancellationToken cancellationToken) =>
         data.ReadAsync((db, token) => db.Organizations.Where(organization => organization.Id == organizationId && organization.InstanceId == Instance)
@@ -1068,7 +1380,7 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
                 ? organization with { Transfer = null }
                 : organization;
 
-    private async Task<(OwnershipTransferRecord Transfer, Versioned<MembershipRecord> Starter)?> LiveTransferAsync(Versioned<OrganizationRecord> organization, CancellationToken cancellationToken)
+    private async Task<LiveTransfer?> LiveTransferAsync(Versioned<OrganizationRecord> organization, CancellationToken cancellationToken)
     {
         if (organization.Value.Transfer is not { } transfer || transfer.ExpiresAt <= clock.GetUtcNow()
             || await this.MembershipAsync(organization.Value.Id, transfer.FromUserId, cancellationToken).ConfigureAwait(false) is not { Value.Role: Roles.Owner } starter
@@ -1077,7 +1389,7 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
             return null;
         }
 
-        return (transfer, starter);
+        return new LiveTransfer(transfer, starter);
     }
 
     private Task<bool> CollaboratesAsync(string userId, string organizationId, string? except, CancellationToken cancellationToken) =>
@@ -1104,5 +1416,7 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
         data.ReadAsync((db, token) => db.ProjectMembers.Where(grant => grant.ProjectId == projectId && grant.UserId == userId)
             .WithVersion().SingleOrDefaultAsync(token), cancellationToken);
 
-    internal sealed record Plan<T>(IReadOnlyList<Change> Operations, T Result, Func<CancellationToken, Task<bool>>? Taken = null, ApiException? TakenError = null);
+    internal sealed record Plan<T>(IReadOnlyList<Change> Operations, T Result, Func<CancellationToken, Task<bool>>? Taken = null, Failure? TakenError = null, Failure? Refusal = null);
+
+    public readonly union PlanOutcome<T>(T, Failure);
 }

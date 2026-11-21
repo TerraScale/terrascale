@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -16,6 +17,10 @@ public sealed class TestWebhookEndpoint(TenantDirectory tenants, PlatformAuthent
     protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
-        return Results.Json(await history.TestAsync(projectId, this.RouteId("id"), cancellationToken), WebhooksJson.Default.WebhookEventBody);
+        return await history.TestAsync(projectId, this.RouteId("id"), cancellationToken) switch
+        {
+            WebhookEventBody body => Results.Json(body, WebhooksJson.Default.WebhookEventBody),
+            Conflict failure => ErrorResults.ToResult(failure),
+        };
     }
 }
