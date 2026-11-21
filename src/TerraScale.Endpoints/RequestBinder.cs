@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.ComponentModel.DataAnnotations;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Numerics;
@@ -13,6 +14,7 @@ using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Primitives;
 using Microsoft.Extensions.Validation;
+using TerraScale.Endpoints.Binding;
 
 namespace TerraScale.Endpoints;
 
@@ -91,7 +93,7 @@ internal sealed class RequestBinder<TRequest>
 
     internal bool Validates => this.validator is not null;
 
-    internal ValueTask<TRequest> BindAsync(HttpContext context, CancellationToken cancellationToken)
+    internal ValueTask<Bound<TRequest>> BindAsync(HttpContext context, CancellationToken cancellationToken)
     {
         if (this.properties is null)
         {
@@ -109,7 +111,7 @@ internal sealed class RequestBinder<TRequest>
 
         if (hasBody && !hasJson)
         {
-            throw new BadHttpRequestException("Expected a JSON request body.", StatusCodes.Status415UnsupportedMediaType);
+            return ValueTask.FromResult<Bound<TRequest>>(new UnsupportedMediaType("Expected a JSON request body."));
         }
 
         return this.MergeAsync(request, hasJson, cancellationToken);
@@ -228,21 +230,41 @@ internal sealed class RequestBinder<TRequest>
     // The body is streamed through unchanged except for the top-level members that route or query
     // values override, so duplicates, Populate, dictionary keys and converters see exactly what direct
     // deserialization would; only the overridden members are replaced, then the serializer runs once.
-    private async ValueTask<TRequest> MergeAsync(HttpRequest request, bool hasJson, CancellationToken cancellationToken)
+    private async ValueTask<Bound<TRequest>> MergeAsync(HttpRequest request, bool hasJson, CancellationToken cancellationToken)
     {
         var overrides = this.CollectParameters(request);
         var options = this.typeInfo.Options;
-        using var document = hasJson ? await ReadDocumentAsync(request, options, cancellationToken).ConfigureAwait(false) : null;
+        JsonDocument? document = null;
+        if (hasJson)
+        {
+            switch (await ReadDocumentAsync(request, options, cancellationToken).ConfigureAwait(false))
+            {
+                case Validation invalid:
+                    return invalid;
+                case UnsupportedMediaType unsupported:
+                    return unsupported;
+                case JsonDocument parsed:
+                    document = parsed;
+                    break;
+                case null:
+                    throw new UnreachableException();
+            }
+        }
 
         var buffer = new ArrayBufferWriter<byte>();
         // The reader honored options.MaxDepth; the writer must allow the same depth or a body the direct
         // path accepts would fail here (its default is 1000, an app may configure more).
+        using (document)
         using (var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions { MaxDepth = options.MaxDepth }))
         {
             writer.WriteStartObject();
             if (document is not null)
             {
-                this.RejectCaseInsensitiveDuplicates(document.RootElement, options);
+                if (this.RejectCaseInsensitiveDuplicates(document.RootElement, options) is { } duplicate)
+                {
+                    return duplicate;
+                }
+
                 foreach (var member in document.RootElement.EnumerateObject())
                 {
                     if (!IsOverridden(member.Name, overrides, options))
@@ -270,19 +292,19 @@ internal sealed class RequestBinder<TRequest>
 
         try
         {
-            return JsonSerializer.Deserialize(buffer.WrittenSpan, this.typeInfo)
-                ?? throw new BadHttpRequestException("A request is required.", StatusCodes.Status400BadRequest);
+            var parsed = JsonSerializer.Deserialize(buffer.WrittenSpan, this.typeInfo);
+            return parsed is null ? new Validation("A request is required.") : parsed;
         }
         catch (JsonException exception)
         {
             var detail = string.IsNullOrEmpty(exception.Path) || exception.Path == "$"
                 ? "The request is invalid."
                 : $"The value of '{exception.Path[2..]}' is invalid.";
-            throw new BadHttpRequestException(detail, StatusCodes.Status400BadRequest, exception);
+            return new Validation(detail);
         }
         catch (Exception exception) when (EndpointJson.IsConverterFailure(exception))
         {
-            throw new BadHttpRequestException("The request is invalid.", StatusCodes.Status400BadRequest, exception);
+            return new Validation("The request is invalid.");
         }
     }
 
@@ -329,11 +351,11 @@ internal sealed class RequestBinder<TRequest>
     // With case-insensitive names and AllowDuplicateProperties = false, the serializer rejects
     // {"page":1,"Page":2}, but the JSON parser only compares exact names. Check the same way before
     // overridden members are dropped, so parameters cannot hide a rejected body.
-    private void RejectCaseInsensitiveDuplicates(JsonElement root, JsonSerializerOptions options)
+    private Validation? RejectCaseInsensitiveDuplicates(JsonElement root, JsonSerializerOptions options)
     {
         if (options.AllowDuplicateProperties || !options.PropertyNameCaseInsensitive)
         {
-            return;
+            return null;
         }
 
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -341,9 +363,11 @@ internal sealed class RequestBinder<TRequest>
         {
             if (this.memberNames!.Contains(member.Name) && !seen.Add(member.Name))
             {
-                throw new BadHttpRequestException("The JSON request body contains duplicate properties.", StatusCodes.Status400BadRequest);
+                return new Validation("The JSON request body contains duplicate properties.");
             }
         }
+
+        return null;
     }
 
     // A body member is replaced when the serializer would bind it to an overridden property:
@@ -362,10 +386,15 @@ internal sealed class RequestBinder<TRequest>
         return false;
     }
 
-    private static async ValueTask<JsonDocument> ReadDocumentAsync(HttpRequest request, JsonSerializerOptions options, CancellationToken cancellationToken)
+    private static async ValueTask<Bound<JsonDocument>> ReadDocumentAsync(HttpRequest request, JsonSerializerOptions options, CancellationToken cancellationToken)
     {
         // Like ReadFromJsonAsync, honor a non-UTF-8 charset by transcoding the body to UTF-8.
-        var encoding = EndpointJson.GetEncoding(request) ?? throw EndpointJson.UnsupportedCharset();
+        var encoding = EndpointJson.GetEncoding(request);
+        if (encoding is null)
+        {
+            return EndpointJson.UnsupportedCharset();
+        }
+
         var transcoded = encoding.CodePage == Encoding.UTF8.CodePage
             ? null
             : Encoding.CreateTranscodingStream(request.Body, encoding, Encoding.UTF8, leaveOpen: true);
@@ -383,9 +412,9 @@ internal sealed class RequestBinder<TRequest>
             {
                 document = await JsonDocument.ParseAsync(transcoded ?? request.Body, documentOptions, cancellationToken).ConfigureAwait(false);
             }
-            catch (JsonException exception)
+            catch (JsonException)
             {
-                throw new BadHttpRequestException("The JSON request body is invalid.", StatusCodes.Status400BadRequest, exception);
+                return new Validation("The JSON request body is invalid.");
             }
 
             if (document.RootElement.ValueKind == JsonValueKind.Object)
@@ -395,9 +424,9 @@ internal sealed class RequestBinder<TRequest>
 
             var kind = document.RootElement.ValueKind;
             document.Dispose();
-            throw kind == JsonValueKind.Null
-                ? new BadHttpRequestException("A JSON request body is required.", StatusCodes.Status400BadRequest)
-                : new BadHttpRequestException("The JSON request body must be an object.", StatusCodes.Status400BadRequest);
+            return kind == JsonValueKind.Null
+                ? new Validation("A JSON request body is required.")
+                : new Validation("The JSON request body must be an object.");
         }
     }
 

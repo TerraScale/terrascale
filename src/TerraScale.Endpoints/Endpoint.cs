@@ -2,6 +2,7 @@ using System.ComponentModel.DataAnnotations;
 using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json.Serialization.Metadata;
+using TerraScale.Endpoints.Binding;
 
 namespace TerraScale.Endpoints;
 
@@ -18,8 +19,7 @@ public abstract class Endpoint<TRequest, TResponse> : EndpointBase
     /// <remarks>Return <c>ValueTask.FromResult(value)</c> (or write an <c>async</c> method) to avoid a task allocation per request.</remarks>
     public abstract ValueTask<TResponse> HandleAsync(TRequest request, CancellationToken cancellationToken);
 
-    /// <summary>Binds the request model. Reads the JSON body by default; throw <see cref="BadHttpRequestException"/> to reject.</summary>
-    protected virtual ValueTask<TRequest> BindAsync(CancellationToken cancellationToken) =>
+    protected virtual ValueTask<Bound<TRequest>> BindAsync(CancellationToken cancellationToken) =>
         this.binder!.BindAsync(this.HttpContext, cancellationToken);
 
     /// <summary>
@@ -43,7 +43,7 @@ public abstract class Endpoint<TRequest, TResponse> : EndpointBase
                 var endpoint = Activate<Endpoint<TRequest, TResponse>>(context, endpointType);
                 endpoint.binder = binder;
                 var cancellationToken = context.RequestAborted;
-                ValueTask<TRequest> binding;
+                ValueTask<Bound<TRequest>> binding;
                 try
                 {
                     binding = endpoint.BindAsync(cancellationToken);
@@ -61,11 +61,14 @@ public abstract class Endpoint<TRequest, TResponse> : EndpointBase
                 // Endpoints without a ValidateAsync override return the shared sentinel and stay synchronous.
                 // The binding was consumed through Result, so the continuation gets the bound value
                 // instead: a ValueTask backed by an IValueTaskSource may be awaited only once.
-                var request = binding.Result;
-                var rules = endpoint.ValidateAsync(request, cancellationToken);
-                return ReferenceEquals(rules, NoValidation)
-                    ? EndpointJson.RespondAsync(context, endpoint.HandleAsync(request, cancellationToken), responseJson)
-                    : CompleteAsync(context, endpoint, binder, new ValueTask<TRequest>(request), rules, responseJson, cancellationToken);
+                var bound = binding.Result;
+                return bound switch
+                {
+                    Validation invalid => Reject(context, invalid),
+                    UnsupportedMediaType unsupported => Reject(context, unsupported),
+                    null => throw new UnreachableException(),
+                    TRequest request => Respond(context, endpoint, binder, request, responseJson, cancellationToken),
+                };
             },
             Signature,
             typeof(TRequest),
@@ -74,24 +77,54 @@ public abstract class Endpoint<TRequest, TResponse> : EndpointBase
             binder.Validates);
     }
 
+    private static Task Respond(
+        HttpContext context,
+        Endpoint<TRequest, TResponse> endpoint,
+        RequestBinder<TRequest> binder,
+        TRequest request,
+        JsonTypeInfo<TResponse>? responseJson,
+        CancellationToken cancellationToken)
+    {
+        var rules = endpoint.ValidateAsync(request, cancellationToken);
+        return ReferenceEquals(rules, NoValidation)
+            ? EndpointJson.RespondAsync(context, endpoint.HandleAsync(request, cancellationToken), responseJson)
+            : CompleteAsync(context, endpoint, binder, new ValueTask<Bound<TRequest>>(request), rules, responseJson, cancellationToken);
+    }
+
     private static async Task CompleteAsync(
         HttpContext context,
         Endpoint<TRequest, TResponse> endpoint,
         RequestBinder<TRequest> binder,
-        ValueTask<TRequest> binding,
+        ValueTask<Bound<TRequest>> binding,
         IAsyncEnumerable<ValidationResult>? rules,
         JsonTypeInfo<TResponse>? responseJson,
         CancellationToken cancellationToken)
     {
         TRequest request;
+        Bound<TRequest> bound;
         try
         {
-            request = await binding.ConfigureAwait(false);
+            bound = await binding.ConfigureAwait(false);
         }
         catch (BadHttpRequestException exception)
         {
             await Reject(context, exception).ConfigureAwait(false);
             return;
+        }
+
+        switch (bound)
+        {
+            case Validation invalid:
+                await Reject(context, invalid).ConfigureAwait(false);
+                return;
+            case UnsupportedMediaType unsupported:
+                await Reject(context, unsupported).ConfigureAwait(false);
+                return;
+            case null:
+                throw new UnreachableException();
+            case TRequest parsed:
+                request = parsed;
+                break;
         }
 
         rules ??= endpoint.ValidateAsync(request, cancellationToken);
@@ -149,8 +182,7 @@ public abstract class Endpoint<TRequest> : EndpointBase
     /// <summary>Sets the response for the current request. Without a call the endpoint answers 204.</summary>
     protected EndpointSender Send => new(this);
 
-    /// <summary>Binds the request model. Reads the JSON body by default; throw <see cref="BadHttpRequestException"/> to reject.</summary>
-    protected virtual ValueTask<TRequest> BindAsync(CancellationToken cancellationToken) =>
+    protected virtual ValueTask<Bound<TRequest>> BindAsync(CancellationToken cancellationToken) =>
         this.binder!.BindAsync(this.HttpContext, cancellationToken);
 
     /// <summary>
@@ -173,7 +205,7 @@ public abstract class Endpoint<TRequest> : EndpointBase
                 var endpoint = Activate<Endpoint<TRequest>>(context, endpointType);
                 endpoint.binder = binder;
                 var cancellationToken = context.RequestAborted;
-                ValueTask<TRequest> binding;
+                ValueTask<Bound<TRequest>> binding;
                 try
                 {
                     binding = endpoint.BindAsync(cancellationToken);
@@ -191,11 +223,14 @@ public abstract class Endpoint<TRequest> : EndpointBase
                 // Endpoints without a ValidateAsync override return the shared sentinel and stay synchronous.
                 // The binding was consumed through Result, so the continuation gets the bound value
                 // instead: a ValueTask backed by an IValueTaskSource may be awaited only once.
-                var request = binding.Result;
-                var rules = endpoint.ValidateAsync(request, cancellationToken);
-                return ReferenceEquals(rules, NoValidation)
-                    ? EndpointSender.RespondAsync(context, endpoint.HandleAsync(request, cancellationToken), endpoint)
-                    : CompleteAsync(context, endpoint, binder, new ValueTask<TRequest>(request), rules, cancellationToken);
+                var bound = binding.Result;
+                return bound switch
+                {
+                    Validation invalid => Reject(context, invalid),
+                    UnsupportedMediaType unsupported => Reject(context, unsupported),
+                    null => throw new UnreachableException(),
+                    TRequest request => Respond(context, endpoint, binder, request, cancellationToken),
+                };
             },
             Signature,
             typeof(TRequest),
@@ -204,23 +239,52 @@ public abstract class Endpoint<TRequest> : EndpointBase
             binder.Validates);
     }
 
+    private static Task Respond(
+        HttpContext context,
+        Endpoint<TRequest> endpoint,
+        RequestBinder<TRequest> binder,
+        TRequest request,
+        CancellationToken cancellationToken)
+    {
+        var rules = endpoint.ValidateAsync(request, cancellationToken);
+        return ReferenceEquals(rules, NoValidation)
+            ? EndpointSender.RespondAsync(context, endpoint.HandleAsync(request, cancellationToken), endpoint)
+            : CompleteAsync(context, endpoint, binder, new ValueTask<Bound<TRequest>>(request), rules, cancellationToken);
+    }
+
     private static async Task CompleteAsync(
         HttpContext context,
         Endpoint<TRequest> endpoint,
         RequestBinder<TRequest> binder,
-        ValueTask<TRequest> binding,
+        ValueTask<Bound<TRequest>> binding,
         IAsyncEnumerable<ValidationResult>? rules,
         CancellationToken cancellationToken)
     {
         TRequest request;
+        Bound<TRequest> bound;
         try
         {
-            request = await binding.ConfigureAwait(false);
+            bound = await binding.ConfigureAwait(false);
         }
         catch (BadHttpRequestException exception)
         {
             await Reject(context, exception).ConfigureAwait(false);
             return;
+        }
+
+        switch (bound)
+        {
+            case Validation invalid:
+                await Reject(context, invalid).ConfigureAwait(false);
+                return;
+            case UnsupportedMediaType unsupported:
+                await Reject(context, unsupported).ConfigureAwait(false);
+                return;
+            case null:
+                throw new UnreachableException();
+            case TRequest parsed:
+                request = parsed;
+                break;
         }
 
         rules ??= endpoint.ValidateAsync(request, cancellationToken);
