@@ -1,3 +1,4 @@
+using TerraBase.Errors;
 using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Runtime.CompilerServices;
@@ -614,7 +615,21 @@ internal sealed partial class TursoDatabaseStore(
             return open;
         }
 
-        await WhileRewritingAsync(() => pool.OpenNew(this), cancellationToken).ConfigureAwait(false);
+        while (true)
+        {
+            switch (pool.OpenNew(this))
+            {
+                case StorePaused paused:
+                    RewriteSessionWaiting?.Invoke();
+                    await paused.Resumed.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    continue;
+                case Done:
+                    break;
+            }
+
+            break;
+        }
+
         TursoSession session;
         try
         {
@@ -1238,7 +1253,26 @@ internal sealed partial class TursoDatabaseStore(
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (await WhileRewritingAsync(() => pool.Rent(this), cancellationToken).ConfigureAwait(false) is { } idle)
+        TursoSession? idle = null;
+        while (true)
+        {
+            switch (pool.Rent(this))
+            {
+                case StorePaused paused:
+                    RewriteSessionWaiting?.Invoke();
+                    await paused.Resumed.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    continue;
+                case OpenPending:
+                    break;
+                case TursoSession rented:
+                    idle = rented;
+                    break;
+            }
+
+            break;
+        }
+
+        if (idle is not null)
         {
             return idle;
         }

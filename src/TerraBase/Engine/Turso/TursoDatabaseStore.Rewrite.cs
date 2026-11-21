@@ -1,3 +1,4 @@
+using TerraBase.Errors;
 using System.Buffers.Binary;
 using System.Data.Common;
 using System.Collections.Immutable;
@@ -256,7 +257,20 @@ internal sealed partial class TursoDatabaseStore
         TursoRunner runner = finalPass ? WriteLane : io;
         if (!finalPass)
         {
-            OpenBackupReader();
+            while (true)
+            {
+                switch (OpenBackupReader())
+                {
+                    case StorePaused paused:
+                        RewriteSessionWaiting?.Invoke();
+                        await paused.Resumed.WaitAsync(cancellationToken).ConfigureAwait(false);
+                        continue;
+                    case Done:
+                        break;
+                }
+
+                break;
+            }
         }
 
         try
@@ -531,32 +545,6 @@ internal sealed partial class TursoDatabaseStore
     }
 
     private void Resume() => pool.Resume(this);
-
-    private async ValueTask<T> WhileRewritingAsync<T>(Func<T> call, CancellationToken cancellationToken)
-    {
-        while (true)
-        {
-            Task resumed;
-            try
-            {
-                return call();
-            }
-            catch (StorePausedException paused)
-            {
-                RewriteSessionWaiting?.Invoke();
-                resumed = paused.Resumed;
-            }
-
-            await resumed.WaitAsync(cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    private ValueTask WhileRewritingAsync(Action call, CancellationToken cancellationToken) =>
-        new(WhileRewritingAsync(() =>
-        {
-            call();
-            return true;
-        }, cancellationToken).AsTask());
 
     private void RefuseUnhealthy()
     {

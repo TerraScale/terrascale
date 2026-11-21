@@ -1,3 +1,4 @@
+using TerraBase.Errors;
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Data.Common;
@@ -117,7 +118,13 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
                     throw new InvalidOperationException("a healthy rewrite of this database waits for its handles; the tap opens after it");
                 }
 
-                store.OpenBackupReader();
+                switch (store.OpenBackupReader())
+                {
+                    case StorePaused paused:
+                        throw new InvalidOperationException("a healthy rewrite of this database waits for its handles; the tap opens after it");
+                    case Done:
+                        break;
+                }
                 Interlocked.Increment(ref store.BackupTaps);
                 var reader = new TursoConnection(connectionString) { CloseRefusal = () => store.CloseRefusal ?? "terminal backup reader close" };
                 tap = new TursoChangeTap(store, io, time, reader, lineage);
