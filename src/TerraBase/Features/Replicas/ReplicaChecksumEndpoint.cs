@@ -9,7 +9,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Replicas;
 
-internal sealed class ReplicaChecksumEndpoint(ITenantDirectory tenants, IDatabaseRevisions revisions, HomeLeaseGate leaseGate, RegionalHandoff handoff) : EndpointWithoutRequest<IResult>
+internal sealed class ReplicaChecksumEndpoint(ITenantDirectory tenants, IDatabaseRevisions revisions, HomeLeaseGate leaseGate, RegionalHandoff handoff, StorageRefusals refusals) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
     {
@@ -72,7 +72,7 @@ internal sealed class ReplicaChecksumEndpoint(ITenantDirectory tenants, IDatabas
             RevisionChecksums round => TypedResults.Json(new ReplicaChecksumPage(round.Revision.ToString(), round.Ranges is null, round.Ranges ?? [], round.Next),
                 ReplicasJsonContext.Default.ReplicaChecksumPage),
             NotFound error => ErrorResponse.From(error),
-            StorageRefused => ErrorResponse.From(new Unavailable("storage is busy; retry later", "storage_busy")),
+            StorageRefused busy => Refused(busy),
         };
 
         if (!leaseGate.Sources(database.DatabaseId!))
@@ -83,4 +83,9 @@ internal sealed class ReplicaChecksumEndpoint(ITenantDirectory tenants, IDatabas
         return answer;
     }
 
+    private IResult Refused(StorageRefused busy)
+    {
+        refusals.Answered(HttpContext.RouteValue("database") as string, "storage_busy", busy.At);
+        return ErrorResponse.From(new Unavailable("storage is busy; retry later", "storage_busy"));
+    }
 }

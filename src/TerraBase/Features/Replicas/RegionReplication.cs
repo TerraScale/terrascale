@@ -257,32 +257,38 @@ internal sealed partial class RegionReplication(
                         .ConfigureAwait(false))
                     {
                         case RevisionPush push:
-                            if (!leaseGate.Serves(revised.Database.DatabaseId!) || !owners.Writer
-                                || push is not { Notice.Revision: { } revision, Result.Format: var format })
                             {
-                                push.Dispose();
-                                continue;
-                            }
-
-                            if (_published.TryGetValue(key, out var last) && last.Revision == revision)
-                            {
-                                push.Dispose();
-                                continue;
-                            }
-
-                            _published[key] = (revision, revised.Database);
-                            foreach (var region in (placement.AllRegions ? _peers.Select(peer => peer.Region) : placement.Replicas).Append(options.Region).Distinct(StringComparer.Ordinal))
-                            {
-                                await nats.PublishAsync(ReplicaSubjects.Revision(region, options.Region, key.Database, format), push.Payload, cancellationToken: cancellationToken)
-                                    .ConfigureAwait(false);
-                                if (push is { HasPages: true, Result: { } offered })
+                                try
                                 {
-                                    await revisions.RecordReplicaPullAsync(revised.Database, region, offered, cancellationToken).ConfigureAwait(false);
-                                }
-                            }
+                                    if (!leaseGate.Serves(revised.Database.DatabaseId!) || !owners.Writer
+                                        || push is not { Notice.Revision: { } revision, Result.Format: var format })
+                                    {
+                                        continue;
+                                    }
 
-                            push.Dispose();
-                            break;
+                                    if (_published.TryGetValue(key, out var last) && last.Revision == revision)
+                                    {
+                                        continue;
+                                    }
+
+                                    _published[key] = (revision, revised.Database);
+                                    foreach (var region in (placement.AllRegions ? _peers.Select(peer => peer.Region) : placement.Replicas).Append(options.Region).Distinct(StringComparer.Ordinal))
+                                    {
+                                        await nats.PublishAsync(ReplicaSubjects.Revision(region, options.Region, key.Database, format), push.Payload, cancellationToken: cancellationToken)
+                                            .ConfigureAwait(false);
+                                        if (push is { HasPages: true, Result: { } offered })
+                                        {
+                                            await revisions.RecordReplicaPullAsync(revised.Database, region, offered, cancellationToken).ConfigureAwait(false);
+                                        }
+                                    }
+                                }
+                                finally
+                                {
+                                    push.Dispose();
+                                }
+
+                                break;
+                            }
                         case NotFound:
                             break;
                         case StorageRefused busy:
