@@ -1,5 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using Fido2NetLib;
+using Fido2NetLib.Objects;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Errors;
@@ -73,23 +75,21 @@ public sealed class PasskeyHostedVerifyEndpoint(Sessions sessions, PasskeyCreden
             return ErrorResults.ToResult(new Forbidden("Start sign-in again before enrolling a passkey.", "passkey_denied"));
         }
 
-        var mapped = PasskeyVerifyEndpoint.Map(body.Response);
-        if (mapped is { Invalid: { } invalid })
+        return PasskeyVerifyEndpoint.Map(body.Response) switch
         {
-            return ErrorResults.ToResult(invalid);
-        }
-
-        if (mapped is not { Response: { } raw })
-        {
-            return ErrorResults.ToResult(PasskeyCredentials.DeniedEnroll());
-        }
-
-        PasskeyVerifyResult verified = await passkeys.VerifyAsync(caller, body.Challenge, raw, body.Name is { Length: > 0 and <= 100 } ? body.Name : null, pending, cancellationToken).ConfigureAwait(false);
-        return verified switch
-        {
-            PasskeyCredentialEntry entry => await Enrolled(this.HttpContext, sessions, caller, entry, pending is not null, cancellationToken),
-            Forbidden error => ErrorResults.ToResult(error),
+            AuthenticatorAttestationRawResponse raw => await VerifyAsync(raw),
+            Validation invalid => ErrorResults.ToResult(invalid),
+            Forbidden denied => ErrorResults.ToResult(denied),
         };
+
+        async ValueTask<IResult> VerifyAsync(AuthenticatorAttestationRawResponse raw)
+        {
+            return await passkeys.VerifyAsync(caller, body.Challenge, raw, body.Name is { Length: > 0 and <= 100 } ? body.Name : null, pending, cancellationToken).ConfigureAwait(false) switch
+            {
+                PasskeyCredentialEntry entry => await Enrolled(this.HttpContext, sessions, caller, entry, pending is not null, cancellationToken),
+                Forbidden error => ErrorResults.ToResult(error),
+            };
+        }
     }
 
     private static async Task<IResult> Enrolled(HttpContext context, Sessions sessions, UserRecord caller, PasskeyCredentialEntry entry, bool finishEnrollment, CancellationToken cancellationToken)

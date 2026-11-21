@@ -1,5 +1,4 @@
 using TerraScale.Authentication.Configuration;
-using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Endpoints;
 

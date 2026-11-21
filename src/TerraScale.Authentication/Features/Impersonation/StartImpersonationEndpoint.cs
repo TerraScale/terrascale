@@ -27,7 +27,6 @@ public sealed class StartImpersonationEndpoint(TenantDirectory tenants, Platform
             Validation error => ErrorResults.ToResult(error),
             NotFound error => ErrorResults.ToResult(error),
             Forbidden error => ErrorResults.ToResult(error),
-            Unavailable error => ErrorResults.ToResult(error),
         };
     }
 }

@@ -45,10 +45,7 @@ public sealed class PasskeySignInOptionsEndpoint(PasskeyCredentials passkeys, Ho
 
         var assertion = await passkeys.SignInOptionsAsync(SignInFlow.Tenant(this.HttpContext), form.Email ?? string.Empty, cancellationToken);
         return assertion is null
-            ? ErrorResults.ToResult(new Unavailable("The storage engine is unavailable; retry shortly.", "temporarily_unavailable")
-            {
-                Details = new Dictionary<string, string> { ["retry_after"] = "2" },
-            })
+            ? throw ApiException.Unavailable()
             : Results.Json(new PasskeyOptionsBody(assertion.Value.Challenge, JsonDocument.Parse(assertion.Value.Options.ToJson()).RootElement),
                 WebAuthnJson.Default.PasskeyOptionsBody);
     }

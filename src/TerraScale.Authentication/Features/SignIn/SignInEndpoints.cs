@@ -97,10 +97,7 @@ public sealed class RequestPasscodeEndpoint(SignInMail mail, HostedAuth hosted, 
         var address = pendingIdentity?.Email ?? form.Email?.Trim() ?? string.Empty;
         if (HostedAuth.Subject(this.HttpContext.Connection.RemoteIpAddress?.ToString()) is not { } ip)
         {
-            return ErrorResults.ToResult(new Unavailable("The storage engine is unavailable; retry shortly.", "temporarily_unavailable")
-            {
-                Details = new Dictionary<string, string> { ["retry_after"] = "2" },
-            });
+            throw ApiException.Unavailable();
         }
 
         if (await SignInFlow.SsoAsync(this.HttpContext, address, SignInFlow.SafeNext(this.HttpContext, form.Next), cancellationToken) is { } sso)
@@ -175,10 +172,7 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
         if (HostedAuth.Subject(this.HttpContext.Connection.RemoteIpAddress?.ToString()) is not { } ip)
         {
-            return ErrorResults.ToResult(new Unavailable("The storage engine is unavailable; retry shortly.", "temporarily_unavailable")
-            {
-                Details = new Dictionary<string, string> { ["retry_after"] = "2" },
-            });
+            throw ApiException.Unavailable();
         }
 
         if ((await hosted.LimitIpAsync(ip, mails: false, cancellationToken)

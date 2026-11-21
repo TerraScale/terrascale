@@ -7,6 +7,8 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.WebAuthn;
 
+internal readonly union PasskeyAttestation(AuthenticatorAttestationRawResponse, Validation, Forbidden);
+
 public sealed class PasskeyVerifyEndpoint(PasskeyCredentials passkeys, StepUpProofs proofs, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
 {
     public override void Configure()
@@ -23,47 +25,42 @@ public sealed class PasskeyVerifyEndpoint(PasskeyCredentials passkeys, StepUpPro
     {
         var body = await this.BodyAsync(WebAuthnJson.Default.PasskeyVerifyRequest, cancellationToken);
         caller = await proofs.ConsumeHeaderAsync(caller, this.HttpContext.Request, "add_passkey", null, cancellationToken);
-        var mapped = Map(body.Response);
-        if (mapped is { Invalid: { } invalid })
+        return Map(body.Response) switch
         {
-            return ErrorResults.ToResult(invalid);
-        }
-
-        if (mapped is not { Response: { } raw })
-        {
-            return ErrorResults.ToResult(PasskeyCredentials.DeniedEnroll());
-        }
-
-        return await passkeys.VerifyAsync(caller, body.Challenge, raw, body.Name is { Length: > 0 and <= 100 } ? body.Name : null, cancellationToken: cancellationToken).ConfigureAwait(false) switch
-        {
-            PasskeyCredentialEntry entry => Results.Json(new PasskeyEnrolledBody(entry.CredentialId, entry.Name, entry.Aaguid, entry.CreatedAt),
-                WebAuthnJson.Default.PasskeyEnrolledBody, statusCode: StatusCodes.Status201Created),
-            Forbidden error => ErrorResults.ToResult(error),
+            AuthenticatorAttestationRawResponse raw => await passkeys.VerifyAsync(caller, body.Challenge, raw,
+                body.Name is { Length: > 0 and <= 100 } ? body.Name : null, cancellationToken: cancellationToken).ConfigureAwait(false) switch
+            {
+                PasskeyCredentialEntry entry => Results.Json(new PasskeyEnrolledBody(entry.CredentialId, entry.Name, entry.Aaguid, entry.CreatedAt),
+                    WebAuthnJson.Default.PasskeyEnrolledBody, statusCode: StatusCodes.Status201Created),
+                Forbidden error => ErrorResults.ToResult(error),
+            },
+            Validation invalid => ErrorResults.ToResult(invalid),
+            Forbidden denied => ErrorResults.ToResult(denied),
         };
     }
 
-    internal static (AuthenticatorAttestationRawResponse? Response, Validation? Invalid) Map(PasskeyAttestationRequest? response)
+    internal static PasskeyAttestation Map(PasskeyAttestationRequest? response)
     {
         if (response?.Response is not { } inner
             || response.RawId is not { Length: > 0 }
             || response.Type?.Equals("public-key", StringComparison.Ordinal) != true
             || inner.ClientDataJson is not { Length: > 0 } || inner.AttestationObject is not { Length: > 0 })
         {
-            return (null, null);
+            return PasskeyCredentials.DeniedEnroll();
         }
 
-        var invalid = new Validation("Unknown passkey transport.");
-        AuthenticatorTransport[] transports;
-        try
+        List<AuthenticatorTransport> transports = [];
+        foreach (var transport in inner.Transports ?? [])
         {
-            transports = [.. (inner.Transports ?? []).Select(transport => Enum.TryParse<AuthenticatorTransport>(transport, ignoreCase: true, out var parsed) ? parsed : throw new FormatException())];
-        }
-        catch (FormatException)
-        {
-            return (null, invalid);
+            if (!Enum.TryParse<AuthenticatorTransport>(transport, ignoreCase: true, out var parsed))
+            {
+                return new Validation("Unknown passkey transport.");
+            }
+
+            transports.Add(parsed);
         }
 
-        return (new AuthenticatorAttestationRawResponse
+        return new AuthenticatorAttestationRawResponse
         {
             Id = response.Id ?? string.Empty,
             RawId = PasskeyCredentials.Base64UrlDecode(response.RawId),
@@ -72,8 +69,8 @@ public sealed class PasskeyVerifyEndpoint(PasskeyCredentials passkeys, StepUpPro
             {
                 ClientDataJson = PasskeyCredentials.Base64UrlDecode(inner.ClientDataJson),
                 AttestationObject = PasskeyCredentials.Base64UrlDecode(inner.AttestationObject),
-                Transports = transports,
+                Transports = [.. transports],
             },
-        }, null);
+        };
     }
 }

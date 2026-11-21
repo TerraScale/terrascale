@@ -12,7 +12,7 @@ using TerraScale.Authentication.Storage;
 
 namespace TerraScale.Authentication.Features.Impersonation;
 
-public readonly union StartImpersonationResult(ImpersonationTicket, Validation, NotFound, Forbidden, Unavailable);
+public readonly union StartImpersonationResult(ImpersonationTicket, Validation, NotFound, Forbidden);
 
 public sealed record ImpersonationRecord(string Id, string InstanceId, string OrganizationId, string UserId, string ActorId,
     string ActorEmail, string ActorStamp, long ActorEpoch, string UserStamp, long UserEpoch, string Reason, string ClientId,
@@ -78,10 +78,7 @@ public sealed class Impersonations(AuthData data, Credentials credentials, Tenan
         if (!await data.SaveAsync([.. proof, Change.Assert(actor), Change.Assert(user), Change.Assert(client), Change.Insert(record),
             this.Audit(record, "started"), this.Event(record, "started")], cancellationToken).ConfigureAwait(false))
         {
-            return new Unavailable("The storage engine is unavailable; retry shortly.", "temporarily_unavailable")
-            {
-                Details = new Dictionary<string, string> { ["retry_after"] = "2" },
-            };
+            throw ApiException.Unavailable();
         }
 
         return new ImpersonationTicket(record.Id, ticket, record.TicketExpiresAt);
