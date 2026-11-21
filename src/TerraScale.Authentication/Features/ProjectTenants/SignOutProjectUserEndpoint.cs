@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Features.ProjectTenants;
@@ -17,6 +18,7 @@ public sealed class SignOutProjectUserEndpoint(TenantDirectory tenants, Sessions
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         return await sessions.RevokeAllAsync(project, this.RouteId("user"), cancellationToken)
-            ? Results.NoContent() : throw PlatformDirectory.NotFound();
+            ? Results.NoContent()
+            : ErrorResults.ToResult(new NotFound("No such resource.", "not_found"));
     }
 }

@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
@@ -17,7 +18,11 @@ public sealed class DeleteProjectUserEndpoint(TenantDirectory tenants, Users use
     protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
-        _ = await this.Tenants.UserAsync(projectId, this.RouteId("user"), cancellationToken);
+        _ = await this.Tenants.UserAsync(projectId, this.RouteId("user"), cancellationToken) switch
+        {
+            UserRecord user => user,
+            NotFound error => error,
+        };
         await users.DeleteAsync(projectId, this.RouteId("user"), cancellationToken);
         return Results.NoContent();
     }

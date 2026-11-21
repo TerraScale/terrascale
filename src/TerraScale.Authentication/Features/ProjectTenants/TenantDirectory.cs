@@ -2,6 +2,7 @@ using System.Net;
 using Microsoft.EntityFrameworkCore;
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
@@ -82,11 +83,11 @@ public sealed class TenantDirectory(AuthData data, Users users, Sessions session
         return PlatformDirectory.Paged([.. rows.Select(row => row.User with { LinkedProviders = [.. row.Links.Select(link => link.Identity)] })], limit, user => user.Id);
     }
 
-    public async Task<UserRecord> UserAsync(string projectId, string userId, CancellationToken cancellationToken) =>
-        await users.GetAsync(projectId, userId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+    public async Task<Found<UserRecord>> UserAsync(string projectId, string userId, CancellationToken cancellationToken) =>
+        await users.GetAsync(projectId, userId, cancellationToken).ConfigureAwait(false) ?? new NotFound("No such resource.", "not_found");
 
-    public async Task<UserRecord> SetDisabledAsync(string projectId, string userId, bool disabled, CancellationToken cancellationToken) =>
-        await users.SetDisabledAsync(projectId, userId, disabled, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+    public async Task<Found<UserRecord>> SetDisabledAsync(string projectId, string userId, bool disabled, CancellationToken cancellationToken) =>
+        await users.SetDisabledAsync(projectId, userId, disabled, cancellationToken).ConfigureAwait(false) ?? new NotFound("No such resource.", "not_found");
 
     public async Task<Page<ProjectSession>> SessionsAsync(string projectId, string? userId, int limit, string? after, CancellationToken cancellationToken)
     {

@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Platform;
 
@@ -16,6 +17,10 @@ public sealed class GetProjectUserEndpoint(TenantDirectory tenants, PlatformAuth
     protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Viewer, cancellationToken);
-        return Results.Json(Map(await this.Tenants.UserAsync(projectId, this.RouteId("user"), cancellationToken)), ProjectTenantJson.Default.ProjectUserBody);
+        return await this.Tenants.UserAsync(projectId, this.RouteId("user"), cancellationToken) switch
+        {
+            UserRecord user => Results.Json(Map(user), ProjectTenantJson.Default.ProjectUserBody),
+            NotFound error => ErrorResults.ToResult(error),
+        };
     }
 }
