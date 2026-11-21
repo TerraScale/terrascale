@@ -74,7 +74,19 @@ namespace TerraScale.Dashboard.Features.Organizations
         public Task<OrganizationDone> LeaveOrganization([Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null)
         {
             return Invoke(async () =>
-        { await lifecycle.LeaveAsync(Scope(organizationId, projectId), Cancellation); return new OrganizationDone(true); });
+        {
+            switch (await lifecycle.LeaveAsync(Scope(organizationId, projectId), Cancellation))
+            {
+                case Conflict error:
+                    throw new AccountAccessException(error.Message, 409);
+                case Forbidden error:
+                    throw new AccountAccessException(error.Message);
+                case Done:
+                    break;
+            }
+
+            return new OrganizationDone(true);
+        });
         }
 
         [McpAccess(McpAccess.Destructive)]

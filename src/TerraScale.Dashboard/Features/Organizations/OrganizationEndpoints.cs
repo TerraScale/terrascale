@@ -1,4 +1,5 @@
 using RazorSlices;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing;
@@ -228,7 +229,15 @@ namespace TerraScale.Dashboard.Features.Organizations
             {
                 if (operation == "leave")
                 {
-                    await lifecycle.LeaveAsync(context, http.RequestAborted);
+                    switch (await lifecycle.LeaveAsync(context, http.RequestAborted))
+                    {
+                        case Conflict error:
+                            return await PageAsync(http, context, placement, error.Message, 409, "danger");
+                        case Forbidden error:
+                            return await PageAsync(http, context, placement, error.Message, 403, "danger");
+                        case Done:
+                            break;
+                    }
                 }
                 else if (operation == "delete-project")
                 {
