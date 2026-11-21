@@ -120,7 +120,7 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
 
                 switch (store.OpenBackupReader())
                 {
-                    case StorePaused paused:
+                    case StorePaused:
                         throw new InvalidOperationException("a healthy rewrite of this database waits for its handles; the tap opens after it");
                     case Done:
                         break;

@@ -31,7 +31,7 @@ internal static class RewriteRefusalExtensions
     }
 }
 
-internal sealed record RewriteRefused(string Message, RewriteRefusal Reason, Exception? Error = null);
+internal sealed record RewriteRefused(string Message, RewriteRefusal Reason);
 
 internal sealed class RewriteUncertainException(Exception innerException)
     : IOException("the rewritten file is in place but its rename may not be durable; storage failed closed", innerException);

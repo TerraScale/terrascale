@@ -101,7 +101,7 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
                     }
                     catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                     {
-                        return BudgetRefused(budget, cancellationToken) ?? new RewriteRefused("the rewrite could not acquire the lifecycle lock in time", new Deadline());
+                        return BudgetRefused(budget, cancellationToken) ?? new RewriteRefused("the rewrite could not acquire the lifecycle lock in time", new Safety());
                     }
                     ownsCreation = true;
                     ObjectDisposedException.ThrowIf(_disposed, this);
@@ -216,7 +216,7 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
                 }
                 catch (Exception error) when (error is not (RewriteUncertainException or OperationCanceledException))
                 {
-                    return new RewriteRefused("the rewrite failed; the old file stays in place", new Safety(), error);
+                    return new RewriteRefused("the rewrite failed; the old file stays in place", new Safety());
                 }
                 finally
                 {

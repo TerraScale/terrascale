@@ -224,9 +224,9 @@ internal sealed partial class TursoDatabaseStore
             {
                 await drained.WaitAsync(HeldDrain, finalToken).ConfigureAwait(false);
             }
-            catch (TimeoutException error)
+            catch (TimeoutException)
             {
-                return await RefusedAsync(new RewriteRefused("the database did not drain while its writer was held", new Safety(), error)).ConfigureAwait(false);
+                return await RefusedAsync(new RewriteRefused("the database did not drain while its writer was held", new Safety())).ConfigureAwait(false);
             }
 
             if (pool.FailedClosesOf(this) is > 0 and var failed)
@@ -267,19 +267,19 @@ internal sealed partial class TursoDatabaseStore
                             await ended.WaitAsync(wait.Token).ConfigureAwait(false);
                         }
                     }
-                    catch (OperationCanceledException error) when (quiet.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                    catch (OperationCanceledException) when (quiet.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                     {
-                        return new RewriteRefused("the database's operations did not end before its writer was taken", new Deadline(), error);
+                        return new RewriteRefused("the database's operations did not end before its writer was taken", new Deadline());
                     }
                 }
 
                 return null;
             }
         }
-        catch (OperationCanceledException error) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             await quiesced.DisposeAsync().ConfigureAwait(false);
-            return new RewriteRefused("the database did not drain before the rewrite was cancelled", new Safety(), error);
+            return new RewriteRefused("the database did not drain before the rewrite was cancelled", new Safety());
         }
         catch
         {
@@ -305,9 +305,12 @@ internal sealed partial class TursoDatabaseStore
         TursoRunner runner = finalPass ? WriteLane : io;
         if (!finalPass)
         {
-            if (OpenBackupReader() is StorePaused)
+            switch (OpenBackupReader())
             {
-                return new RewriteRefused("the rewrite failed; the old file stays in place", new Safety());
+                case StorePaused:
+                    return new RewriteRefused("the rewrite failed; the old file stays in place", new Safety());
+                case Done:
+                    break;
             }
         }
 
