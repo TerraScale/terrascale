@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Rpc;
 using TerraScale.TerraBase.Contracts;
@@ -31,11 +32,11 @@ namespace TerraScale.Dashboard.Features.Rules
             return await CurrentAsync(target.Client, target.ProjectId, target.Database);
         }
 
-        public async Task<TerraBaseRules> VersionAsync(AccountContext context, DatabaseRecord database, string version, CancellationToken cancellationToken)
+        public async Task<Found<TerraBaseRules>> VersionAsync(AccountContext context, DatabaseRecord database, string version, CancellationToken cancellationToken)
         {
             if (!TerraScaleIds.IsValid(version))
             {
-                throw new AccountAccessException("This rules version does not exist.", 404);
+                return new Errors.NotFound("This rules version does not exist.");
             }
 
             var target = await ClientAsync(context, database, false, cancellationToken);
@@ -49,9 +50,13 @@ namespace TerraScale.Dashboard.Features.Rules
             return await VersionsAsync(target.Client, target.ProjectId, target.Database);
         }
 
-        public async Task<TerraBaseRulesDeploy> DeployAsync(AccountContext context, DatabaseRecord database, string? version, string source, CancellationToken cancellationToken)
+        public async Task<Valid<TerraBaseRulesDeploy>> DeployAsync(AccountContext context, DatabaseRecord database, string? version, string source, CancellationToken cancellationToken)
         {
-            var rules = Parse(source);
+            if (Parse(source) is not JsonElement rules)
+            {
+                return new Validation("Rules must be a JSON object.");
+            }
+
             var target = await ClientAsync(context, database, true, cancellationToken);
             return await DeployAsync(target.Client, target.ProjectId, target.Database, version, rules);
         }
@@ -62,9 +67,22 @@ namespace TerraScale.Dashboard.Features.Rules
             return await RestoreAsync(target.Client, target.ProjectId, target.Database, version, current);
         }
 
-        public async Task<TerraBaseRulesTestResult> TestAsync(AccountContext context, DatabaseRecord database, string? draft, RulesRequest request, CancellationToken cancellationToken)
+        public async Task<Valid<TerraBaseRulesTestResult>> TestAsync(AccountContext context, DatabaseRecord database, string? draft, RulesRequest request, CancellationToken cancellationToken)
         {
-            var body = TestBody(draft is null ? null : Parse(draft), request);
+            JsonElement? rules = null;
+            if (draft is not null)
+            {
+                switch (Parse(draft))
+                {
+                    case JsonElement parsed:
+                        rules = parsed;
+                        break;
+                    case Validation error:
+                        return error;
+                }
+            }
+
+            var body = TestBody(rules, request);
             var target = await ClientAsync(context, database, false, cancellationToken);
             return await TestAsync(target.Client, target.ProjectId, target.Database, body);
         }
@@ -131,15 +149,19 @@ namespace TerraScale.Dashboard.Features.Rules
             return Encoding.UTF8.GetString(buffer.WrittenSpan);
         }
 
-        internal static JsonElement Parse(string source)
+        internal static Valid<JsonElement> Parse(string source)
         {
             if (Encoding.UTF8.GetByteCount(source) > MaxSourceBytes)
             {
-                throw new AccountAccessException("Rules are at most 256 KiB.", 400);
+                return new Validation("Rules are at most 256 KiB.");
             }
 
-            var rules = Json(source, "Rules must be a JSON object.");
-            return rules.ValueKind == JsonValueKind.Object ? rules : throw new AccountAccessException("Rules must be a JSON object.", 400);
+            if (Json(source, "Rules must be a JSON object.") is not { ValueKind: JsonValueKind.Object } rules)
+            {
+                return new Validation("Rules must be a JSON object.");
+            }
+
+            return rules;
         }
 
         private static JsonElement TestBody(JsonElement? rules, RulesRequest request) =>
