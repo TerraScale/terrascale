@@ -98,18 +98,18 @@ rejection carries an `application/problem+json` body. A UTF-8 body is assumed
 when route or query values are merged in.
 
 Non-object models (`int`, arrays) still bind from the JSON body only. Override
-`BindAsync` to bind from somewhere else, and throw `BadHttpRequestException` to
-reject the request with its status code:
+`BindAsync` to bind from somewhere else, and return a `Validation` or
+`UnsupportedMediaType` case to reject the request:
 
 ```csharp
 public sealed class GetOrderByNumberEndpoint : Endpoint<int, Order>
 {
     public override void Configure() => Get("/orders/by-number/{number}");
 
-    protected override ValueTask<int> BindAsync(CancellationToken ct) =>
+    protected override ValueTask<Bound<int>> BindAsync(CancellationToken ct) =>
         int.TryParse(HttpContext.Request.RouteValues["number"] as string, out var number)
-            ? ValueTask.FromResult(number)
-            : throw new BadHttpRequestException("number must be an integer");
+            ? ValueTask.FromResult<Bound<int>>(number)
+            : ValueTask.FromResult<Bound<int>>(new Validation("number must be an integer"));
 
     public override ValueTask<Order> HandleAsync(int number, CancellationToken ct) => /* ... */;
 }

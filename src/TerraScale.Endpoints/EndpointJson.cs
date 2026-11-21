@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.Extensions.Options;
 using Microsoft.Net.Http.Headers;
+using TerraScale.Endpoints.Binding;
 using JsonOptions = Microsoft.AspNetCore.Http.Json.JsonOptions;
 
 namespace TerraScale.Endpoints;
@@ -30,21 +31,21 @@ internal static class EndpointJson
         (JsonTypeInfo<T>)options.GetTypeInfo(typeof(T));
 #endif
 
-    internal static async ValueTask<TRequest> ReadBodyAsync<TRequest>(
+    internal static async ValueTask<Bound<TRequest>> ReadBodyAsync<TRequest>(
         HttpContext context,
         JsonTypeInfo<TRequest> typeInfo,
         CancellationToken cancellationToken)
     {
         if (!context.Request.HasJsonContentType())
         {
-            throw new BadHttpRequestException("Expected a JSON request body.", StatusCodes.Status415UnsupportedMediaType);
+            return new UnsupportedMediaType("Expected a JSON request body.");
         }
 
         return await ReadJsonAsync(context, typeInfo, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Reads the body once the JSON content type is known; parsing it again allocates.</summary>
-    internal static async ValueTask<TRequest> ReadJsonAsync<TRequest>(
+    internal static async ValueTask<Bound<TRequest>> ReadJsonAsync<TRequest>(
         HttpContext context,
         JsonTypeInfo<TRequest> typeInfo,
         CancellationToken cancellationToken)
@@ -54,22 +55,22 @@ internal static class EndpointJson
         {
             request = await context.Request.ReadFromJsonAsync(typeInfo, cancellationToken).ConfigureAwait(false);
         }
-        catch (JsonException exception)
+        catch (JsonException)
         {
-            throw new BadHttpRequestException("The JSON request body is invalid.", StatusCodes.Status400BadRequest, exception);
+            return new Validation("The JSON request body is invalid.");
         }
         catch (Exception exception) when (IsConverterFailure(exception))
         {
-            throw new BadHttpRequestException("The JSON request body is invalid.", StatusCodes.Status400BadRequest, exception);
+            return new Validation("The JSON request body is invalid.");
         }
-        catch (InvalidOperationException exception) when (GetEncoding(context.Request) is null)
+        catch (InvalidOperationException) when (GetEncoding(context.Request) is null)
         {
             // ReadFromJsonAsync throws InvalidOperationException for an unknown charset; the filter
             // only runs on that failure, so valid requests do not parse the content type again.
-            throw UnsupportedCharset(exception);
+            return UnsupportedCharset();
         }
 
-        return request ?? throw new BadHttpRequestException("A JSON request body is required.", StatusCodes.Status400BadRequest);
+        return request is null ? new Validation("A JSON request body is required.") : request;
     }
 
     /// <summary>
@@ -84,11 +85,7 @@ internal static class EndpointJson
             ? Encoding.UTF8
             : mediaType.Encoding;
 
-    internal static BadHttpRequestException UnsupportedCharset() =>
-        new("The request charset is not supported.", StatusCodes.Status415UnsupportedMediaType);
-
-    internal static BadHttpRequestException UnsupportedCharset(Exception inner) =>
-        new("The request charset is not supported.", StatusCodes.Status415UnsupportedMediaType, inner);
+    internal static UnsupportedMediaType UnsupportedCharset() => new("The request charset is not supported.");
 
     // Completed handlers write without an async state machine, like generated minimal API code.
     internal static Task RespondAsync<TResponse>(HttpContext context, ValueTask<TResponse> handled, JsonTypeInfo<TResponse>? typeInfo) =>
