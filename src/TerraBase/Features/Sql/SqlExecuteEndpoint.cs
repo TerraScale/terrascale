@@ -283,12 +283,7 @@ internal sealed class SqlExecuteEndpoint(
                 return null;
             }
 
-            var committedOutcome = await transaction.CommitAsync(homeDurable, cancellationToken);            SqlRequestTiming.Mark(HttpContext, "ack");
-            foreach (var timing in transaction.Timings)
-            {
-                SqlRequestTiming.Record(HttpContext, timing.Key, timing.Value);
-            }
-
+            var committedOutcome = await transaction.CommitAsync(homeDurable, cancellationToken);
             if (committedOutcome is LocalWriteRefused refused)
             {
                 return (null, refused.PublishId);
@@ -302,6 +297,12 @@ internal sealed class SqlExecuteEndpoint(
             if (committedOutcome is not LocalCommitted committed)
             {
                 throw new UnreachableException();
+            }
+
+            SqlRequestTiming.Mark(HttpContext, "ack");
+            foreach (var timing in transaction.Timings)
+            {
+                SqlRequestTiming.Record(HttpContext, timing.Key, timing.Value);
             }
 
             sql.RecordLocalWrites(database, results.Sum(result => result.RowsAffected));
