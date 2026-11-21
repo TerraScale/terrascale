@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Http.Metadata;
 using QRCoder;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Ui;
 using TerraScale.Endpoints;
@@ -31,16 +32,29 @@ public sealed class RequiredTotpBeginEndpoint(TotpCredentials mfa, AuthOptions o
         }
 
         var pending = await RequiredMfaEnrollment.ReadAsync(this.HttpContext, form.Challenge, "totp", cancellationToken);
-        var enrollment = await mfa.BeginAsync(pending.User, new MfaAuthorization(Change.Assert(pending.User), pending.ExpiresAt), cancellationToken)
-            ?? throw new ApiException(409, "mfa_enrolled", "An authenticator is already enrolled. Sign in again.");
-        using var qr = QRCodeGenerator.GenerateQrCode(enrollment.ProvisioningUri, QRCodeGenerator.ECCLevel.M);
-        return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.TotpSetup, pending.User.InstanceId, pending.User.Email,
-            SignInFlow.SafeNext(this.HttpContext, form.Next))
+        return pending switch
         {
-            Account = pending.User.Email,
-            Challenge = form.Challenge,
-            Secret = enrollment.Secret,
-            QrCode = "data:image/png;base64," + Convert.ToBase64String(new PngByteQRCode(qr).GetGraphic(6)),
-        });
+            ChallengedSignIn challenged => await EnrollAsync(challenged),
+            Forbidden error => ErrorResults.ToResult(error),
+        };
+
+        async ValueTask<IResult> EnrollAsync(ChallengedSignIn challenged)
+        {
+            var enrollment = await mfa.BeginAsync(challenged.User, new MfaAuthorization(Change.Assert(challenged.User), challenged.ExpiresAt), cancellationToken);
+            if (enrollment is null)
+            {
+                return ErrorResults.ToResult(new Conflict("An authenticator is already enrolled. Sign in again.", "mfa_enrolled"));
+            }
+
+            using var qr = QRCodeGenerator.GenerateQrCode(enrollment.ProvisioningUri, QRCodeGenerator.ECCLevel.M);
+            return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.TotpSetup, challenged.User.InstanceId, challenged.User.Email,
+                SignInFlow.SafeNext(this.HttpContext, form.Next))
+            {
+                Account = challenged.User.Email,
+                Challenge = form.Challenge,
+                Secret = enrollment.Secret,
+                QrCode = "data:image/png;base64," + Convert.ToBase64String(new PngByteQRCode(qr).GetGraphic(6)),
+            });
+        }
     }
 }

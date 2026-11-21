@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
@@ -35,40 +36,53 @@ public sealed class RequiredTotpConfirmEndpoint(Sessions sessions, TotpCredentia
         }
 
         var pending = await RequiredMfaEnrollment.ReadAsync(this.HttpContext, form.Challenge, "totp", cancellationToken);
-        var sso = this.HttpContext.RequestServices.GetRequiredService<SsoSignIn>();
-        var viaSso = !Tenancy.IsProject(pending.User.InstanceId);
-        if (viaSso && !await sso.CanFinishAsync(this.HttpContext, pending.User, cancellationToken))
+        return pending switch
         {
-            return SignInFlow.Refused(this.HttpContext);
-        }
+            ChallengedSignIn challenged => await ConfirmAsync(challenged),
+            Forbidden error => ErrorResults.ToResult(error),
+        };
 
-        var authorization = new MfaAuthorization(Credentials.Claim(pending.User.InstanceId, pending.Completion), pending.ExpiresAt);
-        var issued = (viaSso
-            ? await mfa.ActivateAsync(pending.User, form.Code?.Trim() ?? string.Empty, authorization, cancellationToken)
-            : await mfa.ConfirmAsync(pending.User, form.Code?.Trim() ?? string.Empty, authorization, cancellationToken))
-            ?? throw new ApiException(403, "invalid_code", "The authenticator code is wrong or expired.");
-        var completed = false;
-        try
+        async ValueTask<IResult> ConfirmAsync(ChallengedSignIn challenged)
         {
-            if (viaSso)
+            var sso = this.HttpContext.RequestServices.GetRequiredService<SsoSignIn>();
+            var viaSso = !Tenancy.IsProject(challenged.User.InstanceId);
+            if (viaSso && !await sso.CanFinishAsync(this.HttpContext, challenged.User, cancellationToken))
             {
-                await FactorEnrollmentNotice.SendAsync(this.HttpContext.RequestServices.GetRequiredService<IEmailSender>(), issued.User, cancellationToken);
-                sso.AdvanceEnrollment(this.HttpContext, pending.User, issued.User);
+                return SignInFlow.Refused(this.HttpContext);
             }
 
-            var session = await sessions.CreateAsync(issued.User with { MultiFactor = true, MfaMethod = "totp" }, cancellationToken);
-            completed = await SignInFlow.EnrolledAsync(this.HttpContext, sessions, session, cancellationToken);
-        }
-        catch (Exception) when (viaSso && !this.HttpContext.Response.HasStarted)
-        {
-            SsoSignIn.Clear(this.HttpContext);
-            this.HttpContext.RequestServices.GetRequiredService<ILogger<RequiredTotpConfirmEndpoint>>()
-                .ZLogError($"SSO enrollment completion failed for user {pending.User.Id:@UserId}, request {this.HttpContext.TraceIdentifier:@RequestId}");
-        }
+            var code = form.Code?.Trim() ?? string.Empty;
+            var authorization = new MfaAuthorization(Credentials.Claim(challenged.User.InstanceId, challenged.Completion), challenged.ExpiresAt);
+            var issued = viaSso
+                ? await mfa.ActivateAsync(challenged.User, code, authorization, cancellationToken)
+                : await mfa.ConfirmAsync(challenged.User, code, authorization, cancellationToken);
+            if (issued is null)
+            {
+                return ErrorResults.ToResult(new Forbidden("The authenticator code is wrong or expired.", "invalid_code"));
+            }
+            var completed = false;
+            try
+            {
+                if (viaSso)
+                {
+                    await FactorEnrollmentNotice.SendAsync(this.HttpContext.RequestServices.GetRequiredService<IEmailSender>(), issued.User, cancellationToken);
+                    sso.AdvanceEnrollment(this.HttpContext, challenged.User, issued.User);
+                }
 
-        return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.RecoveryCodes, pending.User.InstanceId,
-            Next: completed ? SignInFlow.SafeNext(this.HttpContext, form.Next) : null,
-            Error: completed ? null : SignInFlow.Copy(this.HttpContext).NoticeCredentialChanged)
-        { Account = pending.User.Email, RecoveryCodes = issued.Codes }, completed ? StatusCodes.Status200OK : StatusCodes.Status403Forbidden);
+                var session = await sessions.CreateAsync(issued.User with { MultiFactor = true, MfaMethod = "totp" }, cancellationToken);
+                completed = await SignInFlow.EnrolledAsync(this.HttpContext, sessions, session, cancellationToken);
+            }
+            catch (Exception) when (viaSso && !this.HttpContext.Response.HasStarted)
+            {
+                SsoSignIn.Clear(this.HttpContext);
+                this.HttpContext.RequestServices.GetRequiredService<ILogger<RequiredTotpConfirmEndpoint>>()
+                    .ZLogError($"SSO enrollment completion failed for user {challenged.User.Id:@UserId}, request {this.HttpContext.TraceIdentifier:@RequestId}");
+            }
+
+            return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.RecoveryCodes, challenged.User.InstanceId,
+                Next: completed ? SignInFlow.SafeNext(this.HttpContext, form.Next) : null,
+                Error: completed ? null : SignInFlow.Copy(this.HttpContext).NoticeCredentialChanged)
+            { Account = challenged.User.Email, RecoveryCodes = issued.Codes }, completed ? StatusCodes.Status200OK : StatusCodes.Status403Forbidden);
+        }
     }
 }

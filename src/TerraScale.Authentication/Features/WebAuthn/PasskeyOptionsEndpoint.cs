@@ -1,6 +1,6 @@
 using System.Text.Json;
-using Fido2NetLib;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Endpoints;
 
@@ -19,12 +19,9 @@ public sealed class PasskeyOptionsEndpoint(PasskeyCredentials passkeys, Platform
 
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        if (await passkeys.OptionsAsync(caller, cancellationToken).ConfigureAwait(false) is not { } options)
-        {
-            throw new ApiException(403, "passkey_denied", "Sign in again before enrolling a passkey.");
-        }
-
-        return Results.Json(new PasskeyOptionsBody(options.Challenge, JsonDocument.Parse(options.Options.ToJson()).RootElement),
-            WebAuthnJson.Default.PasskeyOptionsBody);
+        return await passkeys.OptionsAsync(caller, cancellationToken).ConfigureAwait(false) is { } options
+            ? Results.Json(new PasskeyOptionsBody(options.Challenge, JsonDocument.Parse(options.Options.ToJson()).RootElement),
+                WebAuthnJson.Default.PasskeyOptionsBody)
+            : ErrorResults.ToResult(new Forbidden("Sign in again before enrolling a passkey.", "passkey_denied"));
     }
 }
