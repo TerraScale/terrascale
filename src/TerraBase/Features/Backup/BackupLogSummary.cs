@@ -1,6 +1,10 @@
+using TerraBase.Errors;
+
 namespace TerraBase.Features.Backup;
 
 internal readonly record struct BackupLogSummary(long Bytes, long Creates, bool Boundary, long? EndMark);
+
+internal readonly union BackupLogSummaryResult(BackupLogSummary, Validation);
 
 internal sealed class BackupLogSummaryStream(DateTimeOffset at) : BackupCountingStream
 {
@@ -19,16 +23,17 @@ internal sealed class BackupLogSummaryStream(DateTimeOffset at) : BackupCounting
     private long _creates;
     private bool _boundary;
     private long? _endMark;
+    private Validation? _failure;
 
-    public BackupLogSummary Complete() => _part == Part.Kind
-        ? new(Length, _creates, _boundary, _endMark)
-        : throw new InvalidDataException("a change log record is truncated");
+    public BackupLogSummaryResult Complete() => _part == Part.Kind && _failure is null
+        ? new BackupLogSummary(Length, _creates, _boundary, _endMark)
+        : _failure ?? new Validation("a change log record is truncated");
 
     public override void SetLength(long value)
     {
         base.SetLength(value);
-        (_part, _kind, _field, _shift, _timeBytes, _length, _skip, _clock, _creates, _boundary, _endMark) =
-            (Part.Kind, 0, 0, 0, 0, 0, 0, 0, 0, false, null);
+        (_part, _kind, _field, _shift, _timeBytes, _length, _skip, _clock, _creates, _boundary, _endMark, _failure) =
+            (Part.Kind, 0, 0, 0, 0, 0, 0, 0, 0, false, null, null);
     }
 
     public override void Write(byte[] buffer, int offset, int count)
@@ -48,6 +53,11 @@ internal sealed class BackupLogSummaryStream(DateTimeOffset at) : BackupCounting
     {
         while (!bytes.IsEmpty)
         {
+            if (_failure is not null)
+            {
+                return;
+            }
+
             if (_part == Part.Skip)
             {
                 var count = (int)Math.Min(_skip, bytes.Length);
@@ -71,7 +81,8 @@ internal sealed class BackupLogSummaryStream(DateTimeOffset at) : BackupCounting
                     _endMark = null;
                     if (_kind is < 1 or > 7)
                     {
-                        throw new InvalidDataException("a change log record has an unknown kind");
+                        _failure = new Validation("a change log record has an unknown kind");
+                        return;
                     }
 
                     _boundary |= _kind == 3;
@@ -84,12 +95,19 @@ internal sealed class BackupLogSummaryStream(DateTimeOffset at) : BackupCounting
                     {
                         if (_shift >= 35)
                         {
-                            throw new InvalidDataException("a change log length is malformed");
+                            _failure = new Validation("a change log length is malformed");
+                            return;
                         }
                     }
                     else
                     {
-                        _skip = _length <= 1 << 30 ? _length : throw new InvalidDataException("a change log length is out of range");
+                        if (_length > 1 << 30)
+                        {
+                            _failure = new Validation("a change log length is out of range");
+                            return;
+                        }
+
+                        _skip = _length;
                         _part = Part.Skip;
                         if (_skip == 0)
                         {

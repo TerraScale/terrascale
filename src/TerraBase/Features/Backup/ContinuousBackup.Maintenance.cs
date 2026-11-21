@@ -389,28 +389,42 @@ internal sealed partial class ContinuousBackup
                 }
             }
 
-            var restored = await file.Target.Reader.BuildAsync(file.Prefix, file.Scope, source, DateTimeOffset.MaxValue, stored.Position, next: null, cancellationToken)
+            var built = await file.Target.Reader.BuildAsync(file.Prefix, file.Scope, source, DateTimeOffset.MaxValue, stored.Position, next: null, cancellationToken)
                 .ConfigureAwait(false);
-            try
+            if (built is not RestoredBackup builtBackup)
             {
-                reached = restored.Position;
-                if (restored.Position != stored.Position)
+                error = built switch
                 {
-                    error = "the backup ends before the snapshot it is checked against";
-                }
-                else
+                    BackupHistoryIncomplete failure => failure.Reason,
+                    RestorePointUnproven failure => failure.Reason,
+                    BackupUnreadable failure => failure.Reason,
+                    Unavailable failure => failure.Message,
+                    RestoredBackup => throw new UnreachableException(),
+                };
+            }
+            else
+            {
+                try
                 {
-                    var rebuilt = await _engine.ChecksumAsync(restored.Path, cancellationToken).ConfigureAwait(false);
-                    digest = Convert.ToHexString(rebuilt);
-                    if (!live.SequenceEqual(rebuilt))
+                    reached = builtBackup.Position;
+                    if (builtBackup.Position != stored.Position)
                     {
-                        error = "the restored database differs from the live one";
+                        error = "the backup ends before the snapshot it is checked against";
+                    }
+                    else
+                    {
+                        var checksum = await _engine.ChecksumAsync(builtBackup.Path, cancellationToken).ConfigureAwait(false);
+                        digest = Convert.ToHexString(checksum);
+                        if (!live.SequenceEqual(checksum))
+                        {
+                            error = "the restored database differs from the live one";
+                        }
                     }
                 }
-            }
-            finally
-            {
-                restored.Dispose();
+                finally
+                {
+                    builtBackup.Dispose();
+                }
             }
         }
         catch (Exception failure) when (!cancellationToken.IsCancellationRequested)
