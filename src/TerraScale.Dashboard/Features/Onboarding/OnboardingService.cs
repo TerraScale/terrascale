@@ -1,9 +1,12 @@
+using System.Diagnostics;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Errors;
 
 namespace TerraScale.Dashboard.Features.Onboarding
 {
-    public readonly union OnboardingSaveResult(string, Validation, Forbidden);
+    using NotFound = TerraScale.Dashboard.Errors.NotFound;
+
+    public readonly union OnboardingSaveResult(string, Validation, Forbidden, NotFound);
 
     internal readonly union PersonalWorkspace(AccountContext, Validation);
 
@@ -165,12 +168,21 @@ namespace TerraScale.Dashboard.Features.Onboarding
                 return new Forbidden("Project membership is required.");
             }
 
-            var project = await projects.CompleteProjectAsync(context, name.Length == 0 ? context.Project.Name : name, region, cancellationToken);
+            var completed = await projects.CompleteProjectAsync(context, name.Length == 0 ? context.Project.Name : name, region, cancellationToken);
+            if (completed is not ProjectRecord project)
+            {
+                return completed switch
+                {
+                    Validation invalid => new OnboardingSaveResult(invalid),
+                    Forbidden refused => new OnboardingSaveResult(refused),
+                    NotFound missing => new OnboardingSaveResult(missing),
+                    ProjectRecord or null => throw new UnreachableException(),
+                };
+            }
             if (project.Id != context.Project.Id || project.OrganizationId != context.Organization.Id)
             {
                 throw new IOException("The provisioned project identity changed.");
             }
-
             await accounts.UpdateOrganizationAsync(context, organization =>
             {
                 if (!organization.CanManage(session.UserId))

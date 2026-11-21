@@ -4,6 +4,7 @@ using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Features.Profile;
 using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Common.UI;
+using System.Diagnostics;
 
 namespace TerraScale.Dashboard.Features.Auth
 {
@@ -143,7 +144,19 @@ namespace TerraScale.Dashboard.Features.Auth
 
         internal static async Task<IResult> LogoutAsync(HttpContext context)
         {
-            var form = await FormRequests.ReadAsync(context, context.RequestAborted);
+            IFormCollection form;
+            switch (await FormRequests.ReadAsync(context, context.RequestAborted))
+            {
+                case Validation invalid:
+                    return FormRequests.Refused(context, invalid);
+                case UnsupportedMediaType unsupported:
+                    return FormRequests.Refused(context, unsupported);
+                case IFormCollection parsed:
+                    form = parsed;
+                    break;
+                case null:
+                    throw new UnreachableException();
+            }
             if (!Csrf.Validate(context, form))
             {
                 return RequestError.FormExpired(context, "/", Results.StatusCode(403));

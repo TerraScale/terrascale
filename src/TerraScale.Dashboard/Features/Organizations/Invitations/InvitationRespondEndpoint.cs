@@ -17,7 +17,19 @@ namespace TerraScale.Dashboard.Features.Organizations.Invitations
             var http = HttpContext;
             var token = http.Request.RouteValues["token"]?.ToString() ?? "";
             InvitationEndpoints.Protect(http);
-            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+            IFormCollection form;
+            switch (await FormRequests.ReadAsync(http, http.RequestAborted))
+            {
+                case Validation invalid:
+                    return FormRequests.Refused(http, invalid);
+                case UnsupportedMediaType unsupported:
+                    return FormRequests.Refused(http, unsupported);
+                case IFormCollection parsed:
+                    form = parsed;
+                    break;
+                case null:
+                    throw new UnreachableException();
+            }
             if (!Csrf.Validate(http, form))
             {
                 return RequestError.FormExpired(http, "/invitations/" + Uri.EscapeDataString(token), Results.StatusCode(403));

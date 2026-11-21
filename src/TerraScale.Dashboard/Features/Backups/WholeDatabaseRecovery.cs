@@ -9,6 +9,8 @@ using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.TerraBase.Contracts;
+using TerraScale.Dashboard.Errors;
+using System.Diagnostics;
 
 namespace TerraScale.Dashboard.Features.Backups
 {
@@ -256,7 +258,19 @@ namespace TerraScale.Dashboard.Features.Backups
                 {
                     (context, var database) = await recovery.SourceAsync(context, databaseId, http.RequestAborted);
                     http.Response.Headers.CacheControl = "no-store";
-                    var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+                    IFormCollection form;
+                    switch (await FormRequests.ReadAsync(http, http.RequestAborted))
+                    {
+                        case Validation invalid:
+                            return Results.Problem(invalid.Message, statusCode: StatusCodes.Status400BadRequest);
+                        case UnsupportedMediaType unsupported:
+                            return Results.Problem(unsupported.Message, statusCode: StatusCodes.Status415UnsupportedMediaType);
+                        case IFormCollection parsed:
+                            form = parsed;
+                            break;
+                        case null:
+                            throw new UnreachableException();
+                    }
                     if (!Csrf.Validate(http, form))
                     {
                         return RequestError.FormExpired(http, DatabaseService.Path(database.Id, "backups"), Results.BadRequest("Invalid form token."));

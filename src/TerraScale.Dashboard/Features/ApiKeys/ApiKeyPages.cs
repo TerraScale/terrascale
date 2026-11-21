@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Features.NotFound;
@@ -45,7 +46,22 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             try { await ApiKeyExpiryNotifications.AddAsync(http.RequestServices.GetRequiredService<AccountService>(), context, keys, now, http.RequestAborted); }
             catch (Exception failure) when (!http.RequestAborted.IsCancellationRequested && revealed is not null && ApiKeyService.FollowUpFailure(failure))
             { warning = (warning + " Expiry reminders could not be updated; the key change succeeded.").Trim(); }
-            var form = http.Request.HasFormContentType ? await FormRequests.ReadAsync(http, http.RequestAborted) : null;
+            IFormCollection? form = null;
+            if (http.Request.HasFormContentType)
+            {
+                switch (await FormRequests.ReadAsync(http, http.RequestAborted))
+                {
+                    case Validation invalid:
+                        return FormRequests.Refused(http, invalid);
+                    case UnsupportedMediaType unsupported:
+                        return FormRequests.Refused(http, unsupported);
+                    case IFormCollection parsed:
+                        form = parsed;
+                        break;
+                    case null:
+                        throw new UnreachableException();
+                }
+            }
             var dialog = form?["dialog"].ToString() ?? "";
             var reopen = error.Length > 0 ? dialog : "";
             var rotated = revealed is not null && dialog.StartsWith("rotate-", StringComparison.Ordinal);

@@ -5,6 +5,8 @@ using TerraScale.Dashboard.Features.Databases;
 using Microsoft.AspNetCore.Mvc;
 using TerraScale.Dashboard.Common.UI;
 using TerraScale.Endpoints;
+using TerraScale.Dashboard.Errors;
+using System.Diagnostics;
 
 namespace TerraScale.Dashboard.Features.ApiKeys
 {
@@ -40,7 +42,19 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                 return Results.Unauthorized();
             }
 
-            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+            IFormCollection form;
+            switch (await FormRequests.ReadAsync(http, http.RequestAborted))
+            {
+                case Validation invalid:
+                    return FormRequests.Refused(http, invalid);
+                case UnsupportedMediaType unsupported:
+                    return FormRequests.Refused(http, unsupported);
+                case IFormCollection parsed:
+                    form = parsed;
+                    break;
+                case null:
+                    throw new UnreachableException();
+            }
             if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form))
             {
                 return RequestError.FormExpired(http, "/api-keys", Results.BadRequest("Invalid form token."));

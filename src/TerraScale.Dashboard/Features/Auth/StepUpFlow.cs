@@ -9,6 +9,8 @@ using TerraScale.Dashboard.Features.Profile;
 using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.TsAuth;
+using TerraScale.Dashboard.Errors;
+using System.Diagnostics;
 
 namespace TerraScale.Dashboard.Features.Auth
 {
@@ -97,7 +99,19 @@ namespace TerraScale.Dashboard.Features.Auth
 
         public static async Task<IResult> StartAsync(HttpContext http, AccountContext context, string purpose, string audience, string? receipt = null, McpAuthorization? mcp = null, string? boundOrganizationId = null)
         {
-            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+            IFormCollection form;
+            switch (await FormRequests.ReadAsync(http, http.RequestAborted))
+            {
+                case Validation invalid:
+                    return FormRequests.Refused(http, invalid);
+                case UnsupportedMediaType unsupported:
+                    return FormRequests.Refused(http, unsupported);
+                case IFormCollection parsed:
+                    form = parsed;
+                    break;
+                case null:
+                    throw new UnreachableException();
+            }
             // API clients receive an actionable refusal; proofs must never be submitted in forms or URLs.
             if (!http.Request.Headers.Accept.ToString().Contains("text/html", StringComparison.OrdinalIgnoreCase) && http.Request.Headers["Sec-Fetch-Mode"] != "navigate")
             {

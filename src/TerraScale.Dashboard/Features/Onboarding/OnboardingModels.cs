@@ -1,12 +1,17 @@
 using System.Globalization;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Errors;
 
 namespace TerraScale.Dashboard.Features.Onboarding
 {
+    using NotFound = TerraScale.Dashboard.Errors.NotFound;
+
+    public readonly union CompletedProject(ProjectRecord, Validation, Forbidden, NotFound);
+
     public interface IOnboardingProjectProvisioner
     {
         // Complete the existing provider-backed Personal project; do not invent provider IDs.
-        Task<ProjectRecord> CompleteProjectAsync(AccountContext context, string name, string region, CancellationToken cancellationToken);
+        Task<CompletedProject> CompleteProjectAsync(AccountContext context, string name, string region, CancellationToken cancellationToken);
     }
 
     public sealed record OnboardingStep(string Key, string Label, string Number, string State, bool Completed, bool Current);

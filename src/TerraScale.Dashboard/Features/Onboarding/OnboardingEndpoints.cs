@@ -1,9 +1,11 @@
 using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Common.Validation;
 using TerraScale.Dashboard.Errors;
+using System.Diagnostics;
 
 namespace TerraScale.Dashboard.Features.Onboarding
 {
+    using NotFound = TerraScale.Dashboard.Errors.NotFound;
     public static class OnboardingEndpoints
     {
         public static void AddOnboarding(this IServiceCollection services)
@@ -78,7 +80,19 @@ namespace TerraScale.Dashboard.Features.Onboarding
 
         internal static async Task<IResult> SaveAsync(HttpContext context, DashboardSessions sessions, AccountService accounts, OnboardingService service, IDatabaseBackend backend)
         {
-            var form = await FormRequests.ReadAsync(context, context.RequestAborted);
+            IFormCollection form;
+            switch (await FormRequests.ReadAsync(context, context.RequestAborted))
+            {
+                case Validation invalid:
+                    return FormRequests.Refused(context, invalid);
+                case UnsupportedMediaType unsupported:
+                    return FormRequests.Refused(context, unsupported);
+                case IFormCollection parsed:
+                    form = parsed;
+                    break;
+                case null:
+                    throw new UnreachableException();
+            }
             if (!Csrf.Validate(context, form))
             {
                 return RequestError.FormExpired(context, "/onboarding", Results.StatusCode(403));
@@ -96,7 +110,8 @@ namespace TerraScale.Dashboard.Features.Onboarding
                 {
                     string destination => HttpRedirects.SeeOther(destination),
                     Validation invalid => await RenderAsync(context, sessions, accounts, service, backend, form, invalid.Message, 422),
-                    Forbidden refused => await RenderAsync(context, sessions, accounts, service, backend, form, refused.Message, 403)
+                    Forbidden refused => await RenderAsync(context, sessions, accounts, service, backend, form, refused.Message, 403),
+                    NotFound missing => await RenderAsync(context, sessions, accounts, service, backend, form, missing.Message ?? "The personal project is unavailable.", 404)
                 };
             }
             catch (OnboardingValidationException error)
