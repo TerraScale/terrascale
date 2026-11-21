@@ -281,13 +281,11 @@ public sealed class DeleteOrganizationEndpoint(PlatformDirectory platform, Platf
     /// <inheritdoc />
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        var verified = await proofs.DeleteOrganizationAsync(caller, this.HttpContext.Request, this.RouteId("organization"), cancellationToken);
-        if (verified is not UserRecord user)
+        return await proofs.DeleteOrganizationAsync(caller, this.HttpContext.Request, this.RouteId("organization"), cancellationToken) switch
         {
-            return ErrorResults.ToResult(StepUpProofs.StepUpRequired());
-        }
-
-        return await DeleteOrganizationAsync(user, cancellationToken);
+            UserRecord user => await this.DeleteOrganizationAsync(user, cancellationToken),
+            Forbidden failure => ErrorResults.ToResult(failure),
+        };
     }
 
     private async Task<IResult> DeleteOrganizationAsync(UserRecord caller, CancellationToken cancellationToken)
@@ -392,13 +390,16 @@ public sealed class DeleteAccountEndpoint(AccountDeletion accounts, PlatformAuth
     /// <inheritdoc />
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        var read = DeletionReceiptHeader.Read(this.HttpContext.Request);
-        if (read is Validation invalid)
+        return await (DeletionReceiptHeader.Read(this.HttpContext.Request) switch
         {
-            return ErrorResults.ToResult(invalid);
-        }
+            Validation invalid => Task.FromResult(ErrorResults.ToResult(invalid)),
+            string { Length: 0 } => this.DeleteAccountAsync(caller, null, cancellationToken),
+            string receipt => this.DeleteAccountAsync(caller, receipt, cancellationToken),
+        });
+    }
 
-        string? receipt = read switch { string hash when hash.Length > 0 => hash, _ => null };
+    private async Task<IResult> DeleteAccountAsync(UserRecord caller, string? receipt, CancellationToken cancellationToken)
+    {
         return await proofs.DeleteAsync(caller, this.HttpContext.Request, receipt, cancellationToken) switch
         {
             StepUpConsumption consumed => await this.DeleteAccountAsync(consumed, receipt, cancellationToken),

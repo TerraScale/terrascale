@@ -62,8 +62,12 @@ public sealed class AccountDeletionHistoryEndpoint(AccountDeletion accounts) : E
             organization = values[0];
         }
 
-        return await accounts.HistoryAsync(hash, organization, cancellationToken) is { } history
-            ? Results.Json(history, DeletionHistoryJson.Default.AccountDeletionHistory) : ErrorResults.ToResult(PlatformDirectory.NotFoundFailure());
+        return await accounts.HistoryAsync(hash, organization, cancellationToken) switch
+        {
+            AccountDeletionHistory history => Results.Json(history, DeletionHistoryJson.Default.AccountDeletionHistory),
+            NotFound failure => ErrorResults.ToResult(failure),
+            Conflict failure => ErrorResults.ToResult(failure),
+        };
     }
 }
 

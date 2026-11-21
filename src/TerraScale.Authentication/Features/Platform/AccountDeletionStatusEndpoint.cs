@@ -60,7 +60,13 @@ public sealed class AccountDeletionStatusEndpoint(AccountDeletion accounts) : En
             organization = values[0];
         }
 
-        return await accounts.StatusAsync(hash, organization, cancellationToken) ? Results.NoContent() : Results.Accepted();
+        return await accounts.StatusAsync(hash, organization, cancellationToken) switch
+        {
+            true => Results.NoContent(),
+            false => Results.Accepted(),
+            NotFound failure => ErrorResults.ToResult(failure),
+            Conflict failure => ErrorResults.ToResult(failure),
+        };
     }
 }
 
@@ -78,13 +84,13 @@ internal static class DeletionReceiptHeader
         return values.Count == 1 ? Hash(values[0]) : new Validation("Present one deletion receipt.");
     }
 
-    internal static string Hash(string? value)
+    internal static Valid<string> Hash(string? value)
     {
         if (value is not { Length: 43 }
             || !value.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_')
             || !"AEIMQUYcgkosw048".Contains(value[^1]))
         {
-            throw new ApiException(StatusCodes.Status400BadRequest, "invalid_request", "Present one canonical 32-byte base64url deletion receipt.");
+            return new Validation("Present one canonical 32-byte base64url deletion receipt.");
         }
 
         return Convert.ToHexString(SHA256.HashData(Encoding.ASCII.GetBytes(value)));

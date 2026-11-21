@@ -68,14 +68,16 @@ public sealed class EmailChanges(AuthData data, Credentials credentials, Users u
 
         using var codeSlot = mail.Reserve();
         using var noticeSlot = mail.Reserve();
-        var consumed = await proofs.ConsumeAsync(caller, request.Headers[StepUpProofs.Header].Count == 1 ? request.Headers[StepUpProofs.Header][0] : null,
-            "change_email", "ts-auth", null, cancellationToken).ConfigureAwait(false);
-        if (consumed is not StepUpConsumption consumption)
+        return await proofs.ConsumeAsync(caller, request.Headers[StepUpProofs.Header].Count == 1 ? request.Headers[StepUpProofs.Header][0] : null,
+            "change_email", "ts-auth", null, cancellationToken).ConfigureAwait(false) switch
         {
-            return new Forbidden("A fresh, approved, purpose-bound single-use proof is required.", "step_up_required");
-        }
+            StepUpConsumption consumption => await this.IssueAsync(caller, consumption.Caller, normalized, proofs, codeSlot, noticeSlot, cancellationToken).ConfigureAwait(false),
+            Forbidden failure => failure,
+        };
+    }
 
-        var verified = consumption.Caller;
+    private async Task<EmailChangeRequestResult> IssueAsync(UserRecord caller, UserRecord verified, string normalized, StepUpProofs proofs, SignInMail.Reservation codeSlot, SignInMail.Reservation noticeSlot, CancellationToken cancellationToken)
+    {
         var code = Tokens.RandomDigits(6)!;
         var cancel = Tokens.RandomToken(43);
         var record = new EmailChangeRecord(caller.InstanceId, caller.Id, caller.AuthEpoch, caller.AuthStamp, normalized,

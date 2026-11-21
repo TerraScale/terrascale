@@ -312,14 +312,16 @@ public abstract class ApiKeyEndpoint(ApiKeys keys, PlatformAuthentication authen
         }
 
         var proofs = this.HttpContext.RequestServices.GetRequiredService<StepUpProofs>();
-        var verified = await proofs.ConsumeAsync(caller, this.HttpContext.Request.Headers[StepUpProofs.Header].Count == 1
-            ? this.HttpContext.Request.Headers[StepUpProofs.Header][0] : null, "rotate_api_key", "ts-auth", null, cancellationToken);
-        if (verified is not StepUpConsumption rotation)
+        return await proofs.ConsumeAsync(caller, this.HttpContext.Request.Headers[StepUpProofs.Header].Count == 1
+            ? this.HttpContext.Request.Headers[StepUpProofs.Header][0] : null, "rotate_api_key", "ts-auth", null, cancellationToken) switch
         {
-            return ErrorResults.ToResult(StepUpProofs.StepUpRequired());
-        }
+            StepUpConsumption rotation => await this.RotateAsync(rotation.Caller, ttl, cancellationToken),
+            Forbidden failure => ErrorResults.ToResult(failure),
+        };
+    }
 
-        caller = rotation.Caller;
+    private async Task<IResult> RotateAsync(UserRecord caller, TimeSpan ttl, CancellationToken cancellationToken)
+    {
         var (key, secret) = await keys.RotateAsync(caller, this.RouteId("organization"), this.ProjectId(), this.KeyId(), ttl, cancellationToken);
         var used = await keys.LastUsedAsync([key], cancellationToken);
         return Results.Json(new ApiKeySecretBody(this.Map(key, used.TryGetValue(key.Id, out var at) ? at : null), secret), PlatformApiJson.Default.ApiKeySecretBody);

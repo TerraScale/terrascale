@@ -1,11 +1,16 @@
 using Microsoft.EntityFrameworkCore;
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Storage;
 using ZLogger;
 
 namespace TerraScale.Authentication.Features.Platform;
+
+public readonly union DeletionStatusResult(bool, NotFound, Conflict);
+
+public readonly union DeletionHistoryResult(AccountDeletionHistory, NotFound, Conflict);
 
 public sealed class AccountDeletion(
     PlatformDirectory platform,
@@ -88,12 +93,17 @@ public sealed class AccountDeletion(
         return await this.AdvanceAsync(job, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<bool> StatusAsync(string receiptHash, string? organizationId, CancellationToken cancellationToken)
-    {
-        var receipt = await this.ReadReceiptAsync(receiptHash, organizationId, cancellationToken).ConfigureAwait(false);
+    public async Task<DeletionStatusResult> StatusAsync(string receiptHash, string? organizationId, CancellationToken cancellationToken) =>
+        await this.ReadReceiptAsync(receiptHash, organizationId, cancellationToken).ConfigureAwait(false) switch
+        {
+            NotFound failure => failure,
+            AccountDeletionReceipt found => await this.StatusAsync(found, organizationId, cancellationToken),
+        };
 
-        var job = await platform.ClosureAsync("account", receipt.SubjectId, cancellationToken).ConfigureAwait(false);
-        if (await this.CompletedAsync(receipt.SubjectId, receipt.Generation, cancellationToken).ConfigureAwait(false))
+    private async Task<DeletionStatusResult> StatusAsync(AccountDeletionReceipt found, string? organizationId, CancellationToken cancellationToken)
+    {
+        var job = await platform.ClosureAsync("account", found.SubjectId, cancellationToken).ConfigureAwait(false);
+        if (await this.CompletedAsync(found.SubjectId, found.Generation, cancellationToken).ConfigureAwait(false))
         {
             if (organizationId is null)
             {
@@ -105,39 +115,51 @@ public sealed class AccountDeletion(
             return proof is not null && proof.Id == key && proof.InstanceId == PlatformDirectory.Instance && proof.Scope == "organization" && proof.SubjectId == organizationId;
         }
 
-        if (job?.Value.Generation == receipt.Generation)
+        if (job?.Value.Generation == found.Generation)
         {
             return false;
         }
 
-        throw PlatformDirectory.Conflict("deletion_refused", "No completion proof exists for this closure generation.");
+        return DeletionRefused();
     }
 
-    internal async Task<AccountDeletionHistory?> HistoryAsync(string receiptHash, string? organizationId, CancellationToken cancellationToken)
-    {
-        if (!await this.StatusAsync(receiptHash, organizationId, cancellationToken).ConfigureAwait(false))
+    internal async Task<DeletionHistoryResult> HistoryAsync(string receiptHash, string? organizationId, CancellationToken cancellationToken) =>
+        await this.StatusAsync(receiptHash, organizationId, cancellationToken).ConfigureAwait(false) switch
         {
-            return null;
-        }
+            true => await this.HistoryOfAsync(receiptHash, organizationId, cancellationToken).ConfigureAwait(false),
+            false => PlatformDirectory.NotFoundFailure(),
+            NotFound failure => failure,
+            Conflict failure => failure,
+        };
 
-        var receipt = await this.ReadReceiptAsync(receiptHash, organizationId, cancellationToken).ConfigureAwait(false);
+    private async Task<DeletionHistoryResult> HistoryOfAsync(string receiptHash, string? organizationId, CancellationToken cancellationToken) =>
+        await this.ReadReceiptAsync(receiptHash, organizationId, cancellationToken).ConfigureAwait(false) switch
+        {
+            NotFound failure => failure,
+            AccountDeletionReceipt found => await this.HistoryOfAsync(found, organizationId, cancellationToken),
+        };
+
+    private async Task<DeletionHistoryResult> HistoryOfAsync(AccountDeletionReceipt found, string? organizationId, CancellationToken cancellationToken)
+    {
         var scope = organizationId is null ? "account" : "organization";
-        var subject = organizationId ?? receipt.SubjectId;
+        var subject = organizationId ?? found.SubjectId;
         var key = DeletionJob.Key(PlatformDirectory.Instance, scope, subject);
         var job = await this.JobAsync(key, cancellationToken).ConfigureAwait(false);
         return job is not null && job.Id == key && job.InstanceId == PlatformDirectory.Instance && job.Scope == scope && job.SubjectId == subject
-            && (organizationId is not null || job.ClosureGeneration == receipt.Generation) && job.ErasureId is { } erasure && PlatformDirectory.IsId(erasure)
-            ? new AccountDeletionHistory(erasure, job.RequestedAt, job.AuthLogicalVerifiedAt, job.HistoryStatus, job.HistoryCompletedAt)
-            : null;
+            && (organizationId is not null || job.ClosureGeneration == found.Generation) && job.ErasureId is { } erasure && PlatformDirectory.IsId(erasure)
+                ? new AccountDeletionHistory(erasure, job.RequestedAt, job.AuthLogicalVerifiedAt, job.HistoryStatus, job.HistoryCompletedAt)
+                : PlatformDirectory.NotFoundFailure();
     }
 
-    private async Task<AccountDeletionReceipt> ReadReceiptAsync(string receiptHash, string? organizationId, CancellationToken cancellationToken)
+    private static Conflict DeletionRefused() => new("No completion proof exists for this closure generation.", "deletion_refused");
+
+    private async Task<Found<AccountDeletionReceipt>> ReadReceiptAsync(string receiptHash, string? organizationId, CancellationToken cancellationToken)
     {
         var receipt = await data.ReadAsync((db, token) => db.AccountDeletionReceipts
             .SingleOrDefaultAsync(row => row.InstanceId == PlatformDirectory.Instance && row.TokenHash == receiptHash, token), cancellationToken).ConfigureAwait(false);
         return receipt is not null && receipt.InstanceId == PlatformDirectory.Instance && receipt.TokenHash == receiptHash && receipt.ExpiresAt > clock.GetUtcNow()
             && (organizationId is null || receipt.OrganizationIds.Contains(organizationId, StringComparer.Ordinal))
-            ? receipt : throw PlatformDirectory.NotFound();
+                ? receipt : PlatformDirectory.NotFoundFailure();
     }
 
     private async Task<bool> CompletedAsync(string userId, string generation, CancellationToken cancellationToken)

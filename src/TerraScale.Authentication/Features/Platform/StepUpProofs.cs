@@ -56,7 +56,7 @@ internal sealed record PreparedStepUp(UserRecord Caller, StepUpRecord Record, IR
     public override string ToString() => nameof(PreparedStepUp);
 }
 
-public readonly union StepUpBodyResult(StepUpBody, Validation, QuotaExceeded, Forbidden, Unavailable);
+public readonly union StepUpBodyResult(StepUpBody, Validation, QuotaExceeded, Forbidden);
 
 public readonly union StepUpConsumptionResult(StepUpConsumption, Forbidden);
 
@@ -83,6 +83,7 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
             Forbidden => throw Required(),
         };
     }
+
     internal async Task<PreparedStepUp?> PrepareHeaderAsync(UserRecord caller, HttpRequest request, string purpose, string? organizationId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -106,8 +107,14 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
         return await this.IssueAsync(caller, request.Purpose, request.Audience, callback, request.OrganizationId, cancellationToken).ConfigureAwait(false);
     }
 
-    internal Task<StepUpBodyResult> RequestAgentApprovalAsync(UserRecord caller, string enrollmentId, string returnPath, CancellationToken cancellationToken) =>
-        this.IssueAsync(caller, ApproveAgent, "ts-auth", new Uri(options.PublicOrigin, returnPath), enrollmentId, cancellationToken);
+    internal async Task<StepUpBody> RequestAgentApprovalAsync(UserRecord caller, string enrollmentId, string returnPath, CancellationToken cancellationToken) =>
+        await this.IssueAsync(caller, ApproveAgent, "ts-auth", new Uri(options.PublicOrigin, returnPath), enrollmentId, cancellationToken) switch
+        {
+            StepUpBody body => body,
+            Validation failure => throw new ApiException(StatusCodes.Status400BadRequest, failure.Code, failure.Message),
+            QuotaExceeded failure => throw new ApiException(StatusCodes.Status429TooManyRequests, failure.Code, failure.Message),
+            Forbidden => throw Required(),
+        };
 
     private async Task<StepUpBodyResult> IssueAsync(UserRecord caller, string purpose, string audience, Uri returnUri, string? binding, CancellationToken cancellationToken)
     {
@@ -122,7 +129,7 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
             purpose, audience, returnUri.AbsoluteUri, clock.GetUtcNow().AddMinutes(5), OrganizationId: binding);
         if (!await data.SaveAsync([Change.Assert(caller), Change.Insert(record)], cancellationToken).ConfigureAwait(false))
         {
-            return PlatformFailures.Storage();
+            return StepUpRequired();
         }
 
         return new StepUpBody(secret, new Uri(options.PublicOrigin, $"/ui/{caller.InstanceId}/step-up/{id}").AbsoluteUri, record.ExpiresAt);

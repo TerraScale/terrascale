@@ -23,6 +23,5 @@ public sealed class RequestStepUpEndpoint(StepUpProofs proofs, PlatformAuthentic
             Validation failure => ErrorResults.ToResult(failure),
             QuotaExceeded failure => ErrorResults.ToResult(failure),
             Forbidden failure => ErrorResults.ToResult(failure),
-            Unavailable failure => ErrorResults.ToResult(failure),
         };
 }

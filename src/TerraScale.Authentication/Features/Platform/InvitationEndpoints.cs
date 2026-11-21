@@ -270,15 +270,18 @@ public sealed class StartOwnershipTransferEndpoint(PlatformDirectory platform, P
             throw Invalid("user_id must be a user id.");
         }
 
-        var verified = await proofs.ConsumeAsync(caller,
+        return await proofs.ConsumeAsync(caller,
             this.HttpContext.Request.Headers[StepUpProofs.Header].Count == 1 ? this.HttpContext.Request.Headers[StepUpProofs.Header][0] : null,
-            "start_ownership_transfer", "ts-auth", null, cancellationToken, this.RouteId("organization"));
-        if (verified is not StepUpConsumption consumption)
+            "start_ownership_transfer", "ts-auth", null, cancellationToken, this.RouteId("organization")) switch
         {
-            return ErrorResults.ToResult(StepUpProofs.StepUpRequired());
-        }
+            StepUpConsumption consumption => await this.StartTransferAsync(consumption.Caller, nominee!, cancellationToken),
+            Forbidden failure => ErrorResults.ToResult(failure),
+        };
+    }
 
-        var transfer = await platform.StartTransferAsync(consumption.Caller.Id, this.RouteId("organization"), nominee!, cancellationToken);
+    private async Task<IResult> StartTransferAsync(UserRecord caller, string nominee, CancellationToken cancellationToken)
+    {
+        var transfer = await platform.StartTransferAsync(caller.Id, this.RouteId("organization"), nominee, cancellationToken);
         return Results.Json(Map(transfer), PlatformApiJson.Default.OwnershipTransferBody, statusCode: StatusCodes.Status201Created);
     }
 
