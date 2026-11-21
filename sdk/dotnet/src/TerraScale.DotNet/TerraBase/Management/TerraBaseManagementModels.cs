@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using TerraScale.DotNet.Errors;
 
 namespace TerraScale.DotNet.TerraBase;
 
@@ -58,6 +59,12 @@ public sealed record TerraBaseProjectClosure(string Status, string ClosureId, in
     /// <summary>Whether the returned status is accepted. Does not validate <see cref="EvidenceVersion"/>.</summary>
     public bool Accepted => this.Status == "accepted";
 }
+
+/// <summary>The outcome of a project closure or erasure handoff: the fence's status, or the refusal that wrote nothing.</summary>
+public readonly union ProjectClosureResult(TerraBaseProjectClosure, Conflict, Validation, Unavailable, Unauthorized, Forbidden, QuotaExceeded, TerraBaseClosureUnsupported);
+
+/// <summary>This TerraBase cannot serve the requested closure contract: a wrong listener or mapping answered, or an older engine refused the version.</summary>
+public sealed record TerraBaseClosureUnsupported(string? Code = null);
 
 /// <summary>A database registered in a project, addressed by <see cref="ProjectId"/> and <see cref="Name"/>.</summary>
 /// <param name="Id">Canonical uppercase ULID.</param>
