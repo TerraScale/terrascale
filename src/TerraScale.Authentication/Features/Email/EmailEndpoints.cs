@@ -340,7 +340,6 @@ public sealed class PutEmailBrandingEndpoint(EmailSettings settings, AuthEmails 
             PayloadTooLarge error => ErrorResults.ToResult(error),
             UnsupportedMediaType error => ErrorResults.ToResult(error),
         });
-
     }
 
     private async Task<IResult> SaveAsync(EmailBrandingRequest request, CancellationToken cancellationToken)
@@ -507,7 +506,6 @@ public sealed class PreviewEmailEndpoint(EmailSettings settings, AuthEmails emai
             PayloadTooLarge error => ErrorResults.ToResult(error),
             UnsupportedMediaType error => ErrorResults.ToResult(error),
         });
-
     }
 
     private async Task<IResult> RenderAsync(EmailPreviewRequest request, CancellationToken cancellationToken)
@@ -567,7 +565,6 @@ public sealed class TestEmailEndpoint(EmailSettings settings, AuthEmails emails,
             PayloadTooLarge error => ErrorResults.ToResult(error),
             UnsupportedMediaType error => ErrorResults.ToResult(error),
         });
-
     }
 
     private async Task<IResult> SendAsync(EmailTestRequest request, CancellationToken cancellationToken)

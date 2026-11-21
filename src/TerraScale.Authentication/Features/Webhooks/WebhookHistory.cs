@@ -47,13 +47,9 @@ public sealed class WebhookHistory(AuthData data, WebhookOutbox outbox, TimeProv
         return new WebhookEventPage([.. rows.Take(limit).Select(Body)], rows.Count > limit ? rows[limit - 1].EventId : null);
     }
 
-    public async Task<Found<WebhookDeliveryPage>> DeliveriesAsync(string projectId, string endpointId, CancellationToken cancellationToken)
+    public async Task<WebhookDeliveryPage> DeliveriesAsync(string projectId, string endpointId, CancellationToken cancellationToken)
     {
-        if (await this.EndpointAsync(projectId, endpointId, cancellationToken).ConfigureAwait(false) is not { } endpoint)
-        {
-            return new NotFound("No such endpoint.");
-        }
-        _ = endpoint;
+        await this.EndpointAsync(projectId, endpointId, cancellationToken).ConfigureAwait(false);
         var rows = await data.ReadAsync((db, token) =>
             (from delivery in db.WebhookDeliveries.Where(row => row.ProjectId == projectId && row.EndpointId == endpointId)
                 .OrderByDescending(row => row.Id).Take(20)
