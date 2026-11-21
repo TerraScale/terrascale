@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.RateLimiting;
@@ -33,7 +34,7 @@ public sealed class ImportProjectUsersEndpoint(TenantDirectory tenants, Platform
         var request = await this.BodyAsync(UserProfileJson.Default.ImportProjectUsersRequest, cancellationToken);
         if (request.Users is not { Count: > 0 and <= 500 })
         {
-            throw Invalid("users must contain 1 to 500 rows.");
+            return ErrorResults.ToResult(new Validation("users must contain 1 to 500 rows.", "invalid_request"));
         }
 
         List<ImportedProjectUser> items = [];
