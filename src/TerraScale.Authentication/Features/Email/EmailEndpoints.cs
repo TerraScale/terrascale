@@ -153,6 +153,8 @@ public sealed record EmailRestoreRequest(
 
 internal readonly union EmailBody<T>(T, Validation, PayloadTooLarge, UnsupportedMediaType);
 
+internal readonly union SavedEmailConfig(EmailConfig, Conflict);
+
 /// <summary>
 /// What every <c>/v1/{slug}/email/*</c> endpoint shares. The only caller is the ts-dashboard confidential client, with
 /// HTTP Basic credentials (RFC 6749 section 2.3.1) checked in constant time against <c>TS_AUTH_DASHBOARD_CLIENT_SECRET</c>;
@@ -213,8 +215,15 @@ internal static class EmailApi
     public static long ExpectedVersion(long? version) =>
         version is >= 0 ? version.Value : throw new ApiException(StatusCodes.Status422UnprocessableEntity, "invalid_request", "expected_version is required: the version last read, 0 before the first save.");
 
-    public static EmailConfig Saved(EmailConfig? saved, long expected) =>
-        saved ?? throw new ApiException(StatusCodes.Status409Conflict, "version_conflict", $"The email configuration is no longer at version {expected}; read it again and retry.");
+    public static SavedEmailConfig Saved(EmailConfig? saved, long expected) =>
+        saved is { } config ? new SavedEmailConfig(config) : new SavedEmailConfig(new Conflict(
+            $"The email configuration is no longer at version {expected}; read it again and retry.", "version_conflict"));
+
+    public static IResult Answer(SavedEmailConfig saved, Func<EmailConfig, IResult> answer) => saved switch
+    {
+        EmailConfig config => answer(config),
+        Conflict error => ErrorResults.ToResult(error),
+    };
 
     /// <summary>The configuration with drafts applied for a preview or test.</summary>
     public static EmailConfig Draft(EmailConfig config, AuthEmailKind kind, string locale, EmailBranding? branding, EmailTemplateFields? fields) => config with
@@ -340,7 +349,7 @@ public sealed class PutEmailBrandingEndpoint(EmailSettings settings, AuthEmails 
         var actor = EmailValidation.Actor(request.Actor);
         var branding = EmailValidation.Branding(request.Branding);
         var saved = await settings.SaveAsync(OidcIssuer.InstanceId, expected, actor, "branding", current => current with { Branding = branding }, cancellationToken);
-        return TypedResults.Json(EmailApi.Branding(EmailApi.Saved(saved, expected), emails));
+        return EmailApi.Answer(EmailApi.Saved(saved, expected), config => TypedResults.Json(EmailApi.Branding(config, emails)));
     }
 }
 
@@ -458,7 +467,7 @@ public sealed class PutEmailTemplateEndpoint(EmailSettings settings, AuthOptions
         var fields = EmailValidation.Fields(kind, request.Fields);
         var saved = await settings.SaveAsync(OidcIssuer.InstanceId, expected, actor, $"template:{AuthEmails.Name(kind)}/{locale}",
             current => current with { Templates = EmailApi.WithTemplate(current.Templates, kind, locale, fields) }, cancellationToken);
-        return TypedResults.Json(EmailApi.Template(EmailApi.Saved(saved, expected), kind, locale));
+        return EmailApi.Answer(EmailApi.Saved(saved, expected), config => TypedResults.Json(EmailApi.Template(config, kind, locale)));
     }
 }
 
@@ -651,13 +660,17 @@ public sealed class GetEmailVersionEndpoint(EmailSettings settings, AuthOptions 
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         EmailApi.Refuse(this.HttpContext, options)
-        ?? TypedResults.Json(await Find(settings, this.HttpContext, cancellationToken));
+        ?? await Find(settings, this.HttpContext, cancellationToken) switch
+        {
+            EmailConfig config => TypedResults.Json(config),
+            NotFound error => ErrorResults.ToResult(error),
+        };
 
-    internal static async Task<EmailConfig> Find(EmailSettings settings, HttpContext context, CancellationToken cancellationToken) =>
+    internal static async Task<Found<EmailConfig>> Find(EmailSettings settings, HttpContext context, CancellationToken cancellationToken) =>
         long.TryParse(context.GetRouteValue("version") as string, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var version)
         && await settings.GetVersionAsync(OidcIssuer.InstanceId, version, cancellationToken) is { } config
             ? config
-            : throw new ApiException(StatusCodes.Status404NotFound, "not_found", "No such version.");
+            : new NotFound("No such version.");
 }
 
 /// <summary><c>POST /v1/{slug}/email/versions/{version}/restore</c>: saves an earlier version again as the newest.</summary>
@@ -690,13 +703,16 @@ public sealed class RestoreEmailVersionEndpoint(EmailSettings settings, AuthOpti
             return refused;
         }
 
-        var snapshot = await GetEmailVersionEndpoint.Find(settings, this.HttpContext, cancellationToken);
-        return (await EmailApi.ReadAsync<EmailRestoreRequest>(this.HttpContext, cancellationToken) switch
+        return (await GetEmailVersionEndpoint.Find(settings, this.HttpContext, cancellationToken) switch
         {
-            EmailRestoreRequest request => await SaveAsync(snapshot, request, cancellationToken),
-            Validation error => ErrorResults.ToResult(error),
-            PayloadTooLarge error => ErrorResults.ToResult(error),
-            UnsupportedMediaType error => ErrorResults.ToResult(error),
+            EmailConfig snapshot => await EmailApi.ReadAsync<EmailRestoreRequest>(this.HttpContext, cancellationToken) switch
+            {
+                EmailRestoreRequest request => await SaveAsync(snapshot, request, cancellationToken),
+                Validation error => ErrorResults.ToResult(error),
+                PayloadTooLarge error => ErrorResults.ToResult(error),
+                UnsupportedMediaType error => ErrorResults.ToResult(error),
+            },
+            NotFound error => ErrorResults.ToResult(error),
         });
     }
 
@@ -706,6 +722,6 @@ public sealed class RestoreEmailVersionEndpoint(EmailSettings settings, AuthOpti
         var actor = EmailValidation.Actor(request.Actor);
         var saved = await settings.SaveAsync(OidcIssuer.InstanceId, expected, actor, $"rollback:{snapshot.Version}",
             current => current with { Branding = snapshot.Branding, Templates = snapshot.Templates }, cancellationToken);
-        return TypedResults.Json(EmailApi.Saved(saved, expected));
+        return EmailApi.Answer(EmailApi.Saved(saved, expected), static config => TypedResults.Json(config));
     }
 }
