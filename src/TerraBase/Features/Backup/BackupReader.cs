@@ -319,7 +319,11 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
     {
         var bytes = preflight is null
             ? await DecodedBytesAsync(key, scope, cancellationToken).ConfigureAwait(false)
-            : (await SizedAsync(preflight).ConfigureAwait(false)).Bytes;
+            : await preflight.ConfigureAwait(false) switch
+            {
+                BackupLogSummary summary => summary.Bytes,
+                Validation error => throw new InvalidDataException(error.Message),
+            };
         var claim = preflight is null ? disk.Reserve(bytes) : null;
         BackupScratchStream? frames = null;
         try

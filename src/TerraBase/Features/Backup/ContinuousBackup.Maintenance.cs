@@ -389,7 +389,6 @@ internal sealed partial class ContinuousBackup
                 }
             }
 
-            RestoredBackup? restored = null;
             var built = await file.Target.Reader.BuildAsync(file.Prefix, file.Scope, source, DateTimeOffset.MaxValue, stored.Position, next: null, cancellationToken)
                 .ConfigureAwait(false);
             if (built is not RestoredBackup builtBackup)
@@ -405,21 +404,16 @@ internal sealed partial class ContinuousBackup
             }
             else
             {
-                restored = builtBackup;
-            }
-
-            if (restored is { } rebuilt)
-            {
                 try
                 {
-                    reached = rebuilt.Position;
-                    if (rebuilt.Position != stored.Position)
+                    reached = builtBackup.Position;
+                    if (builtBackup.Position != stored.Position)
                     {
                         error = "the backup ends before the snapshot it is checked against";
                     }
                     else
                     {
-                        var checksum = await _engine.ChecksumAsync(rebuilt.Path, cancellationToken).ConfigureAwait(false);
+                        var checksum = await _engine.ChecksumAsync(builtBackup.Path, cancellationToken).ConfigureAwait(false);
                         digest = Convert.ToHexString(checksum);
                         if (!live.SequenceEqual(checksum))
                         {
@@ -429,7 +423,7 @@ internal sealed partial class ContinuousBackup
                 }
                 finally
                 {
-                    rebuilt.Dispose();
+                    builtBackup.Dispose();
                 }
             }
         }
