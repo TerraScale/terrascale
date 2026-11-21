@@ -4,6 +4,7 @@ using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
@@ -21,11 +22,11 @@ public sealed class CustomTokens(ApiKeys keys, TenantDirectory tenants, KeyRing 
     internal Task CheckAsync(ApiKeyRecord key, string project, IPAddress? address, CancellationToken cancellationToken) =>
         tenants.CheckKeyAccessAsync(key, project, TerraBaseScopes.AuthTokensMint, address, cancellationToken);
 
-    internal async Task<CustomTokenBody> IssueAsync(ApiKeyRecord key, string project, CustomTokenRequest request, CancellationToken cancellationToken)
+    internal async Task<CustomTokenResult> IssueAsync(ApiKeyRecord key, string project, CustomTokenRequest request, CancellationToken cancellationToken)
     {
         if (!TerraScaleIds.IsValid(request.UserId) || request.Database is not null && !TerraScaleIds.IsValid(request.Database))
         {
-            throw Invalid();
+            return Invalid();
         }
 
         var claims = TrustedClaims.Minted(request.Claims);
@@ -74,6 +75,7 @@ public sealed class CustomTokens(ApiKeys keys, TenantDirectory tenants, KeyRing 
         }
     }
 
-    internal static ApiException Invalid() => new(StatusCodes.Status400BadRequest, "invalid_request",
-        "Supply a UTF-8 JSON object of at most 16384 bytes with user_id (canonical ULID), optional database (canonical ULID) and optional claims. No other members are accepted.");
+    internal static Validation Invalid() => new("Supply a UTF-8 JSON object of at most 16384 bytes with user_id (canonical ULID), optional database (canonical ULID) and optional claims. No other members are accepted.");
 }
+
+public readonly union CustomTokenResult(CustomTokenBody, Validation);
