@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Channels;
@@ -7,6 +8,7 @@ using NATS.Client.JetStream;
 using NATS.Client.JetStream.Models;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.HomePush;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -251,7 +253,17 @@ internal sealed class ShapeOverlay(TerraBaseOptions options, TimeProvider time, 
 
             try
             {
-                payload = await crypto.SealAsync(database, payload, cancellationToken).ConfigureAwait(false);
+                switch (await crypto.SealAsync(database, payload, cancellationToken).ConfigureAwait(false))
+                {
+                    case byte[] sealedPayload:
+                        payload = sealedPayload;
+                        break;
+                    case Unavailable:
+                        continue;
+                    default:
+                        throw new UnreachableException();
+                }
+
                 var ack = await js.PublishAsync(Subject(database), payload, opts: new NatsJSPubOpts { MsgId = transaction.Id },
                     cancellationToken: cancellationToken).ConfigureAwait(false);
                 ack.EnsureSuccess();

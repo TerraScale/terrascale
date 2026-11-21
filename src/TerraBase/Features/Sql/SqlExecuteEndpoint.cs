@@ -1,5 +1,6 @@
 using JsonResult = Microsoft.AspNetCore.Http.HttpResults.JsonHttpResult<TerraBase.Features.Sql.SqlErrorBody>;
 using Microsoft.AspNetCore.Authorization;
+using System.Diagnostics;
 using System.Globalization;
 using TerraBase.Configuration;
 using TerraBase.Engine;
@@ -269,36 +270,38 @@ internal sealed class SqlExecuteEndpoint(
 
         await using (transaction.ConfigureAwait(false))
         {
-            var outcome = await sql.ExecuteOnCopyAsync(database, statement => transaction.ExecuteAsync(statement, cancellationToken), statements, write: true, cancellationToken,
+            var executed = await sql.ExecuteOnCopyAsync(database, statement => transaction.ExecuteAsync(statement, cancellationToken), statements, write: true, cancellationToken,
                 (stage, milliseconds) => SqlRequestTiming.Record(HttpContext, stage, milliseconds));
             SqlRequestTiming.Mark(HttpContext, "local_execute");
-            if (outcome is ReplicaSqlFailure failed)
+            if (executed is ReplicaSqlFailure failed)
             {
                 return (Error(new SqlBatchFailure(failed.Error, failed.Statement)), null);
             }
 
-            if (outcome is not IReadOnlyList<SqlResult> results)
+            if (executed is not IReadOnlyList<SqlResult> results)
             {
                 return null;
             }
 
-            LocalCommit committed;
-            try
+            var committedOutcome = await transaction.CommitAsync(homeDurable, cancellationToken);            SqlRequestTiming.Mark(HttpContext, "ack");
+            foreach (var timing in transaction.Timings)
             {
-                committed = await transaction.CommitAsync(homeDurable, cancellationToken);
-                SqlRequestTiming.Mark(HttpContext, "ack");
-                foreach (var timing in transaction.Timings)
-                {
-                    SqlRequestTiming.Record(HttpContext, timing.Key, timing.Value);
-                }
+                SqlRequestTiming.Record(HttpContext, timing.Key, timing.Value);
             }
-            catch (LocalWriteRefusedException refused)
+
+            if (committedOutcome is LocalWriteRefused refused)
             {
                 return (null, refused.PublishId);
             }
-            catch (LocalOutcomeUnknownException)
+
+            if (committedOutcome is LocalOutcomeUnknown)
             {
                 return (Error(new SqlBatchFailure(new SqlError(SqlErrors.Unavailable, "the write reached the push stream but its outcome is unknown; read it at the home"), 0)), null);
+            }
+
+            if (committedOutcome is not LocalCommitted committed)
+            {
+                throw new UnreachableException();
             }
 
             sql.RecordLocalWrites(database, results.Sum(result => result.RowsAffected));
