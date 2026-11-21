@@ -29,6 +29,10 @@ public sealed class ShareAccountAgentOwnerEmailEndpoint(PlatformAuthentication a
         var agentId = this.RouteId("agent");
         var request = await this.BodyAsync(AgentJson.Default.AgentSharingRequest, cancellationToken);
         var share = request.ShareOwnerEmail ?? throw Invalid("share_owner_email must be true or false.");
-        return Results.Json(await agents.ShareOwnerEmailAsync(owner.InstanceId, agentId, owner.Id, share, cancellationToken), AgentJson.Default.AgentBody);
+        return await agents.ShareOwnerEmailAsync(owner.InstanceId, agentId, owner.Id, share, cancellationToken) switch
+        {
+            AgentBody agent => Results.Json(agent, AgentJson.Default.AgentBody),
+            NotFound notFound => ErrorResults.ToResult(notFound),
+        };
     }
 }

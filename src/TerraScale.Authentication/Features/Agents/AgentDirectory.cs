@@ -34,6 +34,8 @@ public sealed record AgentPageBody(IReadOnlyList<AgentBody> Items, string? Next)
 
 public readonly union GetAgentResult(AgentBody, NotFound);
 
+public readonly union ShareOwnerEmailResult(AgentBody, NotFound);
+
 public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, AgentLifecycleEvents events, AttemptLimiter limiter, TimeProvider clock, ILogger<AgentDirectory> logger)
 {
     public static readonly IReadOnlyList<string> PlatformScopes = ["mcp:read", "mcp:write"];
@@ -193,11 +195,16 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
                 .. Event(project, () => events.Revoked(project, agent.Value.OwnerUserId, agentId))], cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<AgentBody> ShareOwnerEmailAsync(string project, string agentId, string owner, bool share, CancellationToken cancellationToken)
+    public async Task<ShareOwnerEmailResult> ShareOwnerEmailAsync(string project, string agentId, string owner, bool share, CancellationToken cancellationToken)
     {
         using var home = HomeReads.Begin();
         var agent = await data.ReadAsync((db, token) => db.Agents.Where(row => row.ProjectId == project && row.Id == agentId && row.OwnerUserId == owner).WithVersion()
-            .SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+            .SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
+        if (agent is null)
+        {
+            return new NotFound();
+        }
+
         var shared = agent.Value with { ShareOwnerEmail = share };
         if (agent.Value.ShareOwnerEmail != share)
         {
