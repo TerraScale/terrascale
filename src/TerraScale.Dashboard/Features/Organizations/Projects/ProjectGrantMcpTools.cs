@@ -1,12 +1,16 @@
 using System.ComponentModel;
 using System.Text.Json.Serialization;
 using ModelContextProtocol.Server;
+using TerraScale.Dashboard.Common.Accounts;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Features.Organizations.Projects;
 using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Organizations
 {
+    using NotFound = TerraScale.Dashboard.Errors.NotFound;
+
     // Extend the registered organization tool type without exposing organization directory tools to project grants.
     public sealed partial class OrganizationMcpTools
     {
@@ -21,7 +25,14 @@ namespace TerraScale.Dashboard.Features.Organizations
         {
             var context = Scope(organizationId, projectId);
             var page = await ProjectGrants.ReadAsync(context, after, Cancellation);
-            return new ProjectGrantMcpPage(context.Organization!.Id, context.Project!.Id, [.. page.Items.Select(GrantView)], page.Next);
+            return page switch
+            {
+                TsAuthPlatformPage<TsAuthPlatformProjectMember> listed => new ProjectGrantMcpPage(context.Organization!.Id, context.Project!.Id,
+                    [.. listed.Items.Select(GrantView)], listed.Next),
+                NotFound error => throw new AccountAccessException(error.Message ?? "Not found.", 404),
+                Validation error => throw new AccountAccessException(error.Message, 400),
+                Unavailable => throw new AccountAccessException("The organization provider could not complete this request. Reload it and try again.", 502),
+            };
         });
         }
 
@@ -35,8 +46,14 @@ namespace TerraScale.Dashboard.Features.Organizations
             return GrantChange(async () =>
         {
             var context = Scope(organizationId, projectId);
-            var grant = await ProjectGrants.SetAsync(context, userId, role, Cancellation);
-            return new ProjectGrantMcpResult(context.Organization!.Id, context.Project!.Id, GrantView(grant));
+            return await ProjectGrants.SetAsync(context, userId, role, Cancellation) switch
+            {
+                TsAuthPlatformProjectMember grant => new ProjectGrantMcpResult(context.Organization!.Id, context.Project!.Id, GrantView(grant)),
+                Forbidden error => throw new AccountAccessException(error.Message, 403),
+                InvalidUser error => throw new AccountAccessException(error.Message, 422),
+                InvalidRole error => throw new AccountAccessException(error.Message, 422),
+                Unavailable => throw new AccountAccessException("The grant change could not be confirmed. Reload project grants before trying again.", 502),
+            };
         });
         }
 
@@ -49,9 +66,14 @@ namespace TerraScale.Dashboard.Features.Organizations
             return GrantChange(async () =>
         {
             var context = Scope(organizationId, projectId);
-            await ProjectGrants.RemoveAsync(context, userId, Cancellation);
-            return new ProjectGrantMcpRemoved(context.Organization!.Id, context.Project!.Id, userId, true,
-                "Only the explicit grant was removed. Organization-implied access and independent service keys remain.");
+            return await ProjectGrants.RemoveAsync(context, userId, Cancellation) switch
+            {
+                Done => new ProjectGrantMcpRemoved(context.Organization!.Id, context.Project!.Id, userId, true,
+                    "Only the explicit grant was removed. Organization-implied access and independent service keys remain."),
+                Forbidden error => throw new AccountAccessException(error.Message, 403),
+                InvalidUser error => throw new AccountAccessException(error.Message, 422),
+                Unavailable => throw new AccountAccessException("The grant change could not be confirmed. Reload project grants before trying again.", 502),
+            };
         });
         }
 
