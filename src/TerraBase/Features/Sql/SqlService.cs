@@ -187,7 +187,7 @@ internal sealed class SqlSession(
     private static readonly SqlError UnknownDatabase = SqlErrors.Error("the database does not exist");
 
     private SqlError Missing() => database.DatabaseId is { } id && fences.MovedTo(id) is { } home
-        ? SqlErrors.Moved(new DatabaseMovedException(home))
+        ? new SqlError(SqlErrors.WrongRegion, home is null ? "the database is moving its home region; retry" : $"the database moved to {home}")
         : UnknownDatabase;
     private static readonly SqlError TooManyChanges = SqlErrors.TooBig("a transaction changes at most 1024 rows and grows the database by at most 8 MiB");
     internal static readonly SqlError TooManyRows = SqlErrors.TooBig("a result holds at most 10000 rows and 8 MiB; add a LIMIT");
@@ -1051,12 +1051,12 @@ internal sealed class SqlSession(
         catch (DatabaseMovedException moved)
         {
             lease?.Dispose();
-            return (null, SqlErrors.Moved(moved));
+            return (null, SqlErrors.Moved(moved.Home));
         }
-        catch (DatabaseFencedException fenced)
+        catch (DatabaseFencedException)
         {
             lease?.Dispose();
-            return (null, SqlErrors.Fenced(fenced));
+            return (null, SqlErrors.Fenced());
         }
         catch (StorageBusyException busy)
         {
@@ -1156,12 +1156,12 @@ internal sealed class SqlSession(
         catch (DatabaseMovedException moved)
         {
             lease?.Dispose();
-            return (null, null, SqlErrors.Moved(moved));
+            return (null, null, SqlErrors.Moved(moved.Home));
         }
-        catch (DatabaseFencedException fenced)
+        catch (DatabaseFencedException)
         {
             lease?.Dispose();
-            return (null, null, SqlErrors.Fenced(fenced));
+            return (null, null, SqlErrors.Fenced());
         }
         catch (StorageBusyException busy)
         {
@@ -1229,8 +1229,8 @@ internal sealed class SqlSession(
         StorageCopyFaultedException => new SqlError(SqlErrors.CopyFaulted, "copy_faulted: Storage requires recovery."),
         StorageProofPendingException => new SqlError(SqlErrors.RecoveryPending, "recovery_pending: Storage recovery proof is pending; retry."),
         StorageBusyException busy => StorageRefused(busy),
-        DatabaseFencedException fenced => SqlErrors.Fenced(fenced),
-        DatabaseMovedException moved => SqlErrors.Moved(moved),
+        DatabaseFencedException => SqlErrors.Fenced(),
+        DatabaseMovedException moved => SqlErrors.Moved(moved.Home),
         QueryCapacityException => SqlErrors.Interrupt,
         _ => null,
     };

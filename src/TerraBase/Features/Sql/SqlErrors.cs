@@ -202,9 +202,9 @@ internal static partial class SqlErrors
 
     public static SqlError Busy(string message) => new(SerializationConflict, message);
 
-    public static SqlError Moved(Engine.DatabaseMovedException moved) => new(WrongRegion, moved.Message);
+    public static SqlError Moved(string? home) => new(WrongRegion, home is null ? "the database is moving its home region; retry" : $"the database moved to {home}");
 
-    public static SqlError Fenced(DatabaseFencedException fenced) => new(Unavailable, fenced.Message);
+    public static SqlError Fenced() => new(Unavailable, DatabaseFencedException.Refusal);
 
     public static SqlError TooBig(string message) => new(TooLarge, message);
 
