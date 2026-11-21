@@ -8,16 +8,6 @@ namespace TerraScale.Dashboard.Common.Usage
     public sealed record UsageSelection(AccountContext Context, string Range, string DatabaseId, bool ExplicitProjectFilter)
     {
         public bool Member { get; init; } = true;
-        public static UsageSelection For(AccountContext context, string projectId, string databaseId, string range)
-        {
-            return TryFor(context, projectId, databaseId, range) switch
-            {
-                UsageSelection selection => selection,
-                NotFound failure => throw new AccountAccessException(failure.Message ?? "Not found.", 404),
-                Forbidden failure => throw new AccountAccessException(failure.Message ?? "Forbidden."),
-            };
-        }
-
         public static UsageSelectionResult TryFor(AccountContext context, string projectId, string databaseId, string range)
         {
             if (context.Session.UserId != context.UserId)

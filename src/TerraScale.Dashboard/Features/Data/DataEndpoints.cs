@@ -9,6 +9,7 @@ using TerraScale.Dashboard.Platform.Datastar;
 namespace TerraScale.Dashboard.Features.Data
 {
     using NotFound = TerraScale.Dashboard.Errors.NotFound;
+    using NotFoundEndpoints = TerraScale.Dashboard.Features.NotFound.NotFoundEndpoints;
     public static class DataEndpoints
     {
         internal static async Task<IResult> MutateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, DataService data, SavedQueryService saved, string action)
@@ -87,7 +88,7 @@ namespace TerraScale.Dashboard.Features.Data
                             break;
                         case NotFound failure:
                             return DatabaseResults.WantsHtml(http)
-                                ? TerraScale.Dashboard.Features.NotFound.NotFoundEndpoints.Page(http, context)
+                                ? NotFoundEndpoints.Page(http, context)
                                 : Results.Problem(failure.Message ?? "Not found.", statusCode: StatusCodes.Status404NotFound);
                         case Forbidden failure:
                             return await Refused(StatusCodes.Status403Forbidden, failure.Message);

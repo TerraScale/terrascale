@@ -43,7 +43,7 @@ namespace TerraScale.Dashboard.Features.Usage
     public sealed class UsageMcpTools(IHttpContextAccessor http, AccountService accounts, SpendingService spending, IUsageMeasurements measurements, TimeProvider time)
     {
         [McpAccess(McpAccess.Read)]
-        [McpServerTool(Name = "get_usage", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true), Description("Read organization plan allowances and producer measurements for an authorized project/database. Missing measurements remain unavailable.")]
+        [McpServerTool(Name = "get_usage", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true, OutputSchemaType = typeof(UsageToolReport)), Description("Read organization plan allowances and producer measurements for an authorized project/database. Missing measurements remain unavailable.")]
         public async Task<CallToolResult> Read(string databaseId = "",
             [Description("1h, 24h, 7d, or 30d. Defaults to 7d; other values are rejected.")] string range = "7d",
             string? organizationId = null, string? projectId = null)
@@ -52,19 +52,19 @@ namespace TerraScale.Dashboard.Features.Usage
             var context = await AccountScope.RefreshAsync(accounts, scoped, Cancellation, requireProject: !scoped.Organization!.ContainsMember(scoped.UserId));
             if (range is not ("1h" or "24h" or "7d" or "30d"))
             {
-                return Failure("Choose 1h, 24h, 7d or 30d.");
+                throw new AccountAccessException("Choose 1h, 24h, 7d or 30d.", 400);
             }
 
             if (databaseId.Length > 0 && (context.Project is null || !context.Project.Databases.TryGetValue(databaseId, out var database) || database.ProjectId != context.Project.Id))
             {
-                return Failure("Database is unavailable.");
+                throw new AccountAccessException("Database is unavailable.", 404);
             }
 
             return UsageSelection.TryFor(context, context.Project?.Id ?? "", databaseId, range) switch
             {
                 UsageSelection selection => await ReportAsync(selection, databaseId, range),
-                NotFound failure => Failure(failure.Message ?? "Not found."),
-                Forbidden failure => Failure(failure.Message),
+                NotFound failure => throw new AccountAccessException(failure.Message ?? "Not found.", 404),
+                Forbidden failure => throw new AccountAccessException(failure.Message),
             };
         }
 
@@ -174,12 +174,6 @@ namespace TerraScale.Dashboard.Features.Usage
         {
             StructuredContent = JsonSerializer.SerializeToElement(report, UsageMcpJson.Default.UsageToolReport),
             Content = [new TextContentBlock { Text = JsonSerializer.Serialize(report, UsageMcpJson.Default.UsageToolReport) }]
-        };
-
-        private static CallToolResult Failure(string message) => new()
-        {
-            IsError = true,
-            Content = [new TextContentBlock { Text = message }]
         };
 
         private static UsageToolAllowance Allowance(string name, string? label, long limit, long? used)
