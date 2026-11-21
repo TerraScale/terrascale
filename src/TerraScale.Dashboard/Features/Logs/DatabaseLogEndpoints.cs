@@ -58,7 +58,7 @@ namespace TerraScale.Dashboard.Features.Logs
                 {
                     return deleted switch
                     {
-                        NotFound error => await PageAsync(http, context, databaseId, "", databases, backend, drains, error.Message ?? "Select a project.", 404),
+                        NotFound error => await PageAsync(http, context, databaseId, "", databases, backend, drains, error.Message!, 404),
                         Forbidden error => await PageAsync(http, context, databaseId, "", databases, backend, drains, error.Message, 403),
                         Done => throw new UnreachableException(),
                     };
@@ -71,7 +71,7 @@ namespace TerraScale.Dashboard.Features.Logs
                 {
                     return saved switch
                     {
-                        NotFound error => await PageAsync(http, context, databaseId, "", databases, backend, drains, error.Message ?? "Select a project.", 404),
+                        NotFound error => await PageAsync(http, context, databaseId, "", databases, backend, drains, error.Message!, 404),
                         Forbidden error => await PageAsync(http, context, databaseId, "", databases, backend, drains, error.Message, 403),
                         Validation error => await PageAsync(http, context, databaseId, "", databases, backend, drains, error.Message, 422),
                         Done => throw new UnreachableException(),

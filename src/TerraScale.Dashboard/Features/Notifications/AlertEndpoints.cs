@@ -74,7 +74,7 @@ namespace TerraScale.Dashboard.Features.Notifications
                     {
                         return deleted switch
                         {
-                            NotFound error => await PageAsync(http, context, rules, error.Message ?? "Alert rule is unavailable.", 404),
+                            NotFound error => await PageAsync(http, context, rules, error.Message!, 404),
                             Forbidden error => await PageAsync(http, context, rules, error.Message, 403),
                             Validation error => await PageAsync(http, context, rules, error.Message, 422),
                             Done => throw new UnreachableException(),
@@ -88,7 +88,7 @@ namespace TerraScale.Dashboard.Features.Notifications
                     {
                         return updated switch
                         {
-                            NotFound error => await PageAsync(http, context, rules, error.Message ?? "Alert rule is unavailable.", 404),
+                            NotFound error => await PageAsync(http, context, rules, error.Message!, 404),
                             Forbidden error => await PageAsync(http, context, rules, error.Message, 403),
                             Validation error => await PageAsync(http, context, rules, error.Message, 422),
                             Done => throw new UnreachableException(),
@@ -104,7 +104,7 @@ namespace TerraScale.Dashboard.Features.Notifications
                         {
                             Validation error => await PageAsync(http, context, rules, error.Message, 422),
                             Conflict error => await PageAsync(http, context, rules, error.Message, 409),
-                            NotFound error => await PageAsync(http, context, rules, error.Message ?? "Select a project.", 404),
+                            NotFound error => await PageAsync(http, context, rules, error.Message!, 404),
                             Forbidden error => await PageAsync(http, context, rules, error.Message, 403),
                             AlertRuleWithSecret => throw new UnreachableException(),
                         };

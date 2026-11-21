@@ -1,5 +1,4 @@
 using TerraScale.Dashboard.Errors;
-using TerraScale.Dashboard.Features.Organizations;
 
 namespace TerraScale.Dashboard.Features.Settings
 {
@@ -38,9 +37,7 @@ namespace TerraScale.Dashboard.Features.Settings
 
     public readonly union AuditRetentionSaved(Done, Validation, Forbidden);
 
-    public readonly union ProjectDeleted(Done, Validation, Conflict, Forbidden);
-
-    public sealed class SettingsService(AccountService accounts, ISettingsBackend backend, OrganizationLifecycleService lifecycle, TimeProvider time)
+    public sealed class SettingsService(AccountService accounts, ISettingsBackend backend, TimeProvider time)
     {
         public async Task<SettingsRead> ReadAsync(AccountContext context, CancellationToken cancellationToken)
         {
@@ -87,33 +84,6 @@ namespace TerraScale.Dashboard.Features.Settings
 
                 org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, "settings.audit_retention_updated", days.ToString(System.Globalization.CultureInfo.InvariantCulture), "setting", time.GetUtcNow()));
             }, cancellationToken);
-            return new Done();
-        }
-
-        public async Task<ProjectDeleted> DeleteProjectAsync(AccountContext context, string projectId, string confirmation, CancellationToken cancellationToken)
-        {
-            context = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);
-            if (!context.CanManage)
-            {
-                return new Forbidden("Organization management is required.");
-            }
-
-            if (context.Project!.Id != projectId)
-            {
-                return new Validation("Enter the selected project name exactly to confirm deletion.");
-            }
-
-            if (confirmation.Trim() != context.Project.Name)
-            {
-                return new Validation("Enter the selected project name exactly to confirm deletion.");
-            }
-
-            if (context.Project.IsDefault || context.Organization!.Projects.Count <= 1)
-            {
-                return new Conflict("The default or last project cannot be deleted.");
-            }
-
-            await lifecycle.DeleteProjectAsync(context, projectId, confirmation, cancellationToken);
             return new Done();
         }
     }

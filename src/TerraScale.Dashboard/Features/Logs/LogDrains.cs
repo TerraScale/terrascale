@@ -41,7 +41,16 @@ namespace TerraScale.Dashboard.Features.Logs
             }
 
             var (organization, project) = owner;
-            var target = CustomerUrls.Validate(url).OriginalString;
+            string target;
+            try
+            {
+                target = CustomerUrls.Validate(url).OriginalString;
+            }
+            catch (ArgumentException error) when (error.Message == CustomerUrls.Rule)
+            {
+                return new Validation(error.Message);
+            }
+
             var name = headerName?.Trim() is { Length: > 0 } text ? text : null;
             var value = headerValue?.Trim() is { Length: > 0 } secret ? secret : null;
             if (name is not null && (name.Length > 64 || !HeaderToken().IsMatch(name) || ReservedHeaders.Contains(name.ToLowerInvariant())) ||

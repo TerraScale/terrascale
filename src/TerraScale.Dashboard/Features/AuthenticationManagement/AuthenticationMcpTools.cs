@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using System.ComponentModel;
 using ModelContextProtocol.Server;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Platform.TsAuth;
@@ -95,7 +96,11 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         public async Task<TsAuthProjectOAuthClient> CreateClient(string name, string type, IReadOnlyList<string> redirectUris, string? organizationId = null, string? projectId = null)
         {
             _ = await Fresh(organizationId, projectId, true);
-            _ = AuthenticationConsole.Validated(AuthenticationConsole.NewClient(name, type, redirectUris));
+            _ = AuthenticationConsole.NewClient(name, type, redirectUris) switch
+            {
+                TsAuthProjectCreateOAuthClient => (object?)null,
+                Validation error => throw new AccountAccessException(error.Message, 422),
+            };
             throw StepUpFlow.Required();
         }
 
@@ -119,10 +124,17 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             // Omitted arguments keep their current value, so read the settings first.
             var current = await projects.GetSettingsAsync(context.Session, context.Project!.Id, Cancellation);
             var methods = passcode is null && password is null && signUpMode is null && magicLink is null && username is null ? null
-                : AuthenticationConsole.Validated(AuthenticationConsole.Methods(passcode ?? current.Methods.Passcode, password ?? current.Methods.Password, signUpMode ?? current.Methods.SignUpMode, magicLink ?? current.Methods.MagicLink, username ?? current.Methods.Username));
-            var validated = AuthenticationConsole.Validated(AuthenticationConsole.Branding(name ?? current.Branding.Name, logoUrl ?? current.Branding.LogoUrl, themeColor ?? current.Branding.ThemeColor));
+                : AuthenticationConsole.Methods(passcode ?? current.Methods.Passcode, password ?? current.Methods.Password, signUpMode ?? current.Methods.SignUpMode, magicLink ?? current.Methods.MagicLink, username ?? current.Methods.Username) switch
+                {
+                    TsAuthProjectMethods value => value,
+                    Validation error => throw new AccountAccessException(error.Message, 422),
+                };
             var branding = name is null && logoUrl is null && themeColor is null ? null
-                : current.Branding with { Name = validated.Name, LogoUrl = validated.LogoUrl, ThemeColor = validated.ThemeColor };
+                : AuthenticationConsole.Branding(name ?? current.Branding.Name, logoUrl ?? current.Branding.LogoUrl, themeColor ?? current.Branding.ThemeColor) switch
+                {
+                    TsAuthProjectBranding value => current.Branding with { Name = value.Name, LogoUrl = value.LogoUrl, ThemeColor = value.ThemeColor },
+                    Validation error => throw new AccountAccessException(error.Message, 422),
+                };
             return await projects.UpdateSettingsAsync(context.Session, context.Project!.Id, new(methods, branding), Cancellation);
         }
 
@@ -133,7 +145,11 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             string? keyId = null, string? organizationId = null, string? projectId = null, string? tenant = null, TsAuthProjectOAuth2? oauth2 = null)
         {
             var context = await Fresh(organizationId, projectId, true);
-            var update = AuthenticationConsole.Validated(AuthenticationConsole.Provider(provider, clientId, clientSecret, issuer, teamId, keyId, tenant, oauth2));
+            var update = AuthenticationConsole.Provider(provider, clientId, clientSecret, issuer, teamId, keyId, tenant, oauth2) switch
+            {
+                TsAuthProjectProviderUpdate value => value,
+                Validation error => throw new AccountAccessException(error.Message, 422),
+            };
             return await projects.SetProviderAsync(context.Session, context.Project!.Id, provider, update, Cancellation);
         }
 

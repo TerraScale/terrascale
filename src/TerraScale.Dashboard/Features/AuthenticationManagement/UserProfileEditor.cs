@@ -6,15 +6,6 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement;
 
 public static partial class AuthenticationConsole
 {
-    private static JsonElement Metadata(string? text)
-    {
-        return ProfileMetadata(text) switch
-        {
-            JsonElement value => value,
-            Validation error => throw new AccountAccessException(error.Message, 422),
-        };
-    }
-
     private static Valid<JsonElement> ProfileMetadata(string? text)
     {
         try

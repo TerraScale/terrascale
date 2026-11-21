@@ -125,7 +125,15 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                         await projects.UpdateSettingsAsync(session, project, new(OrganizationPicker: form.ContainsKey("organization_picker")), cancel);
                         break;
                     case ["settings"]:
-                        await projects.UpdateSettingsAsync(session, project, new(Validated(Methods(form["passcode"] == "on", form["password"] == "on", form["sign_up_mode"].ToString(), form["magic_link"] == "on", form["username"] == "on"))), cancel);
+                        switch (Methods(form["passcode"] == "on", form["password"] == "on", form["sign_up_mode"].ToString(), form["magic_link"] == "on", form["username"] == "on"))
+                        {
+                            case TsAuthProjectMethods methods:
+                                await projects.UpdateSettingsAsync(session, project, new(methods), cancel);
+                                break;
+                            case Validation error:
+                                return await SectionResultAsync(http, context, projects, key, error.Message, 422);
+                        }
+
                         break;
                     case ["attack-protection"]:
                         await projects.UpdateSettingsAsync(session, project, new(AttackProtection: new(
@@ -133,16 +141,39 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                             form["account_lockout"] == "on", form["new_device_email"] == "on")), cancel);
                         break;
                     case ["branding"]:
-                        await projects.UpdateSettingsAsync(session, project, new(Branding: Validated(HostedBranding(form))), cancel);
+                        switch (HostedBranding(form))
+                        {
+                            case TsAuthProjectBranding branding:
+                                await projects.UpdateSettingsAsync(session, project, new(Branding: branding), cancel);
+                                break;
+                            case Validation error:
+                                return await SectionResultAsync(http, context, projects, key, error.Message, 422);
+                        }
+
                         break;
                     case ["mfa-sessions"]:
-                        await projects.UpdateSettingsAsync(session, project, new(Configuration: Validated(await SecurityConfigurationAsync(projects, session, project, form, cancel))), cancel);
+                        switch (await SecurityConfigurationAsync(projects, session, project, form, cancel))
+                        {
+                            case TsAuthProjectConfiguration security:
+                                await projects.UpdateSettingsAsync(session, project, new(Configuration: security), cancel);
+                                break;
+                            case Validation error:
+                                return await SectionResultAsync(http, context, projects, key, error.Message, 422);
+                        }
+
                         break;
                     case ["configuration"]:
                         var currentConfiguration = (await projects.GetSettingsAsync(session, project, cancel)).Configuration ?? new([]);
-                        var updatedConfiguration = Validated(Configuration(form["redirect_urls"], form["session_lifetime_seconds"]));
-                        await projects.UpdateSettingsAsync(session, project, new(Configuration: currentConfiguration with
-                        { RedirectUrls = updatedConfiguration.RedirectUrls, SessionLifetimeSeconds = updatedConfiguration.SessionLifetimeSeconds }), cancel);
+                        switch (Configuration(form["redirect_urls"], form["session_lifetime_seconds"]))
+                        {
+                            case TsAuthProjectConfiguration updated:
+                                await projects.UpdateSettingsAsync(session, project, new(Configuration: currentConfiguration with
+                                { RedirectUrls = updated.RedirectUrls, SessionLifetimeSeconds = updated.SessionLifetimeSeconds }), cancel);
+                                break;
+                            case Validation error:
+                                return await SectionResultAsync(http, context, projects, key, error.Message, 422);
+                        }
+
                         break;
                     case ["danger", var family]:
                         if (form["confirmation"] != context.Project.Name)
@@ -171,28 +202,54 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
 
                         break;
                     case ["providers", var provider]:
-                        await projects.SetProviderAsync(session, project, provider, Validated(Provider(provider, form["client_id"], form["client_secret"], form["issuer"], form["team_id"], form["key_id"], form["tenant"], provider == "oauth2" ? new TsAuthProjectOAuth2(form["authorize_url"].ToString(), form["token_url"].ToString(), form["userinfo_url"].ToString(), form["scopes"].ToString(), form["id_claim"].ToString(), form["email_claim"].ToString(), form["email_verified_claim"].ToString()) : null)), cancel);
+                        switch (Provider(provider, form["client_id"], form["client_secret"], form["issuer"], form["team_id"], form["key_id"], form["tenant"], provider == "oauth2" ? new TsAuthProjectOAuth2(form["authorize_url"].ToString(), form["token_url"].ToString(), form["userinfo_url"].ToString(), form["scopes"].ToString(), form["id_claim"].ToString(), form["email_claim"].ToString(), form["email_verified_claim"].ToString()) : null))
+                        {
+                            case TsAuthProjectProviderUpdate update:
+                                await projects.SetProviderAsync(session, project, provider, update, cancel);
+                                break;
+                            case Validation error:
+                                return await SectionResultAsync(http, context, projects, key, error.Message, 422);
+                        }
+
                         break;
                     case ["providers", var provider, _]: await projects.DeleteProviderAsync(session, project, provider, cancel); break;
                     case ["clients"]:
-                        var request = Validated(NewClient(form["name"], form["type"], Lines(form["redirect_uris"]), form["allowed_scopes"], form["allowed_audiences"], form["token_lifetime_minutes"]));
+                        var request = NewClient(form["name"], form["type"], Lines(form["redirect_uris"]), form["allowed_scopes"], form["allowed_audiences"], form["token_lifetime_minutes"]);
+                        if (request is not TsAuthProjectCreateOAuthClient clientRequest)
+                        {
+                            return request switch
+                            {
+                                Validation error => await SectionResultAsync(http, context, projects, key, error.Message, 422),
+                                _ => throw new UnreachableException(),
+                            };
+                        }
+
                         var intent = StepUpFlow.Intent(http, context, "create_oauth_client");
                         if (intent is null)
                         {
                             return await StepUpFlow.StartAsync(http, context, "create_oauth_client", "ts-auth");
                         }
 
-                        var created = await projects.CreateClientAsync(session, project, request, intent.Challenge.Proof, cancel);
+                        var created = await projects.CreateClientAsync(session, project, clientRequest, intent.Challenge.Proof, cancel);
                         return await PageViewAsync(http, context, projects, "clients", created: created);
                     case ["clients", var id, "edit"]:
-                        var update = Validated(ClientUpdate(form["name"], Lines(form["redirect_uris"]), form["type"], form["allowed_scopes"], form["allowed_audiences"], form["token_lifetime_minutes"]));
+                        var editRequest = ClientUpdate(form["name"], Lines(form["redirect_uris"]), form["type"], form["allowed_scopes"], form["allowed_audiences"], form["token_lifetime_minutes"]);
+                        if (editRequest is not TsAuthProjectClientUpdate clientUpdate)
+                        {
+                            return editRequest switch
+                            {
+                                Validation error => await SectionResultAsync(http, context, projects, key, error.Message, 422),
+                                _ => throw new UnreachableException(),
+                            };
+                        }
+
                         var editIntent = StepUpFlow.Intent(http, context, "update_oauth_client");
                         if (editIntent is null)
                         {
                             return await StepUpFlow.StartAsync(http, context, "update_oauth_client", "ts-auth");
                         }
 
-                        await projects.UpdateClientAsync(session, project, id, update, editIntent.Challenge.Proof, cancel);
+                        await projects.UpdateClientAsync(session, project, id, clientUpdate, editIntent.Challenge.Proof, cancel);
                         break;
                     case ["clients", var id, "rotate"]:
                         var rotateIntent = StepUpFlow.Intent(http, context, "rotate_oauth_client");
@@ -205,14 +262,23 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                         return await PageViewAsync(http, context, projects, "clients", rotated: rotated);
                     case ["clients", var id, "delete"]: await projects.DeleteClientAsync(session, project, id, cancel); break;
                     case ["webhooks"]:
-                        var webhook = Validated(NewWebhook(form["url"], form["event_types"].Select(value => (string?)value)));
+                        var webhook = NewWebhook(form["url"], form["event_types"].Select(value => (string?)value));
+                        if (webhook is not TsAuthCreateWebhookEndpoint endpoint)
+                        {
+                            return webhook switch
+                            {
+                                Validation error => await SectionResultAsync(http, context, projects, key, error.Message, 422),
+                                _ => throw new UnreachableException(),
+                            };
+                        }
+
                         var createIntent = StepUpFlow.Intent(http, context, "create_webhook_endpoint");
                         if (createIntent is null)
                         {
                             return await StepUpFlow.StartAsync(http, context, "create_webhook_endpoint", "ts-auth");
                         }
 
-                        var registered = await projects.CreateWebhookEndpointAsync(session, project, webhook, createIntent.Challenge.Proof, cancel);
+                        var registered = await projects.CreateWebhookEndpointAsync(session, project, endpoint, createIntent.Challenge.Proof, cancel);
                         return await PageViewAsync(http, context, projects, "webhooks", createdWebhook: registered);
                     case ["webhooks", var id, "rotate"]:
                         var secretIntent = StepUpFlow.Intent(http, context, "rotate_webhook_secret");
@@ -229,9 +295,39 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                     case ["sessions", var id, _]: await projects.RevokeSessionAsync(session, project, id, cancel); break;
                     case ["users", var id, "sign-out"]: await projects.SignOutUserAsync(session, project, id, cancel); break;
                     case ["users", var id, "profile"]:
+                        var publicResult = ProfileMetadata(form["public_metadata"]);
+                        if (publicResult is not JsonElement publicMetadata)
+                        {
+                            return publicResult switch
+                            {
+                                Validation error => await SectionResultAsync(http, context, projects, key, error.Message, 422),
+                                _ => throw new UnreachableException(),
+                            };
+                        }
+
+                        var privateResult = ProfileMetadata(form["private_metadata"]);
+                        if (privateResult is not JsonElement privateMetadata)
+                        {
+                            return privateResult switch
+                            {
+                                Validation error => await SectionResultAsync(http, context, projects, key, error.Message, 422),
+                                _ => throw new UnreachableException(),
+                            };
+                        }
+
+                        var unsafeResult = ProfileMetadata(form["unsafe_metadata"]);
+                        if (unsafeResult is not JsonElement unsafeMetadata)
+                        {
+                            return unsafeResult switch
+                            {
+                                Validation error => await SectionResultAsync(http, context, projects, key, error.Message, 422),
+                                _ => throw new UnreachableException(),
+                            };
+                        }
+
                         await projects.UpdateUserAsync(session, project, id, new(Value(form["first_name"].ToString()), Value(form["last_name"].ToString()),
-                            Value(form["image_url"].ToString()), Value(form["external_id"].ToString()), Metadata(form["public_metadata"]),
-                            Metadata(form["private_metadata"]), Metadata(form["unsafe_metadata"])), cancel);
+                            Value(form["image_url"].ToString()), Value(form["external_id"].ToString()), publicMetadata,
+                            privateMetadata, unsafeMetadata), cancel);
                         return HttpRedirects.SeeOther("/auth/users?user=" + Uri.EscapeDataString(id) + "&saved=1");
                     case ["users", var id, "api-keys", var keyId, "revoke"]:
                         await projects.RevokeUserApiKeyAsync(session, project, id, keyId, cancel);
@@ -274,16 +370,6 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         // At least one first factor stays on; ts-auth enforces the same rule.
         private static string[] RestrictionList(string? value) =>
             (value ?? "").Split(['\n', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
-        internal static T Validated<T>(Valid<T> result)
-        {
-            return result switch
-            {
-                not null and T value => value,
-                Validation error => throw new AccountAccessException(error.Message, 422),
-                _ => throw new UnreachableException(),
-            };
-        }
 
         public static Valid<TsAuthProjectMethods> Methods(bool passcode, bool password, string signUpMode, bool magicLink = false, bool username = false)
         {
@@ -379,8 +465,11 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
 
             if (type == "machine")
             {
-                var policy = MachinePolicy(scopes, audiences, minutes);
-                return policy is Validation error ? new Valid<TsAuthProjectCreateOAuthClient>(error) : new NewClientPolicy(name.Trim(), type, AsPolicy(policy)).Client();
+                return MachinePolicy(scopes, audiences, minutes) switch
+                {
+                    MachinePolicyResult policy => new TsAuthProjectCreateOAuthClient(name.Trim(), type, [], policy.Scopes, policy.Audiences, policy.Minutes),
+                    Validation error => new Valid<TsAuthProjectCreateOAuthClient>(error),
+                };
             }
 
             if (uris.Length is < 1 or > 10)
@@ -429,8 +518,11 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
 
             if (type == "machine")
             {
-                var policy = MachinePolicy(scopes, audiences, minutes);
-                return policy is Validation error ? new Valid<TsAuthProjectClientUpdate>(error) : new NewClientPolicy(name.Trim(), type, AsPolicy(policy)).Update();
+                return MachinePolicy(scopes, audiences, minutes) switch
+                {
+                    MachinePolicyResult policy => new TsAuthProjectClientUpdate(name.Trim(), [], policy.Scopes, policy.Audiences, policy.Minutes),
+                    Validation error => new Valid<TsAuthProjectClientUpdate>(error),
+                };
             }
 
             if (uris.Length is < 1 or > 10)
@@ -452,29 +544,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             return new MachinePolicyResult(allowed, Lines(audiences), lifetime);
         }
 
-        private sealed record NewClientPolicy(string Name, string Type, MachinePolicyResult Policy)
-        {
-            public TsAuthProjectCreateOAuthClient Client()
-            {
-                return new(Name, Type, [], Policy.Scopes, Policy.Audiences, Policy.Minutes);
-            }
-
-            public TsAuthProjectClientUpdate Update()
-            {
-                return new(Name, [], Policy.Scopes, Policy.Audiences, Policy.Minutes);
-            }
-        }
-
         private sealed record MachinePolicyResult(IReadOnlyList<string> Scopes, IReadOnlyList<string> Audiences, int Minutes);
-
-        private static MachinePolicyResult AsPolicy(Valid<MachinePolicyResult> result)
-        {
-            return result switch
-            {
-                MachinePolicyResult value => value,
-                Validation => throw new UnreachableException(),
-            };
-        }
 
         [GeneratedRegex("^#[0-9a-f]{6}$")]
         private static partial Regex Color();

@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Platform.TsAuth;
 
@@ -9,11 +8,6 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         public static Valid<TsAuthProjectBranding> HostedBranding(IFormCollection form)
         {
             var basic = Branding(form["name"], form["logo_url"], form["theme_color"]);
-            if (basic is Validation brandingError)
-            {
-                return brandingError;
-            }
-
             var mode = form["default_theme"].ToString();
             if (mode.Length == 0)
             {
@@ -87,7 +81,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                     FooterLinks = footer,
                     EmailMessage = message.Length == 0 ? null : message
                 },
-                Validation => throw new UnreachableException(),
+                Validation error => error,
             };
         }
 
