@@ -45,7 +45,7 @@ public sealed partial class TerraScaleAuthClient
 
 
     private static Task<AuthOutcome> WithDeadlineAsync(Func<CancellationToken, Task<AuthOutcome>> operation, CancellationToken caller) =>
-        WithDeadlineAsync<AuthOutcome>(async token => { await operation(token).ConfigureAwait(false); return new Done(); }, caller);
+        WithDeadlineAsync<AuthOutcome>(async token => await operation(token).ConfigureAwait(false), caller);
 
     private static Task<AuthCompletion> WithDeadlineAsync(Func<CancellationToken, Task<AuthCompletion>> operation, CancellationToken caller) =>
         WithDeadlineAsync<AuthCompletion>(async token => await operation(token).ConfigureAwait(false), caller);

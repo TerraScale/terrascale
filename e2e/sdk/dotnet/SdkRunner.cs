@@ -124,6 +124,12 @@ public sealed class SdkRunner(TerraBaseSqlClient client, string project, string 
             _ => null,
         };
         Same(refusal is not null && (int?)refusal.Status is 403 ? "403" : "missing", "403", "read key cannot disable");
+        var signOutRefusal = await auth.Projects.SignOutUserAsync(read, project, user, cancellationToken) switch
+        {
+            AuthRefused refused => refused,
+            _ => null,
+        };
+        Same(signOutRefusal is not null && (int?)signOutRefusal.Status is 403 ? "403" : "missing", "403", "read key cannot sign out");
         Same(Ok(await auth.Projects.DisableUserAsync(write, project, user, cancellationToken)).Disabled ? "disabled" : "enabled", "disabled", "write key disables");
         Same(Ok(await auth.Projects.EnableUserAsync(write, project, user, cancellationToken)).Disabled ? "disabled" : "enabled", "enabled", "write key enables");
         var keyRecord = Ok(await auth.Projects.CreateUserApiKeyAsync(write, project, user, new("journey", ["invoices:read"]), cancellationToken));
