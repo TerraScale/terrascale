@@ -8,20 +8,6 @@ namespace TerraScale.Dashboard.Common.Databases
     public sealed partial class DatabaseService
     {
         // A write addressed by id must survive a listing gap: refresh once from TerraBase before refusing it.
-        public async Task<DatabaseRecord> RequireAsync(AccountContext context, string id, CancellationToken ct)
-        {
-            try
-            {
-                return Database(context, id);
-            }
-            catch (AccountAccessException error) when (error.StatusCode == 404 && context is { Project: not null, Organization: not null } &&
-                !PlatformDatabases.IsPlatform(context.Organization.Id) && !PlatformDatabases.Databases.ContainsKey(id))
-            {
-                var (_, database) = await LookupAsync(context, id, ct);
-                return database;
-            }
-        }
-
         // Discover one missing ID, never reconcile inventory. No name or caller-chosen project reaches the producer.
         public async Task<(AccountContext Context, DatabaseRecord Database)> LookupAsync(AccountContext context, string id, CancellationToken ct)
         {

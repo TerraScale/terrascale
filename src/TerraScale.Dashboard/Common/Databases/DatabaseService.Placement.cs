@@ -34,7 +34,7 @@ namespace TerraScale.Dashboard.Common.Databases
                     var everywhere = current.AllRegions && offered.Count > 0 &&
                         offered.All(code => chosen.Contains(DatabaseRegion.Resolve(catalog, code.Trim())?.Id ?? code.Trim().ToLowerInvariant()));
                     try { return await SavePlacementAsync(context, current, await backend.PlaceRegionsAsync(scope, route, id, everywhere ? [] : Capped(selected), everywhere, cancellationToken), "database.placement", cancellationToken); }
-                    catch (TerraBaseException error) when (error.ErrorCode == DatabaseRegionsCopyingException.Code)
+                    catch (TerraBaseException error) when (error.ErrorCode == RegionsCopying.Code)
                     {
                         ManagedDatabase pending;
                         try { pending = await backend.GetAsync(scope, route, id, cancellationToken); }

@@ -28,7 +28,7 @@ namespace TerraScale.Dashboard.Common.Databases
         {
             return error switch
             {
-                AccountAccessException or DatabaseWrongRegionException or DatabaseSqlException or SqlOutcomeUnknownException or DatabaseRegionsCopyingException => error.Message,
+                AccountAccessException or DatabaseWrongRegionException or DatabaseSqlException or SqlOutcomeUnknownException => error.Message,
                 TerraBaseException { ErrorCode: "operation_allowance" } => AllowanceUsed,
                 TerraBaseException { ErrorCode: MoveInProgress } => RegionsChanging,
                 TerraBaseException { ErrorCode: "name_taken" } => error.Message,
@@ -73,7 +73,6 @@ namespace TerraScale.Dashboard.Common.Databases
             return Results.Problem(Message(error), statusCode: Status(error), extensions: error switch
             {
                 SqlOutcomeUnknownException unknown => new Dictionary<string, object?> { ["operationId"] = unknown.AttemptId, ["outcome"] = "unknown" },
-                DatabaseRegionsCopyingException => new Dictionary<string, object?> { ["code"] = DatabaseRegionsCopyingException.Code },
                 DatabaseSqlException { Code: { } code } sql => new Dictionary<string, object?> { ["code"] = code, ["sqlstate"] = sql.Sqlstate },
                 _ when RetrySeconds(error) is { } seconds => new Dictionary<string, object?> { ["retryAfterSeconds"] = seconds },
                 TerraBaseException { ErrorCode: { Length: > 0 } code } => new Dictionary<string, object?> { ["code"] = code },
