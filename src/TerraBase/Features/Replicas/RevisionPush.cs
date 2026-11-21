@@ -1,8 +1,10 @@
 using System.Buffers.Binary;
 using System.Buffers;
+using System.Diagnostics;
 using System.Text.Json;
 using TerraBase.Engine.Revisions;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replicas;
 using TerraBase.Features.Sync;
@@ -10,6 +12,8 @@ using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Replicas;
+
+internal readonly union RevisionPushOutcome(RevisionPush, NotFound, StorageRefused);
 
 internal sealed class RevisionPush(IMemoryBudget memory, TenantContext database) : IRevisionPullSink, IDisposable
 {
@@ -27,30 +31,36 @@ internal sealed class RevisionPush(IMemoryBudget memory, TenantContext database)
 
     public RevisionPullResult? Result { get; private set; }
 
-    public static async ValueTask<RevisionPush?> BuildAsync(
+    public static async ValueTask<RevisionPushOutcome> BuildAsync(
         IDatabaseRevisions revisions, IMemoryBudget memory, TenantContext database, string? from, long committedAt, CancellationToken cancellationToken)
     {
         var push = new RevisionPush(memory, database);
         try
         {
-            if (await revisions.PullAsync(database, from, push, cancellationToken).ConfigureAwait(false) is not { } result)
+            switch (await revisions.PullAsync(database, from, push, cancellationToken).ConfigureAwait(false))
             {
-                push.Dispose();
-                return null;
+                case RevisionPullResult result:
+                    push.Result = result;
+                    push.Notice = new ReplicaRevisionNotice(database.OrganizationId, database.ProjectId!, database.DatabaseId!, committedAt, result.Revision.ToString(),
+                        push.HasPages ? from : null)
+                    { CdcPosition = result.CdcPosition };
+                    push.Payload = push.Seal(push.Notice);
+                    return push;
+                case NotFound:
+                    push.Dispose();
+                    return new NotFound();
+                case StorageRefused busy:
+                    push.Dispose();
+                    return busy;
             }
-
-            push.Result = result;
-            push.Notice = new ReplicaRevisionNotice(database.OrganizationId, database.ProjectId!, database.DatabaseId!, committedAt, result.Revision.ToString(),
-                push.HasPages ? from : null)
-            { CdcPosition = result.CdcPosition };
-            push.Payload = push.Seal(push.Notice);
-            return push;
         }
         catch
         {
             push.Dispose();
             throw;
         }
+
+        throw new UnreachableException();
     }
 
     public static bool TryRead(ReadOnlyMemory<byte> payload, out ReplicaRevisionNotice? notice, out ReadOnlyMemory<byte> answer)

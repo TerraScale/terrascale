@@ -253,28 +253,49 @@ internal sealed partial class RegionReplication(
                         continue;
                     }
 
-                    using var push = await RevisionPush.BuildAsync(revisions, memory, revised.Database, _published.GetValueOrDefault(key).Revision, revised.At, cancellationToken)
-                        .ConfigureAwait(false);
-                    if (!leaseGate.Serves(revised.Database.DatabaseId!) || !owners.Writer
-                        || push is not { Notice.Revision: { } revision, Result.Format: var format })
+                    switch (await RevisionPush.BuildAsync(revisions, memory, revised.Database, _published.GetValueOrDefault(key).Revision, revised.At, cancellationToken)
+                        .ConfigureAwait(false))
                     {
-                        continue;
-                    }
+                        case RevisionPush push:
+                            {
+                                try
+                                {
+                                    if (!leaseGate.Serves(revised.Database.DatabaseId!) || !owners.Writer
+                                        || push is not { Notice.Revision: { } revision, Result.Format: var format })
+                                    {
+                                        continue;
+                                    }
 
-                    if (_published.TryGetValue(key, out var last) && last.Revision == revision)
-                    {
-                        continue;
-                    }
+                                    if (_published.TryGetValue(key, out var last) && last.Revision == revision)
+                                    {
+                                        continue;
+                                    }
 
-                    _published[key] = (revision, revised.Database);
-                    foreach (var region in (placement.AllRegions ? _peers.Select(peer => peer.Region) : placement.Replicas).Append(options.Region).Distinct(StringComparer.Ordinal))
-                    {
-                        await nats.PublishAsync(ReplicaSubjects.Revision(region, options.Region, key.Database, format), push.Payload, cancellationToken: cancellationToken)
-                            .ConfigureAwait(false);
-                        if (push is { HasPages: true, Result: { } offered })
-                        {
-                            await revisions.RecordReplicaPullAsync(revised.Database, region, offered, cancellationToken).ConfigureAwait(false);
-                        }
+                                    _published[key] = (revision, revised.Database);
+                                    foreach (var region in (placement.AllRegions ? _peers.Select(peer => peer.Region) : placement.Replicas).Append(options.Region).Distinct(StringComparer.Ordinal))
+                                    {
+                                        await nats.PublishAsync(ReplicaSubjects.Revision(region, options.Region, key.Database, format), push.Payload, cancellationToken: cancellationToken)
+                                            .ConfigureAwait(false);
+                                        if (push is { HasPages: true, Result: { } offered })
+                                        {
+                                            await revisions.RecordReplicaPullAsync(revised.Database, region, offered, cancellationToken).ConfigureAwait(false);
+                                        }
+                                    }
+                                }
+                                finally
+                                {
+                                    push.Dispose();
+                                }
+
+                                break;
+                            }
+                        case NotFound:
+                            break;
+                        case StorageRefused busy:
+                            _ = _published.TryRemove(key, out _);
+                            _revised[key] = revised;
+                            logger.ZLogInformation($"A revision notice was not published: storage refused at {busy.At:@At}");
+                            break;
                     }
                 }
                 catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)

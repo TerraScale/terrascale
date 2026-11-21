@@ -9,7 +9,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Replicas;
 
-internal sealed class ReplicaChecksumEndpoint(ITenantDirectory tenants, IDatabaseRevisions revisions, HomeLeaseGate leaseGate, RegionalHandoff handoff) : EndpointWithoutRequest<IResult>
+internal sealed class ReplicaChecksumEndpoint(ITenantDirectory tenants, IDatabaseRevisions revisions, HomeLeaseGate leaseGate, RegionalHandoff handoff, StorageRefusals refusals) : EndpointWithoutRequest<IResult>
 {
     public override void Configure()
     {
@@ -67,17 +67,25 @@ internal sealed class ReplicaChecksumEndpoint(ITenantDirectory tenants, IDatabas
             return ErrorResponse.From(new Unavailable(DatabaseFencedException.Refusal));
         }
         HttpContext.Response.Headers.CacheControl = "no-store";
-        var round = await revisions.ChecksumAsync(database, revision, cursor, cancellationToken).ConfigureAwait(false);
+        IResult answer = await revisions.ChecksumAsync(database, revision, cursor, cancellationToken).ConfigureAwait(false) switch
+        {
+            RevisionChecksums round => TypedResults.Json(new ReplicaChecksumPage(round.Revision.ToString(), round.Ranges is null, round.Ranges ?? [], round.Next),
+                ReplicasJsonContext.Default.ReplicaChecksumPage),
+            NotFound error => ErrorResponse.From(error),
+            StorageRefused busy => Refused(busy),
+        };
+
         if (!leaseGate.Sources(database.DatabaseId!))
         {
             return ErrorResponse.From(new Unavailable(DatabaseFencedException.Refusal));
         }
-        return round switch
-        {
-            null => ErrorResponse.From(new NotFound("the database is not stored on this node")),
-            var value => TypedResults.Json(new ReplicaChecksumPage(value.Revision.ToString(), value.Ranges is null, value.Ranges ?? [], value.Next),
-                ReplicasJsonContext.Default.ReplicaChecksumPage),
-        };
+
+        return answer;
     }
 
+    private IResult Refused(StorageRefused busy)
+    {
+        refusals.Answered(HttpContext.RouteValue("database") as string, "storage_busy", busy.At);
+        return ErrorResponse.From(new Unavailable("storage is busy; retry later", "storage_busy"));
+    }
 }

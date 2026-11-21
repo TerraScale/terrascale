@@ -1220,7 +1220,7 @@ internal sealed class SqlSession(
 
     private SqlError StorageRefused(StorageBusyException busy)
     {
-        refusals.Answered(database.DatabaseId, SqlErrors.SerializationConflict, busy);
+        refusals.Answered(database.DatabaseId, SqlErrors.SerializationConflict, busy.At);
         return SqlErrors.Busy("the database is busy; retry");
     }
 

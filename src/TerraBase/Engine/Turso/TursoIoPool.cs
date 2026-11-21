@@ -175,6 +175,21 @@ internal sealed class TursoIoPool : TursoRunner, IAsyncDisposable
         }
     }
 
+    internal bool TryAdmit(out StorageBusyException busy)
+    {
+        try
+        {
+            Admit();
+            busy = null!;
+            return true;
+        }
+        catch (StorageBusyException refusal)
+        {
+            busy = refusal;
+            return false;
+        }
+    }
+
     public void Release()
     {
         if (Interlocked.Decrement(ref _admitted) == 0 && Volatile.Read(ref _closed) != 0)
