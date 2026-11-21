@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using ZLogger;
 
@@ -21,7 +22,12 @@ public sealed class DeleteProjectProviderEndpoint(TenantDirectory tenants, Proje
     {
         ArgumentNullException.ThrowIfNull(caller);
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
-        var provider = this.HttpContext.GetRouteValue("provider") is string name && SocialProviders.Names.Contains(name) ? name : throw PlatformDirectory.NotFound();
+        if (this.HttpContext.GetRouteValue("provider") is not string name || !SocialProviders.Names.Contains(name))
+        {
+            return ErrorResults.ToResult(new NotFound("No such resource.", "not_found"));
+        }
+
+        var provider = name;
 
         var updated = await settings.UpdateAsync(projectId, current => current with { Providers = [.. (current.Providers ?? []).Where(other => other.Provider != provider)] }, cancellationToken);
         logger.ZLogInformation($"Audit: user {caller.Id:@UserId} removed the {provider:@Provider} sign-in provider of project {projectId:@ProjectId}");
