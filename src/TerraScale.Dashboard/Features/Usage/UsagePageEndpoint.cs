@@ -1,3 +1,4 @@
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Platform.Datastar;
@@ -5,6 +6,7 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard.Features.Usage
 {
+    using NotFound = TerraScale.Dashboard.Errors.NotFound;
     public sealed class UsagePageEndpoint(DashboardSessions sessions, AccountService accounts, UsageService usage) : EndpointWithoutRequest<IResult>
     {
         public override void Configure() => Get("/usage");
@@ -23,30 +25,34 @@ namespace TerraScale.Dashboard.Features.Usage
                 return HttpRedirects.SeeOther("/organization" + http.Request.QueryString);
             }
 
-            try
+            var tab = http.Request.Query["tab"] == "settings" ? "settings" : "overview";
+            return UsageSelection.TryFor(context, http.Request.Query["project"].ToString(), http.Request.Query["database"].ToString(), http.Request.Query["range"].ToString()) switch
             {
-                var selection = UsageSelection.For(context, http.Request.Query["project"].ToString(), http.Request.Query["database"].ToString(), http.Request.Query["range"].ToString());
-                var tab = http.Request.Query["tab"] == "settings" ? "settings" : "overview";
-                if (!selection.Member && tab == "settings")
-                {
-                    return Results.Text("Organization membership is required.", statusCode: 403);
-                }
-                if (selection.Context.Project is null && tab == "overview")
-                {
-                    return HttpRedirects.SeeOther("/");
-                }
+                UsageSelection selection => await PageAsync(http, usage, selection, tab),
+                NotFound failure => Results.Text(failure.Message ?? "Not found.", statusCode: 404),
+                Forbidden failure => Results.Text(failure.Message, statusCode: 403),
+            };
+        }
 
-                var page = await usage.LoadAsync(ShellModel.For(http, selection.Context, "Usage"), selection, tab, http.Request.Query["saved"].ToString(), http.RequestAborted);
-                if (http.Request.IsDatastarRequest)
-                {
-                    await DatastarEvents.PatchElementsAsync(http, UsagePageView.Create(page));
-                    return Results.Empty;
-                }
-
-                return UsageView.Create(page);
+        private static async Task<IResult> PageAsync(HttpContext http, UsageService usage, UsageSelection selection, string tab)
+        {
+            if (!selection.Member && tab == "settings")
+            {
+                return Results.Text("Organization membership is required.", statusCode: 403);
             }
-            catch (AccountAccessException error) { return Results.Text(error.Message, statusCode: error.StatusCode); }
-            catch (IOException) { return Results.Text("Could not load usage.", statusCode: 503); }
+            if (selection.Context.Project is null && tab == "overview")
+            {
+                return HttpRedirects.SeeOther("/");
+            }
+
+            var page = await usage.LoadAsync(ShellModel.For(http, selection.Context, "Usage"), selection, tab, http.Request.Query["saved"].ToString(), http.RequestAborted);
+            if (http.Request.IsDatastarRequest)
+            {
+                await DatastarEvents.PatchElementsAsync(http, UsagePageView.Create(page));
+                return Results.Empty;
+            }
+
+            return UsageView.Create(page);
         }
     }
 }

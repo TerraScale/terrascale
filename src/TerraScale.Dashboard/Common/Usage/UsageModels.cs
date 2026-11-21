@@ -1,42 +1,71 @@
 using TerraScale.Dashboard.Common.Accounts;
+using TerraScale.Dashboard.Errors;
 
 namespace TerraScale.Dashboard.Common.Usage
 {
+    public readonly union UsageSelectionResult(UsageSelection, NotFound, Forbidden);
+
     public sealed record UsageSelection(AccountContext Context, string Range, string DatabaseId, bool ExplicitProjectFilter)
     {
         public bool Member { get; init; } = true;
         public static UsageSelection For(AccountContext context, string projectId, string databaseId, string range)
         {
+            return TryFor(context, projectId, databaseId, range) switch
+            {
+                UsageSelection selection => selection,
+                NotFound failure => throw new AccountAccessException(failure.Message ?? "Not found.", 404),
+                Forbidden failure => throw new AccountAccessException(failure.Message ?? "Forbidden."),
+            };
+        }
+
+        public static UsageSelectionResult TryFor(AccountContext context, string projectId, string databaseId, string range)
+        {
             if (context.Session.UserId != context.UserId)
             {
-                throw new AccountAccessException("Organization membership is required.");
+                return new Forbidden("Organization membership is required.");
             }
 
-            var org = projectId.Length > 0
-                ? context.Organizations.FirstOrDefault(item => item.Projects.ContainsKey(projectId))
-                    ?? throw new AccountAccessException("Project is unavailable.", 404)
-                : context.Organization ?? throw new AccountAccessException("Selected organization is unavailable.");
+            OrganizationRecord org;
+            if (projectId.Length > 0)
+            {
+                if (context.Organizations.FirstOrDefault(item => item.Projects.ContainsKey(projectId)) is not { } byProject)
+                {
+                    return new NotFound("Project is unavailable.");
+                }
+
+                org = byProject;
+            }
+            else if (context.Organization is { } selected)
+            {
+                org = selected;
+            }
+            else
+            {
+                return new Forbidden("Selected organization is unavailable.");
+            }
+
             var member = org.ContainsMember(context.UserId);
             var project = projectId.Length == 0 ? context.Project : org.Projects[projectId];
             if (project is not null && (project.OrganizationId != org.Id || !org.Projects.ContainsKey(project.Id)))
             {
-                throw new AccountAccessException("Project is unavailable.", 404);
+                return new NotFound("Project is unavailable.");
             }
 
             if (!member && (projectId.Length == 0 || !ProjectCollaborator.Allows(org, project)))
             {
-                throw new AccountAccessException("Organization membership is required.");
+                return new Forbidden("Organization membership is required.");
             }
 
             if (databaseId.Length > 0 && (project is null || !project.Databases.TryGetValue(databaseId, out var database) || database.ProjectId != project.Id))
             {
-                throw new AccountAccessException("Database is unavailable.", 404);
+                return new NotFound("Database is unavailable.");
             }
 
-            return new(context with { Organization = org, Project = project }, range is "1h" or "24h" or "30d" ? range : "7d", databaseId, project is not null && project.Id == projectId)
+            var selection = new UsageSelection(context with { Organization = org, Project = project }, range is "1h" or "24h" or "30d" ? range : "7d", databaseId, project is not null && project.Id == projectId)
             {
                 Member = member
             };
+            return new(selection);
         }
         public string RangeLabel => Range switch { "1h" => "Current UTC hour", "24h" => "Last 24 hours", "30d" => "Last 30 days", _ => "Last 7 days" };
         public static (string Granularity, DateTimeOffset From) Buckets(string range, DateTimeOffset now)

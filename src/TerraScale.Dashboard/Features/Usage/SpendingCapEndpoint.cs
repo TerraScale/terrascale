@@ -1,10 +1,12 @@
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard.Features.Usage
 {
+    using NotFound = TerraScale.Dashboard.Errors.NotFound;
     public sealed class SpendingCapEndpoint(DashboardSessions sessions, AccountService accounts, SpendingService spending, UsageService usage) : EndpointWithoutRequest<IResult>
     {
         public override void Configure() => Post("/api/v1/dashboard/usage/spending-cap");
@@ -48,7 +50,16 @@ namespace TerraScale.Dashboard.Features.Usage
 
             var context = await AccountRequest.RequireAsync(http, sessions, accounts) ?? throw new AccountAccessException("Sign in again.");
             var tab = http.Request.Query["tab"].ToString() == "overview" ? "overview" : "settings";
-            var selection = UsageSelection.For(context, http.Request.Query["project"].ToString(), http.Request.Query["database"].ToString(), http.Request.Query["range"].ToString());
+            return UsageSelection.TryFor(context, http.Request.Query["project"].ToString(), http.Request.Query["database"].ToString(), http.Request.Query["range"].ToString()) switch
+            {
+                UsageSelection selection => await PatchAsync(http, usage, selection, tab, saved),
+                NotFound failure => ErrorResults.ToResult(http, failure),
+                Forbidden failure => ErrorResults.ToResult(http, failure),
+            };
+        }
+
+        private static async Task<IResult> PatchAsync(HttpContext http, UsageService usage, UsageSelection selection, string tab, string saved)
+        {
             var page = await usage.LoadAsync(ShellModel.For(http, selection.Context, "Usage"), selection, tab, saved, http.RequestAborted);
             await DatastarEvents.PatchElementsAsync(http, UsagePageView.Create(page));
             return Results.Empty;
