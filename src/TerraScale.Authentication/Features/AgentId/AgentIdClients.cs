@@ -187,7 +187,8 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
         return caller.ActingAgentId is null && caller.InstanceId == PlatformTenant.Id
             ? caller
             : new Forbidden("Only the account itself, not an agent acting for it, can do this.", "owner_required");
-    }    public static string? RedirectUri(string? value) =>
+    }
+    public static string? RedirectUri(string? value) =>
         value is { Length: > 0 and <= AgentIdClientRecord.MaxRedirectUriLength } && Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps
             && uri.UserInfo.Length == 0 && uri.Fragment.Length == 0 && uri.HostNameType is UriHostNameType.Dns or UriHostNameType.IPv4 or UriHostNameType.IPv6
             && string.Equals(uri.AbsoluteUri, value, StringComparison.Ordinal)
