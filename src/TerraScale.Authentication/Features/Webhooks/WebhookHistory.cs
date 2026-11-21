@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Storage;
 using TerraScale.DotNet;
 
@@ -28,11 +29,11 @@ public sealed class WebhookHistory(AuthData data, WebhookOutbox outbox, TimeProv
     public static WebhookEventBody Body(WebhookOutboxRecord row) => new(row.EventId, row.EventType, row.OccurredAt,
         new(row.UserId, row.Email, row.Provider, row.SessionId, row.EndpointId, row.ActorId, row.Reason, row.OrganizationId, row.OrganizationRole, row.AgentId, row.AgentKeyId));
 
-    public async Task<WebhookEventPage> EventsAsync(string projectId, string? after, int limit, CancellationToken cancellationToken)
+    public async Task<Valid<WebhookEventPage>> EventsAsync(string projectId, string? after, int limit, CancellationToken cancellationToken)
     {
         if (!string.IsNullOrEmpty(after) && !TerraScaleIds.IsValid(after))
         {
-            throw new ApiException(400, "invalid_request", "after must be an event ULID.");
+            return new Validation("after must be an event ULID.", "invalid_request");
         }
 
         var rows = await data.ReadAsync((db, token) => db.WebhookOutbox
@@ -43,12 +44,16 @@ public sealed class WebhookHistory(AuthData data, WebhookOutbox outbox, TimeProv
                 """)
             .Where(row => row.ProjectId == projectId && (after == null || after == "" || string.Compare(row.EventId, after) > 0))
             .OrderBy(row => row.EventId).Take(limit + 1).ToListAsync(token), cancellationToken).ConfigureAwait(false);
-        return new([.. rows.Take(limit).Select(Body)], rows.Count > limit ? rows[limit - 1].EventId : null);
+        return new WebhookEventPage([.. rows.Take(limit).Select(Body)], rows.Count > limit ? rows[limit - 1].EventId : null);
     }
 
-    public async Task<WebhookDeliveryPage> DeliveriesAsync(string projectId, string endpointId, CancellationToken cancellationToken)
+    public async Task<Found<WebhookDeliveryPage>> DeliveriesAsync(string projectId, string endpointId, CancellationToken cancellationToken)
     {
-        await this.EndpointAsync(projectId, endpointId, cancellationToken).ConfigureAwait(false);
+        if (await this.EndpointAsync(projectId, endpointId, cancellationToken).ConfigureAwait(false) is not { } endpoint)
+        {
+            return new NotFound("No such endpoint.");
+        }
+        _ = endpoint;
         var rows = await data.ReadAsync((db, token) =>
             (from delivery in db.WebhookDeliveries.Where(row => row.ProjectId == projectId && row.EndpointId == endpointId)
                 .OrderByDescending(row => row.Id).Take(20)
@@ -62,7 +67,7 @@ public sealed class WebhookHistory(AuthData data, WebhookOutbox outbox, TimeProv
                 [.. group.Select(item => item.Attempt).OfType<WebhookAttemptRecord>().OrderByDescending(attempt => attempt.Id).Take(10)]);
         }).ToList();
 
-        return new(items, null);
+        return new WebhookDeliveryPage(items, null);
     }
 
     public async Task ReplayAsync(string projectId, string endpointId, string deliveryId, CancellationToken cancellationToken)
