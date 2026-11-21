@@ -83,14 +83,12 @@ internal sealed class ShapeCrypto(DataKeys? keys, IShapeKeyRetention retention, 
         {
             string id;
             byte[] dataKey;
-            try
-            {
-                (id, dataKey) = await store.CurrentAsync(scope, cancellationToken).ConfigureAwait(false);
-            }
-            catch (DatabaseShreddedException)
+            if (await store.CurrentAsync(scope, cancellationToken).ConfigureAwait(false) is not DataKey { Id: var currentId, Key: var currentKey })
             {
                 return new NotFound();
             }
+            id = currentId;
+            dataKey = currentKey;
 
             if (id == keyId && epoch == CurrentEpoch)
             {
@@ -105,10 +103,13 @@ internal sealed class ShapeCrypto(DataKeys? keys, IShapeKeyRetention retention, 
 
         try
         {
-            return new ShapeEpochKey(handle, epoch, keyId,
-                EpochKey(await store.GetAsync(scope, keyId, cancellationToken).ConfigureAwait(false), handle, epoch));
+            if (await store.GetAsync(scope, keyId, cancellationToken).ConfigureAwait(false) is not KeyBytes { Key: { } epochKey })
+            {
+                return new NotFound();
+            }
+            return new ShapeEpochKey(handle, epoch, keyId, EpochKey(epochKey, handle, epoch));
         }
-        catch (Exception error) when (error is InvalidDataException or DatabaseShreddedException)
+        catch (Exception error) when (error is InvalidDataException)
         {
             return new NotFound();
         }
@@ -122,7 +123,10 @@ internal sealed class ShapeCrypto(DataKeys? keys, IShapeKeyRetention retention, 
             return new Unavailable("shape keys need the database data key store");
         }
 
-        var (id, dataKey) = await store.CurrentAsync(Scope(database), cancellationToken).ConfigureAwait(false);
+        if (await store.CurrentAsync(Scope(database), cancellationToken).ConfigureAwait(false) is not DataKey { Id: var id, Key: var dataKey })
+        {
+            return new Unavailable("shape keys need the database data key store");
+        }
         var epoch = CurrentEpoch;
         return new ShapeEpochKey(handle, epoch, id, EpochKey(dataKey, handle, epoch));
     }

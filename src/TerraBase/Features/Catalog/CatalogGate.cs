@@ -171,11 +171,10 @@ internal sealed class CatalogGate(
                 var found = await anchors.ReadAsync(AnchorKey, async (stream, token) =>
                 {
                     using var plain = new AnchorBody();
-                    await BackupObject.ReadAsync(stream, plain, AnchorKey, id =>
-                    {
-                        _step = ("read", BackupLayout.Key(KeyScope, id));
-                        return keys.GetAsync(KeyScope, id, token);
-                    }, token).ConfigureAwait(false);
+                    await BackupObject.ReadAsync(stream, plain, AnchorKey, async id =>
+                        await keys.GetAsync(KeyScope, id, token).ConfigureAwait(false) is KeyBytes { Key: var anchorKey }
+                            ? new KeyBytes(anchorKey)
+                            : throw new InvalidDataException(DataKeys.MissingKeyMessage), token).ConfigureAwait(false);
                     using var document = JsonDocument.Parse(plain.ToArray());
                     var root = document.RootElement;
                     if (root.GetProperty("version").GetInt32() != 2
@@ -310,7 +309,10 @@ internal sealed class CatalogGate(
 
             body.Position = 0;
             _step = ("current data key", KeyScope);
-            var (keyId, dataKey) = await keys.CurrentAsync(KeyScope, cancellationToken).ConfigureAwait(false);
+            if (await keys.CurrentAsync(KeyScope, cancellationToken).ConfigureAwait(false) is not DataKey { Id: var keyId, Key: var dataKey })
+            {
+                throw new IOException("the catalog restore anchor cannot be sealed: the catalog key scope is shredded");
+            }
             using var sealedAnchor = new MemoryStream();
             await BackupObject.WriteAsync(body, sealedAnchor, AnchorKey, keyId, dataKey, cancellationToken).ConfigureAwait(false);
             sealedAnchor.Position = 0;

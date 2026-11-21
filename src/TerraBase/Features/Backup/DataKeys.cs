@@ -8,6 +8,16 @@ using TerraBase.Primitives;
 
 namespace TerraBase.Features.Backup;
 
+internal readonly record struct DataKey(string Id, byte[] Key);
+
+internal sealed record Shredded(DateTimeOffset? ShreddedAt);
+
+internal readonly union DataKeyResult(DataKey, Shredded);
+
+internal sealed record KeyBytes(byte[] Key);
+
+internal readonly union DataKeyRead(KeyBytes, Shredded);
+
 internal sealed class DataKeys : IDisposable
 {
     private readonly IObjectStore _store;
@@ -57,7 +67,7 @@ internal sealed class DataKeys : IDisposable
 
     internal ChannelReader<string> Refreshes => _refreshes.Reader;
 
-    internal Task<(string Id, byte[] Key)> ForSealingAsync(string scope, CancellationToken cancellationToken)
+    internal Task<DataKeyResult> ForSealingAsync(string scope, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (_current.TryGetValue(scope, out CurrentKey? current) && current is not null && Fresh(current.Id))
@@ -72,7 +82,7 @@ internal sealed class DataKeys : IDisposable
                     }
                 }
             }
-            return Task.FromResult((current.Id, current.Key));
+            return Task.FromResult<DataKeyResult>(new DataKey(current.Id, current.Key));
         }
         return CurrentAsync(scope, cancellationToken);
     }
@@ -92,11 +102,11 @@ internal sealed class DataKeys : IDisposable
         }
     }
 
-    public async Task<(string Id, byte[] Key)> CurrentAsync(string scope, CancellationToken cancellationToken)
+    public async Task<DataKeyResult> CurrentAsync(string scope, CancellationToken cancellationToken)
     {
         if (Current(scope) is { } cached)
         {
-            return (cached.Id, cached.Key);
+            return new DataKey(cached.Id, cached.Key);
         }
 
         var gate = Gate(_selectionGates, scope);
@@ -108,7 +118,7 @@ internal sealed class DataKeys : IDisposable
             admitted = true;
             if (Current(scope) is { } selected)
             {
-                return (selected.Id, selected.Key);
+                return new DataKey(selected.Id, selected.Key);
             }
 
             _current.TryGetValue(scope, out CurrentKey? previous);
@@ -127,7 +137,7 @@ internal sealed class DataKeys : IDisposable
                     var candidate = item.Key[prefix.Length..];
                     if (candidate == BackupLayout.ShreddedName)
                     {
-                        throw new DatabaseShreddedException((await ShredRecords.ReadAsync(_store, scope, cancellationToken).ConfigureAwait(false))?.ShreddedAt);
+                        return new Shredded((await ShredRecords.ReadAsync(_store, scope, cancellationToken).ConfigureAwait(false))?.ShreddedAt);
                     }
 
                     if (TryParseKey(candidate, out var candidateKey) && NotFuture(candidateKey))
@@ -143,13 +153,17 @@ internal sealed class DataKeys : IDisposable
             {
                 if (id is not null && Fresh(id))
                 {
-                    key = await ReadKeyAsync(scope, id, cancellationToken).ConfigureAwait(false);
+                    if (await ReadKeyAsync(scope, id, cancellationToken).ConfigureAwait(false) is not KeyBytes { Key: var readKey })
+                    {
+                        return new Shredded(null);
+                    }
+                    key = readKey;
                 }
                 else
                 {
                     if (_freshKey && await ShredRecords.ReadAsync(_store, scope, cancellationToken).ConfigureAwait(false) is { } priorShred)
                     {
-                        throw new DatabaseShreddedException(priorShred.ShreddedAt);
+                        return new Shredded(priorShred.ShreddedAt);
                     }
 
                     var (generated, wrapped) = await _master.GenerateDataKeyAsync(cancellationToken).ConfigureAwait(false);
@@ -167,7 +181,7 @@ internal sealed class DataKeys : IDisposable
                 if (await ShredRecords.ReadAsync(_store, scope, cancellationToken).ConfigureAwait(false) is { } shredded)
                 {
                     _ = await _store.DeleteAsync(BackupLayout.Key(scope, id), cancellationToken).ConfigureAwait(false);
-                    throw new DatabaseShreddedException(shredded.ShreddedAt);
+                    return new Shredded(shredded.ShreddedAt);
                 }
 
                 lock (_cacheAdmission)
@@ -177,7 +191,7 @@ internal sealed class DataKeys : IDisposable
                     Cache(_current, scope, new CurrentKey(id, key, _time.GetUtcNow()));
                 }
                 retained = true;
-                return (id, key);
+                return new DataKey(id, key);
             }
             finally
             {
@@ -197,17 +211,17 @@ internal sealed class DataKeys : IDisposable
         }
     }
 
-    public Task<byte[]> GetAsync(string scope, string id, CancellationToken cancellationToken) =>
+    public Task<DataKeyRead> GetAsync(string scope, string id, CancellationToken cancellationToken) =>
         ReadKeyAsync(scope, id, cancellationToken);
 
     public Task<ShredRecord?> ShreddedAsync(string scope, CancellationToken cancellationToken) =>
         ShredRecords.ReadAsync(_store, scope, cancellationToken);
 
-    private async Task<byte[]> ReadKeyAsync(string scope, string id, CancellationToken cancellationToken)
+    private async Task<DataKeyRead> ReadKeyAsync(string scope, string id, CancellationToken cancellationToken)
     {
         if (Cached(scope, id) is { } cached)
         {
-            return cached;
+            return new KeyBytes(cached);
         }
 
         var gate = Gate(_keyGates, BackupLayout.Key(scope, id));
@@ -219,13 +233,13 @@ internal sealed class DataKeys : IDisposable
             admitted = true;
             if (Cached(scope, id) is { } selected)
             {
-                return selected;
+                return new KeyBytes(selected);
             }
 
             if (await ShredRecords.ReadAsync(_store, scope, cancellationToken).ConfigureAwait(false) is { } priorShred)
             {
                 Forget(scope);
-                throw new DatabaseShreddedException(priorShred.ShreddedAt);
+                return new Shredded(priorShred.ShreddedAt);
             }
 
             if (_waitForReadSlot)
@@ -255,7 +269,7 @@ internal sealed class DataKeys : IDisposable
                     {
                         if (await ShredRecords.ReadAsync(_store, scope, cancellationToken).ConfigureAwait(false) is { } shredded)
                         {
-                            throw new DatabaseShreddedException(shredded.ShreddedAt);
+                            return new Shredded(shredded.ShreddedAt);
                         }
 
                         throw new InvalidDataException(MissingKeyMessage);
@@ -268,7 +282,7 @@ internal sealed class DataKeys : IDisposable
                         {
                             CheckGeneration(generation);
                             Cache(_keys, (scope, id), key);
-                            return key;
+                            return new KeyBytes(key);
                         }
                     }
                     catch
