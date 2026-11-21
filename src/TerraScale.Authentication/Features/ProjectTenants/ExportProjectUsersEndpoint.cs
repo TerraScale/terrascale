@@ -98,8 +98,7 @@ public sealed class ExportProjectUsersEndpoint(TenantDirectory tenants, Platform
         if (!await data.SaveAsync(platform.Audit(project.Value.OrganizationId, caller.Id, "project.users_exported", projectId,
             $"{(format == "csv" ? "csv" : "json")}/{items.Length.ToString(CultureInfo.InvariantCulture)}"), cancellationToken))
         {
-            return ErrorResults.ToResult(new Unavailable("The storage engine is unavailable; retry shortly.", "temporarily_unavailable",
-                new Dictionary<string, string> { ["retry_after"] = "2" }));
+            throw ApiException.Unavailable();
         }
 
         this.HttpContext.Response.Headers["X-Export-Created-Before"] = cutoff.ToString("O", CultureInfo.InvariantCulture);
