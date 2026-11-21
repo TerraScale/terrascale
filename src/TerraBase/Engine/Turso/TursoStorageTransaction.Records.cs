@@ -59,7 +59,10 @@ internal sealed partial class TursoStorageTransaction
             RequireSystem();
             ThrowIfReadOnly();
             ArgumentException.ThrowIfNullOrEmpty(id);
-            var body = StrictJson.Read(json, requireObject: false);
+            if (StrictJson.Read(json, requireObject: false) is not string body)
+            {
+                throw new InvalidDataException("a stored record body is not strict JSON");
+            }
             if (EnvelopeKind(kind))
             {
                 var key = store.Encryption.Keyring.Unwrap(EnvelopeWrappedKey(kind, json));
