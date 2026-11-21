@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -17,6 +18,14 @@ public sealed class CreateUserApiKeyEndpoint(TenantDirectory tenants, PlatformAu
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(UserApiKeyJson.Default.UserApiKeyRequest, cancellationToken);
-        return Results.Json(await keys.CreateAsync(project, this.RouteId("user"), caller.Id, request, null, cancellationToken), UserApiKeyJson.Default.UserApiKeyBody, statusCode: 201);
+        return await keys.CreateAsync(project, this.RouteId("user"), caller.Id, request, null, cancellationToken) switch
+        {
+            UserApiKeyBody key => Results.Json(key, UserApiKeyJson.Default.UserApiKeyBody, statusCode: 201),
+            Validation error => ErrorResults.ToResult(error),
+            NotFound error => ErrorResults.ToResult(error),
+            Forbidden error => ErrorResults.ToResult(error),
+            QuotaExceeded error => ErrorResults.ToResult(error),
+            Conflict error => ErrorResults.ToResult(error),
+        };
     }
 }

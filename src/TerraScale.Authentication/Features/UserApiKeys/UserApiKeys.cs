@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.RateLimiting;
@@ -30,8 +31,23 @@ public sealed record UserApiKeyBody(string Id, string UserId, string Name, strin
 public sealed record UserApiKeyPageBody(IReadOnlyList<UserApiKeyBody> Items);
 public sealed record VerifyUserApiKeyBody(bool Valid, string? UserId = null, IReadOnlyList<string>? Scopes = null, string? KeyId = null, DateTimeOffset? ExpiresAt = null);
 
+public readonly union PolicySet(UserApiKeyPolicyBody, Validation, Conflict);
+
+public readonly union UserKeyCreated(UserApiKeyBody, Validation, NotFound, Forbidden, QuotaExceeded, Conflict);
+
+public readonly union KeyRevoked(Done, NotFound, Conflict);
+
+public readonly union KeyVerified(VerifyUserApiKeyBody, QuotaExceeded);
+
 public sealed class UserApiKeys(AuthData data, PlatformDirectory platform, WebhookOutbox outbox, AttemptLimiter limiter, TimeProvider clock)
 {
+    internal const string Changed = "The user or key policy changed concurrently.";
+
+    internal const string InvalidRequest = "Supply a name, 1 to 64 unique scopes from the project's user key policy, and an optional future expiry.";
+
+    internal static Validation Invalid() => new(InvalidRequest, "invalid_request");
+
+    internal static Conflict Refused() => new(Changed, "version_conflict");
     public static UserApiKeyBody Body(UserApiKeyRecord key, string? secret = null) =>
         new(key.Id, key.UserId, key.Name, key.Prefix, key.Scopes, key.CreatedAt, key.ExpiresAt, secret);
 
@@ -39,21 +55,22 @@ public sealed class UserApiKeys(AuthData data, PlatformDirectory platform, Webho
         new(await data.ReadAsync((db, token) => db.UserApiKeyPolicies.Where(row => row.ProjectId == project)
             .Select(row => row.AllowedScopes).SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false) ?? []);
 
-    public async Task<UserApiKeyPolicyBody> SetPolicyAsync(string project, IReadOnlyList<string> scopes, string actor, CancellationToken cancellationToken)
+    public async Task<PolicySet> SetPolicyAsync(string project, IReadOnlyList<string> scopes, string actor, CancellationToken cancellationToken)
     {
         if (scopes is null || scopes.Count != 0 && !MachineClients.ValidScopes(scopes))
         {
-            throw Invalid();
+            return Invalid();
         }
 
         var current = await data.ReadAsync((db, token) => db.UserApiKeyPolicies.Where(row => row.ProjectId == project).WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
         var policy = new UserApiKeyPolicyRecord(project, scopes);
-        await this.SaveAsync(project, actor, "apiKey.policy_updated", project,
-            [current is null ? Change.Insert(policy) : Change.Update(current, policy)], cancellationToken).ConfigureAwait(false);
-        return new(scopes);
+        return await this.TrySaveAsync(project, actor, "apiKey.policy_updated", project,
+            [current is null ? Change.Insert(policy) : Change.Update(current, policy)], cancellationToken).ConfigureAwait(false)
+            ? new UserApiKeyPolicyBody(scopes)
+            : Refused();
     }
 
-    public async Task<UserApiKeyBody> CreateAsync(string project, string userId, string actor, UserApiKeyRequest request, UserApiKeyAuthorization? authorization, CancellationToken cancellationToken)
+    public async Task<UserKeyCreated> CreateAsync(string project, string userId, string actor, UserApiKeyRequest request, UserApiKeyAuthorization? authorization, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         var name = PlatformDirectory.Name(request.Name);
@@ -61,18 +78,18 @@ public sealed class UserApiKeys(AuthData data, PlatformDirectory platform, Webho
         if (name is null || request.Scopes is not { } scopes || !MachineClients.ValidScopes(scopes) || policy is null
             || scopes.Except(policy.Value.AllowedScopes, StringComparer.Ordinal).Any() || request.ExpiresAt <= clock.GetUtcNow())
         {
-            throw Invalid();
+            return Invalid();
         }
 
         var user = await data.ReadAsync((db, token) => db.Users.Where(row => row.InstanceId == project && row.Id == userId).WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
         if (user is null || user.Value.Disabled)
         {
-            throw PlatformDirectory.NotFound();
+            return new NotFound("No such resource.", "not_found");
         }
 
         if (authorization is not null && (authorization.AuthEpoch != user.Value.AuthEpoch || authorization.AuthStamp != user.Value.AuthStamp))
         {
-            throw new ApiException(403, "reauthentication_required", "Sign in again to create an API key.");
+            return new Forbidden("Sign in again to create an API key.", "reauthentication_required");
         }
 
         var now = clock.GetUtcNow();
@@ -80,18 +97,18 @@ public sealed class UserApiKeys(AuthData data, PlatformDirectory platform, Webho
             && (row.ExpiresAt == null || row.ExpiresAt > now) && row.AuthEpoch == user.Value.AuthEpoch && row.AuthStamp == user.Value.AuthStamp, token), cancellationToken).ConfigureAwait(false);
         if (live >= 25)
         {
-            throw new ApiException(409, "user_key_limit", "A user can have at most 25 live API keys.");
+            return new Conflict("A user can have at most 25 live API keys.", "user_key_limit");
         }
 
-        if (await limiter.AcquireAsync(project, "user-api-key-create", userId, 100, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false) is { } wait)
+        if (await limiter.AcquireAsync(project, "user-api-key-create", userId, 100, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false) is not null)
         {
-            throw ApiException.RateLimited("Too many user keys created.", wait);
+            return new QuotaExceeded("Too many user keys created.", "rate_limited");
         }
 
         return await this.InsertAsync(project, actor, user, policy, name, scopes, request.ExpiresAt, authorization, false, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<UserApiKeyBody> InsertAsync(string project, string actor, Versioned<UserRecord> user, Versioned<UserApiKeyPolicyRecord> policy,
+    private async Task<UserKeyCreated> InsertAsync(string project, string actor, Versioned<UserRecord> user, Versioned<UserApiKeyPolicyRecord> policy,
         string name, IReadOnlyList<string> scopes, DateTimeOffset? expiresAt, UserApiKeyAuthorization? authorization, bool retried, CancellationToken cancellationToken)
     {
         var prefix = "tsk_" + Tokens.RandomToken(8);
@@ -104,7 +121,7 @@ public sealed class UserApiKeys(AuthData data, PlatformDirectory platform, Webho
         {
             if (authorization.Until <= clock.GetUtcNow())
             {
-                throw new ApiException(403, "reauthentication_required", "Sign in again to create an API key.");
+                return new Forbidden("Sign in again to create an API key.", "reauthentication_required");
             }
 
             changes.Add(authorization.Session);
@@ -120,7 +137,7 @@ public sealed class UserApiKeys(AuthData data, PlatformDirectory platform, Webho
             return await this.InsertAsync(project, actor, user, policy, name, scopes, expiresAt, authorization, true, cancellationToken).ConfigureAwait(false);
         }
 
-        throw Conflict();
+        return Refused();
     }
 
     public async Task<UserApiKeyPageBody> ListAsync(string project, string userId, CancellationToken cancellationToken)
@@ -130,24 +147,31 @@ public sealed class UserApiKeys(AuthData data, PlatformDirectory platform, Webho
         return new([.. rows.Select(row => Body(row))]);
     }
 
-    public async Task RevokeAsync(string project, string userId, string id, string actor, CancellationToken cancellationToken)
+    public async Task<KeyRevoked> RevokeAsync(string project, string userId, string id, string actor, CancellationToken cancellationToken)
     {
         var key = await data.ReadAsync((db, token) => db.UserApiKeys.Where(row => row.ProjectId == project && row.UserId == userId && row.Id == id)
-            .WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
-        await this.SaveAsync(project, actor, "apiKey.revoked", id,
-            [Change.Delete(key), Change.Insert(outbox.NewEvent(project, "apiKey.revoked", userId))], cancellationToken).ConfigureAwait(false);
+            .WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
+        if (key is null)
+        {
+            return new NotFound("No such resource.", "not_found");
+        }
+
+        return await this.TrySaveAsync(project, actor, "apiKey.revoked", id,
+            [Change.Delete(key), Change.Insert(outbox.NewEvent(project, "apiKey.revoked", userId))], cancellationToken).ConfigureAwait(false)
+            ? new Done()
+            : Refused();
     }
 
-    public async Task<VerifyUserApiKeyBody> VerifyAsync(string project, string? secret, CancellationToken cancellationToken)
+    public async Task<KeyVerified> VerifyAsync(string project, string? secret, CancellationToken cancellationToken)
     {
-        if (await limiter.AcquireAsync(project, "user-api-key-verify", project, 1000, TimeSpan.FromMinutes(1), cancellationToken).ConfigureAwait(false) is { } wait)
+        if (await limiter.AcquireAsync(project, "user-api-key-verify", project, 1000, TimeSpan.FromMinutes(1), cancellationToken).ConfigureAwait(false) is not null)
         {
-            throw ApiException.RateLimited("Too many user key verifications.", wait);
+            return new QuotaExceeded("Too many user key verifications.", "rate_limited");
         }
 
         if (secret is not { Length: 56 } || !secret.StartsWith("tsk_", StringComparison.Ordinal) || secret[12] != '_')
         {
-            return new(false);
+            return new VerifyUserApiKeyBody(false);
         }
 
         var prefix = secret[..12];
@@ -158,18 +182,10 @@ public sealed class UserApiKeys(AuthData data, PlatformDirectory platform, Webho
             || !await data.ReadAsync((db, token) => db.Users.AnyAsync(row => row.InstanceId == project && row.Id == key.UserId && !row.Disabled
                 && row.AuthEpoch == key.AuthEpoch && row.AuthStamp == key.AuthStamp, token), cancellationToken).ConfigureAwait(false))
         {
-            return new(false);
+            return new VerifyUserApiKeyBody(false);
         }
 
-        return new(true, key.UserId, key.Scopes, key.Id, key.ExpiresAt);
-    }
-
-    private async Task SaveAsync(string project, string actor, string action, string target, IReadOnlyList<Change> changes, CancellationToken cancellationToken)
-    {
-        if (!await this.TrySaveAsync(project, actor, action, target, changes, cancellationToken).ConfigureAwait(false))
-        {
-            throw Conflict();
-        }
+        return new VerifyUserApiKeyBody(true, key.UserId, key.Scopes, key.Id, key.ExpiresAt);
     }
 
     private async Task<bool> TrySaveAsync(string project, string actor, string action, string target, IReadOnlyList<Change> changes, CancellationToken cancellationToken)
@@ -178,9 +194,6 @@ public sealed class UserApiKeys(AuthData data, PlatformDirectory platform, Webho
         return await data.SaveAsync([.. changes, platform.Audit(owner.Value.OrganizationId, actor, action, target)], cancellationToken).ConfigureAwait(false);
     }
 
-    private static ApiException Conflict() => new(409, "version_conflict", "The user or key policy changed concurrently.");
-
-    private static ApiException Invalid() => new(400, "invalid_request", "Supply a name, 1 to 64 unique scopes from the project's user key policy, and an optional future expiry.");
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]

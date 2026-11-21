@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -14,7 +15,11 @@ public sealed class RevokeUserApiKeyEndpoint(TenantDirectory tenants, PlatformAu
     protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
-        await keys.RevokeAsync(project, this.RouteId("user"), this.RouteId("key"), caller.Id, cancellationToken);
-        return Results.NoContent();
+        return await keys.RevokeAsync(project, this.RouteId("user"), this.RouteId("key"), caller.Id, cancellationToken) switch
+        {
+            Done => Results.NoContent(),
+            NotFound error => ErrorResults.ToResult(error),
+            Conflict error => ErrorResults.ToResult(error),
+        };
     }
 }

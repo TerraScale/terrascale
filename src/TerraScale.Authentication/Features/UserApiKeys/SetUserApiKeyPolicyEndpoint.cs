@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -15,6 +16,11 @@ public sealed class SetUserApiKeyPolicyEndpoint(TenantDirectory tenants, Platfor
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(UserApiKeyJson.Default.UserApiKeyPolicyBody, cancellationToken);
-        return Results.Json(await keys.SetPolicyAsync(project, request.AllowedScopes, caller.Id, cancellationToken), UserApiKeyJson.Default.UserApiKeyPolicyBody);
+        return await keys.SetPolicyAsync(project, request.AllowedScopes, caller.Id, cancellationToken) switch
+        {
+            UserApiKeyPolicyBody policy => Results.Json(policy, UserApiKeyJson.Default.UserApiKeyPolicyBody),
+            Validation error => ErrorResults.ToResult(error),
+            Conflict error => ErrorResults.ToResult(error),
+        };
     }
 }

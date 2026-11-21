@@ -24,6 +24,10 @@ public sealed class VerifyUserApiKeyEndpoint(TenantDirectory tenants, PlatformAu
 
         var project = await this.AccessAsync(caller, Roles.Viewer, cancellationToken, TerraBaseScopes.AuthRead);
         var request = await this.BodyAsync(UserApiKeyJson.Default.VerifyUserApiKeyRequest, cancellationToken);
-        return Results.Json(await keys.VerifyAsync(project, request.Key, cancellationToken), UserApiKeyJson.Default.VerifyUserApiKeyBody);
+        return await keys.VerifyAsync(project, request.Key, cancellationToken) switch
+        {
+            VerifyUserApiKeyBody verified => Results.Json(verified, UserApiKeyJson.Default.VerifyUserApiKeyBody),
+            QuotaExceeded error => ErrorResults.ToResult(error),
+        };
     }
 }
