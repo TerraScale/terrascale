@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -17,6 +18,13 @@ public sealed class CreateAgentEndpoint(TenantDirectory tenants, PlatformAuthent
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(AgentJson.Default.CreateAgentRequest, cancellationToken);
-        return Results.Json(await agents.CreateAsync(project, this.RouteId("user"), caller.Id, request, static _ => [], null, cancellationToken), AgentJson.Default.AgentBody, statusCode: 201);
+        return await agents.CreateAsync(project, this.RouteId("user"), caller.Id, request, static _ => [], null, cancellationToken) switch
+        {
+            AgentBody agent => Results.Json(agent, AgentJson.Default.AgentBody, statusCode: 201),
+            Validation error => ErrorResults.ToResult(error),
+            NotFound error => ErrorResults.ToResult(error),
+            QuotaExceeded error => ErrorResults.ToResult(error),
+            Conflict error => ErrorResults.ToResult(error),
+        };
     }
 }

@@ -167,28 +167,26 @@ public sealed class AgentEnrollments(AuthData data, PlatformDirectory platform, 
         }
 
         using var publicJwk = JsonDocument.Parse(enrollment.PublicJwk);
-        try
+        return await agents.CreateAsync(enrollment.ProjectId, approver.User.Id, approver.User.Id,
+            new CreateAgentRequest(enrollment.Name, view.Scopes, publicJwk.RootElement.Clone(), enrollment.AllowSelfSubject),
+            key => [Change.Update(view.Enrollment, enrollment with
+                {
+                    Status = AgentEnrollmentStatus.Approved, UserId = approver.User.Id, AgentId = key.AgentId, Kid = key.Kid, ExpiresAt = clock.GetUtcNow() + Lifetime,
+                }),
+                .. stepUp.Operations, Sessions.Live(approver.Session, approver.SessionVersion, clock.GetUtcNow())], deadline, cancellationToken).ConfigureAwait(false) switch
         {
-            await agents.CreateAsync(enrollment.ProjectId, approver.User.Id, approver.User.Id,
-                new CreateAgentRequest(enrollment.Name, view.Scopes, publicJwk.RootElement.Clone(), enrollment.AllowSelfSubject),
-                key => [Change.Update(view.Enrollment, enrollment with
-                    {
-                        Status = AgentEnrollmentStatus.Approved, UserId = approver.User.Id, AgentId = key.AgentId, Kid = key.Kid, ExpiresAt = clock.GetUtcNow() + Lifetime,
-                    }),
-                    .. stepUp.Operations, Sessions.Live(approver.Session, approver.SessionVersion, clock.GetUtcNow())], deadline, cancellationToken).ConfigureAwait(false);
-        }
-        catch (ApiException refused) when (refused.Status is 400 or 401 or 404 or 409 or 429)
-        {
-            return new AgentDecisionRefused(refused.Code switch
+            AgentBody => new AgentApproved(),
+            Validation => new AgentDecisionRefused(Changed),
+            NotFound => new AgentDecisionRefused(Changed),
+            QuotaExceeded => new AgentDecisionRefused(Changed),
+            Conflict refused => new AgentDecisionRefused(refused.Code switch
             {
                 "agent_limit" => "You already have the most agents allowed. Revoke one first.",
                 "agent_key_in_use" => "This key is already registered. Start again with a new key.",
                 "approval_expired" => Expired,
                 _ => Changed,
-            });
-        }
-
-        return new AgentApproved();
+            }),
+        };
     }
 
     public async Task<AgentDecision> DenyAsync(LiveApprover approver, AgentEnrollmentView view, CancellationToken cancellationToken)

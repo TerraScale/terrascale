@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -15,6 +16,12 @@ public sealed class SetAgentPolicyEndpoint(TenantDirectory tenants, PlatformAuth
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(AgentJson.Default.AgentPolicyBody, cancellationToken);
-        return Results.Json(await agents.SetPolicyAsync(project, request.AllowedScopes, caller.Id, cancellationToken), AgentJson.Default.AgentPolicyBody);
+        return await agents.SetPolicyAsync(project, request.AllowedScopes, caller.Id, cancellationToken) switch
+        {
+            AgentPolicyBody policy => Results.Json(policy, AgentJson.Default.AgentPolicyBody),
+            Validation error => ErrorResults.ToResult(error),
+            NotFound error => ErrorResults.ToResult(error),
+            Conflict error => ErrorResults.ToResult(error),
+        };
     }
 }

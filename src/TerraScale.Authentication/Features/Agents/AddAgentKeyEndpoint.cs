@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -15,6 +16,12 @@ public sealed class AddAgentKeyEndpoint(TenantDirectory tenants, PlatformAuthent
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(AgentJson.Default.AddAgentKeyRequest, cancellationToken);
-        return Results.Json(await agents.AddKeyAsync(project, this.RouteId("agent"), caller.Id, request, cancellationToken), AgentJson.Default.AgentKeyBody, statusCode: 201);
+        return await agents.AddKeyAsync(project, this.RouteId("agent"), caller.Id, request, cancellationToken) switch
+        {
+            AgentKeyBody key => Results.Json(key, AgentJson.Default.AgentKeyBody, statusCode: 201),
+            Validation error => ErrorResults.ToResult(error),
+            NotFound error => ErrorResults.ToResult(error),
+            Conflict error => ErrorResults.ToResult(error),
+        };
     }
 }
