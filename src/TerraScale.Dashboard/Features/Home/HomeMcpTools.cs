@@ -4,6 +4,8 @@ using TerraScale.Dashboard.Platform.Mcp;
 
 namespace TerraScale.Dashboard.Features.Home
 {
+    using NotFound = TerraScale.Dashboard.Errors.NotFound;
+
     [McpServerToolType]
     public sealed class HomeMcpTools(IHttpContextAccessor http, AccountService accounts, IHomeMeasurements measurements)
     {
@@ -21,8 +23,12 @@ namespace TerraScale.Dashboard.Features.Home
 
             var context = Scope(organizationId, projectId);
             context = await AccountScope.RefreshAsync(accounts, context, Cancellation, requireProject: context.Role.Length == 0);
-            return HomeMcpPresentation.For(context, await measurements.ReadAsync(context, normalized, Cancellation), normalized);
-        }
+            var overview = HomeMcpPresentation.For(context, await measurements.ReadAsync(context, normalized, Cancellation), normalized);
+            return overview switch
+            {
+                HomeMcpOverview value => value,
+                NotFound error => throw new AccountAccessException(error.Message ?? "Not found.", 404),
+            };        }
 
         private AccountContext Scope(string? organizationId, string? projectId)
         {
