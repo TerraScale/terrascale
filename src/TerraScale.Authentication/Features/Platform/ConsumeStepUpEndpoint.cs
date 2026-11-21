@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 
 namespace TerraScale.Authentication.Features.Platform;
 
@@ -22,17 +23,30 @@ public sealed class ConsumeStepUpEndpoint(StepUpProofs proofs, PlatformAuthentic
         {
             if (body.Purpose is not ("change_plan" or "delete_organization") || body.OperationReceipt is not null || body.OrganizationId is null)
             {
-                throw Invalid("Use ts-auth change_plan or delete_organization with its organization_id and without an operation_receipt.");
+                return ErrorResults.ToResult(new Validation("Use ts-auth change_plan or delete_organization with its organization_id and without an operation_receipt."));
             }
         }
         else if (body.Audience != "ts-dashboard" || body.Purpose is not ("create_pat" or "delete_account")
             || (body.Purpose == "delete_account") != (body.OperationReceipt is not null) || body.OrganizationId is not null)
         {
-            throw Invalid("Use ts-dashboard create_pat, or delete_account with its operation_receipt, without an organization_id.");
+            return ErrorResults.ToResult(new Validation("Use ts-dashboard create_pat, or delete_account with its operation_receipt, without an organization_id."));
         }
 
-        var consumed = await proofs.ConsumeAsync(caller, body.Proof, body.Purpose, body.Audience,
-            body.OperationReceipt is null ? null : DeletionReceiptHeader.Hash(body.OperationReceipt), cancellationToken, body.OrganizationId);
-        return consumed.OperationGrant is { } grant ? Results.Json(new StepUpGrantBody(grant), StepUpJson.Default.StepUpGrantBody) : Results.NoContent();
+        return body.OperationReceipt is null
+            ? await this.ConsumeProofAsync(caller, body, null, cancellationToken)
+            : DeletionReceiptHeader.Hash(body.OperationReceipt) switch
+            {
+                Validation invalid => ErrorResults.ToResult(invalid),
+                string hash => await this.ConsumeProofAsync(caller, body, hash, cancellationToken),
+            };
     }
+
+    private async Task<IResult> ConsumeProofAsync(UserRecord caller, ConsumeStepUpRequest body, string? receiptHash, CancellationToken cancellationToken) =>
+        await proofs.ConsumeAsync(caller, body.Proof, body.Purpose, body.Audience, receiptHash, cancellationToken, body.OrganizationId) switch
+        {
+            StepUpConsumption consumed => consumed.OperationGrant is { } grant
+                ? Results.Json(new StepUpGrantBody(grant), StepUpJson.Default.StepUpGrantBody)
+                : Results.NoContent(),
+            Forbidden failure => ErrorResults.ToResult(failure),
+        };
 }

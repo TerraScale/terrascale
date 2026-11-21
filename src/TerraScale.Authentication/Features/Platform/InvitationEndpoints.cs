@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
 
@@ -269,8 +270,17 @@ public sealed class StartOwnershipTransferEndpoint(PlatformDirectory platform, P
             throw Invalid("user_id must be a user id.");
         }
 
-        caller = await proofs.ConsumeHeaderAsync(caller, this.HttpContext.Request, "start_ownership_transfer", this.RouteId("organization"), cancellationToken);
-        var transfer = await platform.StartTransferAsync(caller.Id, this.RouteId("organization"), nominee!, cancellationToken);
+        return await proofs.ConsumeAsync(caller, StepUpProofs.Proof(this.HttpContext.Request),
+            "start_ownership_transfer", "ts-auth", null, cancellationToken, this.RouteId("organization")) switch
+        {
+            StepUpConsumption consumption => await this.StartTransferAsync(consumption.Caller, nominee!, cancellationToken),
+            Forbidden failure => ErrorResults.ToResult(failure),
+        };
+    }
+
+    private async Task<IResult> StartTransferAsync(UserRecord caller, string nominee, CancellationToken cancellationToken)
+    {
+        var transfer = await platform.StartTransferAsync(caller.Id, this.RouteId("organization"), nominee, cancellationToken);
         return Results.Json(Map(transfer), PlatformApiJson.Default.OwnershipTransferBody, statusCode: StatusCodes.Status201Created);
     }
 
