@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.WebUtilities;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
 using Microsoft.EntityFrameworkCore;
@@ -54,7 +55,7 @@ public sealed class ExportProjectUsersEndpoint(TenantDirectory tenants, Platform
         var format = this.HttpContext.Request.Query["format"].ToString();
         if (format is not ("" or "json" or "csv"))
         {
-            throw Invalid("format must be json or csv.");
+            return ErrorResults.ToResult(new Validation("format must be json or csv."));
         }
 
         var cutoff = clock.GetUtcNow();
@@ -73,13 +74,13 @@ public sealed class ExportProjectUsersEndpoint(TenantDirectory tenants, Platform
             }
             catch (Exception error) when (error is FormatException or JsonException)
             {
-                throw Invalid("after must be a cursor from this export.");
+                return ErrorResults.ToResult(new Validation("after must be a cursor from this export."));
             }
         }
 
         if (position is not null && !PlatformDirectory.IsId(position))
         {
-            throw Invalid("after must be a cursor from this project's export.");
+            return ErrorResults.ToResult(new Validation("after must be a cursor from this project's export."));
         }
 
         var from = position ?? string.Empty;
@@ -97,7 +98,8 @@ public sealed class ExportProjectUsersEndpoint(TenantDirectory tenants, Platform
         if (!await data.SaveAsync(platform.Audit(project.Value.OrganizationId, caller.Id, "project.users_exported", projectId,
             $"{(format == "csv" ? "csv" : "json")}/{items.Length.ToString(CultureInfo.InvariantCulture)}"), cancellationToken))
         {
-            throw ApiException.Unavailable();
+            return ErrorResults.ToResult(new Unavailable("The storage engine is unavailable; retry shortly.", "temporarily_unavailable",
+                new Dictionary<string, string> { ["retry_after"] = "2" }));
         }
 
         this.HttpContext.Response.Headers["X-Export-Created-Before"] = cutoff.ToString("O", CultureInfo.InvariantCulture);

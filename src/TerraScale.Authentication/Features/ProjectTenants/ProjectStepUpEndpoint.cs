@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.Metadata;
@@ -6,6 +7,7 @@ using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
@@ -57,15 +59,26 @@ public sealed class ProjectStepUpEndpoint(PlatformAuthentication authentication,
         var project = this.HttpContext.GetRouteValue("project") as string;
         if (project is null || Tenancy.Resolved(this.HttpContext) != project)
         {
-            throw Denied();
+            return Denied();
         }
 
-        var request = await this.ReadAsync(cancellationToken);
+        var read = await this.ReadAsync(cancellationToken);
+        if (read is Validation invalid)
+        {
+            return ErrorResults.ToResult(invalid);
+        }
+
+        var request = read switch
+        {
+            ProjectStepUpRequest body => body,
+            Validation => throw new UnreachableException(),
+        };
+
         if (!PlatformDirectory.IsId(request.ClientId)
             || await authentication.AuthenticateAsync(this.HttpContext.Request, cancellationToken, project, request.ClientId) is not { } caller
             || await sessions.ResolveIdAsync(project, caller.Id, caller.SessionId, cancellationToken) is not { } live)
         {
-            throw Denied();
+            return Denied();
         }
 
         if (await hosted.LimitIpAsync(SignInFlow.Ip(this.HttpContext), mails: false, cancellationToken) is { } wait)
@@ -87,7 +100,7 @@ public sealed class ProjectStepUpEndpoint(PlatformAuthentication authentication,
 
             if (checkedPassword.User is not { } verified || verified.AuthEpoch != caller.AuthEpoch || verified.AuthStamp != caller.AuthStamp)
             {
-                throw Denied();
+                return Denied();
             }
 
             passwordVerified = true;
@@ -101,7 +114,7 @@ public sealed class ProjectStepUpEndpoint(PlatformAuthentication authentication,
                     caller.AuthStamp, factor, cancellationToken) is null
                 || !await mfa.VerifyAsync(caller, request.Code, cancellationToken))
             {
-                throw Denied();
+                return Denied();
             }
 
             method = "otp";
@@ -114,19 +127,19 @@ public sealed class ProjectStepUpEndpoint(PlatformAuthentication authentication,
                     || await passkeys.VerifySignInAsync(project, request.Challenge, caller.Email, assertion, cancellationToken) is not { } verified
                     || verified.Id != caller.Id || verified.AuthEpoch != caller.AuthEpoch || verified.AuthStamp != caller.AuthStamp)
                 {
-                    throw Denied();
+                    return Denied();
                 }
             }
             catch (FormatException)
             {
-                throw Denied();
+                return Denied();
             }
 
             method = "swk";
         }
         else if (!passwordVerified || policy.RequireMfa || request.Code is not null || request.Passkey is not null || request.Challenge is not null)
         {
-            throw Denied();
+            return Denied();
         }
 
         var keys = await ring.GetActiveAsync(project, cancellationToken);
@@ -139,7 +152,7 @@ public sealed class ProjectStepUpEndpoint(PlatformAuthentication authentication,
                 || await proofs.RequirementsAsync(caller, cancellationToken) is not { } requirements
                 || !await data.SaveAsync([.. requirements, Change.Update(current, current.Value with { VerifiedAt = now })], cancellationToken))
             {
-                throw Denied();
+                return Denied();
             }
 
             var expires = now.AddMinutes(5);
@@ -179,7 +192,7 @@ public sealed class ProjectStepUpEndpoint(PlatformAuthentication authentication,
         }
     }
 
-    private async Task<ProjectStepUpRequest> ReadAsync(CancellationToken cancellationToken)
+    private async Task<Valid<ProjectStepUpRequest>> ReadAsync(CancellationToken cancellationToken)
     {
         try
         {
@@ -201,11 +214,11 @@ public sealed class ProjectStepUpEndpoint(PlatformAuthentication authentication,
         }
         catch (Exception error) when (error is JsonException or BadHttpRequestException)
         {
-            throw new ApiException(400, "invalid_request", "Supply a JSON object with client_id and password, code, or challenge and passkey.");
+            return new Validation("Supply a JSON object with client_id and password, code, or challenge and passkey.");
         }
 
-        throw new ApiException(400, "invalid_request", "Supply a JSON object of at most 16384 bytes with client_id and password, code, or challenge and passkey.");
+        return new Validation("Supply a JSON object of at most 16384 bytes with client_id and password, code, or challenge and passkey.");
     }
 
-    private static ApiException Denied() => new(401, "step_up_denied", "Present a live project sign-in token and reverify with the password or an allowed factor.");
+    private static IResult Denied() => ErrorResults.ToResult(new Unauthorized("Present a live project sign-in token and reverify with the password or an allowed factor.", "step_up_denied"));
 }
