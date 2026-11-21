@@ -1,4 +1,5 @@
 using TerraScale.Dashboard.Platform.TsAuth;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Platform.Datastar;
@@ -93,6 +94,7 @@ namespace TerraScale.Dashboard.Features.Profile
                 return RequestError.FormExpired(http, "/profile", Results.BadRequest("Invalid form token."));
             }
 
+            ProfileSaveResult saved;
             try
             {
                 if (language)
@@ -100,14 +102,22 @@ namespace TerraScale.Dashboard.Features.Profile
                     var locale = form["locale"].ToString();
                     if (locale is not ("en" or "pt-BR"))
                     {
-                        throw new AccountAccessException("Choose an available language.", 422, "invalid_profile_locale");
+                        return await InvalidAsync(http, sessions, context, "Choose an available language.", "invalid_profile_locale", 422, language, form);
                     }
 
                     await accounts.UpdateAccountAsync(context.Session, account => account.Locale = locale, http.RequestAborted);
+                    saved = new Done();
                 }
                 else
                 {
-                    await ProfileChanges.SaveAsync(accounts, context.Session, form["name"].ToString(), form["phoneNumber"].ToString(), http.RequestAborted);
+                    saved = await ProfileChanges.SaveAsync(accounts, context.Session, form["name"].ToString(), form["phoneNumber"].ToString(), http.RequestAborted);
+                }
+                switch (saved)
+                {
+                    case Validation invalid:
+                        return await InvalidAsync(http, sessions, context, invalid.Message, invalid.Code, 422, language, form);
+                    case Done:
+                        break;
                 }
                 if (http.Request.IsDatastarRequest)
                 {
@@ -119,39 +129,43 @@ namespace TerraScale.Dashboard.Features.Profile
             }
             catch (AccountAccessException error)
             {
-                if (http.Request.IsDatastarRequest)
-                {
-                    await DatastarEvents.PatchElementsAsync(http, ProfilePatch.Create(new(ShellModel.For(http, context, "Profile"), "profile", Error: error.Message, Sessions: await sessions.ListAsync(http, context.Session))
-                    {
-                        Providers = await http.RequestServices.GetRequiredService<ITsAuthProviders>().ListProvidersAsync(context.Session, http.RequestAborted),
-                        InvalidField = error.Code switch
-                        {
-                            "invalid_profile_name" => "displayName",
-                            "invalid_profile_phone" => "phoneNumber",
-                            "invalid_profile_locale" => "interfaceLanguage",
-                            _ => null
-                        },
-                        DraftName = language ? null : form["name"].ToString(),
-                        DraftPhone = language ? null : form["phoneNumber"].ToString()
-                    }));
-                    return Results.Empty;
-                }
-                var slice = ProfileView.Create(new(ShellModel.For(http, context, "Profile"), Error: error.Message, Sessions: await sessions.ListAsync(http, context.Session))
+                return await InvalidAsync(http, sessions, context, error.Message, error.Code, error.StatusCode, language, form);
+            }
+        }
+
+        internal static string? InvalidField(string code)
+        {
+            return code switch
+            {
+                "invalid_profile_name" => "displayName",
+                "invalid_profile_phone" => "phoneNumber",
+                "invalid_profile_locale" => "interfaceLanguage",
+                _ => null
+            };
+        }
+
+        private static async Task<IResult> InvalidAsync(HttpContext http, DashboardSessions sessions, AccountContext context, string message, string code, int statusCode, bool language, IFormCollection form)
+        {
+            if (http.Request.IsDatastarRequest)
+            {
+                await DatastarEvents.PatchElementsAsync(http, ProfilePatch.Create(new(ShellModel.For(http, context, "Profile"), "profile", Error: message, Sessions: await sessions.ListAsync(http, context.Session))
                 {
                     Providers = await http.RequestServices.GetRequiredService<ITsAuthProviders>().ListProvidersAsync(context.Session, http.RequestAborted),
-                    InvalidField = error.Code switch
-                    {
-                        "invalid_profile_name" => "displayName",
-                        "invalid_profile_phone" => "phoneNumber",
-                        "invalid_profile_locale" => "interfaceLanguage",
-                        _ => null
-                    },
+                    InvalidField = InvalidField(code),
                     DraftName = language ? null : form["name"].ToString(),
                     DraftPhone = language ? null : form["phoneNumber"].ToString()
-                });
-                slice.StatusCode = error.StatusCode;
-                return slice;
+                }));
+                return Results.Empty;
             }
+            var slice = ProfileView.Create(new(ShellModel.For(http, context, "Profile"), Error: message, Sessions: await sessions.ListAsync(http, context.Session))
+            {
+                Providers = await http.RequestServices.GetRequiredService<ITsAuthProviders>().ListProvidersAsync(context.Session, http.RequestAborted),
+                InvalidField = InvalidField(code),
+                DraftName = language ? null : form["name"].ToString(),
+                DraftPhone = language ? null : form["phoneNumber"].ToString()
+            });
+            slice.StatusCode = statusCode;
+            return slice;
         }
     }
 }

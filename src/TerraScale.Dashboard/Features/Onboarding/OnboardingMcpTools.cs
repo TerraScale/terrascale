@@ -2,7 +2,7 @@ using System.ComponentModel;
 using Microsoft.Extensions.Primitives;
 using ModelContextProtocol.Server;
 using TerraScale.Dashboard.Platform.Mcp;
-using TerraScale.Dashboard.Common.Validation;
+using TerraScale.Dashboard.Errors;
 
 namespace TerraScale.Dashboard.Features.Onboarding
 {
@@ -42,9 +42,12 @@ namespace TerraScale.Dashboard.Features.Onboarding
                 ["name"] = name,
                 ["region"] = region
             });
-            string destination;
-            try { destination = await onboarding.SaveAsync(session, form, Cancellation); }
-            catch (OnboardingValidationException error) { throw new AccountAccessException(error.Message, 422); }
+            var destination = await onboarding.SaveAsync(session, form, Cancellation) switch
+            {
+                string saved => saved,
+                Validation invalid => throw new AccountAccessException(invalid.Message, 422),
+                Forbidden refused => throw new AccountAccessException(refused.Message, 403)
+            };
             var account = (await accounts.GetContextAsync(session, Cancellation)).Account;
             return new(account.OnboardingCompleted, account.OnboardingCompleted ? "" : account.OnboardingStep,
                 destination is "/" or "/onboarding" ? null : destination);
