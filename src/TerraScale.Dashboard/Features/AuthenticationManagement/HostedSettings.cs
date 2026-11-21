@@ -8,6 +8,11 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         public static Valid<TsAuthProjectBranding> HostedBranding(IFormCollection form)
         {
             var basic = Branding(form["name"], form["logo_url"], form["theme_color"]);
+            if (basic is Validation brandingError)
+            {
+                return brandingError;
+            }
+
             var mode = form["default_theme"].ToString();
             if (mode.Length == 0)
             {
