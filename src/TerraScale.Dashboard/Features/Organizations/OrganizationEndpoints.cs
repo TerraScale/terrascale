@@ -1,4 +1,5 @@
 using RazorSlices;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing;
@@ -161,7 +162,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                     {
                         if (context.Organization is null || context.Role != "owner")
                         {
-                            throw new AccountAccessException("Organization ownership is required.");
+                            return await AccessRefusedAsync(http, context, placement, operation, "Organization ownership is required.");
                         }
 
                         var intent = StepUpFlow.Intent(http, context, "start_ownership_transfer");
@@ -228,7 +229,13 @@ namespace TerraScale.Dashboard.Features.Organizations
             {
                 if (operation == "leave")
                 {
-                    await lifecycle.LeaveAsync(context, http.RequestAborted);
+                    switch (await lifecycle.LeaveAsync(context, http.RequestAborted))
+                    {
+                        case Conflict error:
+                            return await PageAsync(http, context, placement, error.Message, 409, "danger");
+                        case Done:
+                            break;
+                    }
                 }
                 else if (operation == "delete-project")
                 {
@@ -238,7 +245,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 {
                     if (context.Organization is null || context.Organization.Kind == "personal" || context.Role != "owner")
                     {
-                        throw new AccountAccessException("Only the owner can delete a business organization.");
+                        return await PageAsync(http, context, placement, "Only the owner can delete a business organization.", 403, "danger");
                     }
 
                     var intent = StepUpFlow.Intent(http, context, "delete_organization");
@@ -264,6 +271,17 @@ namespace TerraScale.Dashboard.Features.Organizations
             catch (Exception error) when (operation != "leave" && (error is HttpRequestException or IOException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested))
             { return DeletionProgress.Create(http, form, http.Request.Path + "?organizationId=" + Uri.EscapeDataString(context.Organization!.Id)); }
             catch (AccountAccessException error) { return await PageAsync(http, context, placement, error.Message, error.StatusCode, operation == "delete-project" ? "projects" : "danger"); }
+        }
+
+        internal static async Task<IResult> AccessRefusedAsync(HttpContext http, AccountContext context, IWorkspacePlacement placement, string operation, string message, int status = 403)
+        {
+            if (http.Request.IsDatastarRequest)
+            {
+                await PatchAsync(http, context, placement, message, operation.StartsWith("ownership", StringComparison.Ordinal) ? "danger"
+                    : http.Request.Query["tab"] == "invitations" ? "invitations" : "members");
+                return Results.Empty;
+            }
+            return await PageAsync(http, context, placement, message, status, operation.StartsWith("ownership", StringComparison.Ordinal) ? "danger" : null);
         }
 
         internal static async Task<IResult> MutateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, IWorkspacePlacement placement, string operation, string? projectId = null, AccountContext? scopedContext = null)
@@ -302,7 +320,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 var regions = form["regions"].Select(item => item ?? "").Where(item => item.Length > 0).ToArray();
                 if (regions.Length == 0)
                 {
-                    throw new AccountAccessException("Choose at least one serving region.", 422);
+                    return await ProjectRefusedAsync(http, context, placement, operation, form, "Choose at least one serving region.", 422, projectId);
                 }
 
                 if (operation == "projects")
@@ -311,7 +329,11 @@ namespace TerraScale.Dashboard.Features.Organizations
                 }
                 else
                 {
-                    var project = context.Organization?.Projects.GetValueOrDefault(projectId ?? "") ?? throw new AccountAccessException("Project is unavailable.", 404);
+                    if (context.Organization?.Projects.GetValueOrDefault(projectId ?? "") is not { } project)
+                    {
+                        return await ProjectRefusedAsync(http, context, placement, operation, form, "Project is unavailable.", 404, projectId);
+                    }
+
                     regions = [.. project.Regions.Where(region => regions.Contains(region, StringComparer.OrdinalIgnoreCase)),
                         .. regions.Where(region => !project.Regions.Contains(region, StringComparer.OrdinalIgnoreCase))];
                     await operations.UpdateProjectAsync(context with { Project = project }, name, regions, http.RequestAborted);
@@ -320,26 +342,32 @@ namespace TerraScale.Dashboard.Features.Organizations
             }
             catch (AccountAccessException error)
             {
-                if (operation is not ("projects" or "rename-project"))
-                {
-                    if (http.Request.IsDatastarRequest)
-                    {
-                        await PatchAsync(http, context, placement, error.Message);
-                        return Results.Empty;
-                    }
-                    return await PageAsync(http, context, placement, error.Message, error.StatusCode);
-                }
-
-                var page = await PageModelAsync(http, context, placement, error.Message, openCreateProject: operation == "projects");
-                var slice = OrganizationView.Create(page with
-                {
-                    ProjectDraftName = form["name"].ToString(),
-                    ProjectDraftRegions = [.. form["regions"].Select(value => value ?? "").Where(page.Regions.Contains)],
-                    ProjectDraftId = operation == "rename-project" ? projectId ?? "" : ""
-                });
-                slice.StatusCode = error.StatusCode;
-                return slice;
+                return await ProjectRefusedAsync(http, context, placement, operation, form, error.Message, error.StatusCode);
             }
+        }
+
+        private static async Task<IResult> ProjectRefusedAsync(HttpContext http, AccountContext context, IWorkspacePlacement placement, string operation,
+            IFormCollection form, string message, int status, string? projectId = null)
+        {
+            if (operation is not ("projects" or "rename-project"))
+            {
+                if (http.Request.IsDatastarRequest)
+                {
+                    await PatchAsync(http, context, placement, message);
+                    return Results.Empty;
+                }
+                return await PageAsync(http, context, placement, message, status);
+            }
+
+            var page = await PageModelAsync(http, context, placement, message, openCreateProject: operation == "projects");
+            var slice = OrganizationView.Create(page with
+            {
+                ProjectDraftName = form["name"].ToString(),
+                ProjectDraftRegions = [.. form["regions"].Select(value => value ?? "").Where(page.Regions.Contains)],
+                ProjectDraftId = operation == "rename-project" ? projectId ?? "" : ""
+            });
+            slice.StatusCode = status;
+            return slice;
         }
     }
 }

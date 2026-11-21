@@ -1,10 +1,13 @@
 using TerraScale.Dashboard.Common.Accounts;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Organizations.Projects
 {
+    using NotFound = TerraScale.Dashboard.Errors.NotFound;
+
     public sealed record ProjectGrantPage(ShellModel Shell, IReadOnlyList<TsAuthPlatformProjectMember> Grants,
         string? Next = null, string Error = "", bool HasPrevious = false, string DraftUserId = "", string DraftRole = "viewer", string Status = "", string Dialog = "")
     {
@@ -24,17 +27,22 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
             }
 
             context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, requireProject: true);
+            if (http.Request.Query["after"].Count > 1)
+            {
+                return Page(http, context, [], error: "Choose one page cursor. Open the first page.", status: 400);
+            }
+
+            var after = http.Request.Query["after"].Count == 0 ? null : http.Request.Query["after"].ToString();
             try
             {
-                if (http.Request.Query["after"].Count > 1)
+                return await grants.ReadAsync(context, after, http.RequestAborted) switch
                 {
-                    throw new AccountAccessException("Choose one page cursor. Open the first page.", 400);
-                }
-
-                var after = http.Request.Query["after"].Count == 0 ? null : http.Request.Query["after"].ToString();
-                var page = await grants.ReadAsync(context, after, http.RequestAborted);
-                return Page(http, context, page.Items, page.Next, previous: after is not null,
-                    notice: http.Request.Query["changed"] == "1" ? "Explicit project grant updated." : "");
+                    TsAuthPlatformPage<TsAuthPlatformProjectMember> listed => Page(http, context, listed.Items, listed.Next, previous: after is not null,
+                        notice: http.Request.Query["changed"] == "1" ? "Explicit project grant updated." : ""),
+                    NotFound error => Page(http, context, [], error: error.Message!, status: 404),
+                    Validation error => Page(http, context, [], error: error.Message, status: 400),
+                    Unavailable => Page(http, context, [], error: "Project grants could not be loaded. Reload this page to retry.", status: 503),
+                };
             }
             catch (AccountAccessException error) { return Page(http, context, [], error: error.Message, status: error.StatusCode); }
             catch (Exception error) when (error is IOException or HttpRequestException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
@@ -60,7 +68,14 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
                     http.Response.Headers.CacheControl = "no-store";
                     var errorShell = ShellModel.For(http, context, "Project grants") with { ReturnUrl = WorkspaceUrl.For(context, "/project/members", replace: true) };
                     var reloaded = await http.RequestServices.GetRequiredService<ProjectGrantService>().ReadAsync(context, null, http.RequestAborted);
-                    await DatastarEvents.PatchElementsAsync(http, ProjectGrantPageView.Create(new(errorShell, reloaded.Items, null, message, false, userId, role, "",
+                    var items = reloaded switch
+                    {
+                        TsAuthPlatformPage<TsAuthPlatformProjectMember> page => page.Items,
+                        NotFound failure => throw new AccountAccessException(failure.Message!, 404),
+                        Validation failure => throw new AccountAccessException(failure.Message, 400),
+                        Unavailable => throw new IOException("The project grant page is invalid."),
+                    };
+                    await DatastarEvents.PatchElementsAsync(http, ProjectGrantPageView.Create(new(errorShell, items, null, message, false, userId, role, "",
                         form["dialog"] == "edit" ? "edit-grant-" + userId : form["dialog"] == "remove" ? "remove-grant-" + userId : "")));
                     return Results.Empty;
                 }
@@ -74,13 +89,39 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
 
             try
             {
-                if (form["operation"] == "set")
+                var operation = form["operation"].ToString();
+                if (operation == "set")
                 {
-                    await grants.SetAsync(context, userId, role, http.RequestAborted);
+                    var written = await grants.SetAsync(context, userId, role, http.RequestAborted);
+                    switch (written)
+                    {
+                        case Forbidden refused:
+                            return await Error(refused.Message, 403);
+                        case InvalidUser invalid:
+                            return await Error(invalid.Message, 422);
+                        case InvalidRole invalid:
+                            return await Error(invalid.Message, 422);
+                        case Unavailable:
+                            return await Error("The grant change could not be confirmed. Reload project grants before trying again.", 503);
+                        case TsAuthPlatformProjectMember:
+                            break;
+                    }
                 }
-                else if (form["operation"] == "remove")
+                else if (operation == "remove")
                 {
-                    await grants.RemoveAsync(context, userId, http.RequestAborted);
+                    var removed = await grants.RemoveAsync(context, userId, http.RequestAborted);
+                    switch (removed)
+                    {
+                        case Forbidden refused:
+                            return await Error(refused.Message, 403);
+                        case InvalidUser invalid:
+                            return await Error(invalid.Message, 422);
+                        case Unavailable:
+                            return await Error("The grant change could not be confirmed. Reload project grants before trying again.", 503);
+                        case Done:
+                            break;
+                    }
+
                     if (userId == context.UserId)
                     {
                         http.Response.Headers.CacheControl = "no-store";
@@ -89,12 +130,19 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
                 }
                 else
                 {
-                    throw new AccountAccessException("Choose grant/change or remove explicit grant.", 422);
+                    return await Error("Choose grant/change or remove explicit grant.", 422);
                 }
 
                 if (http.Request.IsDatastarRequest)
                 {
-                    return await PatchAsync(http, context, grants, notice: "Explicit project grant updated.");
+                    context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, requireProject: true, reload: true);
+                    return await grants.ReadAsync(context, null, http.RequestAborted) switch
+                    {
+                        TsAuthPlatformPage<TsAuthPlatformProjectMember> page => await PatchedAsync(http, context, page.Items, "Explicit project grant updated."),
+                        NotFound => await Error("The project or target user is unavailable. New grants require an existing organization member; otherwise ask an organization admin about a project invitation. Invitations are not available here.", 404),
+                        Validation failure => await Error(failure.Message, 400),
+                        Unavailable => await Error("The grant change could not be confirmed. Reload project grants before trying again.", 503),
+                    };
                 }
                 return HttpRedirects.SeeOther(WorkspaceUrl.For(context, "/project/members?changed=1", replace: true));
             }
@@ -114,13 +162,11 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
             return page;
         }
 
-        private static async Task<IResult> PatchAsync(HttpContext http, AccountContext context, ProjectGrantService grants, string notice = "")
+        private static async Task<IResult> PatchedAsync(HttpContext http, AccountContext context, IReadOnlyList<TsAuthPlatformProjectMember> items, string notice)
         {
-            context = await AccountScope.RefreshAsync(http.RequestServices.GetRequiredService<AccountService>(), context, http.RequestAborted, requireProject: true, reload: true);
-            var page = await grants.ReadAsync(context, null, http.RequestAborted);
             http.Response.Headers.CacheControl = "no-store";
             var shell = ShellModel.For(http, context, "Project grants") with { ReturnUrl = WorkspaceUrl.For(context, "/project/members", replace: true) };
-            await DatastarEvents.PatchElementsAsync(http, ProjectGrantPageView.Create(new(shell, page.Items, null, "", false, "", "viewer", notice, "")));
+            await DatastarEvents.PatchElementsAsync(http, ProjectGrantPageView.Create(new(shell, items, null, "", false, "", "viewer", notice, "")));
             return Results.Empty;
         }
     }

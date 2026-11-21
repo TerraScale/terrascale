@@ -1,8 +1,13 @@
+using System.Diagnostics;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Errors;
+using TerraScale.Dashboard.Platform.TsAuth;
 using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard.Features.Organizations.Invitations
 {
+    using NotFound = TerraScale.Dashboard.Errors.NotFound;
+
     public sealed class InvitationRespondEndpoint(DashboardSessions sessions, InvitationService invitations) : EndpointWithoutRequest<IResult>
     {
         public override void Configure() => Post("/invitations/{token}/respond");
@@ -28,13 +33,24 @@ namespace TerraScale.Dashboard.Features.Organizations.Invitations
             {
                 var action = form["action"].ToString().Trim().ToLowerInvariant();
                 var answered = await invitations.RespondAsync(session, token, action, http.RequestAborted);
-                http.Response.Headers.Location = action == "decline" ? "/databases?invitation=declined" : answered.Project is { } project
-                    ? "/databases?organizationId=" + answered.Organization.Id + "&projectId=" + project.Id
-                    : "/organization?tab=members&invitation=accepted";
-                return Results.StatusCode(StatusCodes.Status303SeeOther);
+                return answered switch
+                {
+                    Validation error => await InvitationEndpoints.PageAsync(http, sessions, invitations, token, error.Message, 400),
+                    NotFound error => await InvitationEndpoints.PageAsync(http, sessions, invitations, token, error.Message!, 404),
+                    Forbidden error => await InvitationEndpoints.PageAsync(http, sessions, invitations, token, error.Message, 403),
+                    PendingInvitation pending => Accepted(http, pending, action),
+                };
             }
             catch (TerraScale.Dashboard.Common.Accounts.AccountAccessException error)
             { return await InvitationEndpoints.PageAsync(http, sessions, invitations, token, error.Message, error.StatusCode); }
+        }
+
+        private static IResult Accepted(HttpContext http, PendingInvitation pending, string action)
+        {
+            http.Response.Headers.Location = action == "decline" ? "/databases?invitation=declined" : pending.Project is { } project
+                ? "/databases?organizationId=" + pending.Organization.Id + "&projectId=" + project.Id
+                : "/organization?tab=members&invitation=accepted";
+            return Results.StatusCode(StatusCodes.Status303SeeOther);
         }
     }
 }

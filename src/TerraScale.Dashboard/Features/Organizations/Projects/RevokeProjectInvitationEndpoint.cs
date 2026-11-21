@@ -1,10 +1,14 @@
 using TerraScale.Dashboard.Common.Accounts;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Platform.Datastar;
+using TerraScale.Dashboard.Platform.TsAuth;
 using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard.Features.Organizations.Projects
 {
+    using NotFound = TerraScale.Dashboard.Errors.NotFound;
+
     public sealed class RevokeProjectInvitationEndpoint(DashboardSessions sessions, AccountService accounts, ProjectInvitationService invitations) : EndpointWithoutRequest<IResult>
     {
         public override void Configure() => Post("/api/v1/dashboard/project/invitations/revoke");
@@ -31,14 +35,6 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
                 return ProjectInvitationEndpoints.Page(http, context, [], error: message, status: status);
             }
 
-            static async Task<IResult> PatchAsync(HttpContext http, AccountContext context, ProjectInvitationService invitations, string notice, string after)
-            {
-                var page = await invitations.ReadAsync(context, after.Length == 0 ? null : after, http.RequestAborted);
-                http.Response.Headers.CacheControl = "no-store";
-                await DatastarEvents.PatchElementsAsync(http, ProjectInvitationPageView.Create(new(ShellModel.For(http, context, "Project invitations"), page.Items, page.Next, Notice: notice)));
-                return Results.Empty;
-            }
-
             if (!Csrf.Validate(http, form))
             {
                 return RequestError.FormExpired(http, "/project/invitations", await Error("The form expired. Reload project invitations and try again.", 400));
@@ -50,12 +46,43 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
             }
 
             var after = form["after"].ToString();
+            ProjectInvitationRevocation revoked;
             try
             {
-                await invitations.RevokeAsync(context, form["invitationId"].ToString(), after.Length == 0 ? null : after, http.RequestAborted);
+                revoked = await invitations.RevokeAsync(context, form["invitationId"].ToString(), after.Length == 0 ? null : after, http.RequestAborted);
+            }
+            catch (AccountAccessException error) { return await Error(error.Message, error.StatusCode); }
+            catch (Exception error) when (error is IOException or HttpRequestException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
+            { return await Error("Revocation could not be confirmed. Reload project invitations to check its current status before retrying.", 503); }
+            switch (revoked)
+            {
+                case Forbidden error:
+                    return await Error(error.Message, 403);
+                case Validation error:
+                    return await Error(error.Message, 400);
+                case InvalidInvitation error:
+                    return await Error(error.Message, 422);
+                case NotFound error:
+                    return await Error(error.Message!, 404);
+                case Conflict error:
+                    return await Error(error.Message, 409);
+                case Unavailable:
+                    return await Error("Revocation could not be confirmed. Reload project invitations to check its current status before retrying.", 503);
+                case Done:
+                    break;
+            }
+
+            try
+            {
                 if (http.Request.IsDatastarRequest)
                 {
-                    return await PatchAsync(http, context, invitations, "Project invitation revoked. Its acceptance link no longer works.", after);
+                    return await invitations.ReadAsync(context, after.Length == 0 ? null : after, http.RequestAborted) switch
+                    {
+                        TsAuthPlatformPage<TsAuthPlatformInvitation> listed => await PatchedAsync(http, context, listed.Items, listed.Next, "Project invitation revoked. Its acceptance link no longer works."),
+                        Forbidden error => await Error(error.Message, 403),
+                        Validation error => await Error(error.Message, 400),
+                        Unavailable => await Error("Revocation could not be confirmed. Reload project invitations to check its current status before retrying.", 503),
+                    };
                 }
                 return HttpRedirects.SeeOther(WorkspaceUrl.For(context, "/project/invitations?revoked=1", replace: true));
             }
@@ -63,6 +90,12 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
             catch (Exception error) when (error is IOException or HttpRequestException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
             { return await Error("Revocation could not be confirmed. Reload project invitations to check its current status before retrying.", 503); }
         }
+
+        private static async Task<IResult> PatchedAsync(HttpContext http, AccountContext context, IReadOnlyList<TsAuthPlatformInvitation> items, string? next, string notice)
+        {
+            http.Response.Headers.CacheControl = "no-store";
+            await DatastarEvents.PatchElementsAsync(http, ProjectInvitationPageView.Create(new(ShellModel.For(http, context, "Project invitations"), items, next, Notice: notice)));
+            return Results.Empty;
+        }
     }
 }
-

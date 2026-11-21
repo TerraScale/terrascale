@@ -1,10 +1,13 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
 using TerraScale.Dashboard.Common.Accounts;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Platform.Mcp;
 
 namespace TerraScale.Dashboard.Features.Organizations
 {
+    using NotFound = TerraScale.Dashboard.Errors.NotFound;
+
     [McpServerToolType]
     public sealed partial class OrganizationMcpTools(IHttpContextAccessor http, AccountService accounts, OrganizationOperations operations,
         OrganizationLifecycleService lifecycle, InvitationService invitations, IOrganizationAccess access, TimeProvider time)
@@ -71,7 +74,17 @@ namespace TerraScale.Dashboard.Features.Organizations
         public Task<OrganizationDone> LeaveOrganization([Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null)
         {
             return Invoke(async () =>
-        { await lifecycle.LeaveAsync(Scope(organizationId, projectId), Cancellation); return new OrganizationDone(true); });
+        {
+            switch (await lifecycle.LeaveAsync(Scope(organizationId, projectId), Cancellation))
+            {
+                case Conflict error:
+                    throw new AccountAccessException(error.Message, 409);
+                case Done:
+                    break;
+            }
+
+            return new OrganizationDone(true);
+        });
         }
 
         [McpAccess(McpAccess.Destructive)]
@@ -235,7 +248,13 @@ namespace TerraScale.Dashboard.Features.Organizations
             return Invoke(async () =>
         {
             var context = await PrincipalAsync();
-            var organization = (await invitations.RespondAsync(context.Session, Token(token), action, Cancellation)).Organization;
+            var organization = (await invitations.RespondAsync(context.Session, Token(token), action, Cancellation)) switch
+            {
+                PendingInvitation pending => pending.Organization,
+                Validation error => throw new AccountAccessException(error.Message, 400),
+                NotFound error => throw new AccountAccessException(error.Message!, 404),
+                Forbidden error => throw new AccountAccessException(error.Message),
+            };
             return new OrganizationInvitationResponse(organization.Id, organization.Name, action.Trim().ToLowerInvariant());
         });
         }
