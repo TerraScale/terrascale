@@ -67,8 +67,12 @@ namespace TerraScale.Dashboard.Features.Functions
                     return View(http, context, database, items, null, [], notice: notice);
                 }
 
-                var selected = await functions.ReadAsync(context, database, name, http.RequestAborted)
-                    ?? throw new AccountAccessException("This function does not exist.", 404);
+                var selected = await functions.ReadAsync(context, database, name, http.RequestAborted);
+                if (selected is null)
+                {
+                    return View(http, context, database, items, null, [], "This function does not exist.", 404);
+                }
+
                 var stats = await ReadStatsAsync(http, functions, context, database, name);
                 var logs = Filter(await functions.LogsAsync(context, database, name, http.RequestAborted), trigger, status, stats);
                 var secrets = await ReadSecretsAsync(http, functions, context, database, name);
@@ -111,7 +115,7 @@ namespace TerraScale.Dashboard.Features.Functions
                 logs = selected is null ? [] : await functions.LogsAsync(context, database, name, http.RequestAborted);
                 if (!await functions.DeleteAsync(context, database, name, http.RequestAborted))
                 {
-                    throw new AccountAccessException("This function no longer exists.", 404);
+                    return View(http, context, database, items, selected, logs, "The function was not deleted. This function no longer exists.", 404, deleteName: name);
                 }
 
                 return HttpRedirects.SeeOther(DatabaseService.Path(id, "functions"));
@@ -154,8 +158,14 @@ namespace TerraScale.Dashboard.Features.Functions
             {
                 if (inPlace)
                 {
-                    before = await functions.ReadAsync(context, database, name, http.RequestAborted)
-                        ?? throw new AccountAccessException("This function does not exist.", 404);
+                    before = await functions.ReadAsync(context, database, name, http.RequestAborted);
+                    if (before is null)
+                    {
+                        var missingLogs = Filter([], trigger, status);
+                        await PatchDeployAsync(http, functions, context, database, null, missingLogs, "", "This function does not exist.", trigger, status);
+                        return Results.Empty;
+                    }
+
                     if (intent == "trigger")
                     {
                         source = before.Source ?? "";
@@ -210,13 +220,17 @@ namespace TerraScale.Dashboard.Features.Functions
             FunctionRecord? selected = null;
             try
             {
-                selected = await functions.ReadAsync(context, database, name, http.RequestAborted)
-                    ?? throw new AccountAccessException("This function does not exist.", 404);
+                selected = await functions.ReadAsync(context, database, name, http.RequestAborted);
+                if (selected is null)
+                {
+                    return await SecretRefusedAsync(http, functions, context, database, name, null, delete, secret, "This function does not exist.");
+                }
+
                 if (delete)
                 {
                     if (!await functions.DeleteSecretAsync(context, database, name, secret, http.RequestAborted))
                     {
-                        throw new AccountAccessException("This secret no longer exists.", 404);
+                        return await SecretRefusedAsync(http, functions, context, database, name, selected, delete, secret, "This secret no longer exists.");
                     }
                 }
                 else
@@ -235,6 +249,17 @@ namespace TerraScale.Dashboard.Features.Functions
                 return View(http, context, database, [], selected, Filter(logs, "", "", stats), status: Status(error), noAccess: Status(error) == 403, stats: stats, secrets: secrets,
                     secretName: delete ? "" : secret, secretError: FailureText(error));
             }
+        }
+
+        private static async Task<IResult> SecretRefusedAsync(HttpContext http, FunctionBackend functions, AccountContext context, DatabaseRecord database, string name,
+            FunctionRecord? selected, bool delete, string secret, string message)
+        {
+            IReadOnlyList<FunctionInvocation> logs = selected is null ? [] : await OptionalPanel.LoadAsync<IReadOnlyList<FunctionInvocation>>(http, "function-logs",
+                async () => await functions.LogsAsync(context, database, name, http.RequestAborted), () => []);
+            var secrets = selected is null ? null : await ReadSecretsAsync(http, functions, context, database, name);
+            var stats = selected is null ? null : await ReadStatsAsync(http, functions, context, database, name);
+            return View(http, context, database, [], selected, Filter(logs, "", "", stats), status: 404, stats: stats, secrets: secrets,
+                secretName: delete ? "" : secret, secretError: message);
         }
 
         private static async Task PatchDeployAsync(HttpContext http, FunctionBackend functions, AccountContext context, DatabaseRecord database, FunctionRecord? saved,
@@ -274,8 +299,12 @@ namespace TerraScale.Dashboard.Features.Functions
             IReadOnlyList<FunctionInvocation> logs = [];
             try
             {
-                selected = await functions.ReadAsync(context, database, name, http.RequestAborted)
-                    ?? throw new AccountAccessException("This function does not exist.", 404);
+                selected = await functions.ReadAsync(context, database, name, http.RequestAborted);
+                if (selected is null)
+                {
+                    return await RunView(http, functions, context, database, null, [], raw, "", "This function does not exist.", trigger, status, query);
+                }
+
                 logs = Filter(await functions.LogsAsync(context, database, name, http.RequestAborted), trigger, status);
                 if (!JsonEvent(raw))
                 {
