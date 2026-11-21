@@ -47,7 +47,6 @@ public readonly union RotateIfDueResult(Added, Done, Conflict);
 
 public sealed class KeyRing(AuthData data, AuthOptions options, TimeProvider clock, KeyRingRefresh? refresh = null)
 {
-    /// <summary>The most keys an instance holds, which bounds every lookup. A rotation that would exceed it after retirement is refused (409).</summary>
     public const int MaxKeys = 16;
 
     /// <summary>A scheduled rotation adds a key once the newest one is this old.</summary>
