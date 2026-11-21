@@ -10,6 +10,7 @@ using TerraScale.Dashboard.Features.Organizations.Sso;
 using TerraScale.Dashboard.Features.Organizations.Wizard;
 using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.Dashboard.Common.UI;
+using System.Diagnostics;
 
 namespace TerraScale.Dashboard.Features.Organizations
 {
@@ -122,7 +123,19 @@ namespace TerraScale.Dashboard.Features.Organizations
                 return Results.Unauthorized();
             }
 
-            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+            IFormCollection form;
+            switch (await FormRequests.ReadAsync(http, http.RequestAborted))
+            {
+                case Validation invalid:
+                    return FormRequests.Refused(http, invalid);
+                case UnsupportedMediaType unsupported:
+                    return FormRequests.Refused(http, unsupported);
+                case IFormCollection parsed:
+                    form = parsed;
+                    break;
+                case null:
+                    throw new UnreachableException();
+            }
             if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form))
             {
                 return RequestError.FormExpired(http, operation.StartsWith("ownership", StringComparison.Ordinal) ? "/organization?tab=danger"
@@ -219,7 +232,19 @@ namespace TerraScale.Dashboard.Features.Organizations
                 return Results.Unauthorized();
             }
 
-            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+            IFormCollection form;
+            switch (await FormRequests.ReadAsync(http, http.RequestAborted))
+            {
+                case Validation invalid:
+                    return FormRequests.Refused(http, invalid);
+                case UnsupportedMediaType unsupported:
+                    return FormRequests.Refused(http, unsupported);
+                case IFormCollection parsed:
+                    form = parsed;
+                    break;
+                case null:
+                    throw new UnreachableException();
+            }
             if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form))
             {
                 return RequestError.FormExpired(http, operation == "delete-project" ? "/organization?tab=projects" : "/organization?tab=danger", Results.StatusCode(403));
@@ -292,7 +317,19 @@ namespace TerraScale.Dashboard.Features.Organizations
                 return Results.Unauthorized();
             }
 
-            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+            IFormCollection form;
+            switch (await FormRequests.ReadAsync(http, http.RequestAborted))
+            {
+                case Validation invalid:
+                    return FormRequests.Refused(http, invalid);
+                case UnsupportedMediaType unsupported:
+                    return FormRequests.Refused(http, unsupported);
+                case IFormCollection parsed:
+                    form = parsed;
+                    break;
+                case null:
+                    throw new UnreachableException();
+            }
             if (!Csrf.Validate(http, form))
             {
                 return RequestError.FormExpired(http, operation is "projects" or "rename-project" ? "/organization?tab=projects" : "/organization", Results.BadRequest("Invalid form token."));

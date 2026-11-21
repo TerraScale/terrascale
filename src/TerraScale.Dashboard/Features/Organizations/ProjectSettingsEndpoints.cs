@@ -1,6 +1,8 @@
 using TerraScale.Dashboard.Common.Accounts;
 using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Platform.Datastar;
+using TerraScale.Dashboard.Errors;
+using System.Diagnostics;
 
 namespace TerraScale.Dashboard.Features.Organizations
 {
@@ -33,7 +35,19 @@ namespace TerraScale.Dashboard.Features.Organizations
             }
 
             context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, requireProject: true);
-            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+            IFormCollection form;
+            switch (await FormRequests.ReadAsync(http, http.RequestAborted))
+            {
+                case Validation invalid:
+                    return FormRequests.Refused(http, invalid);
+                case UnsupportedMediaType unsupported:
+                    return FormRequests.Refused(http, unsupported);
+                case IFormCollection parsed:
+                    form = parsed;
+                    break;
+                case null:
+                    throw new UnreachableException();
+            }
             var name = form["name"].ToString();
             if (!Csrf.Validate(http, form))
             {

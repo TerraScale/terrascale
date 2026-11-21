@@ -2,6 +2,7 @@ using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Features.Data;
 using TerraScale.Endpoints;
+using System.Diagnostics;
 
 namespace TerraScale.Dashboard.Features.Databases
 {
@@ -18,7 +19,19 @@ namespace TerraScale.Dashboard.Features.Databases
                 return Results.Unauthorized();
             }
 
-            var form = await FormRequests.ReadAsync(http, cancellationToken);
+            IFormCollection form;
+            switch (await FormRequests.ReadAsync(http, cancellationToken))
+            {
+                case Validation invalid:
+                    return FormRequests.Refused(http, invalid);
+                case UnsupportedMediaType unsupported:
+                    return FormRequests.Refused(http, unsupported);
+                case IFormCollection parsed:
+                    form = parsed;
+                    break;
+                case null:
+                    throw new UnreachableException();
+            }
             if (!Csrf.Validate(http, form))
             {
                 return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "tables"), Results.BadRequest("Invalid form token."));

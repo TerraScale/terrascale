@@ -6,6 +6,8 @@ using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Common.Validation;
 using AccountService = TerraScale.Dashboard.Common.Accounts.AccountService;
+using TerraScale.Dashboard.Errors;
+using System.Diagnostics;
 
 namespace TerraScale.Dashboard.Features.Billing
 {
@@ -19,7 +21,19 @@ namespace TerraScale.Dashboard.Features.Billing
                 return AccountRequest.LoginRedirect(http);
             }
 
-            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+            IFormCollection form;
+            switch (await FormRequests.ReadAsync(http, http.RequestAborted))
+            {
+                case Validation invalid:
+                    return FormRequests.Refused(http, invalid);
+                case UnsupportedMediaType unsupported:
+                    return FormRequests.Refused(http, unsupported);
+                case IFormCollection parsed:
+                    form = parsed;
+                    break;
+                case null:
+                    throw new UnreachableException();
+            }
             if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form))
             {
                 return RequestError.FormExpired(http, "/organization?tab=billing", Results.Text("Invalid CSRF token.", statusCode: 403));

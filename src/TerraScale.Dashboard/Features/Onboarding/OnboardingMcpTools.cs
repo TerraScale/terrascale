@@ -6,6 +6,8 @@ using TerraScale.Dashboard.Errors;
 
 namespace TerraScale.Dashboard.Features.Onboarding
 {
+    using NotFound = TerraScale.Dashboard.Errors.NotFound;
+
     [McpServerToolType]
     public sealed class OnboardingMcpTools(IHttpContextAccessor http, AccountService accounts, OnboardingService onboarding)
     {
@@ -46,7 +48,8 @@ namespace TerraScale.Dashboard.Features.Onboarding
             {
                 string saved => saved,
                 Validation invalid => throw new AccountAccessException(invalid.Message, 422),
-                Forbidden refused => throw new AccountAccessException(refused.Message, 403)
+                Forbidden refused => throw new AccountAccessException(refused.Message, 403),
+                NotFound missing => throw new AccountAccessException(missing.Message ?? "The personal project is unavailable.", 404)
             };
             var account = (await accounts.GetContextAsync(session, Cancellation)).Account;
             return new(account.OnboardingCompleted, account.OnboardingCompleted ? "" : account.OnboardingStep,

@@ -1,5 +1,7 @@
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Errors;
+using System.Diagnostics;
 
 namespace TerraScale.Dashboard.Features.Profile
 {
@@ -13,7 +15,19 @@ namespace TerraScale.Dashboard.Features.Profile
                 return AccountRequest.LoginRedirect(http);
             }
 
-            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+            IFormCollection form;
+            switch (await FormRequests.ReadAsync(http, http.RequestAborted))
+            {
+                case Validation invalid:
+                    return FormRequests.Refused(http, invalid);
+                case UnsupportedMediaType unsupported:
+                    return FormRequests.Refused(http, unsupported);
+                case IFormCollection parsed:
+                    form = parsed;
+                    break;
+                case null:
+                    throw new UnreachableException();
+            }
             if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form))
             {
                 return RequestError.FormExpired(http, "/profile", Results.BadRequest("Invalid form token."));

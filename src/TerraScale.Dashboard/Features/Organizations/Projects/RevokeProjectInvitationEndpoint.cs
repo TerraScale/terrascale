@@ -4,6 +4,7 @@ using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.Dashboard.Platform.TsAuth;
 using TerraScale.Endpoints;
+using System.Diagnostics;
 
 namespace TerraScale.Dashboard.Features.Organizations.Projects
 {
@@ -23,7 +24,19 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
             }
 
             context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, requireProject: true);
-            var form = await FormRequests.ReadAsync(http, http.RequestAborted);
+            IFormCollection form;
+            switch (await FormRequests.ReadAsync(http, http.RequestAborted))
+            {
+                case Validation invalid:
+                    return FormRequests.Refused(http, invalid);
+                case UnsupportedMediaType unsupported:
+                    return FormRequests.Refused(http, unsupported);
+                case IFormCollection parsed:
+                    form = parsed;
+                    break;
+                case null:
+                    throw new UnreachableException();
+            }
             async Task<IResult> Error(string message, int status)
             {
                 if (http.Request.IsDatastarRequest)

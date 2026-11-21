@@ -2,6 +2,8 @@ using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Errors;
+using System.Diagnostics;
 
 namespace TerraScale.Dashboard.Features.Profile
 {
@@ -33,7 +35,21 @@ namespace TerraScale.Dashboard.Features.Profile
             {
                 if (sessions is not null)
                 {
-                    var form = await FormRequests.ReadAsync(http, budget.Token);
+                    IFormCollection form;
+                    switch (await FormRequests.ReadAsync(http, budget.Token))
+                    {
+                        case Validation invalid:
+                            return PendingPage(http, "Deletion status needs attention",
+                                "The saved receipt could not confirm account closure. Automatic checks have stopped. Your receipt has been retained. Sign in to the same account and review deletion from your profile; do not treat this error as completion.", attempt, StatusCodes.Status400BadRequest, attention: true);
+                        case UnsupportedMediaType unsupported:
+                            return PendingPage(http, "Deletion status needs attention",
+                                "The saved receipt could not confirm account closure. Automatic checks have stopped. Your receipt has been retained. Sign in to the same account and review deletion from your profile; do not treat this error as completion.", attempt, StatusCodes.Status415UnsupportedMediaType, attention: true);
+                        case IFormCollection parsed:
+                            form = parsed;
+                            break;
+                        case null:
+                            throw new UnreachableException();
+                    }
                     if (!Csrf.Validate(http, form))
                     {
                         return RequestError.FormExpired(http, "/account-deletion", Results.StatusCode(403));
