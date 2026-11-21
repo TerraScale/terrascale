@@ -13,7 +13,7 @@ public sealed class CreateProjectInvitationEndpoint(TenantDirectory tenants, Pla
         this.Describe("create_project_invitation", "Invite an end user", "Needs the admin project role.", "Project tenants", typeof(CreateProjectInvitationRequest), StatusCodes.Status201Created, typeof(ProjectInvitationBody));
     }
 
-    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
+    protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(ProjectTenantJson.Default.CreateProjectInvitationRequest, cancellationToken);

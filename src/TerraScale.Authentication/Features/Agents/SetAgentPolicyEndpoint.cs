@@ -11,7 +11,7 @@ public sealed class SetAgentPolicyEndpoint(TenantDirectory tenants, PlatformAuth
         this.Describe("set_agent_policy", "Set agent policy", "Agent identities. Requires the admin role or the corresponding project key scope.", "Agents", typeof(AgentPolicyBody), 200, typeof(AgentPolicyBody), conflict: true);
     }
 
-    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
+    protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(AgentJson.Default.AgentPolicyBody, cancellationToken);

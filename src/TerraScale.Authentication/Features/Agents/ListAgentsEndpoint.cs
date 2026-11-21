@@ -12,7 +12,7 @@ public sealed class ListAgentsEndpoint(TenantDirectory tenants, PlatformAuthenti
         this.Describe("list_agents", "List agents", "owner filters by the owning user id; limit is 1 to 100 (default 50) and after the previous page's next. Agent identities. Requires the viewer role or the corresponding project key scope.", "Agents", null, 200, typeof(AgentPageBody), paged: true);
     }
 
-    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
+    protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var project = await this.AccessAsync(caller, Roles.Viewer, cancellationToken);
         var (limit, after) = this.Paging(50);

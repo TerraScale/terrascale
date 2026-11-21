@@ -17,7 +17,7 @@ public sealed class DeleteProjectProviderEndpoint(TenantDirectory tenants, Proje
             "Project tenants", null, StatusCodes.Status200OK, typeof(SettingsBody));
     }
 
-    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
+    protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(caller);
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);

@@ -126,15 +126,12 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
     {
         var person = new ProjectCaller.SignedIn(caller);
         await this.BeforeWriteAsync(person, cancellationToken);
-        return Answers.ToResult(await this.AnswerAsync(person, cancellationToken));
+        return Answers.ToResult(await this.HandleAsync(person, cancellationToken));
     }
 
     protected virtual Task BeforeWriteAsync(ProjectCaller caller, CancellationToken cancellationToken) => Task.CompletedTask;
 
-    protected abstract Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken);
-
-    protected virtual async Task<Answer> AnswerAsync(ProjectCaller caller, CancellationToken cancellationToken) =>
-        await this.HandleAsync(caller, cancellationToken);
+    protected abstract Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken);
 
     protected override async Task<IResult> AuthenticateAndHandleAsync(CancellationToken cancellationToken)
     {
@@ -159,7 +156,7 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
         await keys.RecordUseAsync(key, cancellationToken);
         if (HttpMethods.IsGet(request.Method))
         {
-            return await this.HandleAsync(new ProjectCaller.SecretKey(key), cancellationToken);
+            return Answers.ToResult(await this.HandleAsync(new ProjectCaller.SecretKey(key), cancellationToken));
         }
 
         var operation = this.HttpContext.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName
@@ -169,7 +166,7 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
         {
             await this.BeforeWriteAsync(new ProjectCaller.SecretKey(key), cancellationToken);
             answer = await this.Tenants.AuditKeyWriteAsync(key, operation, request.Path,
-                token => this.AnswerAsync(new ProjectCaller.SecretKey(key), token), Answers.Completed, cancellationToken);
+                token => this.HandleAsync(new ProjectCaller.SecretKey(key), token), Answers.Completed, cancellationToken);
         }
         catch (Exception error)
         {

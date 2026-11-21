@@ -11,7 +11,7 @@ public sealed class SetUserApiKeyPolicyEndpoint(TenantDirectory tenants, Platfor
         this.Describe("set_user_api_key_policy", "Set user api key policy", "Project-scoped user-owned keys. Requires the admin role or the corresponding project key scope.", "User API keys", typeof(UserApiKeyPolicyBody), 200, typeof(UserApiKeyPolicyBody), conflict: true);
     }
 
-    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
+    protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(UserApiKeyJson.Default.UserApiKeyPolicyBody, cancellationToken);

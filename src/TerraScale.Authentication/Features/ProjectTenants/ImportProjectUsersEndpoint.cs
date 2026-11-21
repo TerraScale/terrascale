@@ -27,7 +27,7 @@ public sealed class ImportProjectUsersEndpoint(TenantDirectory tenants, Platform
         }
     }
 
-    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
+    protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(UserProfileJson.Default.ImportProjectUsersRequest, cancellationToken);

@@ -13,7 +13,7 @@ public sealed class CreateUserApiKeyEndpoint(TenantDirectory tenants, PlatformAu
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
     }
 
-    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
+    protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(UserApiKeyJson.Default.UserApiKeyRequest, cancellationToken);

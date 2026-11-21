@@ -15,7 +15,7 @@ public sealed class VerifyUserApiKeyEndpoint(TenantDirectory tenants, PlatformAu
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
     }
 
-    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
+    protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         if (caller is not ProjectCaller.SecretKey)
         {

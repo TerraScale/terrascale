@@ -16,7 +16,7 @@ public sealed class UpdateProjectUserEndpoint(TenantDirectory tenants, PlatformA
             "Project tenants", typeof(UserProfilePatch), StatusCodes.Status200OK, typeof(ProjectUserBody), conflict: true);
     }
 
-    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
+    protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var patch = await this.BodyAsync(UserProfileJson.Default.UserProfilePatch, cancellationToken);

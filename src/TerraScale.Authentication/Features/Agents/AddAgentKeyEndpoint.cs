@@ -11,7 +11,7 @@ public sealed class AddAgentKeyEndpoint(TenantDirectory tenants, PlatformAuthent
         this.Describe("add_agent_key", "Add agent key", "An agent has at most two active keys. Agent identities. Requires the admin role or the corresponding project key scope.", "Agents", typeof(AddAgentKeyRequest), 201, typeof(AgentKeyBody), conflict: true);
     }
 
-    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
+    protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(AgentJson.Default.AddAgentKeyRequest, cancellationToken);
