@@ -1,26 +1,47 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Features.Data;
 
 namespace TerraScale.Dashboard.Features.Databases;
 
+public readonly union ConflictListing(DatabaseConflictList, Validation);
+
 // Customer SQL is the contract: never read TerraBase's private apply tables or infer historical winners from current rows.
 public sealed class DatabaseConflicts(DataService data)
 {
-    public async Task<DatabaseConflictList> ListAsync(AccountContext context, string databaseId, string table, string since, string until,
+    public async Task<ConflictListing> ListAsync(AccountContext context, string databaseId, string table, string since, string until,
         int limit, string before, CancellationToken cancellationToken)
     {
         if (table.Length > 256 || limit is < 1 or > 100 || before.Length > 26)
         {
-            throw new AccountAccessException("Use a table name up to 256 characters, a limit from 1 to 100, and a conflict ID for before.", 422);
+            return new Validation("Use a table name up to 256 characters, a limit from 1 to 100, and a conflict ID for before.");
         }
 
-        var start = Instant(since, "since");
-        var end = Instant(until, "until");
+        DateTimeOffset? start = null;
+        DateTimeOffset? end = null;
+        if (since.Length > 0)
+        {
+            switch (Instant(since, "since"))
+            {
+                case Validation failure: return failure;
+                case DateTimeOffset begin: start = begin; break;
+            }
+        }
+
+        if (until.Length > 0)
+        {
+            switch (Instant(until, "until"))
+            {
+                case Validation failure: return failure;
+                case DateTimeOffset finish: end = finish; break;
+            }
+        }
+
         if (start is not null && end is not null && start >= end)
         {
-            throw new AccountAccessException("Since must be earlier than until.", 422);
+            return new Validation("Since must be earlier than until.");
         }
 
         var conditions = new List<string>();
@@ -36,7 +57,7 @@ public sealed class DatabaseConflicts(DataService data)
         var result = await data.SqlAsync(context, databaseId, sql, false, cancellationToken);
         var indexes = result.Columns.Select((column, index) => (column.Name, index)).ToDictionary(item => item.Name, item => item.index, StringComparer.Ordinal);
         var items = result.Rows.Take(limit).Select(row => Read(row, indexes)).ToArray();
-        return new(items, result.Rows.Count > limit ? items[^1].Id : null, result.Rows.Count > limit, limit);
+        return new DatabaseConflictList(items, result.Rows.Count > limit ? items[^1].Id : null, result.Rows.Count > limit, limit);
     }
 
     private static DatabaseConflict Read(IReadOnlyList<JsonElement> row, Dictionary<string, int> indexes)
@@ -56,14 +77,15 @@ public sealed class DatabaseConflicts(DataService data)
             Required("message"), Required("created_at"));
     }
 
-    private static DateTimeOffset? Instant(string value, string field)
+    private readonly union InstantResult(DateTimeOffset, Validation);
+
+    private static InstantResult Instant(string value, string field)
     {
-        if (value.Length == 0) { return null; }
         // The form uses UTC datetime-local; MCP callers can also pass an explicit ISO 8601 offset.
         if (value.Length > 40 || !DateTimeOffset.TryParseExact(value,
             ["yyyy-MM-dd'T'HH:mm", "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFzzz", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'"], CultureInfo.InvariantCulture,
             DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsed))
-        { throw new AccountAccessException("Use an ISO 8601 timestamp for " + field + ".", 422); }
+        { return new Validation("Use an ISO 8601 timestamp for " + field + "."); }
         return parsed;
     }
 
