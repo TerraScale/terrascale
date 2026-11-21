@@ -48,10 +48,11 @@ public sealed class TenantDirectory(AuthData data, Users users, Sessions session
         }
     }
 
-    public Task<IResult> AuditKeyWriteAsync(ApiKeyRecord key, string operation, string target, Func<CancellationToken, Task<IResult>> write, CancellationToken cancellationToken)
+    public Task<Answer> AuditKeyWriteAsync(ApiKeyRecord key, string operation, string target, Func<CancellationToken, Task<Answer>> write,
+        Func<Answer, bool> completed, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(key);
-        return data.AuditWritesAsync(platform.Audit(key.OrganizationId, key.Id, operation + ".succeeded", key.ProjectId, target), write, cancellationToken);
+        return data.AuditWritesAsync(platform.Audit(key.OrganizationId, key.Id, operation + ".succeeded", key.ProjectId, target), write, completed, cancellationToken);
     }
 
     public async Task AuditKeyFailureAsync(ApiKeyRecord key, string operation, string target, int status, CancellationToken cancellationToken)

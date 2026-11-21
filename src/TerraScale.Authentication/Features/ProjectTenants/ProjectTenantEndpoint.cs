@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 using TerraScale.Authentication.Features.AttackProtection;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using Microsoft.EntityFrameworkCore;
@@ -85,6 +86,36 @@ public sealed record RotateClientRequest(int? GraceSeconds);
 
 public sealed record ClientSecretBody(string ClientId, string ClientSecret, DateTimeOffset? PreviousSecretExpiresAt);
 
+public readonly union Answer(IResult, Failure);
+
+public static class Answers
+{
+    public static IResult ToResult(Answer answer) => answer switch
+    {
+        IResult result => result,
+        Failure failure => ErrorResults.ToResult(failure),
+    };
+
+    public static bool Completed(Answer answer) => answer is not Failure;
+
+    public static int Status(Failure failure) => failure switch
+    {
+        NotFound => StatusCodes.Status404NotFound,
+        Conflict => StatusCodes.Status409Conflict,
+        Validation => StatusCodes.Status400BadRequest,
+        PreconditionFailed => StatusCodes.Status412PreconditionFailed,
+        Unauthorized => StatusCodes.Status401Unauthorized,
+        Forbidden => StatusCodes.Status403Forbidden,
+        QuotaExceeded => StatusCodes.Status429TooManyRequests,
+        Unavailable => StatusCodes.Status503ServiceUnavailable,
+        PayloadTooLarge => StatusCodes.Status413PayloadTooLarge,
+        UnsupportedMediaType => StatusCodes.Status415UnsupportedMediaType,
+        RequestTimeout => StatusCodes.Status408RequestTimeout,
+        Gone => StatusCodes.Status410Gone,
+        OutcomeUnknown => StatusCodes.Status503ServiceUnavailable,
+    };
+}
+
 public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
 {
     protected const string Root = "/v1/{project}";
@@ -95,12 +126,15 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
     {
         var person = new ProjectCaller.SignedIn(caller);
         await this.BeforeWriteAsync(person, cancellationToken);
-        return await this.HandleAsync(person, cancellationToken);
+        return Answers.ToResult(await this.AnswerAsync(person, cancellationToken));
     }
 
     protected virtual Task BeforeWriteAsync(ProjectCaller caller, CancellationToken cancellationToken) => Task.CompletedTask;
 
     protected abstract Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken);
+
+    protected virtual async Task<Answer> AnswerAsync(ProjectCaller caller, CancellationToken cancellationToken) =>
+        await this.HandleAsync(caller, cancellationToken);
 
     protected override async Task<IResult> AuthenticateAndHandleAsync(CancellationToken cancellationToken)
     {
@@ -130,11 +164,12 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
 
         var operation = this.HttpContext.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName
             ?? throw new InvalidOperationException("A management operation must have a name.");
+        Answer answer;
         try
         {
             await this.BeforeWriteAsync(new ProjectCaller.SecretKey(key), cancellationToken);
-            return await this.Tenants.AuditKeyWriteAsync(key, operation, request.Path,
-                token => this.HandleAsync(new ProjectCaller.SecretKey(key), token), cancellationToken);
+            answer = await this.Tenants.AuditKeyWriteAsync(key, operation, request.Path,
+                token => this.AnswerAsync(new ProjectCaller.SecretKey(key), token), Answers.Completed, cancellationToken);
         }
         catch (Exception error)
         {
@@ -143,6 +178,13 @@ public abstract class ProjectTenantEndpoint(TenantDirectory tenants, PlatformAut
             await this.Tenants.AuditKeyFailureAsync(key, operation, request.Path, status, CancellationToken.None);
             throw;
         }
+
+        if (answer is Failure refused)
+        {
+            await this.Tenants.AuditKeyFailureAsync(key, operation, request.Path, Answers.Status(refused), CancellationToken.None);
+        }
+
+        return Answers.ToResult(answer);
     }
 
     protected async Task<string> AccessAsync(ProjectCaller caller, string minimum, CancellationToken cancellationToken, string? requiredScope = null)
