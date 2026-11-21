@@ -122,9 +122,9 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
             return new Conflict($"A user can have at most {MaxLiveAgentsPerUser} live agents.", "agent_limit");
         }
 
-        if (await limiter.AcquireAsync(project, "agent-create", userId, 100, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false) is not null)
+        if (await limiter.AcquireAsync(project, "agent-create", userId, 100, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false) is { } wait)
         {
-            return new QuotaExceeded("Too many agents created.", "rate_limited");
+            return new QuotaExceeded("Too many agents created.", "rate_limited", RetryAfter: wait);
         }
 
         var agent = new AgentRecord(project, AuthIds.New(), userId, name, AgentStatus.Active, scopes, request.AllowSelfSubject, now, request.ExpiresAt, null, null, user.Value.AuthEpoch, stamp);

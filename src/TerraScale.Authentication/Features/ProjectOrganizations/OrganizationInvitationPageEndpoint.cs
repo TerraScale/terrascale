@@ -31,7 +31,7 @@ public sealed class OrganizationInvitationPageEndpoint(ProjectOrganizationDirect
         var invitation = await organizations.InvitationAsync(tenant, secret, cancellationToken);
         if (invitation is not Versioned<ProjectOrganizationInvitation> invite)
         {
-            return Results.NotFound();
+            return ErrorResults.ToResult(new NotFound("No such resource.", "not_found"));
         }
 
         if (await sessions.ResolveAsync(tenant, this.HttpContext.Request.Cookies[Tenancy.SessionCookie(tenant)], cancellationToken) is null)
@@ -41,7 +41,7 @@ public sealed class OrganizationInvitationPageEndpoint(ProjectOrganizationDirect
 
         var org = await organizations.ReadAsync(tenant, invite.Value.OrganizationId, cancellationToken);
         return org is null
-            ? Results.NotFound()
+            ? ErrorResults.ToResult(new NotFound("No such resource.", "not_found"))
             : OrganizationPageModel.Render(this.HttpContext, new(tenant, "", $"Join {org.Value.Name}", invite.Value.Email, secret));
     }
 }

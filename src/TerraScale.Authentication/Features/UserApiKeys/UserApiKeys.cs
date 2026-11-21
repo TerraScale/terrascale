@@ -100,9 +100,9 @@ public sealed class UserApiKeys(AuthData data, PlatformDirectory platform, Webho
             return new Conflict("A user can have at most 25 live API keys.", "user_key_limit");
         }
 
-        if (await limiter.AcquireAsync(project, "user-api-key-create", userId, 100, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false) is not null)
+        if (await limiter.AcquireAsync(project, "user-api-key-create", userId, 100, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false) is { } wait)
         {
-            return new QuotaExceeded("Too many user keys created.", "rate_limited");
+            return new QuotaExceeded("Too many user keys created.", "rate_limited", RetryAfter: wait);
         }
 
         return await this.InsertAsync(project, actor, user, policy, name, scopes, request.ExpiresAt, authorization, false, cancellationToken).ConfigureAwait(false);
@@ -164,9 +164,9 @@ public sealed class UserApiKeys(AuthData data, PlatformDirectory platform, Webho
 
     public async Task<KeyVerified> VerifyAsync(string project, string? secret, CancellationToken cancellationToken)
     {
-        if (await limiter.AcquireAsync(project, "user-api-key-verify", project, 1000, TimeSpan.FromMinutes(1), cancellationToken).ConfigureAwait(false) is not null)
+        if (await limiter.AcquireAsync(project, "user-api-key-verify", project, 1000, TimeSpan.FromMinutes(1), cancellationToken).ConfigureAwait(false) is { } wait)
         {
-            return new QuotaExceeded("Too many user key verifications.", "rate_limited");
+            return new QuotaExceeded("Too many user key verifications.", "rate_limited", RetryAfter: wait);
         }
 
         if (secret is not { Length: 56 } || !secret.StartsWith("tsk_", StringComparison.Ordinal) || secret[12] != '_')
