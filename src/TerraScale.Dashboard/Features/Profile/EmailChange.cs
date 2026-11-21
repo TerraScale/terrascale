@@ -37,9 +37,9 @@ namespace TerraScale.Dashboard.Features.Profile
                 {
                     return await RefusedAsync(error);
                 }
-                catch (Exception error) when (error is HttpRequestException or IOException or TimeoutException)
+                catch (Exception error) when (Unavailable(error))
                 {
-                    return await ViewAsync("The email change could not be confirmed. If you already submitted a code, try signing in with the new address before starting again.", 503);
+                    return await UnavailableAsync();
                 }
             }
             else
@@ -50,14 +50,14 @@ namespace TerraScale.Dashboard.Features.Profile
                     return await ViewAsync("Enter a valid new email address.", 422);
                 }
 
-                var intent = StepUpFlow.Intent(http, context, "change_email");
-                if (intent is null)
-                {
-                    return await StepUpFlow.StartAsync(http, context, "change_email", "ts-auth");
-                }
-
                 try
                 {
+                    var intent = StepUpFlow.Intent(http, context, "change_email");
+                    if (intent is null)
+                    {
+                        return await StepUpFlow.StartAsync(http, context, "change_email", "ts-auth");
+                    }
+
                     var pending = await gateway.RequestEmailChangeAsync(context.Session, email, intent.Challenge.Proof, http.RequestAborted);
                     pendingEmail = pending.NewEmail;
                     status = "Code sent to your new address. Enter it within ten minutes. Your current address received a cancel link.";
@@ -66,9 +66,9 @@ namespace TerraScale.Dashboard.Features.Profile
                 {
                     return await RefusedAsync(error);
                 }
-                catch (Exception error) when (error is HttpRequestException or IOException or TimeoutException)
+                catch (Exception error) when (Unavailable(error))
                 {
-                    return await ViewAsync("The email change could not be confirmed. If you already submitted a code, try signing in with the new address before starting again.", 503);
+                    return await UnavailableAsync();
                 }
             }
             if (!confirm)
@@ -90,6 +90,10 @@ namespace TerraScale.Dashboard.Features.Profile
                 };
                 return await ViewAsync(message, error.StatusCode);
             }
+
+            static bool Unavailable(Exception error) => error is HttpRequestException or IOException or TimeoutException;
+
+            Task<IResult> UnavailableAsync() => ViewAsync("The email change could not be confirmed. If you already submitted a code, try signing in with the new address before starting again.", 503);
 
             async Task<IResult> ViewAsync(string error, int statusCode)
             {

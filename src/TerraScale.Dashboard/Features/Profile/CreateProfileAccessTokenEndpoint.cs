@@ -31,9 +31,9 @@ namespace TerraScale.Dashboard.Features.Profile
             try
             {
                 _ = AccessTokens.Validate(form["name"].ToString(), days);
+                return await StepUpFlow.StartAsync(http, context, "create_pat", "ts-dashboard");
             }
             catch (AccountAccessException error) { return await AccessTokenEndpoints.FailureAsync(http, context, sessions, tokens, error.Message, error.StatusCode); }
-            return await StepUpFlow.StartAsync(http, context, "create_pat", "ts-dashboard");
         }
     }
 }

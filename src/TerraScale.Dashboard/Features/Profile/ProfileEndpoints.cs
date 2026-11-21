@@ -95,35 +95,42 @@ namespace TerraScale.Dashboard.Features.Profile
             }
 
             ProfileSaveResult saved;
-            if (language)
+            try
             {
-                var locale = form["locale"].ToString();
-                if (locale is not ("en" or "pt-BR"))
+                if (language)
                 {
-                    return await InvalidAsync(http, sessions, context, "Choose an available language.", "invalid_profile_locale", 422, language, form);
-                }
+                    var locale = form["locale"].ToString();
+                    if (locale is not ("en" or "pt-BR"))
+                    {
+                        return await InvalidAsync(http, sessions, context, "Choose an available language.", "invalid_profile_locale", 422, language, form);
+                    }
 
-                await accounts.UpdateAccountAsync(context.Session, account => account.Locale = locale, http.RequestAborted);
-                saved = new Done();
+                    await accounts.UpdateAccountAsync(context.Session, account => account.Locale = locale, http.RequestAborted);
+                    saved = new Done();
+                }
+                else
+                {
+                    saved = await ProfileChanges.SaveAsync(accounts, context.Session, form["name"].ToString(), form["phoneNumber"].ToString(), http.RequestAborted);
+                }
+                switch (saved)
+                {
+                    case Validation invalid:
+                        return await InvalidAsync(http, sessions, context, invalid.Message, invalid.Code, 422, language, form);
+                    case Done:
+                        break;
+                }
+                if (http.Request.IsDatastarRequest)
+                {
+                    context = await accounts.GetContextAsync(context.Session, http.RequestAborted);
+                    await DatastarEvents.PatchElementsAsync(http, ProfilePatch.Create(new(ShellModel.For(http, context, "Profile"), "profile", Status: language ? "Language preference saved." : "Profile saved.", Sessions: await sessions.ListAsync(http, context.Session))));
+                    return Results.Empty;
+                }
+                return HttpRedirects.SeeOther("/profile?tab=profile&status=" + (language ? "language-saved" : "profile-saved"));
             }
-            else
+            catch (AccountAccessException error)
             {
-                saved = await ProfileChanges.SaveAsync(accounts, context.Session, form["name"].ToString(), form["phoneNumber"].ToString(), http.RequestAborted);
+                return await InvalidAsync(http, sessions, context, error.Message, error.Code, error.StatusCode, language, form);
             }
-            switch (saved)
-            {
-                case Validation invalid:
-                    return await InvalidAsync(http, sessions, context, invalid.Message, invalid.Code, 422, language, form);
-                case Done:
-                    break;
-            }
-            if (http.Request.IsDatastarRequest)
-            {
-                context = await accounts.GetContextAsync(context.Session, http.RequestAborted);
-                await DatastarEvents.PatchElementsAsync(http, ProfilePatch.Create(new(ShellModel.For(http, context, "Profile"), "profile", Status: language ? "Language preference saved." : "Profile saved.", Sessions: await sessions.ListAsync(http, context.Session))));
-                return Results.Empty;
-            }
-            return HttpRedirects.SeeOther("/profile?tab=profile&status=" + (language ? "language-saved" : "profile-saved"));
         }
 
         internal static string? InvalidField(string code)
