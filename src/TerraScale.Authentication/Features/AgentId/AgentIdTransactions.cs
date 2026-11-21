@@ -69,14 +69,10 @@ public sealed class AgentIdTransactions(AuthData data, AgentAssertions assertion
         return Base64Url.EncodeToString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical.ToString())));
     }
 
-    public async Task LimitAsync(string purpose, string ip, string clientId, CancellationToken cancellationToken)
+    public async Task<TimeSpan?> LimitAsync(string purpose, string ip, string clientId, CancellationToken cancellationToken)
     {
-        if ((await limiter.AcquireAsync(AgentIdIssuer.Slug, purpose + "-ip", limiter.Fold(ip), AuthorizationsPerAddressMinute, Window, cancellationToken).ConfigureAwait(false)
-            ?? await limiter.AcquireAsync(AgentIdIssuer.Slug, purpose + "-client", limiter.Fold(clientId), RequestsPerClientMinute, Window, cancellationToken).ConfigureAwait(false))
-            is { } wait)
-        {
-            throw ApiException.RateLimited("Too many sign-in attempts; retry later.", wait);
-        }
+        return (await limiter.AcquireAsync(AgentIdIssuer.Slug, purpose + "-ip", limiter.Fold(ip), AuthorizationsPerAddressMinute, Window, cancellationToken).ConfigureAwait(false)
+            ?? await limiter.AcquireAsync(AgentIdIssuer.Slug, purpose + "-client", limiter.Fold(clientId), RequestsPerClientMinute, Window, cancellationToken).ConfigureAwait(false));
     }
 
     public async Task<AgentIdTransactionRecord> OpenAsync(string requestHash, string clientId, CancellationToken cancellationToken)
