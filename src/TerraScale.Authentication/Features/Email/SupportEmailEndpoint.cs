@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
@@ -81,7 +82,17 @@ public sealed class SupportEmailEndpoint(AuthData data, PlatformDirectory direct
         {
             return refused;
         }
-        var request = await EmailApi.ReadAsync<EmailSupportRequest>(this.HttpContext, cancellationToken).ConfigureAwait(false);
+        return (await EmailApi.ReadAsync<EmailSupportRequest>(this.HttpContext, cancellationToken).ConfigureAwait(false) switch
+        {
+            EmailSupportRequest request => await SendAsync(request, cancellationToken),
+            Validation error => ErrorResults.ToResult(error),
+            PayloadTooLarge error => ErrorResults.ToResult(error),
+            UnsupportedMediaType error => ErrorResults.ToResult(error),
+        });
+    }
+
+    private async Task<IResult> SendAsync(EmailSupportRequest request, CancellationToken cancellationToken)
+    {
         var subject = request.Subject?.Trim() ?? "";
         var message = request.Message?.Trim() ?? "";
         if (!TerraScaleIds.IsValid(request.RequestId) || !TerraScaleIds.IsValid(request.UserId) || !TerraScaleIds.IsValid(request.OrganizationId) ||
@@ -104,7 +115,7 @@ public sealed class SupportEmailEndpoint(AuthData data, PlatformDirectory direct
         }
         if (!await limiter.TryAcquireAsync(OidcIssuer.InstanceId, "support", user.Id, PerUserPerHour, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false))
         {
-            throw new ApiException(StatusCodes.Status429TooManyRequests, "rate_limited", "Too many support requests; retry within the hour or email support@terrascale.tech.");
+            return ErrorResults.ToResult(new QuotaExceeded("Too many support requests; retry within the hour or email support@terrascale.tech.", "rate_limited"));
         }
         var delivery = new SupportEmailDelivery(OidcIssuer.InstanceId, request.RequestId, user.Id, "sending");
         var reserved = Change.Insert(delivery);

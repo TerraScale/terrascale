@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
@@ -150,6 +151,10 @@ public sealed record EmailRestoreRequest(
     [property: JsonPropertyName("expected_version")] long? ExpectedVersion,
     [property: JsonPropertyName("actor")] EmailActor? Actor);
 
+internal readonly union EmailBody<T>(T, Validation, PayloadTooLarge, UnsupportedMediaType);
+
+internal readonly union SavedEmailConfig(EmailConfig, Conflict);
+
 /// <summary>
 /// What every <c>/v1/{slug}/email/*</c> endpoint shares. The only caller is the ts-dashboard confidential client, with
 /// HTTP Basic credentials (RFC 6749 section 2.3.1) checked in constant time against <c>TS_AUTH_DASHBOARD_CLIENT_SECRET</c>;
@@ -165,11 +170,11 @@ internal static class EmailApi
     public static IResult? Refuse(HttpContext context, AuthOptions options) => DashboardClientAuthentication.Refuse(context, options);
 
     /// <summary>Reads a JSON body of at most <see cref="MaxBodyBytes"/>; anything else is 400, 413 or 415.</summary>
-    public static async Task<T> ReadAsync<T>(HttpContext context, CancellationToken cancellationToken)
+    public static async Task<EmailBody<T>> ReadAsync<T>(HttpContext context, CancellationToken cancellationToken)
     {
         if (!context.Request.HasJsonContentType())
         {
-            throw new ApiException(StatusCodes.Status415UnsupportedMediaType, "unsupported_media_type", "Send the body as application/json.");
+            return new UnsupportedMediaType("Send the body as application/json.");
         }
 
         if (context.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit)
@@ -179,16 +184,21 @@ internal static class EmailApi
 
         try
         {
-            return await JsonSerializer.DeserializeAsync<T>(context.Request.Body, Json, cancellationToken)
-                ?? throw new ApiException(StatusCodes.Status400BadRequest, "invalid_request", "The body must be a JSON object.");
+            var value = await JsonSerializer.DeserializeAsync<T>(context.Request.Body, Json, cancellationToken);
+            if (value is null)
+            {
+                return new Validation("The body must be a JSON object.");
+            }
+
+            return value;
         }
         catch (JsonException error)
         {
-            throw new ApiException(StatusCodes.Status400BadRequest, "invalid_request", $"The body is not valid JSON for this operation ({error.Path}).");
+            return new Validation($"The body is not valid JSON for this operation ({error.Path}).");
         }
         catch (BadHttpRequestException error) when (error.StatusCode == StatusCodes.Status413PayloadTooLarge)
         {
-            throw new ApiException(StatusCodes.Status413PayloadTooLarge, "payload_too_large", $"The body is larger than {MaxBodyBytes} bytes.");
+            return new PayloadTooLarge($"The body is larger than {MaxBodyBytes} bytes.");
         }
     }
 
@@ -205,8 +215,15 @@ internal static class EmailApi
     public static long ExpectedVersion(long? version) =>
         version is >= 0 ? version.Value : throw new ApiException(StatusCodes.Status422UnprocessableEntity, "invalid_request", "expected_version is required: the version last read, 0 before the first save.");
 
-    public static EmailConfig Saved(EmailConfig? saved, long expected) =>
-        saved ?? throw new ApiException(StatusCodes.Status409Conflict, "version_conflict", $"The email configuration is no longer at version {expected}; read it again and retry.");
+    public static SavedEmailConfig Saved(EmailConfig? saved, long expected) =>
+        saved is { } config ? new SavedEmailConfig(config) : new SavedEmailConfig(new Conflict(
+            $"The email configuration is no longer at version {expected}; read it again and retry.", "version_conflict"));
+
+    public static IResult Answer(SavedEmailConfig saved, Func<EmailConfig, IResult> answer) => saved switch
+    {
+        EmailConfig config => answer(config),
+        Conflict error => ErrorResults.ToResult(error),
+    };
 
     /// <summary>The configuration with drafts applied for a preview or test.</summary>
     public static EmailConfig Draft(EmailConfig config, AuthEmailKind kind, string locale, EmailBranding? branding, EmailTemplateFields? fields) => config with
@@ -316,12 +333,22 @@ public sealed class PutEmailBrandingEndpoint(EmailSettings settings, AuthEmails 
             return refused;
         }
 
-        var request = await EmailApi.ReadAsync<EmailBrandingRequest>(this.HttpContext, cancellationToken);
+        return (await EmailApi.ReadAsync<EmailBrandingRequest>(this.HttpContext, cancellationToken) switch
+        {
+            EmailBrandingRequest request => await SaveAsync(request, cancellationToken),
+            Validation error => ErrorResults.ToResult(error),
+            PayloadTooLarge error => ErrorResults.ToResult(error),
+            UnsupportedMediaType error => ErrorResults.ToResult(error),
+        });
+    }
+
+    private async Task<IResult> SaveAsync(EmailBrandingRequest request, CancellationToken cancellationToken)
+    {
         var expected = EmailApi.ExpectedVersion(request.ExpectedVersion);
         var actor = EmailValidation.Actor(request.Actor);
         var branding = EmailValidation.Branding(request.Branding);
         var saved = await settings.SaveAsync(OidcIssuer.InstanceId, expected, actor, "branding", current => current with { Branding = branding }, cancellationToken);
-        return TypedResults.Json(EmailApi.Branding(EmailApi.Saved(saved, expected), emails));
+        return EmailApi.Answer(EmailApi.Saved(saved, expected), config => TypedResults.Json(EmailApi.Branding(config, emails)));
     }
 }
 
@@ -423,13 +450,23 @@ public sealed class PutEmailTemplateEndpoint(EmailSettings settings, AuthOptions
 
         var kind = EmailApi.Kind(this.HttpContext.GetRouteValue("kind") as string, route: true);
         var locale = EmailApi.Locale(this.HttpContext.GetRouteValue("locale") as string, route: true);
-        var request = await EmailApi.ReadAsync<EmailTemplateRequest>(this.HttpContext, cancellationToken);
+        return (await EmailApi.ReadAsync<EmailTemplateRequest>(this.HttpContext, cancellationToken) switch
+        {
+            EmailTemplateRequest request => await SaveAsync(kind, locale, request, cancellationToken),
+            Validation error => ErrorResults.ToResult(error),
+            PayloadTooLarge error => ErrorResults.ToResult(error),
+            UnsupportedMediaType error => ErrorResults.ToResult(error),
+        });
+    }
+
+    private async Task<IResult> SaveAsync(AuthEmailKind kind, string locale, EmailTemplateRequest request, CancellationToken cancellationToken)
+    {
         var expected = EmailApi.ExpectedVersion(request.ExpectedVersion);
         var actor = EmailValidation.Actor(request.Actor);
         var fields = EmailValidation.Fields(kind, request.Fields);
         var saved = await settings.SaveAsync(OidcIssuer.InstanceId, expected, actor, $"template:{AuthEmails.Name(kind)}/{locale}",
             current => current with { Templates = EmailApi.WithTemplate(current.Templates, kind, locale, fields) }, cancellationToken);
-        return TypedResults.Json(EmailApi.Template(EmailApi.Saved(saved, expected), kind, locale));
+        return EmailApi.Answer(EmailApi.Saved(saved, expected), config => TypedResults.Json(EmailApi.Template(config, kind, locale)));
     }
 }
 
@@ -462,7 +499,17 @@ public sealed class PreviewEmailEndpoint(EmailSettings settings, AuthEmails emai
             return refused;
         }
 
-        var request = await EmailApi.ReadAsync<EmailPreviewRequest>(this.HttpContext, cancellationToken);
+        return (await EmailApi.ReadAsync<EmailPreviewRequest>(this.HttpContext, cancellationToken) switch
+        {
+            EmailPreviewRequest request => await RenderAsync(request, cancellationToken),
+            Validation error => ErrorResults.ToResult(error),
+            PayloadTooLarge error => ErrorResults.ToResult(error),
+            UnsupportedMediaType error => ErrorResults.ToResult(error),
+        });
+    }
+
+    private async Task<IResult> RenderAsync(EmailPreviewRequest request, CancellationToken cancellationToken)
+    {
         var kind = EmailApi.Kind(request.Kind);
         var locale = EmailApi.Locale(request.Locale);
         var scheme = request.ColorScheme ?? "auto";
@@ -511,7 +558,17 @@ public sealed class TestEmailEndpoint(EmailSettings settings, AuthEmails emails,
             return refused;
         }
 
-        var request = await EmailApi.ReadAsync<EmailTestRequest>(this.HttpContext, cancellationToken);
+        return (await EmailApi.ReadAsync<EmailTestRequest>(this.HttpContext, cancellationToken) switch
+        {
+            EmailTestRequest request => await SendAsync(request, cancellationToken),
+            Validation error => ErrorResults.ToResult(error),
+            PayloadTooLarge error => ErrorResults.ToResult(error),
+            UnsupportedMediaType error => ErrorResults.ToResult(error),
+        });
+    }
+
+    private async Task<IResult> SendAsync(EmailTestRequest request, CancellationToken cancellationToken)
+    {
         var kind = EmailApi.Kind(request.Kind);
         var locale = EmailApi.Locale(request.Locale);
         var to = EmailValidation.Address("to", request.To) ?? throw new ApiException(StatusCodes.Status422UnprocessableEntity, "invalid_request", "to is required.");
@@ -600,13 +657,17 @@ public sealed class GetEmailVersionEndpoint(EmailSettings settings, AuthOptions 
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         EmailApi.Refuse(this.HttpContext, options)
-        ?? TypedResults.Json(await Find(settings, this.HttpContext, cancellationToken));
+        ?? await Find(settings, this.HttpContext, cancellationToken) switch
+        {
+            EmailConfig config => TypedResults.Json(config),
+            NotFound error => ErrorResults.ToResult(error),
+        };
 
-    internal static async Task<EmailConfig> Find(EmailSettings settings, HttpContext context, CancellationToken cancellationToken) =>
+    internal static async Task<Found<EmailConfig>> Find(EmailSettings settings, HttpContext context, CancellationToken cancellationToken) =>
         long.TryParse(context.GetRouteValue("version") as string, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var version)
         && await settings.GetVersionAsync(OidcIssuer.InstanceId, version, cancellationToken) is { } config
             ? config
-            : throw new ApiException(StatusCodes.Status404NotFound, "not_found", "No such version.");
+            : new NotFound("No such version.");
 }
 
 /// <summary><c>POST /v1/{slug}/email/versions/{version}/restore</c>: saves an earlier version again as the newest.</summary>
@@ -639,12 +700,25 @@ public sealed class RestoreEmailVersionEndpoint(EmailSettings settings, AuthOpti
             return refused;
         }
 
-        var snapshot = await GetEmailVersionEndpoint.Find(settings, this.HttpContext, cancellationToken);
-        var request = await EmailApi.ReadAsync<EmailRestoreRequest>(this.HttpContext, cancellationToken);
+        return (await GetEmailVersionEndpoint.Find(settings, this.HttpContext, cancellationToken) switch
+        {
+            EmailConfig snapshot => await EmailApi.ReadAsync<EmailRestoreRequest>(this.HttpContext, cancellationToken) switch
+            {
+                EmailRestoreRequest request => await SaveAsync(snapshot, request, cancellationToken),
+                Validation error => ErrorResults.ToResult(error),
+                PayloadTooLarge error => ErrorResults.ToResult(error),
+                UnsupportedMediaType error => ErrorResults.ToResult(error),
+            },
+            NotFound error => ErrorResults.ToResult(error),
+        });
+    }
+
+    private async Task<IResult> SaveAsync(EmailConfig snapshot, EmailRestoreRequest request, CancellationToken cancellationToken)
+    {
         var expected = EmailApi.ExpectedVersion(request.ExpectedVersion);
         var actor = EmailValidation.Actor(request.Actor);
         var saved = await settings.SaveAsync(OidcIssuer.InstanceId, expected, actor, $"rollback:{snapshot.Version}",
             current => current with { Branding = snapshot.Branding, Templates = snapshot.Templates }, cancellationToken);
-        return TypedResults.Json(EmailApi.Saved(saved, expected));
+        return EmailApi.Answer(EmailApi.Saved(saved, expected), static config => TypedResults.Json(config));
     }
 }
