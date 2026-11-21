@@ -172,9 +172,12 @@ internal sealed class CatalogGate(
                 {
                     using var plain = new AnchorBody();
                     await BackupObject.ReadAsync(stream, plain, AnchorKey, async id =>
-                        await keys.GetAsync(KeyScope, id, token).ConfigureAwait(false) is KeyBytes { Key: var anchorKey }
+                    {
+                        _step = ("read", BackupLayout.Key(KeyScope, id));
+                        return await keys.GetAsync(KeyScope, id, token).ConfigureAwait(false) is KeyBytes { Key: var anchorKey }
                             ? new KeyBytes(anchorKey)
-                            : throw new InvalidDataException(DataKeys.MissingKeyMessage), token).ConfigureAwait(false);
+                            : throw new InvalidDataException(DataKeys.MissingKeyMessage);
+                    }, token).ConfigureAwait(false);
                     using var document = JsonDocument.Parse(plain.ToArray());
                     var root = document.RootElement;
                     if (root.GetProperty("version").GetInt32() != 2

@@ -187,7 +187,7 @@ internal sealed class SqlSession(
     private static readonly SqlError UnknownDatabase = SqlErrors.Error("the database does not exist");
 
     private SqlError Missing() => database.DatabaseId is { } id && fences.MovedTo(id) is { } home
-        ? new SqlError(SqlErrors.WrongRegion, home is null ? "the database is moving its home region; retry" : $"the database moved to {home}")
+        ? SqlErrors.Moved(home)
         : UnknownDatabase;
     private static readonly SqlError TooManyChanges = SqlErrors.TooBig("a transaction changes at most 1024 rows and grows the database by at most 8 MiB");
     internal static readonly SqlError TooManyRows = SqlErrors.TooBig("a result holds at most 10000 rows and 8 MiB; add a LIMIT");
