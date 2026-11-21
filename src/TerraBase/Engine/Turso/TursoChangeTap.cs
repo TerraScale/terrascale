@@ -1,4 +1,3 @@
-using TerraBase.Errors;
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Data.Common;
@@ -7,6 +6,7 @@ using System.Text;
 using Turso;
 using Turso.Data.Sqlite;
 using Turso.Raw.Public;
+using TerraBase.Errors;
 
 namespace TerraBase.Engine.Turso;
 
@@ -524,13 +524,17 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
 
     internal long RewriteBytes { get; private set; }
 
-    internal long ReplayRewrite(TursoConnection source, TursoConnection target, bool final, CancellationToken token)
+    internal readonly record struct ReplayApplied(long Changes);
+
+    internal readonly union ReplayOutcome(ReplayApplied, RewriteRefused);
+
+    internal ReplayOutcome ReplayRewrite(TursoConnection source, TursoConnection target, bool final, CancellationToken token)
     {
         ThrowIfUnavailable();
         _reader = source;
         if (_anchor > 0 && Scalar("SELECT 1 FROM turso_cdc WHERE change_id = $anchor;", _anchor) is null)
         {
-            throw new RewriteRefusedException("the rewrite's change-log anchor was trimmed");
+            return new RewriteRefused("the rewrite's change-log anchor was trimmed", new Safety());
         }
 
         var end = _anchor;
@@ -550,7 +554,7 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
                 if (++count > 1024 || bytes > PageBytes || !rows.IsDBNull(3) && rows.GetString(3) == "sqlite_schema")
                 {
                     FaultAwareCopySource.Abort(rows);
-                    throw new RewriteRefusedException("the final rewrite delta exceeds its budget", reason: new Budget());
+                    return new RewriteRefused("the final rewrite delta exceeds its budget", new Budget());
                 }
                 if (rows.GetInt64(1) == 2)
                 {
@@ -559,7 +563,7 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
             }
             if (last != end)
             {
-                throw new RewriteRefusedException("the final rewrite delta ends inside a transaction");
+                return new RewriteRefused("the final rewrite delta ends inside a transaction", new Safety());
             }
         }
         else
@@ -569,7 +573,7 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
 
         if (_anchor == 0 && Scalar("SELECT min(change_id) FROM turso_cdc WHERE change_id > $anchor;", 0) as long? is > 1)
         {
-            throw new RewriteRefusedException("the rewrite's initial change-log prefix was trimmed");
+            return new RewriteRefused("the rewrite's initial change-log prefix was trimmed", new Safety());
         }
 
         var first = _anchor;
@@ -585,7 +589,7 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
             using var segment = new MemoryStream(buffer.WrittenMemory.ToArray(), writable: false);
             if (!placed || next <= _anchor || !replay.Apply(segment, token))
             {
-                throw new RewriteRefusedException("the rewrite delta cannot be replayed");
+                return new RewriteRefused("the rewrite delta cannot be replayed", new Safety());
             }
 
             _anchor = next;
@@ -594,13 +598,13 @@ internal sealed partial class TursoChangeTap : IWalTap, ICdcBackupRetention
 
         if (replay.Open)
         {
-            throw new RewriteRefusedException("the rewrite delta ends inside a transaction");
+            return new RewriteRefused("the rewrite delta ends inside a transaction", new Safety());
         }
 
         replay.Resume();
         _store.RewriteAnchor = _anchor;
         ThrowIfUnavailable();
-        return _anchor - first;
+        return new ReplayApplied(_anchor - first);
     }
 
     private bool Truncate(TursoSession writer)

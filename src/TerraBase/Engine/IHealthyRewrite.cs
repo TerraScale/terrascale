@@ -4,10 +4,12 @@ namespace TerraBase.Engine;
 
 internal interface IHealthyRewrite
 {
-    ValueTask<HealthyRewrite> RewriteAsync(TenantContext? database, long minimumOffset, CancellationToken cancellationToken);
+    ValueTask<HealthyRewriteOutcome> RewriteAsync(TenantContext? database, long minimumOffset, CancellationToken cancellationToken);
 }
 
 internal readonly record struct HealthyRewrite(Ulid SourceIncarnation, Ulid TargetIncarnation, long Offset);
+
+internal readonly union HealthyRewriteOutcome(HealthyRewrite, RewriteRefused);
 
 internal closed record class RewriteRefusal;
 internal sealed record class Safety : RewriteRefusal;
@@ -29,11 +31,7 @@ internal static class RewriteRefusalExtensions
     }
 }
 
-internal sealed class RewriteRefusedException(string message, Exception? innerException = null, RewriteRefusal? reason = null)
-    : IOException(message, innerException)
-{
-    internal RewriteRefusal Reason { get; } = reason ?? new Safety();
-}
+internal sealed record RewriteRefused(string Message, RewriteRefusal Reason, Exception? Error = null);
 
 internal sealed class RewriteUncertainException(Exception innerException)
     : IOException("the rewritten file is in place but its rename may not be durable; storage failed closed", innerException);

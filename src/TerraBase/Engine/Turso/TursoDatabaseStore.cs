@@ -1,10 +1,10 @@
-using TerraBase.Errors;
 using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using Turso.Data.Sqlite;
 using Turso.Raw.Public;
+using TerraBase.Errors;
 using TerraBase.Configuration;
 using TerraBase.Features.Memory;
 using TerraBase.Hosting;
