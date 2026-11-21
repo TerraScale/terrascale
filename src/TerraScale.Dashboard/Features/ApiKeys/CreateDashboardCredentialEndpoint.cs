@@ -49,19 +49,31 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             {
                 if (!context.CanManageKeys)
                 {
-                    throw new AccountAccessException("Project member access is required.");
+                    const string denied = "Project member access is required.";
+                    return DatabaseEndpoints.WantsHtml(http)
+                        ? await ApiKeyPages.PageAsync(http, context, keys, databases, denied, kind, form["name"].ToString(), status: StatusCodes.Status403Forbidden,
+                            draftScopes: form["scopes"].ToString(), draftDatabaseId: form["databaseId"].ToString(), draftExpiresInDays: form["expiresInDays"].ToString(), draftAllowedCidrs: form["allowedCidrs"].ToString())
+                        : Results.Problem(denied, statusCode: StatusCodes.Status403Forbidden);
                 }
 
                 if (kind is not ("key" or "api-key"))
                 {
-                    throw new AccountAccessException("Kind must be key.", 422);
+                    const string refused = "Kind must be key.";
+                    return DatabaseEndpoints.WantsHtml(http)
+                        ? await ApiKeyPages.PageAsync(http, context, keys, databases, refused, kind, form["name"].ToString(), status: StatusCodes.Status422UnprocessableEntity,
+                            draftScopes: form["scopes"].ToString(), draftDatabaseId: form["databaseId"].ToString(), draftExpiresInDays: form["expiresInDays"].ToString(), draftAllowedCidrs: form["allowedCidrs"].ToString())
+                        : Results.Problem(refused, statusCode: StatusCodes.Status422UnprocessableEntity);
                 }
 
                 var expires = form["expiresInDays"].ToString();
                 var expiresInDays = 0;
                 if (expires.Length > 0 && !int.TryParse(expires, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out expiresInDays))
                 {
-                    throw new AccountAccessException("Choose no expiry, 30 days, 90 days, or 1 year.", 422);
+                    const string refused = "Choose no expiry, 30 days, 90 days, or 1 year.";
+                    return DatabaseEndpoints.WantsHtml(http)
+                        ? await ApiKeyPages.PageAsync(http, context, keys, databases, refused, kind, form["name"].ToString(), status: StatusCodes.Status422UnprocessableEntity,
+                            draftScopes: form["scopes"].ToString(), draftDatabaseId: form["databaseId"].ToString(), draftExpiresInDays: form["expiresInDays"].ToString(), draftAllowedCidrs: form["allowedCidrs"].ToString())
+                        : Results.Problem(refused, statusCode: StatusCodes.Status422UnprocessableEntity);
                 }
 
                 var credential = await keys.CreateAsync(context, kind, form["name"].ToString(), form["databaseId"].ToString(), form["scope"].Concat(form["scopes"]).SelectMany(value => (value ?? "").Split([',', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)), expiresInDays, ApiKeyService.ParseCidrs(form["allowedCidrs"].ToString()), http.RequestAborted);

@@ -6,6 +6,7 @@ using Microsoft.AspNetCore;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.IdentityModel.Tokens;
 using OpenIddict.Abstractions;
+using OidcErrors = OpenIddict.Abstractions.OpenIddictConstants.Errors;
 using OpenIddict.Server.AspNetCore;
 using OpenIddict.Server;
 using TerraScale.Authentication.Configuration;
@@ -379,7 +380,7 @@ public sealed class RefuseScopeExpansion : IOpenIddictServerHandler<ValidateToke
             return ValueTask.CompletedTask;
         }
 
-        context.Reject(Errors.InvalidScope, "The requested scope exceeds the original authorization.");
+        context.Reject(OidcErrors.InvalidScope, "The requested scope exceeds the original authorization.");
         return ValueTask.CompletedTask;
     }
 }
@@ -487,7 +488,7 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
         {
             if (!await credentials.AreCurrentAsync(tenant, inherited, context.CancellationToken).ConfigureAwait(false))
             {
-                context.Reject(Errors.InvalidGrant, CredentialLineage.ConflictNotice);
+                context.Reject(OidcErrors.InvalidGrant, CredentialLineage.ConflictNotice);
             }
 
             return;
@@ -507,7 +508,7 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
                 || await authorizations.FindByIdAsync(parentId, context.CancellationToken).ConfigureAwait(false) is not { Status: Statuses.Valid } parent
                 || context.Principal!.GetClaim(Claims.Subject) is not { Length: > 0 } subject)
             {
-                context.Reject(Errors.InvalidGrant, CredentialLineage.ConflictNotice);
+                context.Reject(OidcErrors.InvalidGrant, CredentialLineage.ConflictNotice);
                 return;
             }
 
@@ -535,7 +536,7 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
                 || await authorizations.FindByIdAsync(approvalId, context.CancellationToken).ConfigureAwait(false) is not { Status: Statuses.Valid } approval
                 || approval.Subject != context.Principal!.GetClaim(Claims.Subject) || approval.ApplicationId != token.ApplicationId)
             {
-                context.Reject(Errors.InvalidGrant, CredentialLineage.ConflictNotice);
+                context.Reject(OidcErrors.InvalidGrant, CredentialLineage.ConflictNotice);
                 return;
             }
 
@@ -546,7 +547,7 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
         {
             if (context.Transaction.GetHttpRequest()?.HttpContext.Items[AgentIdFence.Item] is not AgentIdFence fence)
             {
-                context.Reject(Errors.InvalidGrant, "The agent can no longer sign in.");
+                context.Reject(OidcErrors.InvalidGrant, "The agent can no longer sign in.");
                 return;
             }
 
@@ -555,7 +556,7 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
 
         if (inherited.Length + (addsBinding ? 1 : 0) > Credentials.MaxLineage)
         {
-            context.Reject(Errors.InvalidGrant, "This sign-in reached its rotation limit. Sign in again to continue.");
+            context.Reject(OidcErrors.InvalidGrant, "This sign-in reached its rotation limit. Sign in again to continue.");
             return;
         }
 
@@ -590,7 +591,7 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
             && (context.Request.IsRefreshTokenGrantType() || context.Request.IsAuthorizationCodeGrantType())
             && await CredentialLineage.RevokeReplayAsync(tokens, token, principal, context.Request.ClientId,
                 context.CancellationToken).ConfigureAwait(false);
-        context.Reject(Errors.InvalidGrant, replay ? CredentialLineage.ReplayNotice : CredentialLineage.ConflictNotice);
+        context.Reject(OidcErrors.InvalidGrant, replay ? CredentialLineage.ReplayNotice : CredentialLineage.ConflictNotice);
     }
 
     private static OidcToken Redeemed(OidcToken token, DateTimeOffset now)

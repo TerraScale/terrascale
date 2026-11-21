@@ -21,26 +21,37 @@ namespace TerraScale.Dashboard.Features.Profile
 
             string? pendingEmail = null;
             var status = "";
-            try
+            if (confirm)
             {
-                if (confirm)
+                var code = form["code"].ToString().Trim();
+                if (code.Length != 6 || !code.All(char.IsAsciiDigit))
                 {
-                    var code = form["code"].ToString().Trim();
-                    if (code.Length != 6 || !code.All(char.IsAsciiDigit))
-                    {
-                        throw new AccountAccessException("Enter the six-digit code sent to your new address.", 422, "invalid_request");
-                    }
+                    return await ViewAsync("Enter the six-digit code sent to your new address.", 422);
+                }
 
+                try
+                {
                     await gateway.ConfirmEmailChangeAsync(context.Session, code, http.RequestAborted);
                 }
-                else
+                catch (AccountAccessException error)
                 {
-                    var email = form["new_email"].ToString().Trim();
-                    if (email.Length > 254 || !System.Net.Mail.MailAddress.TryCreate(email, out var address) || address.Address != email)
-                    {
-                        throw new AccountAccessException("Enter a valid new email address.", 422, "invalid_request");
-                    }
+                    return await RefusedAsync(error);
+                }
+                catch (Exception error) when (Unavailable(error))
+                {
+                    return await UnavailableAsync();
+                }
+            }
+            else
+            {
+                var email = form["new_email"].ToString().Trim();
+                if (email.Length > 254 || !System.Net.Mail.MailAddress.TryCreate(email, out var address) || address.Address != email)
+                {
+                    return await ViewAsync("Enter a valid new email address.", 422);
+                }
 
+                try
+                {
                     var intent = StepUpFlow.Intent(http, context, "change_email");
                     if (intent is null)
                     {
@@ -51,8 +62,24 @@ namespace TerraScale.Dashboard.Features.Profile
                     pendingEmail = pending.NewEmail;
                     status = "Code sent to your new address. Enter it within ten minutes. Your current address received a cancel link.";
                 }
+                catch (AccountAccessException error)
+                {
+                    return await RefusedAsync(error);
+                }
+                catch (Exception error) when (Unavailable(error))
+                {
+                    return await UnavailableAsync();
+                }
             }
-            catch (AccountAccessException error)
+            if (!confirm)
+            {
+                return await ViewAsync("", 200);
+            }
+            await sessions.RevokeUserAsync(context.UserId, http.RequestAborted);
+            await sessions.EndAsync(http);
+            return HttpRedirects.SeeOther("/login?emailChanged=1");
+
+            async Task<IResult> RefusedAsync(AccountAccessException error)
             {
                 var message = error.Code switch
                 {
@@ -63,18 +90,10 @@ namespace TerraScale.Dashboard.Features.Profile
                 };
                 return await ViewAsync(message, error.StatusCode);
             }
-            catch (Exception error) when (error is HttpRequestException or IOException or TimeoutException)
-            {
-                return await ViewAsync("The email change could not be confirmed. If you already submitted a code, try signing in with the new address before starting again.", 503);
-            }
-            if (!confirm)
-            {
-                return await ViewAsync("", 200);
-            }
-            // Auth has invalidated every grant. Do not attempt to revoke the old bearer again.
-            await sessions.RevokeUserAsync(context.UserId, http.RequestAborted);
-            await sessions.EndAsync(http);
-            return HttpRedirects.SeeOther("/login?emailChanged=1");
+
+            static bool Unavailable(Exception error) => error is HttpRequestException or IOException or TimeoutException;
+
+            Task<IResult> UnavailableAsync() => ViewAsync("The email change could not be confirmed. If you already submitted a code, try signing in with the new address before starting again.", 503);
 
             async Task<IResult> ViewAsync(string error, int statusCode)
             {

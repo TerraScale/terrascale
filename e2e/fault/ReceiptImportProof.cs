@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Replicas;
@@ -38,8 +39,8 @@ internal static class ReceiptImportProof
         var services = app.Services;
         var engine = services.GetRequiredService<IStorageEngine>();
         await SeedAsync(engine, "identical", cancellationToken);
-        var ordinary = await RegionalCatalog.ExportAsync(engine, cancellationToken);
-        var incoming = await SendingCatalog.ExportAsync(engine, cancellationToken);
+        var ordinary = await SnapshotAsync(RegionalCatalog.ExportAsync(engine, cancellationToken));
+        var incoming = await SnapshotAsync(SendingCatalog.ExportAsync(engine, cancellationToken));
         var receipts = incoming.Records.Where(record => record.Kind == PurgeKind || record.Kind == ClosureKind).ToArray();
         Require(receipts.Length == 2 && !ordinary.Records.Any(record => record.Kind == PurgeKind || record.Kind == ClosureKind),
             "ordinary handoff exported receipts or journey exporter omitted them");
@@ -51,7 +52,7 @@ internal static class ReceiptImportProof
         foreach (var name in new[] { "purge-holder", "purge-authority", "closure-holder", "closure-authority", "stale-closure", "stale-refusal",
             "absent-holder", "absent-authority", "absent-database", "absent-project", "purge-version", "closure-version", "evidence-version", "malformed", "duplicate", "conflict-count" })
         {
-            var before = await SendingCatalog.ExportAsync(engine, cancellationToken);
+            var before = await SnapshotAsync(SendingCatalog.ExportAsync(engine, cancellationToken));
             var bad = Changed(incoming, name);
             var refused = false;
             try
@@ -64,7 +65,7 @@ internal static class ReceiptImportProof
                     ? "database_purge_receipts" : "project_closure_receipts";
                 refused = error.Message.Contains(kind, StringComparison.Ordinal) && error.Message.Contains(name == "conflict-count" ? "2 records" : "1 records", StringComparison.Ordinal);
             }
-            var after = await SendingCatalog.ExportAsync(engine, cancellationToken);
+            var after = await SnapshotAsync(SendingCatalog.ExportAsync(engine, cancellationToken));
             var unchanged = Bytes(before).AsSpan().SequenceEqual(Bytes(after));
             if (!refused || !unchanged)
             {
@@ -147,7 +148,7 @@ internal static class ReceiptImportProof
                 }
                 else if (command == "capture")
                 {
-                    before = await SendingCatalog.ExportAsync(engine, cancellationToken);
+                    before = await SnapshotAsync(SendingCatalog.ExportAsync(engine, cancellationToken));
                 }
                 else if (command == "unchanged")
                 {
@@ -322,6 +323,12 @@ internal static class ReceiptImportProof
 
     private static RegionalRecord Record(string kind, string holder, ProjectClosureReceipt receipt) =>
         new(kind, holder, JsonSerializer.SerializeToUtf8Bytes(receipt, ManagementJsonContext.Default.ProjectClosureReceipt));
+
+    private static async Task<RegionalCatalogSnapshot> SnapshotAsync(Task<RegionalCatalogExport> export) => await export switch
+    {
+        RegionalCatalogSnapshot snapshot => snapshot,
+        Unavailable unavailable => throw new InvalidOperationException($"regional catalog export failed: {unavailable.Code}"),
+    };
 
     private static byte[] Bytes(RegionalCatalogSnapshot snapshot) => JsonSerializer.SerializeToUtf8Bytes(snapshot with
     {

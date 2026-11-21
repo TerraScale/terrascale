@@ -23,17 +23,17 @@ namespace TerraScale.Dashboard.Features.Profile
                 return RequestError.FormExpired(http, "/profile?tab=access-tokens", Results.StatusCode(403));
             }
 
+            if (!int.TryParse(form["expiresInDays"], out var days))
+            {
+                return await AccessTokenEndpoints.FailureAsync(http, context, sessions, tokens, "Choose a valid token expiration.", 422);
+            }
+
             try
             {
-                if (!int.TryParse(form["expiresInDays"], out var days))
-                {
-                    throw new AccountAccessException("Choose a valid token expiration.", 422);
-                }
-
                 _ = AccessTokens.Validate(form["name"].ToString(), days);
                 return await StepUpFlow.StartAsync(http, context, "create_pat", "ts-dashboard");
             }
-            catch (AccountAccessException error) { return await AccessTokenEndpoints.FailureAsync(http, context, sessions, tokens, error); }
+            catch (AccountAccessException error) { return await AccessTokenEndpoints.FailureAsync(http, context, sessions, tokens, error.Message, error.StatusCode); }
         }
     }
 }

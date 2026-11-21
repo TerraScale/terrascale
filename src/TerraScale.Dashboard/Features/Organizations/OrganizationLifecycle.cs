@@ -1,29 +1,35 @@
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Organizations
 {
+    using NotFound = TerraScale.Dashboard.Errors.NotFound;
+
+    public readonly union LeaveResult(Done, Conflict);
+
     public sealed class OrganizationLifecycleService(OrganizationStore organizations, AccountService accounts, ITsAuthPlatform platform, IAuthStepUpGateway stepUp, TimeProvider time)
     {
-        public async Task LeaveAsync(AccountContext context, CancellationToken cancellationToken)
+        public async Task<LeaveResult> LeaveAsync(AccountContext context, CancellationToken cancellationToken)
         {
             context = await FreshAsync(context, cancellationToken);
             var org = context.Organization!;
             if (org.Kind == "personal" || context.Role == "owner")
             {
-                throw new AccountAccessException("Owners must transfer ownership before leaving a business organization.", 409);
+                return new Conflict("Owners must transfer ownership before leaving a business organization.");
             }
 
             if (context.Organizations.Count < 2)
             {
-                throw new AccountAccessException("Keep another accessible organization before leaving.", 409);
+                return new Conflict("Keep another accessible organization before leaving.");
             }
 
             await platform.LeaveOrganizationAsync(context.Session, org.Id, cancellationToken);
             await ProjectAfterRemovalAsync(context, false, cancellationToken);
             await ForgetAsync(context, cancellationToken);
+            return new Done();
         }
 
         // Completes on the owner's confirmed request. An organization already marked by the earlier

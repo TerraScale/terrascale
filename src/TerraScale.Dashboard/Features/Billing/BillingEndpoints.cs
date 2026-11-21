@@ -8,6 +8,7 @@ using TerraScale.Dashboard.Features.Billing.Invoices;
 using TerraScale.Dashboard.Features.Billing.Plans;
 using TerraScale.Dashboard.Features.Billing.Webhooks;
 using TerraScale.Dashboard.Common.Validation;
+using TerraScale.Dashboard.Errors;
 
 namespace TerraScale.Dashboard.Features.Billing
 {
@@ -50,8 +51,21 @@ namespace TerraScale.Dashboard.Features.Billing
                 ? reporter.OperationUnitOverageAsync(subscribed, cancellationToken) : Task.FromResult(0L);
             BillingCard? paymentMethod = null;
             var paymentMethodUnavailable = false;
-            try { paymentMethod = await paymentMethodRead; }
-            catch (Exception error) when (error is TerraBaseException or HttpRequestException or StripeException or BillingPaymentMethodUnavailableException ||
+            try
+            {
+                switch (await paymentMethodRead)
+                {
+                    case BillingCard card:
+                        paymentMethod = card;
+                        break;
+                    case Unavailable:
+                        paymentMethodUnavailable = true;
+                        break;
+                    case NoCard:
+                        break;
+                }
+            }
+            catch (Exception error) when (error is TerraBaseException or HttpRequestException or StripeException ||
                                           error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
             { paymentMethodUnavailable = true; }
             IReadOnlyList<BillingInvoice> invoices = [];

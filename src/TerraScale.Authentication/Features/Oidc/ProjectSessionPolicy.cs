@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Claims;
 using Microsoft.AspNetCore;
 using OpenIddict.Abstractions;
+using OidcErrors = OpenIddict.Abstractions.OpenIddictConstants.Errors;
 using OpenIddict.Server;
 using TerraScale.Authentication.Features.Identity;
 using static OpenIddict.Abstractions.OpenIddictConstants;
@@ -24,7 +25,7 @@ public sealed class ProjectSessionPolicy(Sessions sessions, TimeProvider clock, 
 
         if (ReadAuthenticationTime(refresh, clock) is not { } authenticatedAt)
         {
-            context.Reject(Errors.InvalidGrant, "The sign-in has no valid authentication time.");
+            context.Reject(OidcErrors.InvalidGrant, "The sign-in has no valid authentication time.");
             return;
         }
 
@@ -32,7 +33,7 @@ public sealed class ProjectSessionPolicy(Sessions sessions, TimeProvider clock, 
         if (authenticatedAt > DateTimeOffset.MaxValue - lifetime || authenticatedAt + lifetime <= clock.GetUtcNow())
         {
             await RevokeAsync(tokens, refresh, context.CancellationToken).ConfigureAwait(false);
-            context.Reject(Errors.InvalidGrant, "The project's absolute session lifetime has elapsed.");
+            context.Reject(OidcErrors.InvalidGrant, "The project's absolute session lifetime has elapsed.");
             return;
         }
 

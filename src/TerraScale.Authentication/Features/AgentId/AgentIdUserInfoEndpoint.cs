@@ -3,6 +3,7 @@ using Microsoft.AspNetCore;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http.Metadata;
 using OpenIddict.Abstractions;
+using OidcErrors = OpenIddict.Abstractions.OpenIddictConstants.Errors;
 using OpenIddict.Server.AspNetCore;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Oidc;
@@ -68,6 +69,6 @@ public abstract class AgentIdUserInfoEndpoint(AgentIdTransactions transactions, 
     }
 
     private static IResult Refused() =>
-        Results.Challenge(OidcResults.Error(Errors.InvalidToken, "The access token no longer identifies an agent that can sign in."),
+        Results.Challenge(OidcResults.Error(OidcErrors.InvalidToken, "The access token no longer identifies an agent that can sign in."),
             [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
 }

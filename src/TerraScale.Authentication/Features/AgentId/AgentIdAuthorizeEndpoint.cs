@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Http.Metadata;
 using Microsoft.Extensions.Primitives;
 using Microsoft.Net.Http.Headers;
 using OpenIddict.Abstractions;
+using OidcErrors = OpenIddict.Abstractions.OpenIddictConstants.Errors;
 using OpenIddict.Server.AspNetCore;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
@@ -40,26 +41,30 @@ public abstract class AgentIdAuthorizeEndpoint(AgentIdTransactions transactions,
 
         if (!request.HasScope(Scopes.OpenId))
         {
-            return Results.Forbid(OidcResults.Error(Errors.InvalidScope, "Sign in as agent requires the openid scope."), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
+            return Results.Forbid(OidcResults.Error(OidcErrors.InvalidScope, "Sign in as agent requires the openid scope."), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
         }
 
         if (request.HasScope(AgentIdIssuer.OwnerEmailScope) && AgentIdIssuer.IsOpenClient(clientId))
         {
-            return Results.Forbid(OidcResults.Error(Errors.InvalidScope, "Only a registered client can request the owner_email scope."), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
+            return Results.Forbid(OidcResults.Error(OidcErrors.InvalidScope, "Only a registered client can request the owner_email scope."), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
         }
 
         List<KeyValuePair<string, StringValues>> parameters = HttpMethods.IsPost(this.HttpContext.Request.Method)
             ? [.. await this.HttpContext.Request.ReadFormAsync(cancellationToken)]
             : [.. this.HttpContext.Request.Query];
-        var browser = this.HttpContext.Request.GetTypedHeaders().Accept.Any(media => media.MediaType.Equals("text/html", StringComparison.OrdinalIgnoreCase));
         try
         {
-            await transactions.LimitAsync("agentid-authorize", SignInFlow.Ip(this.HttpContext), clientId, cancellationToken);
+            if (await transactions.LimitAsync("agentid-authorize", SignInFlow.Ip(this.HttpContext), clientId, cancellationToken) is { } limited)
+            {
+                return HostedAuth.TooMany(limited);
+            }
         }
-        catch (ApiException error) when (error.RetryAfter is { } wait)
+        catch (ApiException unavailable) when (unavailable.RetryAfter is { } wait)
         {
             return HostedAuth.TooMany(wait);
         }
+
+        var browser = this.HttpContext.Request.GetTypedHeaders().Accept.Any(media => media.MediaType.Equals("text/html", StringComparison.OrdinalIgnoreCase));
 
         var transaction = await transactions.OpenAsync(AgentIdTransactions.RequestHash(parameters), clientId, cancellationToken);
         this.HttpContext.Response.Headers.CacheControl = "no-store";
@@ -88,6 +93,6 @@ public abstract class AgentIdAuthorizeEndpoint(AgentIdTransactions transactions,
 
         return await transactions.CompleteAsync(transaction, cancellationToken) is { } signIn
             ? Results.SignIn(AgentIdIssuer.Principal(options, clientId, signIn, request.GetScopes(), redemption: false), null, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme)
-            : Results.Forbid(OidcResults.Error(Errors.AccessDenied, "The agent can no longer sign in."), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
+            : Results.Forbid(OidcResults.Error(OidcErrors.AccessDenied, "The agent can no longer sign in."), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
     }
 }

@@ -1,5 +1,6 @@
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
@@ -18,7 +19,7 @@ public abstract class SelfAgentEndpoint(PlatformAuthentication authentication, A
         var request = this.HttpContext.Request;
         if (!HttpMethods.IsGet(request.Method) && (request.Headers.Origin is not [{ } origin] || !SignInFlow.IsPublicOrigin(origin, options.PublicOrigin)))
         {
-            throw PlatformDirectory.Forbidden();
+            return ErrorResults.ToResult(new Forbidden("Your role does not allow this.", "forbidden_role"));
         }
 
         return await sessions.ResolveAsync(project, request.Cookies[Tenancy.SessionCookie(project)], cancellationToken) is { } live

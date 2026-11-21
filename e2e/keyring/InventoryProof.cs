@@ -14,6 +14,7 @@ using TerraBase.Engine;
 using TerraBase.Engine.Turso;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Replicas;
+using TerraBase.Errors;
 using Turso.Data.Sqlite;
 using StorageTransaction = TerraBase.Engine.Turso.TursoStorageTransaction;
 using MasterKeyring = TerraBase.Features.Backup.Keyring;
@@ -274,7 +275,12 @@ internal static class InventoryProof
             ["k0"] = settings.Keys["k0"],
             ["absent"] = RandomNumberGenerator.GetBytes(32),
         });
-        var snapshot = await RegionalCatalog.ExportAsync(engine, cancellationToken);
+        var exported = await RegionalCatalog.ExportAsync(engine, cancellationToken);
+        var snapshot = exported switch
+        {
+            RegionalCatalogSnapshot catalog => catalog,
+            Unavailable unavailable => throw new InvalidOperationException($"regional catalog export failed: {unavailable.Code}"),
+        };
         var destination = new ProjectBackupDestination(new Uri("https://example.com"), "auto", "journey-backups", "both", DateTimeOffset.UnixEpoch);
         async Task<RegionalRecord> CredentialAsync(IKeyring ring, string id)
         {
@@ -292,7 +298,11 @@ internal static class InventoryProof
         }
         catch (InvalidDataException error) when (error.Message.Contains("unconfigured key id 'absent'", StringComparison.Ordinal))
         {
-            var after = await RegionalCatalog.ExportAsync(engine, cancellationToken);
+            var after = await RegionalCatalog.ExportAsync(engine, cancellationToken) switch
+            {
+                RegionalCatalogSnapshot catalog => catalog,
+                Unavailable unavailable => throw new InvalidOperationException($"regional catalog export failed: {unavailable.Code}"),
+            };
             Require(!after.Records.Any(record => record.Id is "marker" or "missing"), "import did not roll back as a whole");
             Require(after.Records.Count == snapshot.Records.Count && snapshot.Records.All(original =>
                 after.Records.Any(record => record.Kind == original.Kind && record.Id == original.Id && record.Json.SequenceEqual(original.Json))),

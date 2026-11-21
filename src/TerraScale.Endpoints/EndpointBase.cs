@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using TerraScale.Endpoints.Binding;
 
 namespace TerraScale.Endpoints;
 
@@ -88,6 +89,12 @@ public abstract class EndpointBase : IEndpoint
     // Goes through IProblemDetailsService when the app registers one, so error bodies stay customizable.
     private protected static Task Reject(HttpContext context, BadHttpRequestException exception) =>
         TypedResults.Problem(exception.Message, statusCode: exception.StatusCode).ExecuteAsync(context);
+
+    private protected static Task Reject(HttpContext context, Validation invalid) =>
+        TypedResults.Problem(invalid.Message, statusCode: StatusCodes.Status400BadRequest).ExecuteAsync(context);
+
+    private protected static Task Reject(HttpContext context, UnsupportedMediaType unsupported) =>
+        TypedResults.Problem(unsupported.Message, statusCode: StatusCodes.Status415UnsupportedMediaType).ExecuteAsync(context);
 
     /// <summary>
     /// True unless the endpoint overrides <c>BindAsync</c>. A custom binder owns the request, so the

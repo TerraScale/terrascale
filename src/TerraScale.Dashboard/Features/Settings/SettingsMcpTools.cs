@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Platform.Mcp;
 
 namespace TerraScale.Dashboard.Features.Settings
@@ -9,17 +10,26 @@ namespace TerraScale.Dashboard.Features.Settings
     {
         [McpAccess(McpAccess.Read)]
         [McpServerTool(Name = "get_project_settings", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true), Description("Read provider audit retention and the selected project's deletion eligibility. Requires organization management.")]
-        public Task<ProjectSettings> Read(string? organizationId = null, string? projectId = null)
+        public async Task<ProjectSettings> Read(string? organizationId = null, string? projectId = null)
         {
-            return settings.ReadAsync(Scope(organizationId, projectId), Cancellation);
+            return await settings.ReadAsync(Scope(organizationId, projectId), Cancellation) switch
+            {
+                ProjectSettings value => value,
+                Forbidden error => throw new AccountAccessException(error.Message),
+            };
         }
 
         [McpAccess(McpAccess.Destructive)]
         [McpServerTool(Name = "set_audit_retention", Idempotent = true, UseStructuredContent = true, Destructive = false, OpenWorld = false), Description("Set the provider's organization audit retention from 1 to 90 days. Requires an owner or admin role.")]
         public async Task<SettingsSaved> SetRetention(int days, string? organizationId = null, string? projectId = null)
         {
-            await settings.SetAuditRetentionAsync(Scope(organizationId, projectId), days, Cancellation);
-            return new(true);
+            var saved = await settings.SetAuditRetentionAsync(Scope(organizationId, projectId), days, Cancellation);
+            return saved switch
+            {
+                Done => new(true),
+                Validation error => throw new AccountAccessException(error.Message, 400),
+                Forbidden error => throw new AccountAccessException(error.Message),
+            };
         }
 
         [McpAccess(McpAccess.Destructive)]

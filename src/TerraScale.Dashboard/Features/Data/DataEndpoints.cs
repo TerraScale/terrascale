@@ -2,11 +2,14 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.WebUtilities;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Platform.Datastar;
 
 namespace TerraScale.Dashboard.Features.Data
 {
+    using NotFound = TerraScale.Dashboard.Errors.NotFound;
+    using NotFoundEndpoints = TerraScale.Dashboard.Features.NotFound.NotFoundEndpoints;
     public static class DataEndpoints
     {
         internal static async Task<IResult> MutateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, DataService data, SavedQueryService saved, string action)
@@ -48,7 +51,7 @@ namespace TerraScale.Dashboard.Features.Data
                     var problem = SqlValidation.Diagnostics(form["sql"].ToString()).FirstOrDefault(item => item.Severity == "error");
                     if (problem is not null)
                     {
-                        throw new AccountAccessException(problem.Message, 422);
+                        return await Refused(StatusCodes.Status422UnprocessableEntity, problem.Message);
                     }
 
                     if (action == "sql")
@@ -61,16 +64,36 @@ namespace TerraScale.Dashboard.Features.Data
                         var result = await data.SqlAsync(context, id, form["sql"].ToString(), true, http.RequestAborted);
                         return Results.Json(new { columns = result.Columns, rows = result.Rows, rowsAffected = result.RowsAffected, lastInsertRowId = result.LastInsertRowId });
                     }
-                    var query = await saved.SaveAsync(context, id, form["name"].ToString(), form["sql"].ToString(), http.RequestAborted);
-                    if (http.Request.IsDatastarRequest)
+                    switch (await saved.SaveAsync(context, id, form["name"].ToString(), form["sql"].ToString(), http.RequestAborted))
                     {
-                        return await PageAsync(http, context, id, data, saved);
+                        case SavedQuery savedQuery:
+                            if (http.Request.IsDatastarRequest)
+                            {
+                                return await PageAsync(http, context, id, data, saved);
+                            }
+                            return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "sql") + "?savedQueryId=" + Uri.EscapeDataString(savedQuery.Id)) : Results.Json(PublicSavedQuery(savedQuery), statusCode: 201);
+                        case Forbidden failure:
+                            return await Refused(StatusCodes.Status403Forbidden, failure.Message);
+                        case Validation failure:
+                            return await Refused(StatusCodes.Status422UnprocessableEntity, failure.Message);
+                        case Conflict failure:
+                            return await Refused(StatusCodes.Status409Conflict, failure.Message);
                     }
-                    return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "sql") + "?savedQueryId=" + Uri.EscapeDataString(query.Id)) : Results.Json(PublicSavedQuery(query), statusCode: 201);
                 }
                 if (action == "saved-queries/delete")
                 {
-                    await saved.DeleteAsync(context, id, form["id"].ToString(), http.RequestAborted);
+                    switch (await saved.DeleteAsync(context, id, form["id"].ToString(), http.RequestAborted))
+                    {
+                        case Done:
+                            break;
+                        case NotFound failure:
+                            return DatabaseResults.WantsHtml(http)
+                                ? NotFoundEndpoints.Page(http, context)
+                                : Results.Problem(failure.Message ?? "Not found.", statusCode: StatusCodes.Status404NotFound);
+                        case Forbidden failure:
+                            return await Refused(StatusCodes.Status403Forbidden, failure.Message);
+                    }
+
                     if (http.Request.IsDatastarRequest)
                     {
                         return await PageAsync(http, context, id, data, saved);
@@ -87,6 +110,17 @@ namespace TerraScale.Dashboard.Features.Data
 
                 return await PageAsync(http, context, id, data, saved, DatabaseEndpoints.Message(error), action == "saved-queries" ? "save-query" : action == "saved-queries/delete" ? "delete-query-" + form["id"] : "",
                     form["sql"].ToString(), queryName: form["name"].ToString(), status: DatabaseEndpoints.Status(error));
+            }
+
+            async Task<IResult> Refused(int status, string message)
+            {
+                if (!DatabaseResults.WantsHtml(http) && !http.Request.IsDatastarRequest)
+                {
+                    return Results.Problem(message, statusCode: status);
+                }
+
+                return await PageAsync(http, context, id, data, saved, message, action == "saved-queries" ? "save-query" : action == "saved-queries/delete" ? "delete-query-" + form["id"] : "",
+                    form["sql"].ToString(), queryName: form["name"].ToString(), status: status);
             }
         }
 

@@ -56,7 +56,7 @@ namespace TerraScale.Dashboard.Features.Profile
                 var typed = form["email"].ToString().Trim();
                 if (typed.Length == 0 || !typed.Equals(context.Account.Email.Trim(), StringComparison.OrdinalIgnoreCase))
                 {
-                    throw new AccountAccessException("Type your account email to confirm deletion.", 422);
+                    return await RefusedViewAsync(http, sessions, context, tokens, "Type your account email to confirm deletion.", 422, form);
                 }
 
                 foreach (var org in context.Organizations)
@@ -68,7 +68,7 @@ namespace TerraScale.Dashboard.Features.Profile
                         if (members.Any(member => member.UserId == context.UserId && member.Role == "owner") &&
                             !members.Any(member => member.UserId != context.UserId && member.Role == "owner"))
                         {
-                            throw new AccountAccessException("Transfer ownership of your shared organizations before deleting your account.", 409);
+                            return await RefusedViewAsync(http, sessions, context, tokens, "Transfer ownership of your shared organizations before deleting your account.", 409, form);
                         }
 
                         continue;
@@ -117,18 +117,29 @@ namespace TerraScale.Dashboard.Features.Profile
             catch (Exception error) when (persisted && Transient(error, http)) { return Retry(http); }
             catch (AccountAccessException error)
             {
-                if (error.StatusCode == 409 && await ReadOperationAsync(http, storage, identity) is { } refused)
-                {
-                    try { _ = await platform.AccountDeletionCompletedAsync(refused.Receipt, cancellationToken); }
-                    catch (AccountAccessException status) when (status.Code == "deletion_refused")
-                    { await DropAsync(storage, Key(http), cancellationToken); http.Response.Cookies.Delete(Cookie); }
-                }
-                var view = ProfileView.Create(new(ShellModel.For(http, context, "Profile"), "danger", Error: error.Message,
-                    Tokens: await tokens.ListAsync(context, cancellationToken), Sessions: await sessions.ListAsync(http, context.Session))
-                { DialogId = "delete-account", DraftEmail = form["email"].ToString() });
-                view.StatusCode = error.StatusCode;
-                return view;
+                return await RefusedAsync(http, sessions, context, tokens, platform, storage, identity, error, form, cancellationToken);
             }
+        }
+
+        private static async Task<IResult> RefusedAsync(HttpContext http, DashboardSessions sessions, AccountContext context, AccessTokens tokens,
+            ITsAuthPlatform platform, IDbContextFactory<DashboardDbContext> storage, IDashboardIdentity identity, AccountAccessException error, IFormCollection form, CancellationToken cancellationToken)
+        {
+            if (error.StatusCode == 409 && await ReadOperationAsync(http, storage, identity) is { } refused)
+            {
+                try { _ = await platform.AccountDeletionCompletedAsync(refused.Receipt, cancellationToken); }
+                catch (AccountAccessException status) when (status.Code == "deletion_refused")
+                { await DropAsync(storage, Key(http), cancellationToken); http.Response.Cookies.Delete(Cookie); }
+            }
+            return await RefusedViewAsync(http, sessions, context, tokens, error.Message, error.StatusCode, form);
+        }
+
+        private static async Task<IResult> RefusedViewAsync(HttpContext http, DashboardSessions sessions, AccountContext context, AccessTokens tokens, string message, int statusCode, IFormCollection form)
+        {
+            var view = ProfileView.Create(new(ShellModel.For(http, context, "Profile"), "danger", Error: message,
+                Tokens: await tokens.ListAsync(context, http.RequestAborted), Sessions: await sessions.ListAsync(http, context.Session))
+            { DialogId = "delete-account", DraftEmail = form["email"].ToString() });
+            view.StatusCode = statusCode;
+            return view;
         }
 
         public static async Task<IResult> ContinueAsync(HttpContext http, DashboardSessions sessions, ITsAuthPlatform platform, IDbContextFactory<DashboardDbContext> storage, AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity)

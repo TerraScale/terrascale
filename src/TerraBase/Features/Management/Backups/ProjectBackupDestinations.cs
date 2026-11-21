@@ -65,7 +65,13 @@ internal sealed class ProjectBackupDestinations(
             using (var bucket = new S3ObjectStore(new Uri(request.Endpoint!), request.Region!, request.Bucket!, request.AccessKeyId!, request.SecretKey!, http,
                 S3ObjectStore.CustomerHttpClientName, time))
             {
-                await ProbeAsync(bucket, organizationId, projectId, timeout.Token).ConfigureAwait(false);
+                switch (await ProbeAsync(bucket, organizationId, projectId, timeout.Token).ConfigureAwait(false))
+                {
+                    case Done:
+                        break;
+                    case Unavailable failure:
+                        return failure;
+                }
             }
 
             var credentials = await CustomerCredentials.SealAsync(master, request.AccessKeyId!, request.SecretKey!, timeout.Token).ConfigureAwait(false);
@@ -166,7 +172,7 @@ internal sealed class ProjectBackupDestinations(
         };
     }
 
-    private async Task ProbeAsync(S3ObjectStore bucket, string organizationId, string projectId, CancellationToken cancellationToken)
+    private async Task<ProbeCheck> ProbeAsync(S3ObjectStore bucket, string organizationId, string projectId, CancellationToken cancellationToken)
     {
         var prefix = BackupLayout.Data($"{organizationId}/{projectId}");
         var key = $"{prefix}.probe/{Ulid.NewUlid()}";
@@ -176,25 +182,24 @@ internal sealed class ProjectBackupDestinations(
         try
         {
             await bucket.PutAsync(key, content, cancellationToken).ConfigureAwait(false);
-            if (!await bucket.ReadAsync(key, async (stream, readToken) =>
+            var matched = false;
+            if (await bucket.ReadAsync(key, async (stream, readToken) =>
             {
                 var received = new byte[expected.Length + 1];
                 var length = await stream.ReadAtLeastAsync(received, received.Length, throwOnEndOfStream: false, readToken).ConfigureAwait(false);
-                if (length != expected.Length || !received.AsSpan(0, length).SequenceEqual(expected))
-                {
-                    throw new IOException("customer bucket returned an invalid access check");
-                }
-            }, cancellationToken).ConfigureAwait(false))
+                matched = length == expected.Length && received.AsSpan(0, length).SequenceEqual(expected);
+            }, cancellationToken).ConfigureAwait(false) && matched)
             {
-                throw new IOException("customer bucket cannot read the access check");
+                await using (var listed = bucket.ListAsync(prefix, null, cancellationToken).GetAsyncEnumerator(cancellationToken))
+                {
+                    _ = await listed.MoveNextAsync().ConfigureAwait(false);
+                }
+                cancellationToken.ThrowIfCancellationRequested();
+                verified = true;
+                return new Done();
             }
 
-            await using (var listed = bucket.ListAsync(prefix, null, cancellationToken).GetAsyncEnumerator(cancellationToken))
-            {
-                _ = await listed.MoveNextAsync().ConfigureAwait(false);
-            }
-            cancellationToken.ThrowIfCancellationRequested();
-            verified = true;
+            return new Unavailable("customer backup bucket could not be accessed");
         }
         finally
         {
@@ -210,3 +215,6 @@ internal sealed class ProjectBackupDestinations(
         }
     }
 }
+
+internal readonly union ProbeCheck(Done, Unavailable);
+

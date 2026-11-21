@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.IdentityModel.Tokens;
 using OpenIddict.Abstractions;
+using OidcErrors = OpenIddict.Abstractions.OpenIddictConstants.Errors;
 using OpenIddict.Server;
 using OpenIddict.Server.AspNetCore;
 using static OpenIddict.Server.OpenIddictServerEvents;
@@ -62,7 +63,7 @@ internal static class MachineClients
     {
         if (Policy(application) is not { } policy || application.ClientType != ClientTypes.Confidential)
         {
-            return OidcResults.Forbid(Errors.UnauthorizedClient, "Only a machine app can use client_credentials.");
+            return OidcResults.Forbid(OidcErrors.UnauthorizedClient, "Only a machine app can use client_credentials.");
         }
 
         if (await context.RequestServices.GetRequiredService<AttemptLimiter>().AcquireAsync(application.InstanceId!, "machine-token-client", application.ClientId!,
@@ -75,7 +76,7 @@ internal static class MachineClients
         var resources = request.GetResources();
         if (scopes.Length == 0 || scopes.Except(policy.AllowedScopes, StringComparer.Ordinal).Any())
         {
-            return OidcResults.Forbid(Errors.InvalidScope, "Request one or more of the app's allowed scopes.");
+            return OidcResults.Forbid(OidcErrors.InvalidScope, "Request one or more of the app's allowed scopes.");
         }
 
         if (resources.Length > 1 || resources.Except(policy.AllowedAudiences, StringComparer.Ordinal).Any())

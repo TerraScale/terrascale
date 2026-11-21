@@ -10,6 +10,7 @@ using System.Text;
 using Turso;
 using Turso.Data.Sqlite;
 using Turso.Raw.Public;
+using TerraBase.Errors;
 
 namespace TerraBase.Engine.Turso;
 
@@ -60,21 +61,31 @@ internal sealed partial class TursoDatabaseStore
 
     internal Action<CancellationToken>? RewriteSnapshotPinned { get; set; }
 
-    internal bool TryBeginRewrite()
+    internal readonly union RewriteBegin(RewriteLease, RewriteHeld, RewriteRefused);
+
+    internal sealed record RewriteLease;
+
+    internal sealed record RewriteHeld;
+
+    internal RewriteBegin TryBeginRewrite()
     {
-        RefuseUnhealthy();
+        if (UnhealthyRewrite() is { } unhealthy)
+        {
+            return unhealthy;
+        }
+
         if (!Captures)
         {
-            throw new RewriteRefusedException("a database without change capture cannot be rewritten");
+            return new RewriteRefused("a database without change capture cannot be rewritten", new Safety());
         }
 
         if (Interlocked.CompareExchange(ref _rewriting, 1, 0) != 0)
         {
-            return false;
+            return new RewriteHeld();
         }
 
         RewriteAnchor = 0;
-        return true;
+        return new RewriteLease();
     }
 
     internal void EndRewrite()
@@ -104,17 +115,21 @@ internal sealed partial class TursoDatabaseStore
 
     internal Action? RewriteWaiting { get; set; }
 
-    internal async Task<IAsyncDisposable> QuiesceAsync(
-    Func<CancellationToken, Task> prepare, Func<CancellationToken, Task> topUp,
+    internal readonly union QuiesceResult(Quiesced, RewriteRefused);
+
+    internal async Task<QuiesceResult> QuiesceAsync(
+    Func<CancellationToken, Task<RewriteRefused?>> prepare, Func<CancellationToken, Task<RewriteRefused?>> topUp,
     Action writerAcquired, CancellationToken finalToken, CancellationToken cancellationToken)
     {
+        if (UnhealthyRewrite() is { } entry)
+        {
+            return entry;
+        }
 
-        RefuseUnhealthy();
         Interlocked.Increment(ref _quiescing);
         var quiesced = new Quiesced(this);
         try
         {
-
             var quiet = Stopwatch.GetTimestamp();
             if (pool.BusyOf(this, _writerSession) > Volatile.Read(ref BackupTaps))
             {
@@ -123,20 +138,32 @@ internal sealed partial class TursoDatabaseStore
                 {
                     if (Stopwatch.GetElapsedTime(quiet) >= QuietBudget)
                     {
-                        throw new RewriteRefusedException("the database's readers did not end before its writer was taken");
+                        return await RefusedAsync(new RewriteRefused("the database's readers did not end before its writer was taken", new Safety())).ConfigureAwait(false);
                     }
 
                     await Task.Delay(QuietPoll, Time, cancellationToken).ConfigureAwait(false);
                 }
             }
 
-            await prepare(cancellationToken).ConfigureAwait(false);
+            if (await prepare(cancellationToken).ConfigureAwait(false) is { } prepared)
+            {
+                return await RefusedAsync(prepared).ConfigureAwait(false);
+            }
 
-            await HoldOperationsAsync().ConfigureAwait(false);
+            if (await HoldOperationsAsync().ConfigureAwait(false) is { } operations)
+            {
+                return await RefusedAsync(operations).ConfigureAwait(false);
+            }
 
-            await topUp(cancellationToken).ConfigureAwait(false);
+            if (await topUp(cancellationToken).ConfigureAwait(false) is { } topped)
+            {
+                return await RefusedAsync(topped).ConfigureAwait(false);
+            }
             cancellationToken.ThrowIfCancellationRequested();
-            RefuseUnhealthy();
+            if (UnhealthyRewrite() is { } healthy)
+            {
+                return await RefusedAsync(healthy).ConfigureAwait(false);
+            }
 
             if (quiesced.Operations)
             {
@@ -154,20 +181,30 @@ internal sealed partial class TursoDatabaseStore
                 RewriteWaiting?.Invoke();
                 if (Stopwatch.GetElapsedTime(taps) >= QuietBudget)
                 {
-                    throw new RewriteRefusedException("the database's backup readers did not end before its writer was taken");
+                    return await RefusedAsync(new RewriteRefused("the database's backup readers did not end before its writer was taken", new Safety())).ConfigureAwait(false);
                 }
                 await Task.Delay(QuietPoll, Time, cancellationToken).ConfigureAwait(false);
             }
 
             await PrepareRewriteLogAsync(cancellationToken).ConfigureAwait(false);
-            await HoldOperationsAsync().ConfigureAwait(false);
-            await topUp(cancellationToken).ConfigureAwait(false);
+            if (await HoldOperationsAsync().ConfigureAwait(false) is { } held)
+            {
+                return await RefusedAsync(held).ConfigureAwait(false);
+            }
+
+            if (await topUp(cancellationToken).ConfigureAwait(false) is { } toppedAgain)
+            {
+                return await RefusedAsync(toppedAgain).ConfigureAwait(false);
+            }
 
             RewriteBeforeWriter?.Invoke();
             await AcquireWriterAsync("a healthy rewrite", cancellationToken).ConfigureAwait(false);
             quiesced.Writer = true;
             writerAcquired();
-            RefuseUnhealthy();
+            if (UnhealthyRewrite() is { } acquired)
+            {
+                return await RefusedAsync(acquired).ConfigureAwait(false);
+            }
 
             pool.Pause(this);
             quiesced.Paused = true;
@@ -187,19 +224,25 @@ internal sealed partial class TursoDatabaseStore
             {
                 await drained.WaitAsync(HeldDrain, finalToken).ConfigureAwait(false);
             }
-            catch (TimeoutException error)
+            catch (TimeoutException)
             {
-                throw new RewriteRefusedException("the database did not drain while its writer was held", error);
+                return await RefusedAsync(new RewriteRefused("the database did not drain while its writer was held", new Safety())).ConfigureAwait(false);
             }
 
             if (pool.FailedClosesOf(this) is > 0 and var failed)
             {
-                throw new RewriteRefusedException($"{failed} native closes of this database failed; its handles may still be open");
+                return await RefusedAsync(new RewriteRefused($"{failed} native closes of this database failed; its handles may still be open", new Safety())).ConfigureAwait(false);
             }
 
             return quiesced;
 
-            async Task HoldOperationsAsync()
+            async Task<QuiesceResult> RefusedAsync(RewriteRefused refused)
+            {
+                await quiesced.DisposeAsync().ConfigureAwait(false);
+                return refused;
+            }
+
+            async Task<RewriteRefused?> HoldOperationsAsync()
             {
                 if (Ledger is not null && !IsSystem)
                 {
@@ -224,17 +267,19 @@ internal sealed partial class TursoDatabaseStore
                             await ended.WaitAsync(wait.Token).ConfigureAwait(false);
                         }
                     }
-                    catch (OperationCanceledException error) when (quiet.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                    catch (OperationCanceledException) when (quiet.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                     {
-                        throw new RewriteRefusedException("the database's operations did not end before its writer was taken", error, new Deadline());
+                        return new RewriteRefused("the database's operations did not end before its writer was taken", new Deadline());
                     }
                 }
+
+                return null;
             }
         }
-        catch (OperationCanceledException error) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             await quiesced.DisposeAsync().ConfigureAwait(false);
-            throw new RewriteRefusedException("the database did not drain before the rewrite was cancelled", error);
+            return new RewriteRefused("the database did not drain before the rewrite was cancelled", new Safety());
         }
         catch
         {
@@ -243,7 +288,11 @@ internal sealed partial class TursoDatabaseStore
         }
     }
 
-    internal async Task<(long Offset, TursoChangeTap Replay, Ulid Incarnation)> WriteRewriteAsync(
+    internal readonly record struct RewriteWrite(long Offset, TursoChangeTap Replay, Ulid Incarnation);
+
+    internal readonly union WriteRewriteOutcome(RewriteWrite, RewriteRefused);
+
+    internal async Task<WriteRewriteOutcome> WriteRewriteAsync(
     string target, long minimumOffset, TursoChangeTap? replay, Ulid targetIncarnation, bool finalPass, CancellationToken cancellationToken)
     {
         ThrowIfUnavailable();
@@ -256,7 +305,13 @@ internal sealed partial class TursoDatabaseStore
         TursoRunner runner = finalPass ? WriteLane : io;
         if (!finalPass)
         {
-            OpenBackupReader();
+            switch (OpenBackupReader())
+            {
+                case StorePaused:
+                    return new RewriteRefused("the rewrite failed; the old file stays in place", new Safety());
+                case Done:
+                    break;
+            }
         }
 
         try
@@ -282,7 +337,7 @@ internal sealed partial class TursoDatabaseStore
                         RewriteFinalStarting?.Invoke(cancellationToken);
                         if (new FileInfo(FilePath + "-wal") is { Exists: true, Length: > RewriteFinalWalBytes })
                         {
-                            throw new RewriteRefusedException("the final rewrite WAL exceeds its byte budget", reason: new Budget());
+                            return Refuse(source, "the final rewrite WAL exceeds its byte budget", new Budget());
                         }
                     }
                     cancellationToken.ThrowIfCancellationRequested();
@@ -295,12 +350,12 @@ internal sealed partial class TursoDatabaseStore
                     Execute(source, "BEGIN;");
                     if (Ulid.Parse((string)Scalar(source, TursoStatements.Incarnation)!) != Incarnation || Closed)
                     {
-                        throw new RewriteRefusedException("the rewrite source incarnation changed");
+                        return Refuse(source, "the rewrite source incarnation changed", new Safety());
                     }
                     offset = Convert.ToInt64(Scalar(source, TursoStatements.CurrentOffset), CultureInfo.InvariantCulture);
                     if (offset < minimumOffset)
                     {
-                        throw new RewriteRefusedException("the copied cut precedes the requested commit offset");
+                        return Refuse(source, "the copied cut precedes the requested commit offset", new Safety());
                     }
                     if (replay is null)
                     {
@@ -331,10 +386,17 @@ internal sealed partial class TursoDatabaseStore
                         {
                             var started = Stopwatch.GetTimestamp();
                             Execute(source, "BEGIN;");
-                            long changes;
+                            long changes = 0;
                             using (MeasureRewrite(finalPass ? "final_replay" : "round_replay"))
                             {
-                                changes = replay!.ReplayRewrite(source, copy, finalPass, cancellationToken);
+                                switch (replay!.ReplayRewrite(source, copy, finalPass, cancellationToken))
+                                {
+                                    case TursoChangeTap.ReplayApplied applied:
+                                        changes = applied.Changes;
+                                        break;
+                                    case RewriteRefused refused:
+                                        return Refused(source, refused);
+                                }
                             }
                             offset = Convert.ToInt64(Scalar(source, TursoStatements.CurrentOffset), CultureInfo.InvariantCulture);
                             var converged = changes <= 1024 && replay!.RewriteBytes <= 4L * 1024 * 1024 && Stopwatch.GetElapsedTime(started) <= RewriteRoundBudget;
@@ -343,7 +405,7 @@ internal sealed partial class TursoDatabaseStore
                                 using var measured = MeasureRewrite("digest");
                                 if (!RewriteDigest(source, cancellationToken).AsSpan().SequenceEqual(RewriteDigest(copy, cancellationToken)))
                                 {
-                                    throw new RewriteRefusedException("the replayed copy does not hold the same logical state");
+                                    return Refuse(source, "the replayed copy does not hold the same logical state", new Safety());
                                 }
                                 verified = true;
 
@@ -370,14 +432,21 @@ internal sealed partial class TursoDatabaseStore
 
                             if (round + 1 == RewriteRounds)
                             {
-                                throw new RewriteRefusedException("the rewrite could not catch up within its round budget", reason: new Budget());
+                                return Refuse(source, "the rewrite could not catch up within its round budget", new Budget());
                             }
                         }
 
                         foreach (var table in RewriteRefreshTables)
                         {
-                            CheckRewriteTableBudget(source, table);
-                            CheckRewriteTableBudget(copy, table);
+                            if (CheckRewriteTableBudget(source, table) is { } sourceBudget)
+                            {
+                                return Refused(source, sourceBudget);
+                            }
+
+                            if (CheckRewriteTableBudget(copy, table) is { } copyBudget)
+                            {
+                                return Refused(source, copyBudget);
+                            }
                         }
 
                         if (finalPass)
@@ -402,12 +471,12 @@ internal sealed partial class TursoDatabaseStore
                             {
                                 if (!RewriteTableDigest(source, table, cancellationToken).AsSpan().SequenceEqual(RewriteTableDigest(copy, table, cancellationToken)))
                                 {
-                                    throw new RewriteRefusedException("a refreshed rewrite table differs from its source");
+                                    return Refuse(source, "a refreshed rewrite table differs from its source", new Safety());
                                 }
                             }
                             if (!Equals(Scalar(source, TursoStatements.CurrentOffset), Scalar(copy, TursoStatements.CurrentOffset)))
                             {
-                                throw new RewriteRefusedException("the final rewrite offset differs from its source");
+                                return Refuse(source, "the final rewrite offset differs from its source", new Safety());
                             }
                         }
 
@@ -428,7 +497,7 @@ internal sealed partial class TursoDatabaseStore
                         using var result = checkpoint.ExecuteReader();
                         if (result.Read() && !result.IsDBNull(0) && result.GetInt64(0) != 0)
                         {
-                            throw new RewriteRefusedException("the old file's log did not checkpoint");
+                            return Refuse(source, "the old file's log did not checkpoint", new Safety());
                         }
                     }
 
@@ -451,7 +520,7 @@ internal sealed partial class TursoDatabaseStore
 
                 cancellationToken.ThrowIfCancellationRequested();
                 ThrowIfUnavailable();
-                return (offset, replay!, incarnation);
+                return new RewriteWrite(offset, replay!, incarnation);
             }, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception) when (sourceError is not null)
@@ -486,6 +555,14 @@ internal sealed partial class TursoDatabaseStore
                 throw;
             }
         }
+
+        WriteRewriteOutcome Refuse(TursoConnection source, string message, RewriteRefusal why) => Refused(source, new RewriteRefused(message, why));
+
+        WriteRewriteOutcome Refused(TursoConnection source, RewriteRefused refusal)
+        {
+            Close(source);
+            return refusal;
+        }
     }
 
     internal async Task PrepareRewriteLogAsync(CancellationToken token)
@@ -508,7 +585,7 @@ internal sealed partial class TursoDatabaseStore
 
     private const long RewriteFinalWalBytes = 16L * 1024 * 1024;
 
-    private static void CheckRewriteTableBudget(TursoConnection connection, string table)
+    private static RewriteRefused? CheckRewriteTableBudget(TursoConnection connection, string table)
     {
         const int maxRows = 1024;
         const long maxBytes = 1024 * 1024;
@@ -519,8 +596,10 @@ internal sealed partial class TursoDatabaseStore
         using var rows = budget.ExecuteReader();
         if (!rows.Read() || rows.GetInt64(0) > maxRows || rows.GetInt64(1) > maxBytes)
         {
-            throw new RewriteRefusedException($"the rewrite's {table} refresh exceeds its row or byte budget");
+            return new RewriteRefused($"the rewrite's {table} refresh exceeds its row or byte budget", new Safety());
         }
+
+        return null;
     }
 
     private static void RefreshRewriteTable(TursoConnection source, TursoConnection copy, string table, CancellationToken token)
@@ -532,44 +611,20 @@ internal sealed partial class TursoDatabaseStore
 
     private void Resume() => pool.Resume(this);
 
-    private async ValueTask<T> WhileRewritingAsync<T>(Func<T> call, CancellationToken cancellationToken)
-    {
-        while (true)
-        {
-            Task resumed;
-            try
-            {
-                return call();
-            }
-            catch (StorePausedException paused)
-            {
-                RewriteSessionWaiting?.Invoke();
-                resumed = paused.Resumed;
-            }
-
-            await resumed.WaitAsync(cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    private ValueTask WhileRewritingAsync(Action call, CancellationToken cancellationToken) =>
-        new(WhileRewritingAsync(() =>
-        {
-            call();
-            return true;
-        }, cancellationToken).AsTask());
-
-    private void RefuseUnhealthy()
+    private RewriteRefused? UnhealthyRewrite()
     {
         ThrowIfUnavailable();
         if ((Ledger?.FailedClosed ?? CloseRefusal) is { } refusal)
         {
-            throw new RewriteRefusedException($"only a healthy copy is rewritten: {refusal}");
+            return new RewriteRefused($"only a healthy copy is rewritten: {refusal}", new Safety());
         }
 
         if (!IsSystem && (FaultRow is not null || !Settled))
         {
-            throw new RewriteRefusedException("only a copy without a fault record is rewritten");
+            return new RewriteRefused("only a copy without a fault record is rewritten", new Safety());
         }
+
+        return null;
     }
 
     internal void Rewritten(Ulid incarnation) => _incarnation = new(incarnation);
@@ -704,7 +759,7 @@ internal sealed partial class TursoDatabaseStore
         return command.ExecuteScalar();
     }
 
-    private sealed class Quiesced(TursoDatabaseStore store) : IAsyncDisposable
+    internal sealed class Quiesced(TursoDatabaseStore store) : IAsyncDisposable
     {
         internal bool Operations { get; set; }
         internal bool Writer { get; set; }

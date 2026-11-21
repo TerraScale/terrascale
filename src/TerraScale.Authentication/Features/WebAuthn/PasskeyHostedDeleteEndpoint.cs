@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Platform;
@@ -61,9 +62,17 @@ public sealed class PasskeyHostedDeleteEndpoint(Sessions sessions, PasskeyCreden
             return await SecurityFlow.RefusedAsync(this.HttpContext, sessions, mfa, live.User, ("That code is wrong or already used", "Enter the current code from your authenticator app, or an unused recovery code."), StatusCodes.Status401Unauthorized, cancellationToken);
         }
 
-        if (await passkeys.DeleteAsync(live.User, id, cancellationToken).ConfigureAwait(false) is null)
+        var removed = await passkeys.DeleteAsync(live.User, id, cancellationToken).ConfigureAwait(false);
+        switch (removed)
         {
-            throw new ApiException(403, "passkey_denied", "Sign in again before removing a passkey.");
+            case PasskeyCredentialEntry:
+                break;
+            case Forbidden:
+                return ErrorResults.ToResult(new Forbidden("Sign in again before removing a passkey.", "passkey_denied"));
+            case NotFound error:
+                return ErrorResults.ToResult(error);
+            case Conflict error:
+                return ErrorResults.ToResult(error);
         }
 
         logger.ZLogInformation($"Audit: user {live.User.Id:@UserId} removed a passkey");

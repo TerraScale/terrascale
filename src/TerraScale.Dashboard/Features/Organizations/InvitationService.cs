@@ -1,11 +1,16 @@
 using System.Net.Mail;
 using TerraScale.Dashboard.Common.Formatting;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Organizations
 {
+    using NotFound = TerraScale.Dashboard.Errors.NotFound;
+
     public sealed record PendingInvitation(OrganizationRecord Organization, InvitationRecord Invitation, TsAuthPlatformNamed? Project = null);
+
+    public readonly union InvitationResponse(PendingInvitation, Validation, NotFound, Forbidden);
 
     // ts-auth stores invitations and their tokens, checks the invitee's verified
     // email and grants the membership. The dashboard keeps no token or index; it
@@ -137,18 +142,23 @@ namespace TerraScale.Dashboard.Features.Organizations
             named.Name is { Length: >= 1 and <= 128 } name && name == name.Trim() && name.Any(char.IsLetterOrDigit) && !name.Any(char.IsControl);
         }
 
-        public async Task<PendingInvitation> RespondAsync(SessionRecord session, string token, string action, CancellationToken cancellationToken)
+        public async Task<InvitationResponse> RespondAsync(SessionRecord session, string token, string action, CancellationToken cancellationToken)
         {
             action = action.Trim().ToLowerInvariant();
             if (action is not ("accept" or "decline"))
             {
-                throw new AccountAccessException("Choose whether to accept or decline the invitation.", 400);
+                return new Validation("Choose whether to accept or decline the invitation.");
             }
 
-            var pending = await FindAsync(session, token, cancellationToken) ?? throw new AccountAccessException("Invitation is unavailable.", 404);
+            var pending = await FindAsync(session, token, cancellationToken);
+            if (pending is null)
+            {
+                return new NotFound("Invitation is unavailable.");
+            }
+
             if (!pending.Invitation.Email.Equals(session.Email, StringComparison.OrdinalIgnoreCase))
             {
-                throw new AccountAccessException("Sign in with the invited email to answer this invitation.");
+                return new Forbidden("Sign in with the invited email to answer this invitation.");
             }
 
             if (action == "decline")

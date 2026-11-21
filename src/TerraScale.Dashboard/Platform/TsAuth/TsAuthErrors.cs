@@ -51,18 +51,24 @@ namespace TerraScale.Dashboard.Platform.TsAuth
         private static async Task<(string? Code, string? Message)> ReadErrorAsync(HttpContent? content, CancellationToken cancellationToken)
         {
             if (content is null || content.Headers.ContentLength > MaximumErrorBytes) return (null, null);
-            using var destination = new BoundedHttpBodyStream(MaximumErrorBytes, () => new ErrorBodyLimitException(), cancellationToken);
-            try
+            await using var source = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+            var bytes = new byte[MaximumErrorBytes + 1];
+            var length = 0;
+            while (length < bytes.Length)
             {
-                await content.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
-                cancellationToken.ThrowIfCancellationRequested();
+                var count = await source.ReadAsync(bytes.AsMemory(length), cancellationToken).ConfigureAwait(false);
+                if (count == 0)
+                {
+                    break;
+                }
+
+                length += count;
             }
-            catch (ErrorBodyLimitException) { return (null, null); }
-            var buffer = destination.ToArray();
+            if (length > MaximumErrorBytes) return (null, null);
 
             try
             {
-                using var json = JsonDocument.Parse(buffer);
+                using var json = JsonDocument.Parse(bytes.AsMemory(0, length));
                 var root = json.RootElement;
                 if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("error", out var error)) return (null, null);
                 var code = error.ValueKind == JsonValueKind.String ? error.GetString()
@@ -78,8 +84,6 @@ namespace TerraScale.Dashboard.Platform.TsAuth
                 return (null, null);
             }
         }
-
-        private sealed class ErrorBodyLimitException : Exception;
 
         private static readonly HashSet<string> KnownErrorCodes = new(StringComparer.Ordinal)
         {

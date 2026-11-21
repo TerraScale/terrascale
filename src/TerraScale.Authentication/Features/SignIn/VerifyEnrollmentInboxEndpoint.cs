@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
@@ -35,26 +36,34 @@ public sealed class VerifyEnrollmentInboxEndpoint(Passcodes passcodes, TotpCrede
             return SignInFlow.Refused(this.HttpContext);
         }
 
-        var pending = await PendingAsync(this.HttpContext, form.Challenge, cancellationToken);
-
-        var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
-        if ((await hosted.LimitIpAsync(SignInFlow.Ip(this.HttpContext), mails: false, cancellationToken)
-            ?? await hosted.LimitCodeAsync(pending.User.Email, PasscodePurpose.EnrollmentInbox, cancellationToken,
-                AuthEmails.Locale(this.HttpContext.Request))) is { } wait)
+        var pending = await VerifyEnrollmentInboxEndpoint.PendingAsync(this.HttpContext, form.Challenge, cancellationToken);
+        return pending switch
         {
-            return SignInFlow.Limited(this.HttpContext, SignInStep.EnrollmentInbox, wait, pending.User.Email, next, challenge: form.Challenge);
-        }
+            ChallengedSignIn challenged => await InboxAsync(challenged),
+            Forbidden error => ErrorResults.ToResult(error),
+        };
 
-        if (await passcodes.RedeemEnrollmentInboxAsync(pending.User, form.Challenge!, form.Code ?? string.Empty, cancellationToken) is not { } proven)
+        async ValueTask<IResult> InboxAsync(ChallengedSignIn challenged)
         {
-            return Page(this.HttpContext, pending.User.Email, next, form.Challenge!, wrong: true);
-        }
+            var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
+            if ((await hosted.LimitIpAsync(SignInFlow.Ip(this.HttpContext), mails: false, cancellationToken)
+                ?? await hosted.LimitCodeAsync(challenged.User.Email, PasscodePurpose.EnrollmentInbox, cancellationToken,
+                    AuthEmails.Locale(this.HttpContext.Request))) is { } wait)
+            {
+                return SignInFlow.Limited(this.HttpContext, SignInStep.EnrollmentInbox, wait, challenged.User.Email, next, challenge: form.Challenge);
+            }
 
-        return await SignInFlow.SecondFactorAsync(this.HttpContext, mfa, proven, next, cancellationToken)
-            ?? SignInFlow.Refused(this.HttpContext);
+            if (await passcodes.RedeemEnrollmentInboxAsync(challenged.User, form.Challenge!, form.Code ?? string.Empty, cancellationToken) is not { } proven)
+            {
+                return Page(this.HttpContext, challenged.User.Email, next, form.Challenge!, wrong: true);
+            }
+
+            return await SignInFlow.SecondFactorAsync(this.HttpContext, mfa, proven, next, cancellationToken)
+                ?? SignInFlow.Refused(this.HttpContext);
+        }
     }
 
-    internal static async Task<ChallengedSignIn> PendingAsync(HttpContext context, string? challenge, CancellationToken cancellationToken)
+    internal static async Task<RequiredMfaPending> PendingAsync(HttpContext context, string? challenge, CancellationToken cancellationToken)
     {
         var tenant = SignInFlow.Tenant(context);
         var mfa = context.RequestServices.GetRequiredService<TotpCredentials>();
@@ -63,7 +72,7 @@ public sealed class VerifyEnrollmentInboxEndpoint(Passcodes passcodes, TotpCrede
             || await mfa.ChallengedAsync(tenant, challenge, "enrollment-inbox", cancellationToken) is not { } pending
             || await mfa.HasAllowedFactorAsync(pending.User, false, cancellationToken))
         {
-            throw new ApiException(403, "mfa_required", "Start sign-in again.");
+            return new Forbidden("Start sign-in again.", "mfa_required");
         }
 
         return pending with
@@ -77,8 +86,12 @@ public sealed class VerifyEnrollmentInboxEndpoint(Passcodes passcodes, TotpCrede
 
     internal static async Task<IResult> SendAsync(HttpContext context, UserRecord user, string? next, CancellationToken cancellationToken)
     {
-        var challenge = await context.RequestServices.GetRequiredService<TotpCredentials>().InboxChallengeAsync(user, cancellationToken)
-            ?? throw new ApiException(403, "mfa_required", "Start sign-in again.");
+        var challenge = await context.RequestServices.GetRequiredService<TotpCredentials>().InboxChallengeAsync(user, cancellationToken);
+        if (challenge is null)
+        {
+            return ErrorResults.ToResult(new Forbidden("Start sign-in again.", "mfa_required"));
+        }
+
         using var reservation = context.RequestServices.GetRequiredService<SignInMail>().Reserve();
         if (await context.RequestServices.GetRequiredService<HostedAuth>().LimitMailAsync(user.Email, SignInFlow.Ip(context), cancellationToken) is { } refusal)
         {

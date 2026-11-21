@@ -209,10 +209,4 @@ internal static class ApplySql
     }
 
     public static string ValueJson(object? value) => Shown(Json(writer => WriteValue(writer, value)));
-
-    public static object? Value(JsonElement value) => SqlJson.Value(value) switch
-    {
-        SqlValue sql => SqlSession.Bound(sql),
-        _ => throw new FormatException("a value is not a SQL value"),
-    };
 }

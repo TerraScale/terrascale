@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Features.Sso;
@@ -44,13 +45,17 @@ public sealed class PutSsoConnectionEndpoint(SsoConnections connections, Platfor
         }
 
         var secret = oidc.ClientSecret is { } sent ? connections.Seal(domain, sent) : null;
-        return this.Ok(await connections.PutAsync(organizationId, caller.Id, domain, current => current with
+        return await connections.PutAsync(organizationId, caller.Id, domain, current => current with
         {
             Protocol = SsoConnections.Oidc,
             DefaultRole = role,
             Issuer = issuer,
             ClientId = clientId,
             ClientSecretBox = secret ?? current.ClientSecretBox ?? throw Invalid("oidc.client_secret is required."),
-        }, cancellationToken));
+        }, cancellationToken) switch
+        {
+            SsoConnectionRecord saved => this.Ok(saved),
+            Conflict failure => ErrorResults.ToResult(failure),
+        };
     }
 }

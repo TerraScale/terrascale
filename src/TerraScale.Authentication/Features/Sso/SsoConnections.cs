@@ -8,6 +8,7 @@ using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Security;
@@ -109,12 +110,12 @@ public sealed partial class SsoConnections(AuthData data, PlatformDirectory plat
     /// Creates or changes the organization's connection with <paramref name="change"/>. 409 when the organization has a
     /// connection for another domain, or another live organization verified this one; an unverified domain moves.
     /// </summary>
-    public async Task<SsoConnectionRecord> PutAsync(string organizationId, string actor, string domain, Func<SsoConnectionRecord, SsoConnectionRecord> change, CancellationToken cancellationToken)
+    public async Task<PutConnectionResult> PutAsync(string organizationId, string actor, string domain, Func<SsoConnectionRecord, SsoConnectionRecord> change, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(change);
         if (await this.ForOrganizationAsync(organizationId, cancellationToken).ConfigureAwait(false) is { } own && own.Value.Domain != domain)
         {
-            throw PlatformDirectory.Conflict("conflict", "This organization has a connection for another domain; delete it first.");
+            return new Conflict("This organization has a connection for another domain; delete it first.");
         }
 
         for (var attempt = 0; attempt < 3; attempt++)
@@ -124,7 +125,7 @@ public sealed partial class SsoConnections(AuthData data, PlatformDirectory plat
             var mine = existing?.Value.OrganizationId == organizationId;
             if (existing is { Value.VerifiedAt: not null } && !mine && await platform.OrganizationAsync(existing.Value.OrganizationId, cancellationToken).ConfigureAwait(false) is not null)
             {
-                throw PlatformDirectory.Conflict("conflict", "Another organization verified this domain.");
+                return new Conflict("Another organization verified this domain.");
             }
 
             var start = mine ? existing!.Value : new SsoConnectionRecord(Instance, domain, organizationId, Oidc, Roles.Member, Tokens.RandomToken(32), now, now);
@@ -143,9 +144,14 @@ public sealed partial class SsoConnections(AuthData data, PlatformDirectory plat
     }
 
     /// <summary>Marks the domain verified when its TXT record carries the token; 409 <c>domain_unverified</c> otherwise.</summary>
-    public async Task<SsoConnectionRecord> VerifyAsync(string organizationId, string actor, CancellationToken cancellationToken)
+    public async Task<VerifyConnectionResult> VerifyAsync(string organizationId, string actor, CancellationToken cancellationToken)
     {
-        var found = await this.ForOrganizationAsync(organizationId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+        var found = await this.ForOrganizationAsync(organizationId, cancellationToken).ConfigureAwait(false);
+        if (found is null)
+        {
+            return new NotFound("No such resource.");
+        }
+
         if (found.Value.VerifiedAt is not null)
         {
             return found.Value;
@@ -153,7 +159,7 @@ public sealed partial class SsoConnections(AuthData data, PlatformDirectory plat
 
         if (!await this.PublishedAsync(found.Value, cancellationToken).ConfigureAwait(false))
         {
-            throw PlatformDirectory.Conflict("domain_unverified", $"No TXT record {RecordLabel}.{found.Value.Domain} with the verification value was found; DNS changes can take a few minutes.");
+            return new Conflict($"No TXT record {RecordLabel}.{found.Value.Domain} with the verification value was found; DNS changes can take a few minutes.", "domain_unverified");
         }
 
         var verified = found.Value with { VerifiedAt = clock.GetUtcNow(), UpdatedAt = clock.GetUtcNow() };
@@ -163,21 +169,28 @@ public sealed partial class SsoConnections(AuthData data, PlatformDirectory plat
                 platform.Audit(organizationId, actor, "sso.verified", null, verified.Domain),
             ], cancellationToken).ConfigureAwait(false)
             ? verified
-            : throw PlatformDirectory.Conflict("conflict", "The connection changed; retry.");
+            : new Conflict("The connection changed; retry.");
     }
 
     /// <summary>Deletes the organization's connection; 404 when it has none.</summary>
-    public async Task DeleteAsync(string organizationId, string actor, CancellationToken cancellationToken)
+    public async Task<DeleteConnectionResult> DeleteAsync(string organizationId, string actor, CancellationToken cancellationToken)
     {
-        var found = await this.ForOrganizationAsync(organizationId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+        var found = await this.ForOrganizationAsync(organizationId, cancellationToken).ConfigureAwait(false);
+        if (found is null)
+        {
+            return new NotFound("No such resource.");
+        }
+
         if (!await data.SaveAsync(
             [
                 Change.Delete(found),
                 platform.Audit(organizationId, actor, "sso.deleted", null, found.Value.Domain),
             ], cancellationToken).ConfigureAwait(false))
         {
-            throw PlatformDirectory.Conflict("conflict", "The connection changed; retry.");
+            return new Conflict("The connection changed; retry.");
         }
+
+        return new Done();
     }
 
     /// <summary>Seals an OIDC client secret for the connection of <paramref name="domain"/>.</summary>
@@ -244,3 +257,7 @@ public sealed partial class SsoConnections(AuthData data, PlatformDirectory plat
     [GeneratedRegex("^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$")]
     private static partial Regex DomainPattern();
 }
+
+public readonly union PutConnectionResult(SsoConnectionRecord, Conflict);
+public readonly union VerifyConnectionResult(SsoConnectionRecord, NotFound, Conflict);
+public readonly union DeleteConnectionResult(Done, NotFound, Conflict);

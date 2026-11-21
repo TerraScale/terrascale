@@ -28,7 +28,13 @@ namespace TerraScale.Dashboard.Features.Databases
         public Task<DatabaseConflictList> ListConflicts(string databaseId, string table = "", string since = "", string until = "", int limit = 50,
             string before = "", string? organizationId = null, string? projectId = null)
         {
-            return conflicts.ListAsync(Scope(organizationId, projectId), databaseId, table, since, until, limit, before, Cancellation);
+            return ConflictsAsync();
+
+            async Task<DatabaseConflictList> ConflictsAsync()
+            {
+                var listing = await conflicts.ListAsync(Scope(organizationId, projectId), databaseId, table, since, until, limit, before, Cancellation);
+                return listing is DatabaseConflictList result ? result : throw DatabaseMutations.ToError(DatabaseMutations.RefusedConflict(listing));
+            }
         }
 
         [McpAccess(McpAccess.Read)]
@@ -39,7 +45,10 @@ namespace TerraScale.Dashboard.Features.Databases
             await databases.SyncAsync(context, Cancellation);
             var db = DatabaseService.Database(context, databaseId);
             var output = await DatabaseOutput(db);
-            var placement = await databases.ConfiguredPlacementAsync(output.Placement, Cancellation);
+            var configured = await databases.ConfiguredPlacementAsync(output.Placement, Cancellation);
+            var placement = configured is not IReadOnlyList<DatabaseRegion> regions
+                ? throw DatabaseMutations.ToError(DatabaseMutations.RefusedConfigured(configured))
+                : regions;
             string? unavailable = null;
             bool? backupsEnabled = null;
             try
@@ -69,7 +78,10 @@ namespace TerraScale.Dashboard.Features.Databases
         {
             var context = Scope(organizationId, projectId);
             DatabaseService.Scope(context);
-            return await DatabaseOutput(await databases.CreateAsync(context, name, string.IsNullOrEmpty(region) ? context.Project!.Region : region, Cancellation, ttlHours));
+            var created = await databases.CreateAsync(context, name, string.IsNullOrEmpty(region) ? context.Project!.Region : region, Cancellation, ttlHours);
+            return created is DatabaseRecord database
+                ? await DatabaseOutput(database)
+                : throw DatabaseMutations.ToError(DatabaseMutations.RefusedMutation(created));
         }
 
         [McpAccess(McpAccess.Write)]
@@ -82,7 +94,10 @@ namespace TerraScale.Dashboard.Features.Databases
                 var started = await recovery.StartForkAsync(context, databaseId, pointInTime, name, DatabaseTtl.Seconds(ttlHours), Cancellation);
                 return new McpRestoreStart(started.OperationId, started.Status, name.Trim());
             }
-            return await DatabaseOutput(await databases.BranchAsync(context, databaseId, name, Cancellation, ttlHours));
+            var branched = await databases.BranchAsync(context, databaseId, name, Cancellation, ttlHours);
+            return branched is DatabaseRecord database
+                ? await DatabaseOutput(database)
+                : throw DatabaseMutations.ToError(DatabaseMutations.RefusedMutation(branched));
         }
 
         [McpAccess(McpAccess.Destructive)]
@@ -93,7 +108,10 @@ namespace TerraScale.Dashboard.Features.Databases
             {
                 throw new AccountAccessException("Supply ttlHours or clear=true, exclusively.", 422);
             }
-            return await DatabaseOutput(await databases.SetTtlAsync(Scope(organizationId, projectId), databaseId, ttlHours, Cancellation));
+            var saved = await databases.SetTtlAsync(Scope(organizationId, projectId), databaseId, ttlHours, Cancellation);
+            return saved is DatabaseRecord database
+                ? await DatabaseOutput(database)
+                : throw DatabaseMutations.ToError(DatabaseMutations.RefusedMutation(saved));
         }
 
         [McpAccess(McpAccess.Destructive)]

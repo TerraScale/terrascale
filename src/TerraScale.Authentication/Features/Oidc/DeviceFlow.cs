@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http.Metadata;
 using System.Security.Claims;
 using OpenIddict.Abstractions;
+using OidcErrors = OpenIddict.Abstractions.OpenIddictConstants.Errors;
 using OpenIddict.Server;
 using OpenIddict.Server.AspNetCore;
 using TerraScale.Authentication.Configuration;
@@ -89,7 +90,7 @@ public static class DeviceFlow
         var decision = post ? http.Request.Form["decision"].ToString() : string.Empty;
         if (decision == "deny")
         {
-            return Results.Forbid(OidcResults.Error(Errors.AccessDenied, "The user denied the device."), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
+            return Results.Forbid(OidcResults.Error(OidcErrors.AccessDenied, "The user denied the device."), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
         }
 
         if (decision != "approve")
@@ -219,13 +220,13 @@ public sealed class RenderDeviceDecision : IOpenIddictServerHandler<ApplyEndUser
         var page = error switch
         {
             null => new SignInPageModel(SignInStep.DeviceApproved, OidcIssuer.Slug),
-            Errors.AccessDenied => new SignInPageModel(SignInStep.DeviceDenied, OidcIssuer.Slug),
+            OidcErrors.AccessDenied => new SignInPageModel(SignInStep.DeviceDenied, OidcIssuer.Slug),
             _ => new SignInPageModel(SignInStep.DeviceEnter, OidcIssuer.Slug, Error: context.Response.ErrorDescription ?? "Start again from your terminal.")
             {
                 ErrorTitle = "The device could not be approved",
             },
         };
-        await SignInPageModel.Render(http, page, error is null or Errors.AccessDenied ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest)
+        await SignInPageModel.Render(http, page, error is null or OidcErrors.AccessDenied ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest)
             .ExecuteAsync(http).ConfigureAwait(false);
         context.HandleRequest();
     }

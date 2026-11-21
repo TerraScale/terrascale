@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Http.Metadata;
 using Microsoft.AspNetCore;
 using Microsoft.IdentityModel.Tokens;
 using OpenIddict.Abstractions;
+using OidcErrors = OpenIddict.Abstractions.OpenIddictConstants.Errors;
 using OpenIddict.Server.AspNetCore;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
@@ -202,7 +203,7 @@ public abstract class AuthorizeEndpoint(Impersonations impersonations, Sessions 
         long? loginAfter = long.TryParse(marker, NumberStyles.None, CultureInfo.InvariantCulture, out var milliseconds) ? milliseconds : null;
         if (parameters.Any(parameter => parameter.Key is Parameters.Prompt or LoginAfter && parameter.Value.Count > 1) || marker.Count > 0 && loginAfter is null)
         {
-            return OidcResults.Forbid(Errors.InvalidRequest, $"prompt and {LoginAfter} may appear only once, and {LoginAfter} must be Unix milliseconds.");
+            return OidcResults.Forbid(OidcErrors.InvalidRequest, $"prompt and {LoginAfter} may appear only once, and {LoginAfter} must be Unix milliseconds.");
         }
 
         var ticketParameter = parameters.FirstOrDefault(parameter => parameter.Key == "impersonation_ticket").Value;
@@ -210,7 +211,7 @@ public abstract class AuthorizeEndpoint(Impersonations impersonations, Sessions 
         {
             if (ticketParameter.Count != 1 || string.IsNullOrEmpty(ticketParameter[0]))
             {
-                return OidcResults.Forbid(Errors.InvalidRequest, "Supply exactly one impersonation ticket.");
+                return OidcResults.Forbid(OidcErrors.InvalidRequest, "Supply exactly one impersonation ticket.");
             }
 
             try
@@ -226,7 +227,7 @@ public abstract class AuthorizeEndpoint(Impersonations impersonations, Sessions 
             }
             catch (ApiException error) when (error.Status == 400)
             {
-                return OidcResults.Forbid(Errors.InvalidRequest, error.Message);
+                return OidcResults.Forbid(OidcErrors.InvalidRequest, error.Message);
             }
         }
 
@@ -236,7 +237,7 @@ public abstract class AuthorizeEndpoint(Impersonations impersonations, Sessions 
             return acting is not null && acting.Record.ClientId == request.ClientId
                 ? OidcResults.SignIn(options, acting.User, acting.Record.RedeemedAt!.Value, request.GetScopes(),
                     OidcResults.Audiences(tenant, options, request.ClientId), impersonation: acting.Record)
-                : OidcResults.Forbid(Errors.LoginRequired, "End the impersonation before signing in to another client.");
+                : OidcResults.Forbid(OidcErrors.LoginRequired, "End the impersonation before signing in to another client.");
         }
 
         var cookie = Tenancy.SessionCookie(tenant);
@@ -247,12 +248,12 @@ public abstract class AuthorizeEndpoint(Impersonations impersonations, Sessions 
         }
         catch (ApiException error) when (error.Status == StatusCodes.Status503ServiceUnavailable)
         {
-            return OidcResults.Forbid(Errors.TemporarilyUnavailable, error.Message);
+            return OidcResults.Forbid(OidcErrors.TemporarilyUnavailable, error.Message);
         }
         catch (TerraBaseUnavailableException)
         {
             // Storage was down (QA round 4, auth:11 answered 500): the client gets OAuth's retryable error instead.
-            return OidcResults.Forbid(Errors.TemporarilyUnavailable, ApiException.Unavailable().Message);
+            return OidcResults.Forbid(OidcErrors.TemporarilyUnavailable, ApiException.Unavailable().Message);
         }
 
         var now = clock.GetUtcNow();
@@ -266,7 +267,7 @@ public abstract class AuthorizeEndpoint(Impersonations impersonations, Sessions 
         {
             if (request.HasPromptValue(PromptValues.None))
             {
-                return OidcResults.Forbid(Errors.LoginRequired, live is null ? CredentialLineage.ConflictNotice : "The session is older than max_age allows.");
+                return OidcResults.Forbid(OidcErrors.LoginRequired, live is null ? CredentialLineage.ConflictNotice : "The session is older than max_age allows.");
             }
 
             // Sign-in resumes the request as a GET without prompt=login; ts_login_after keeps the demand for a sign-in made
@@ -295,7 +296,7 @@ public abstract class AuthorizeEndpoint(Impersonations impersonations, Sessions 
             var organizations = this.HttpContext.RequestServices.GetRequiredService<ProjectOrganizationDirectory>();
             if (parameters.Any(parameter => parameter.Key == "organization" && parameter.Value.Count != 1))
             {
-                return OidcResults.Forbid(Errors.InvalidRequest, "organization must appear once.");
+                return OidcResults.Forbid(OidcErrors.InvalidRequest, "organization must appear once.");
             }
 
             var suggestions = request.HasPromptValue(PromptValues.None) ? [] : await organizations.AutoJoinAsync(signedIn.User, cancellationToken);
@@ -305,7 +306,7 @@ public abstract class AuthorizeEndpoint(Impersonations impersonations, Sessions 
                 organization = await organizations.ClaimsAsync(tenant, selected, signedIn.User.Id, cancellationToken);
                 if (organization is null)
                 {
-                    return OidcResults.Forbid(Errors.AccessDenied, "The user is not a member of this organization.");
+                    return OidcResults.Forbid(OidcErrors.AccessDenied, "The user is not a member of this organization.");
                 }
             }
             else
@@ -315,7 +316,7 @@ public abstract class AuthorizeEndpoint(Impersonations impersonations, Sessions 
                 {
                     if (request.HasPromptValue(PromptValues.None))
                     {
-                        return OidcResults.Forbid(Errors.InteractionRequired, "Choose an organization.");
+                        return OidcResults.Forbid(OidcErrors.InteractionRequired, "Choose an organization.");
                     }
 
                     var resume = $"/{tenant}/oauth/authorize{QueryString.Create(parameters)}";
@@ -371,7 +372,7 @@ public sealed class TokenEndpoint(Impersonations impersonations, TotpCredentials
         catch (Exception error) when (AuthData.IsUnavailable(error) && !this.HttpContext.RequestAborted.IsCancellationRequested)
         {
             var unavailable = error as ApiException ?? ApiException.Unavailable(error);
-            return Results.Json(new OAuthErrorBody(Errors.TemporarilyUnavailable, unavailable.Message), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status503ServiceUnavailable);
+            return Results.Json(new OAuthErrorBody(OidcErrors.TemporarilyUnavailable, unavailable.Message), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status503ServiceUnavailable);
         }
     }
 
@@ -390,7 +391,7 @@ public sealed class TokenEndpoint(Impersonations impersonations, TotpCredentials
 
         if (Tenancy.IsProject(tenant) && !request.IsAuthorizationCodeGrantType() && !request.IsRefreshTokenGrantType() && !request.IsClientCredentialsGrantType())
         {
-            return OidcResults.Forbid(Errors.UnsupportedGrantType, "A project issuer grants authorization_code, refresh_token, machine client_credentials and the agent jwt-bearer grant.");
+            return OidcResults.Forbid(OidcErrors.UnsupportedGrantType, "A project issuer grants authorization_code, refresh_token, machine client_credentials and the agent jwt-bearer grant.");
         }
 
         if (request.GrantType == AgentExchange.GrantType)
@@ -400,7 +401,7 @@ public sealed class TokenEndpoint(Impersonations impersonations, TotpCredentials
 
         if (request.IsAuthorizationCodeGrantType() && !await OidcResults.AllowsRedirectAsync(settings, tenant, request.RedirectUri, cancellationToken))
         {
-            return OidcResults.Forbid(Errors.InvalidGrant, "The project does not permit this redirect URI.");
+            return OidcResults.Forbid(OidcErrors.InvalidGrant, "The project does not permit this redirect URI.");
         }
 
         if (request.IsClientCredentialsGrantType())
@@ -408,7 +409,7 @@ public sealed class TokenEndpoint(Impersonations impersonations, TotpCredentials
             var application = await applications.FindByClientIdAsync(request.ClientId!, cancellationToken);
             if (application is null)
             {
-                return OidcResults.Forbid(Errors.InvalidClient, "The client is unknown, revoked or expired.");
+                return OidcResults.Forbid(OidcErrors.InvalidClient, "The client is unknown, revoked or expired.");
             }
 
             if (Tenancy.IsProject(tenant))
@@ -454,7 +455,7 @@ public sealed class TokenEndpoint(Impersonations impersonations, TotpCredentials
                 : null;
         if (user is null || ProjectSessionPolicy.ReadAuthenticationTime(principal, clock) is not { } authenticationTime)
         {
-            return OidcResults.Forbid(Errors.InvalidGrant, "The user is no longer signed in.");
+            return OidcResults.Forbid(OidcErrors.InvalidGrant, "The user is no longer signed in.");
         }
 
         if (Tenancy.IsProject(tenant) && principal.GetClaim("ts_auth_session") is { } sessionId)
@@ -462,7 +463,7 @@ public sealed class TokenEndpoint(Impersonations impersonations, TotpCredentials
             if (await sessions.ResolveIdAsync(tenant, user.Id, sessionId, cancellationToken) is not { } live)
             {
                 await ProjectSessionPolicy.RevokeAsync(tokens, principal, cancellationToken);
-                return OidcResults.Forbid(Errors.InvalidGrant, "The project session is no longer active.");
+                return OidcResults.Forbid(OidcErrors.InvalidGrant, "The project session is no longer active.");
             }
 
             user = live.User;
@@ -471,13 +472,13 @@ public sealed class TokenEndpoint(Impersonations impersonations, TotpCredentials
             if (authenticationTime > DateTimeOffset.MaxValue - lifetime || authenticationTime + lifetime <= clock.GetUtcNow())
             {
                 await ProjectSessionPolicy.RevokeAsync(tokens, principal, cancellationToken);
-                return OidcResults.Forbid(Errors.InvalidGrant, "The project's absolute session lifetime has elapsed.");
+                return OidcResults.Forbid(OidcErrors.InvalidGrant, "The project's absolute session lifetime has elapsed.");
             }
         }
 
         if (!FixedRefreshTokens.TryRead(request, tenant, clock.GetUtcNow(), out var refreshExpiresAt))
         {
-            return OidcResults.Forbid(Errors.InvalidRequest, FixedRefreshTokens.InvalidNotice);
+            return OidcResults.Forbid(OidcErrors.InvalidRequest, FixedRefreshTokens.InvalidNotice);
         }
 
         OrganizationClaims? organization = null;
@@ -486,7 +487,7 @@ public sealed class TokenEndpoint(Impersonations impersonations, TotpCredentials
             organization = await this.HttpContext.RequestServices.GetRequiredService<ProjectOrganizationDirectory>().ClaimsAsync(tenant, orgId, user.Id, cancellationToken);
             if (organization is null)
             {
-                return OidcResults.Forbid(Errors.InvalidGrant, "The organization membership ended.");
+                return OidcResults.Forbid(OidcErrors.InvalidGrant, "The organization membership ended.");
             }
         }
 
@@ -556,7 +557,7 @@ public abstract class UserInfoEndpoint(Impersonations impersonations, TotpCreden
         }
         catch (ApiException error) when (error.Status == StatusCodes.Status503ServiceUnavailable)
         {
-            return Results.Json(new OAuthErrorBody(Errors.TemporarilyUnavailable, error.Message), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status503ServiceUnavailable);
+            return Results.Json(new OAuthErrorBody(OidcErrors.TemporarilyUnavailable, error.Message), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status503ServiceUnavailable);
         }
     }
 
@@ -578,7 +579,7 @@ public abstract class UserInfoEndpoint(Impersonations impersonations, TotpCreden
                     principal.GetClaim(OidcIssuer.MfaClaim), cancellationToken);
         if (user is null || principal is null)
         {
-            return Results.Challenge(OidcResults.Error(Errors.InvalidToken, "The access token no longer identifies a user."), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
+            return Results.Challenge(OidcResults.Error(OidcErrors.InvalidToken, "The access token no longer identifies a user."), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
         }
 
         var email = principal.HasScope(Scopes.Email);
@@ -746,7 +747,7 @@ internal static class OidcResults
         tenant == OidcIssuer.InstanceId && clientId == OidcIssuer.DashboardClientId
             && (await settings.GetAsync(PlatformBootstrap.AuthProjectId, cancellationToken)).OrganizationPicker;
 
-    public static IResult DisallowedRedirect() => Results.Json(new OAuthErrorBody(Errors.InvalidRequest,
+    public static IResult DisallowedRedirect() => Results.Json(new OAuthErrorBody(OidcErrors.InvalidRequest,
         "The project does not permit this redirect URI."), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status400BadRequest);
 
     /// <summary>The project allowlist narrows, and never replaces, OpenIddict's client URI validation.</summary>
@@ -801,7 +802,7 @@ internal static class OidcResults
         // although ts-dashboard holds their permissions for the exchange.
         if (scopes.Except(SignInScopes).Any())
         {
-            return Forbid(Errors.InvalidScope, "A sign-in grants only openid, email, profile and offline_access.");
+            return Forbid(OidcErrors.InvalidScope, "A sign-in grants only openid, email, profile and offline_access.");
         }
 
         var dataAccess = impersonation is null && Tenancy.IsProject(user.InstanceId);

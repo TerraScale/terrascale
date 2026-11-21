@@ -1,9 +1,12 @@
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard.Features.Analytics
 {
+    using NotFound = TerraScale.Dashboard.Errors.NotFound;
+
     public static class AnalyticsEndpoints
     {
         public static IServiceCollection AddAnalyticsFeatures(this IServiceCollection services)
@@ -20,26 +23,34 @@ namespace TerraScale.Dashboard.Features.Analytics
                 return AccountRequest.LoginRedirect(http);
             }
 
-            try
+            return AnalyticsSelection.TryFor(context, http.Request.Query["project"].ToString(), http.Request.Query["database"].ToString(),
+                http.Request.Query["region"].ToString(), http.Request.Query["range"].ToString()) switch
             {
-                var selection = AnalyticsSelection.For(context, http.Request.Query["project"].ToString(), http.Request.Query["database"].ToString(),
-                    http.Request.Query["region"].ToString(), http.Request.Query["range"].ToString());
-                var page = await analytics.LoadAsync(ShellModel.For(http, selection.Context, "Analytics"), selection, http.RequestAborted);
-                if (http.Request.IsDatastarRequest)
-                {
-                    await DatastarEvents.PatchElementsAsync(http, AnalyticsPageView.Create(page));
-                    return Results.Empty;
-                }
+                AnalyticsSelection selection => await PageAsync(http, analytics, selection),
+                NotFound failure => Notice(http, context, failure.Message ?? "Not found.", 404),
+                Forbidden failure => Notice(http, context, failure.Message, 403),
+                Validation failure => Notice(http, context, failure.Message, 400),
+            };
+        }
 
-                return AnalyticsView.Create(page);
-            }
-            catch (AccountAccessException error)
+        private static RazorSlices.RazorSlice<AnalyticsNoticeModel> Notice(HttpContext http, AccountContext context, string message, int status)
+        {
+            var view = AnalyticsNotice.Create(new(ShellModel.For(http, context, "Analytics"),
+                message + (status == 403 ? " Ask an owner or admin for access." : "")));
+            view.StatusCode = status;
+            return view;
+        }
+
+        private static async Task<IResult> PageAsync(HttpContext http, AnalyticsService analytics, AnalyticsSelection selection)
+        {
+            var page = await analytics.LoadAsync(ShellModel.For(http, selection.Context, "Analytics"), selection, http.RequestAborted);
+            if (http.Request.IsDatastarRequest)
             {
-                var view = AnalyticsNotice.Create(new(ShellModel.For(http, context, "Analytics"),
-                    error.Message + (error.StatusCode == 403 ? " Ask an owner or admin for access." : "")));
-                view.StatusCode = error.StatusCode;
-                return view;
+                await DatastarEvents.PatchElementsAsync(http, AnalyticsPageView.Create(page));
+                return Results.Empty;
             }
+
+            return AnalyticsView.Create(page);
         }
     }
 

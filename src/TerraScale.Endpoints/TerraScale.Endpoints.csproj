@@ -14,7 +14,6 @@
     <PackageTags>terrascale;aspnetcore;endpoints;openapi</PackageTags>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <LangVersion>14.0</LangVersion>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <AnalysisLevel>latest-recommended</AnalysisLevel>

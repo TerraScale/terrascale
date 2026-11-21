@@ -1,10 +1,13 @@
 using Fido2NetLib;
 using Fido2NetLib.Objects;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.WebAuthn;
+
+internal readonly union PasskeyAttestation(AuthenticatorAttestationRawResponse, Validation, Forbidden);
 
 public sealed class PasskeyVerifyEndpoint(PasskeyCredentials passkeys, StepUpProofs proofs, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
 {
@@ -22,29 +25,41 @@ public sealed class PasskeyVerifyEndpoint(PasskeyCredentials passkeys, StepUpPro
     {
         var body = await this.BodyAsync(WebAuthnJson.Default.PasskeyVerifyRequest, cancellationToken);
         caller = await proofs.ConsumeHeaderAsync(caller, this.HttpContext.Request, "add_passkey", null, cancellationToken);
-        var raw = Map(body.Response);
-        var entry = raw is null ? null
-            : await passkeys.VerifyAsync(caller, body.Challenge, raw, body.Name is { Length: > 0 and <= 100 } ? body.Name : null, cancellationToken: cancellationToken).ConfigureAwait(false);
-        if (entry is null)
+        return Map(body.Response) switch
         {
-            throw new ApiException(403, "passkey_denied", "The passkey registration failed verification; start again.");
-        }
-
-        return Results.Json(new PasskeyEnrolledBody(entry.CredentialId, entry.Name, entry.Aaguid, entry.CreatedAt),
-            WebAuthnJson.Default.PasskeyEnrolledBody, statusCode: StatusCodes.Status201Created);
+            AuthenticatorAttestationRawResponse raw => await passkeys.VerifyAsync(caller, body.Challenge, raw,
+                body.Name is { Length: > 0 and <= 100 } ? body.Name : null, cancellationToken: cancellationToken).ConfigureAwait(false) switch
+            {
+                PasskeyCredentialEntry entry => Results.Json(new PasskeyEnrolledBody(entry.CredentialId, entry.Name, entry.Aaguid, entry.CreatedAt),
+                    WebAuthnJson.Default.PasskeyEnrolledBody, statusCode: StatusCodes.Status201Created),
+                Forbidden error => ErrorResults.ToResult(error),
+            },
+            Validation invalid => ErrorResults.ToResult(invalid),
+            Forbidden denied => ErrorResults.ToResult(denied),
+        };
     }
 
-    internal static AuthenticatorAttestationRawResponse? Map(PasskeyAttestationRequest? response)
+    internal static PasskeyAttestation Map(PasskeyAttestationRequest? response)
     {
         if (response?.Response is not { } inner
             || response.RawId is not { Length: > 0 }
             || response.Type?.Equals("public-key", StringComparison.Ordinal) != true
             || inner.ClientDataJson is not { Length: > 0 } || inner.AttestationObject is not { Length: > 0 })
         {
-            return null;
+            return PasskeyCredentials.DeniedEnroll();
         }
 
-        AuthenticatorTransport[] transports = [.. (inner.Transports ?? []).Select(transport => Enum.TryParse<AuthenticatorTransport>(transport, ignoreCase: true, out var parsed) ? parsed : throw new ApiException(400, "invalid_request", "Unknown passkey transport."))];
+        List<AuthenticatorTransport> transports = [];
+        foreach (var transport in inner.Transports ?? [])
+        {
+            if (!Enum.TryParse<AuthenticatorTransport>(transport, ignoreCase: true, out var parsed))
+            {
+                return new Validation("Unknown passkey transport.");
+            }
+
+            transports.Add(parsed);
+        }
+
         return new AuthenticatorAttestationRawResponse
         {
             Id = response.Id ?? string.Empty,
@@ -54,7 +69,7 @@ public sealed class PasskeyVerifyEndpoint(PasskeyCredentials passkeys, StepUpPro
             {
                 ClientDataJson = PasskeyCredentials.Base64UrlDecode(inner.ClientDataJson),
                 AttestationObject = PasskeyCredentials.Base64UrlDecode(inner.AttestationObject),
-                Transports = transports,
+                Transports = [.. transports],
             },
         };
     }

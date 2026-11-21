@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Endpoints;
@@ -20,25 +21,30 @@ public sealed class PasskeyDeleteEndpoint(PasskeyCredentials passkeys, TotpCrede
 
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        var id = this.HttpContext.GetRouteValue("id") is string value && value.Length is > 0 and <= 1024 ? value
-            : throw new ApiException(StatusCodes.Status404NotFound, "passkey_not_found", "No passkey with this id is enrolled for the account.");
+        if (this.HttpContext.GetRouteValue("id") is not (string value and { Length: > 0 and <= 1024 }))
+        {
+            return ErrorResults.ToResult(new NotFound("No passkey with this id is enrolled for the account.", "passkey_not_found"));
+        }
+
+        var id = value;
         var entries = await passkeys.ListAsync(caller, cancellationToken).ConfigureAwait(false);
         if (entries.All(entry => entry.CredentialId != id))
         {
-            throw new ApiException(StatusCodes.Status404NotFound, "passkey_not_found", "No passkey with this id is enrolled for the account.");
+            return ErrorResults.ToResult(new NotFound("No passkey with this id is enrolled for the account.", "passkey_not_found"));
         }
 
         if (await PasskeyGuard.LastFactorAsync(platform, mfa, caller.Id, entries.Count - 1, cancellationToken).ConfigureAwait(false))
         {
-            throw PasskeyGuard.LastFactor();
+            return ErrorResults.ToResult(PasskeyGuard.LastFactor);
         }
 
-        var verified = await proofs.ConsumeHeaderAsync(caller, this.HttpContext.Request, "delete_passkey", null, cancellationToken).ConfigureAwait(false);
-        if (await passkeys.DeleteAsync(verified, id, cancellationToken).ConfigureAwait(false) is null)
+        var verified = await proofs.ConsumeHeaderAsync(caller, this.HttpContext.Request, "delete_passkey", null, cancellationToken);
+        return await passkeys.DeleteAsync(verified, id, cancellationToken).ConfigureAwait(false) switch
         {
-            throw new ApiException(403, "passkey_denied", "Sign in again before deleting a passkey.");
-        }
-
-        return Results.NoContent();
+            PasskeyCredentialEntry => Results.NoContent(),
+            Forbidden error => ErrorResults.ToResult(error),
+            NotFound error => ErrorResults.ToResult(error),
+            Conflict error => ErrorResults.ToResult(error),
+        };
     }
 }

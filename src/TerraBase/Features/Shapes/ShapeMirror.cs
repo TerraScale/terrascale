@@ -14,6 +14,7 @@ using Amazon.S3;
 using Amazon.S3.Model;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Memory;
 using TerraBase.Tenancy;
@@ -39,6 +40,12 @@ internal sealed record ShapeMirrorObject(string Offset, string NextOffset, strin
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower)]
 [JsonSerializable(typeof(ShapeMirrorManifest))]
 internal sealed partial class ShapeMirrorJsonContext : JsonSerializerContext;
+
+internal sealed record Retry;
+
+internal readonly union MirrorResult(Done, Retry);
+
+internal sealed record MirrorUpload(ShapeObjectHead Head, bool Uploaded);
 
 internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, IShapeMetrics metrics, IMemoryBudget memory, TimeProvider time,
     Func<IShapeCrypto> crypto, ShapeObjectStore? objects, ILogger<ShapeMirror> logger) : BackgroundService, IShapeMirror, IShapeKeyRetention
@@ -526,16 +533,32 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
             {
                 for (var attempt = 1; ; attempt++)
                 {
+                    MirrorResult outcome;
                     try
                     {
-                        await MirrorAsync(pending, stoppingToken).ConfigureAwait(false);
-                        break;
+                        outcome = await MirrorAsync(pending, stoppingToken).ConfigureAwait(false);
                     }
                     catch (Exception error) when (!stoppingToken.IsCancellationRequested && !pending.AdoptOnly && attempt < MirrorAttempts && Transient(error))
                     {
                         _logger.ZLogInformation(error, $"Shape mirror attempt {attempt} of {MirrorAttempts} failed; it is tried again");
                         await Task.Delay(RetryDelay * attempt, _time, stoppingToken).ConfigureAwait(false);
+                        continue;
                     }
+
+                    switch (outcome)
+                    {
+                        case Retry when !pending.AdoptOnly && attempt < MirrorAttempts:
+                            _logger.ZLogInformation($"Shape mirror attempt {attempt} of {MirrorAttempts} failed; it is tried again");
+                            await Task.Delay(RetryDelay * attempt, _time, stoppingToken).ConfigureAwait(false);
+                            continue;
+                        case Retry:
+                            _logger.ZLogWarning($"Shape mirror failed; immutable origin bytes remain available");
+                            break;
+                        case Done:
+                            break;
+                    }
+
+                    break;
                 }
             }
             catch (Exception error) when (!stoppingToken.IsCancellationRequested)
@@ -667,17 +690,17 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         _objects?.Dispose();
     }
 
-    private Task MirrorAsync(Pending pending, CancellationToken cancellationToken) =>
+    private Task<MirrorResult> MirrorAsync(Pending pending, CancellationToken cancellationToken) =>
         !pending.AdoptOnly && pending.Body.IsEmpty && pending.Offset.StartsWith("snap.", StringComparison.Ordinal)
             ? MirrorSnapshotAsync(pending, cancellationToken)
             : MirrorBodyAsync(pending, cancellationToken);
 
-    private async Task MirrorSnapshotAsync(Pending pending, CancellationToken cancellationToken)
+    private async Task<MirrorResult> MirrorSnapshotAsync(Pending pending, CancellationToken cancellationToken)
     {
         var store = await _engine.OpenDatabaseAsync(pending.Database, cancellationToken).ConfigureAwait(false);
         if (store is null)
         {
-            return;
+            return new Done();
         }
 
         var index = 0;
@@ -695,7 +718,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
 
             if (page is null)
             {
-                return;
+                return new Done();
             }
 
             using (page)
@@ -703,17 +726,26 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
                 more = page.NextRowid is not null;
                 var offset = ShapeSnapshots.PageOffset(pending.CoveredOffset, index);
                 var next = more ? ShapeSnapshots.PageOffset(pending.CoveredOffset, index + 1) : Number(pending.CoveredOffset);
-                await MirrorBodyAsync(pending with { Offset = offset, NextOffset = next, Body = page.Body }, linked.Token).ConfigureAwait(false);
+                switch (await MirrorBodyAsync(pending with { Offset = offset, NextOffset = next, Body = page.Body }, linked.Token).ConfigureAwait(false))
+                {
+                    case Retry outcome:
+                        return outcome;
+                    case Done:
+                        break;
+                }
+
                 index++;
             }
         }
+
+        return new Done();
     }
 
-    private async Task MirrorBodyAsync(Pending pending, CancellationToken cancellationToken)
+    private async Task<MirrorResult> MirrorBodyAsync(Pending pending, CancellationToken cancellationToken)
     {
         if (_objects is null)
         {
-            return;
+            return new Done();
         }
 
         var key = ShapeObjectStore.Key(pending.ShapeId, pending.Handle, pending.Offset);
@@ -721,7 +753,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         var floorOffset = long.TryParse(pending.Offset, NumberStyles.None, CultureInfo.InvariantCulture, out var at) ? at : pending.CoveredOffset;
         if (!pending.AdoptOnly && (floorOffset < floor || pending.SealedAt < _time.GetUtcNow() - ShapeRetention.Age))
         {
-            return;
+            return new Done();
         }
 
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30), _time);
@@ -732,25 +764,31 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         if (head is null && pending.AdoptOnly)
         {
             RememberMissing(key, pending.Database);
-            return;
+            return new Done();
         }
 
         if (head is null)
         {
-            using var cipher = await _crypto().EncryptAsync(pending.Database, pending.Handle, pending.Offset,
-                pending.Body, linked.Token).ConfigureAwait(false);
-            head = new(owner, key[(key.LastIndexOf('/') + 1)..], Convert.ToHexStringLower(SHA256.HashData(cipher.Bytes.Span)),
-                cipher.Bytes.Length, cipher.Epoch, cipher.KeyId, pending.SealedAt.ToUnixTimeMilliseconds(), floorOffset);
-            var written = await _objects.PutAsync(key, head, cipher.Bytes, linked.Token).ConfigureAwait(false);
-            uploaded = ReferenceEquals(written, head);
-            head = written;
+            var upload = await _crypto().EncryptAsync(pending.Database, pending.Handle, pending.Offset,
+                pending.Body, linked.Token).ConfigureAwait(false) switch
+            {
+                ShapeCiphertext cipher => await PutAsync(_objects, key, owner, pending, floorOffset, cipher, linked.Token).ConfigureAwait(false),
+                Unavailable or EpochBoundary => (MirrorUpload?)null,
+            };
+            if (upload is not { } written)
+            {
+                return new Retry();
+            }
+
+            uploaded = written.Uploaded;
+            head = written.Head;
         }
 
         floor = await FloorAsync(pending.Database, pending.Handle, linked.Token).ConfigureAwait(false);
         if (floor == long.MaxValue)
         {
             _ = await _objects.DeleteAsync(key, linked.Token, head.Owner).ConfigureAwait(false);
-            return;
+            return new Done();
         }
 
         if (head.Owner != owner || !Retained(head, floor))
@@ -760,7 +798,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
                 _ = await _objects.DeleteAsync(key, linked.Token, head.Owner).ConfigureAwait(false);
             }
 
-            return;
+            return new Done();
         }
 
         if (!uploaded)
@@ -786,6 +824,20 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         if (uploaded)
         {
             _metrics.RecordMirrorLag(TimeSpan.FromMilliseconds(Math.Max(0, _time.GetUtcNow().ToUnixTimeMilliseconds() - head.SealedAt)));
+        }
+
+        return new Done();
+    }
+
+    private static async Task<MirrorUpload> PutAsync(ShapeObjectStore objects, string key, string owner, Pending pending, long floorOffset, ShapeCiphertext cipher, CancellationToken cancellationToken)
+    {
+        using (cipher)
+        {
+            var head = new ShapeObjectHead(owner, key[(key.LastIndexOf('/') + 1)..],
+                Convert.ToHexStringLower(SHA256.HashData(cipher.Bytes.Span)), cipher.Bytes.Length, cipher.Epoch, cipher.KeyId,
+                pending.SealedAt.ToUnixTimeMilliseconds(), floorOffset);
+            var written = await objects.PutAsync(key, head, cipher.Bytes, cancellationToken).ConfigureAwait(false);
+            return new(written, ReferenceEquals(written, head));
         }
     }
 

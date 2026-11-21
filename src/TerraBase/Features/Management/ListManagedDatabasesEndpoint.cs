@@ -71,8 +71,6 @@ internal sealed class ListManagedDatabasesEndpoint(
                     return ErrorResponse.From(unavailable);
                 case NotFound:
                     break;
-                default:
-                    throw new InvalidOperationException();
             }
         }
 

@@ -88,37 +88,41 @@ internal sealed class GetShapeKeyEndpoint(
                 return ShapeRoute.Refetch(HttpContext, lineage, "shape lineage changed");
             }
 
-            var key = await crypto.GetKeyAsync(database, handle, epoch, ids[0]!, linked.Token);
-            if (key is null)
+            return await crypto.GetKeyAsync(database, handle, epoch, ids[0]!, linked.Token) switch
             {
-                return ShapeRoute.Refetch(HttpContext, lineage, "the epoch and data key pair is not retained");
-            }
-
-            try
-            {
-                if (!catalog.IsOpen)
-                {
-                    return ErrorResponse.From(CatalogStale);
-                }
-                if (HttpContext.User.Identity?.AuthenticationType == ApiKeyAuthenticationHandler.SchemeName
-                    && (ApiKeyAuthenticationHandler.Secret(HttpContext.Request) is not { } secret
-                        || await keys.FindAsync(secret, cancellationToken) is not ApiKey current || current.Id != ApiKey.Of(HttpContext).Id))
-                {
-                    return ErrorResponse.From(new Unauthorized("The request cannot be served.", "invalid_key"));
-                }
-
-                return TypedResults.Json(new ShapeKeyResponse(handle, epoch.ToString(CultureInfo.InvariantCulture), key.KeyId,
-                    Base64Url.EncodeToString(key.Key)), ShapeKeyJsonContext.Default.ShapeKeyResponse);
-            }
-            finally
-            {
-                CryptographicOperations.ZeroMemory(key.Key);
-            }
+                NotFound => ShapeRoute.Refetch(HttpContext, lineage, "the epoch and data key pair is not retained"),
+                Unavailable => ErrorResponse.From(new Unavailable("the database data key is unavailable")),
+                ShapeEpochKey key => await ServeKeyAsync(key, handle, epoch, cancellationToken),
+            };
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested
             && error is IOException or HttpRequestException or AmazonS3Exception or InvalidDataException or OperationCanceledException)
         {
             return ErrorResponse.From(new Unavailable("the database data key is unavailable"));
+        }
+    }
+
+    private async ValueTask<IResult> ServeKeyAsync(ShapeEpochKey key, string handle, long epoch, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!catalog.IsOpen)
+            {
+                return ErrorResponse.From(CatalogStale);
+            }
+            if (HttpContext.User.Identity?.AuthenticationType == ApiKeyAuthenticationHandler.SchemeName
+                && (ApiKeyAuthenticationHandler.Secret(HttpContext.Request) is not { } secret
+                    || await keys.FindAsync(secret, cancellationToken) is not ApiKey current || current.Id != ApiKey.Of(HttpContext).Id))
+            {
+                return ErrorResponse.From(new Unauthorized("The request cannot be served.", "invalid_key"));
+            }
+
+            return TypedResults.Json(new ShapeKeyResponse(handle, epoch.ToString(CultureInfo.InvariantCulture), key.KeyId,
+                Base64Url.EncodeToString(key.Key)), ShapeKeyJsonContext.Default.ShapeKeyResponse);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(key.Key);
         }
     }
 }

@@ -32,7 +32,11 @@ namespace TerraScale.Dashboard.Features.Organizations
 
             try
             {
-                var organization = context.Organization ?? throw new AccountAccessException("Select an organization.");
+                if (context.Organization is not { } organization)
+                {
+                    return await RefusedAsync(http, context, placement, "Select an organization.");
+                }
+
                 await mfa.SetRequireMfaAsync(context.Session, organization.Id, form["requireMfa"] == "true", http.RequestAborted);
                 if (http.Request.IsDatastarRequest)
                 {
@@ -44,13 +48,18 @@ namespace TerraScale.Dashboard.Features.Organizations
             }
             catch (AccountAccessException error)
             {
-                if (http.Request.IsDatastarRequest)
-                {
-                    await OrganizationEndpoints.PatchAsync(http, context, placement, error.Message, "organization");
-                    return Results.Empty;
-                }
-                return await OrganizationEndpoints.PageAsync(http, context, placement, error.Message, error.StatusCode, "organization");
+                return await RefusedAsync(http, context, placement, error.Message, error.StatusCode);
             }
+        }
+
+        private static async Task<IResult> RefusedAsync(HttpContext http, AccountContext context, IWorkspacePlacement placement, string message, int status = 403)
+        {
+            if (http.Request.IsDatastarRequest)
+            {
+                await OrganizationEndpoints.PatchAsync(http, context, placement, message, "organization");
+                return Results.Empty;
+            }
+            return await OrganizationEndpoints.PageAsync(http, context, placement, message, status, "organization");
         }
     }
 }
