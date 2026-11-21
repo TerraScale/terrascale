@@ -26,12 +26,17 @@ namespace TerraScale.Dashboard.Features.Usage
             }
 
             var tab = http.Request.Query["tab"] == "settings" ? "settings" : "overview";
-            return UsageSelection.TryFor(context, http.Request.Query["project"].ToString(), http.Request.Query["database"].ToString(), http.Request.Query["range"].ToString()) switch
+            try
             {
-                UsageSelection selection => await PageAsync(http, usage, selection, tab),
-                NotFound failure => Results.Text(failure.Message ?? "Not found.", statusCode: 404),
-                Forbidden failure => Results.Text(failure.Message, statusCode: 403),
-            };
+                return UsageSelection.TryFor(context, http.Request.Query["project"].ToString(), http.Request.Query["database"].ToString(), http.Request.Query["range"].ToString()) switch
+                {
+                    UsageSelection selection => await PageAsync(http, usage, selection, tab),
+                    NotFound failure => Results.Text(failure.Message ?? "Not found.", statusCode: 404),
+                    Forbidden failure => Results.Text(failure.Message, statusCode: 403),
+                };
+            }
+            catch (AccountAccessException error) { return Results.Text(error.Message, statusCode: error.StatusCode); }
+            catch (IOException) { return Results.Text("Could not load usage.", statusCode: 503); }
         }
 
         private static async Task<IResult> PageAsync(HttpContext http, UsageService usage, UsageSelection selection, string tab)
