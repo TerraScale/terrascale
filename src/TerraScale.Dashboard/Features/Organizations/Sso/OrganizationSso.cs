@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraScale.Dashboard.Common.Accounts;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.TsAuth;
@@ -162,39 +163,94 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
         }
 
         // Reads the configure form. The client secret is write-only: left blank, ts-auth keeps the stored one.
-        public static SsoUpdate Parse(IFormCollection form)
+        public static Valid<SsoUpdate> Parse(IFormCollection form)
         {
-            string Field(string name, int max = 2048)
+            Valid<string> Field(string name, int max = 2048) =>
+                form[name].ToString().Trim() is var trimmed && trimmed.Length <= max
+                    ? trimmed : new Validation("A single sign-on field is too long.", "unprocessable");
+
+            static Valid<string> Https(string value, string label) =>
+                Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == "https" && uri.UserInfo.Length == 0
+                    ? value : new Validation(label + " must be an https:// URL.", "unprocessable");
+
+            static Valid<string> Required(string value, string label) =>
+                value.Length > 0 ? value : new Validation("Enter the " + label + ".", "unprocessable");
+
+            string domain = "";
+            switch (Field("domain", 253))
             {
-                return form[name].ToString().Trim() is var value && value.Length <= max
-                ? value : throw new AccountAccessException("A single sign-on field is too long.", 422);
+                case Validation error:
+                    return error;
+                case string raw:
+                    domain = raw.ToLowerInvariant();
+                    break;
             }
 
-            static string Https(string value, string label)
-            {
-                return Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == "https" && uri.UserInfo.Length == 0
-                            ? value : throw new AccountAccessException(label + " must be an https:// URL.", 422);
-            }
-
-            static string Required(string value, string label)
-            {
-                return value.Length > 0 ? value : throw new AccountAccessException("Enter the " + label + ".", 422);
-            }
-
-            var domain = Field("domain", 253).ToLowerInvariant();
             if (Uri.CheckHostName(domain) != UriHostNameType.Dns || !domain.Contains('.'))
             {
-                throw new AccountAccessException("Enter the email domain, for example acme.com.", 422);
+                return new Validation("Enter the email domain, for example acme.com.", "unprocessable");
             }
 
-            var role = Field("default_role");
+            string role = "";
+            switch (Field("default_role"))
+            {
+                case Validation error:
+                    return error;
+                case string raw:
+                    role = raw;
+                    break;
+            }
+
             if (role is not ("viewer" or "member" or "admin"))
             {
-                throw new AccountAccessException("Choose a default role.", 422);
+                return new Validation("Choose a default role.", "unprocessable");
             }
 
-            return new(domain, "oidc", role, new(Https(Field("oidc_issuer"), "The issuer"), Required(Field("oidc_client_id"), "client ID"),
-                Field("oidc_client_secret", 1024) is { Length: > 0 } secret ? secret : null));
+            string issuer = "";
+            switch (Field("oidc_issuer"))
+            {
+                case Validation error:
+                    return error;
+                case string raw:
+                    switch (Https(raw, "The issuer"))
+                    {
+                        case Validation error:
+                            return error;
+                        case string url:
+                            issuer = url;
+                            break;
+                    }
+                    break;
+            }
+
+            string clientId = "";
+            switch (Field("oidc_client_id"))
+            {
+                case Validation error:
+                    return error;
+                case string raw:
+                    switch (Required(raw, "client ID"))
+                    {
+                        case Validation error:
+                            return error;
+                        case string id:
+                            clientId = id;
+                            break;
+                    }
+                    break;
+            }
+
+            string secret = "";
+            switch (Field("oidc_client_secret", 1024))
+            {
+                case Validation error:
+                    return error;
+                case string raw:
+                    secret = raw;
+                    break;
+            }
+
+            return new SsoUpdate(domain, "oidc", role, new(issuer, clientId, secret is { Length: > 0 } text ? text : null));
         }
     }
 
@@ -227,7 +283,14 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
                 }
                 else
                 {
-                    await sso.SaveAsync(context, OrganizationSsoService.Parse(form), http.RequestAborted);
+                    switch (OrganizationSsoService.Parse(form))
+                    {
+                        case Validation error:
+                            throw new AccountAccessException(error.Message, 422);
+                        case SsoUpdate update:
+                            await sso.SaveAsync(context, update, http.RequestAborted);
+                            break;
+                    }
                 }
 
                 if (http.Request.IsDatastarRequest)
