@@ -9,7 +9,9 @@ internal interface IHealthyRewrite
 
 internal readonly record struct HealthyRewrite(Ulid SourceIncarnation, Ulid TargetIncarnation, long Offset);
 
-internal readonly union HealthyRewriteOutcome(HealthyRewrite, RewriteRefused);
+internal readonly union HealthyRewriteOutcome(HealthyRewrite, RewriteRefused, RewriteUncertain);
+
+internal sealed record class RewriteUncertain(Exception Cause);
 
 internal closed record class RewriteRefusal;
 internal sealed record class Safety : RewriteRefusal;
@@ -32,6 +34,3 @@ internal static class RewriteRefusalExtensions
 }
 
 internal sealed record RewriteRefused(string Message, RewriteRefusal Reason);
-
-internal sealed class RewriteUncertainException(Exception innerException)
-    : IOException("the rewritten file is in place but its rename may not be durable; storage failed closed", innerException);
