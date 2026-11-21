@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -15,7 +16,11 @@ public sealed class DeleteProjectOrganizationEndpoint(ProjectOrganizationDirecto
     protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
-        await organizations.DeleteAsync(project, this.Org, cancellationToken);
-        return Results.NoContent();
+        return await organizations.DeleteAsync(project, this.Org, cancellationToken) switch
+        {
+            Done => Results.NoContent(),
+            NotFound error => ErrorResults.ToResult(error),
+            Conflict error => ErrorResults.ToResult(error),
+        };
     }
 }

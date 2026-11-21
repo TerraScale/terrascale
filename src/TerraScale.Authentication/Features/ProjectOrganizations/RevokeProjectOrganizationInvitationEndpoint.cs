@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -15,7 +16,11 @@ public sealed class RevokeProjectOrganizationInvitationEndpoint(ProjectOrganizat
     protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
-        await organizations.RevokeInvitationAsync(project, this.Org, this.RouteId("invitation"), cancellationToken);
-        return Results.NoContent();
+        return await organizations.RevokeInvitationAsync(project, this.Org, this.RouteId("invitation"), cancellationToken) switch
+        {
+            Done => Results.NoContent(),
+            NotFound error => ErrorResults.ToResult(error),
+            Conflict error => ErrorResults.ToResult(error),
+        };
     }
 }

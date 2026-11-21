@@ -1,3 +1,5 @@
+using TerraScale.Authentication.Errors;
+using TerraScale.Authentication.Storage;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -15,6 +17,9 @@ public sealed class GetProjectOrganizationEndpoint(ProjectOrganizationDirectory 
     protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var project = await this.AccessAsync(caller, Roles.Viewer, cancellationToken);
-        return Results.Json(ProjectOrganizationDirectory.Body((await organizations.ReadAsync(project, this.Org, cancellationToken)).Value), ProjectOrganizationsJson.Default.ProjectOrganizationBody);
+        var org = await organizations.ReadAsync(project, this.Org, cancellationToken);
+        return org is null
+            ? ErrorResults.ToResult(ProjectOrganizationDirectory.NoSuchOrganization())
+            : Results.Json(ProjectOrganizationDirectory.Body(org.Value), ProjectOrganizationsJson.Default.ProjectOrganizationBody);
     }
 }

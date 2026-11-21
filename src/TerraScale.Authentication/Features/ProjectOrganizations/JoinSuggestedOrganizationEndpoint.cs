@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Configuration;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
@@ -37,14 +38,14 @@ public sealed class JoinSuggestedOrganizationEndpoint(ProjectOrganizationDirecto
         var form = await this.HttpContext.Request.ReadFormAsync(cancellationToken);
         var next = SignInFlow.SafeNext(this.HttpContext, form["next"]);
         var org = this.HttpContext.GetRouteValue("org") as string ?? throw PlatformDirectory.NotFound();
-        if (form["dismiss"] == "true")
+        var handled = form["dismiss"] == "true"
+            ? await organizations.DismissSuggestionAsync(live.User, org, cancellationToken)
+            : await organizations.JoinSuggestedAsync(live.User, org, cancellationToken);
+        return handled switch
         {
-            await organizations.DismissSuggestionAsync(live.User, org, cancellationToken);
-        }
-        else
-        {
-            await organizations.JoinSuggestedAsync(live.User, org, cancellationToken);
-        }
-        return Results.Redirect(next ?? $"/ui/{tenant}/sign-in");
+            Done => Results.Redirect(next ?? $"/ui/{tenant}/sign-in"),
+            NotFound => Results.NotFound(),
+            Conflict => Results.StatusCode(409),
+        };
     }
 }

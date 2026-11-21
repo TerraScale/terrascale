@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -16,6 +17,14 @@ public sealed class UpdateProjectOrganizationMemberEndpoint(ProjectOrganizationD
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.OrganizationBodyAsync(ProjectOrganizationsJson.Default.ProjectMembershipRequest, cancellationToken);
-        return Results.Json(await organizations.ChangeMemberAsync(project, this.Org, this.RouteId("user"), request.Role, false, cancellationToken), ProjectOrganizationsJson.Default.ProjectOrganizationMembership);
+        return await organizations.ChangeMemberAsync(project, this.Org, this.RouteId("user"), request.Role, false, cancellationToken) switch
+        {
+            ProjectOrganizationMembership changed => Results.Json(changed, ProjectOrganizationsJson.Default.ProjectOrganizationMembership),
+            Done => Results.NoContent(),
+            NotFound error => ErrorResults.ToResult(error),
+            Validation error => ErrorResults.ToResult(error),
+            Conflict error => ErrorResults.ToResult(error)
+        };
+
     }
 }

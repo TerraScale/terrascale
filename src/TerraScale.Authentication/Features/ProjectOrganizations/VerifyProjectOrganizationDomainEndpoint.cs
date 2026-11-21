@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -15,6 +16,12 @@ public sealed class VerifyProjectOrganizationDomainEndpoint(ProjectOrganizationD
     protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
-        return Results.Json(await organizations.ChangeDomainAsync(project, this.Org, (string)this.HttpContext.GetRouteValue("domain")!, false, cancellationToken), ProjectOrganizationsJson.Default.ProjectOrganizationDomainBody);
+        return await organizations.VerifyDomainAsync(project, this.Org, (string)this.HttpContext.GetRouteValue("domain")!, cancellationToken) switch
+        {
+            ProjectOrganizationDomainBody verified => Results.Json(verified, ProjectOrganizationsJson.Default.ProjectOrganizationDomainBody),
+            NotFound error => ErrorResults.ToResult(error),
+            Conflict error => ErrorResults.ToResult(error)
+        };
+
     }
 }

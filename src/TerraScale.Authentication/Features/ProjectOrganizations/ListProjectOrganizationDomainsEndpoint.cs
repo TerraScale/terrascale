@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -15,6 +16,11 @@ public sealed class ListProjectOrganizationDomainsEndpoint(ProjectOrganizationDi
     protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var project = await this.AccessAsync(caller, Roles.Viewer, cancellationToken);
-        return Results.Json(await organizations.DomainsAsync(project, this.Org, cancellationToken), ProjectOrganizationsJson.Default.ProjectOrganizationDomainPage);
+        return await organizations.DomainsAsync(project, this.Org, cancellationToken) switch
+        {
+            ProjectOrganizationDomainPage page => Results.Json(page, ProjectOrganizationsJson.Default.ProjectOrganizationDomainPage),
+            NotFound error => ErrorResults.ToResult(error)
+        };
+
     }
 }

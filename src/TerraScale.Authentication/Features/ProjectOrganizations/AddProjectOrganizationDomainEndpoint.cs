@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -16,6 +17,13 @@ public sealed class AddProjectOrganizationDomainEndpoint(ProjectOrganizationDire
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.OrganizationBodyAsync(ProjectOrganizationsJson.Default.ProjectDomainRequest, cancellationToken);
-        return Results.Json(await organizations.AddDomainAsync(project, this.Org, request.Domain, cancellationToken), ProjectOrganizationsJson.Default.ProjectOrganizationDomainBody, statusCode: 201);
+        return await organizations.AddDomainAsync(project, this.Org, request.Domain, cancellationToken) switch
+        {
+            ProjectOrganizationDomainBody added => Results.Json(added, ProjectOrganizationsJson.Default.ProjectOrganizationDomainBody, statusCode: 201),
+            NotFound error => ErrorResults.ToResult(error),
+            Validation error => ErrorResults.ToResult(error),
+            Conflict error => ErrorResults.ToResult(error)
+        };
+
     }
 }

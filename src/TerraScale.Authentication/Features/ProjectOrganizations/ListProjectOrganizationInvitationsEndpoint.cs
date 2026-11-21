@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -16,6 +17,11 @@ public sealed class ListProjectOrganizationInvitationsEndpoint(ProjectOrganizati
     {
         var project = await this.AccessAsync(caller, Roles.Viewer, cancellationToken);
         var (limit, after) = this.Paging();
-        return Results.Json(await organizations.InvitationsAsync(project, this.Org, limit, after, cancellationToken), ProjectOrganizationsJson.Default.ProjectOrganizationInvitationPage);
+        return await organizations.InvitationsAsync(project, this.Org, limit, after, cancellationToken) switch
+        {
+            ProjectOrganizationInvitationPage page => Results.Json(page, ProjectOrganizationsJson.Default.ProjectOrganizationInvitationPage),
+            NotFound error => ErrorResults.ToResult(error)
+        };
+
     }
 }
