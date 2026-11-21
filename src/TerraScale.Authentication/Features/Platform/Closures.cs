@@ -105,6 +105,9 @@ public sealed class Closures(
         SdkErrors.Validation { Code: { Length: > 0 and <= 64 } code } when code.All(character => char.IsAsciiLetterLower(character) || character == '_') => code,
         SdkErrors.Unavailable { Code: { Length: > 0 and <= 64 } code } when code.All(character => char.IsAsciiLetterLower(character) || character == '_') => code,
         SdkErrors.Conflict { Code: { Length: > 0 and <= 64 } code } when code.All(character => char.IsAsciiLetterLower(character) || character == '_') => code,
+        SdkErrors.Unauthorized { Code: { Length: > 0 and <= 64 } code } when code.All(character => char.IsAsciiLetterLower(character) || character == '_') => code,
+        SdkErrors.Forbidden { Code: { Length: > 0 and <= 64 } code } when code.All(character => char.IsAsciiLetterLower(character) || character == '_') => code,
+        SdkErrors.QuotaExceeded { Code: { Length: > 0 and <= 64 } code } when code.All(character => char.IsAsciiLetterLower(character) || character == '_') => code,
         TerraBaseClosureUnsupported { Code: { Length: > 0 and <= 64 } code } when code.All(character => char.IsAsciiLetterLower(character) || character == '_') => code,
         _ => "terrabase_unavailable",
     };
