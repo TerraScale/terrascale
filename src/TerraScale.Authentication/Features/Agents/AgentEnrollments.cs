@@ -6,6 +6,7 @@ using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
@@ -31,6 +32,10 @@ public sealed record StartAgentEnrollmentRequest(string? Name, IReadOnlyList<str
 public sealed record AgentEnrollmentBody(string EnrollmentId, string UserCode, string VerificationUri, string VerificationUriComplete, int ExpiresIn, int Interval);
 public sealed record AgentEnrollmentTokenRequest(string? Proof);
 public sealed record AgentEnrollmentTokenBody(string AgentId, string Kid);
+
+public readonly union StartAgentEnrollmentResult(AgentEnrollmentBody, Validation, NotFound, Conflict);
+
+public readonly union RedeemAgentEnrollmentResult(AgentEnrollmentTokenBody, Unauthorized, Validation);
 
 public sealed record LiveApprover(SessionRecord Session, string SessionVersion, UserRecord User);
 
@@ -76,17 +81,22 @@ public sealed class AgentEnrollments(AuthData data, PlatformDirectory platform, 
 
     public static string Display(string code) => code[..4] + "-" + code[4..];
 
-    public async Task<AgentEnrollmentBody> StartAsync(string project, string ip, StartAgentEnrollmentRequest request, CancellationToken cancellationToken)
+    public async Task<StartAgentEnrollmentResult> StartAsync(string project, string ip, StartAgentEnrollmentRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         var name = PlatformDirectory.Name(request.Name);
         if (name is not { Length: <= 64 } || request.RequestedScopes is not { } scopes || !MachineClients.ValidScopes(scopes))
         {
-            throw new ApiException(400, "invalid_request", "Supply a name of 1 to 64 characters, 1 to 64 unique requested_scopes and a public_jwk.");
+            return new Validation("Supply a name of 1 to 64 characters, 1 to 64 unique requested_scopes and a public_jwk.", "invalid_request");
         }
 
         var key = AgentJwk.Parse(request.PublicJwk);
-        var tenant = Tenancy.IsProject(project) ? await platform.ProjectAsync(project, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound() : null;
+        var tenant = Tenancy.IsProject(project) ? await platform.ProjectAsync(project, cancellationToken).ConfigureAwait(false) : null;
+        if (Tenancy.IsProject(project) && tenant is null)
+        {
+            return new NotFound("No such resource.");
+        }
+
         if ((await limiter.AcquireDurableAsync(project, "agent-enrollment-ip", limiter.Fold(ip), StartsPerIp, LookupWindow, cancellationToken).ConfigureAwait(false)
             ?? await limiter.AcquireDurableAsync(project, "agent-enrollment", project, StartsPerProject, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false)) is { } wait)
         {
@@ -99,11 +109,11 @@ public sealed class AgentEnrollments(AuthData data, PlatformDirectory platform, 
             AgentEnrollmentStatus.Pending, now, now + Lifetime);
         if (!await data.SaveAsync([Change.Insert(enrollment), .. tenant is null ? [] : new[] { Change.Assert(tenant) }], cancellationToken).ConfigureAwait(false))
         {
-            throw new ApiException(409, "version_conflict", "The enrollment could not be stored; start it again.");
+            return new Conflict("The enrollment could not be stored; start it again.", "version_conflict");
         }
 
         var page = new Uri(options.PublicOrigin, PagePath(project)).AbsoluteUri;
-        return new(enrollment.Id, Display(code), page, page + "?user_code=" + Display(code), (int)Lifetime.TotalSeconds, (int)Interval.TotalSeconds);
+        return new AgentEnrollmentBody(enrollment.Id, Display(code), page, page + "?user_code=" + Display(code), (int)Lifetime.TotalSeconds, (int)Interval.TotalSeconds);
     }
 
     public async Task<AgentEnrollmentView?> FindAsync(string project, string code, CancellationToken cancellationToken)
@@ -198,7 +208,7 @@ public sealed class AgentEnrollments(AuthData data, PlatformDirectory platform, 
             : new AgentDecisionRefused(Changed);
     }
 
-    public async Task<AgentEnrollmentTokenBody> RedeemAsync(string project, string enrollmentId, string? proof, CancellationToken cancellationToken)
+    public async Task<RedeemAgentEnrollmentResult> RedeemAsync(string project, string enrollmentId, string? proof, CancellationToken cancellationToken)
     {
         var current = await data.ReadAsync((db, token) => db.AgentEnrollments.Where(row => row.ProjectId == project && row.Id == enrollmentId).WithVersion()
             .SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
@@ -208,34 +218,34 @@ public sealed class AgentEnrollments(AuthData data, PlatformDirectory platform, 
             || await AgentProof.IssuedAtAsync(proof, enrollment.PublicJwk, audience, now).ConfigureAwait(false) is not { } issuedAt
             || issuedAt <= enrollment.LastProofIssuedAt)
         {
-            throw new ApiException(401, "invalid_proof", "Sign a fresh ES256 JWT with the enrolled key: aud this URL, a jti, iat, and exp at most 300 seconds ahead.");
+            return new Unauthorized("Sign a fresh ES256 JWT with the enrolled key: aud this URL, a jti, iat, and exp at most 300 seconds ahead.", "invalid_proof");
         }
 
         if (enrollment.Status == AgentEnrollmentStatus.Collected || enrollment.ExpiresAt <= now)
         {
-            throw Answer("expired_token", "The enrollment expired or its result was already collected. Start again.");
+            return Answer("expired_token", "The enrollment expired or its result was already collected. Start again.");
         }
 
         if (enrollment.Status == AgentEnrollmentStatus.Denied)
         {
-            throw Answer("access_denied", "The user denied the agent.");
+            return Answer("access_denied", "The user denied the agent.");
         }
 
         if (enrollment.LastPollAt > now - Interval)
         {
-            throw Answer("slow_down", $"Poll at most every {Interval.TotalSeconds:0} seconds.");
+            return Answer("slow_down", $"Poll at most every {Interval.TotalSeconds:0} seconds.");
         }
 
         var approved = enrollment.Status == AgentEnrollmentStatus.Approved;
         var polled = enrollment with { Status = approved ? AgentEnrollmentStatus.Collected : enrollment.Status, LastPollAt = now, LastProofIssuedAt = issuedAt };
         if (!await data.SaveAsync([Change.Update(current, polled)], cancellationToken).ConfigureAwait(false))
         {
-            throw Answer("slow_down", $"Poll at most every {Interval.TotalSeconds:0} seconds.");
+            return Answer("slow_down", $"Poll at most every {Interval.TotalSeconds:0} seconds.");
         }
 
         return approved
-            ? new(enrollment.AgentId ?? throw new InvalidDataException("An approved enrollment has no agent."), enrollment.Kid ?? throw new InvalidDataException("An approved enrollment has no key."))
-            : throw Answer("authorization_pending", "The user has not decided yet.");
+            ? new AgentEnrollmentTokenBody(enrollment.AgentId ?? throw new InvalidDataException("An approved enrollment has no agent."), enrollment.Kid ?? throw new InvalidDataException("An approved enrollment has no key."))
+            : Answer("authorization_pending", "The user has not decided yet.");
     }
 
     public async Task<int> PruneAsync(int batchSize, CancellationToken cancellationToken = default)
@@ -245,7 +255,7 @@ public sealed class AgentEnrollments(AuthData data, PlatformDirectory platform, 
             .ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false);
     }
 
-    private static ApiException Answer(string code, string message) => new(400, code, message);
+    private static Validation Answer(string code, string message) => new(message, code);
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow, AllowDuplicateProperties = false)]

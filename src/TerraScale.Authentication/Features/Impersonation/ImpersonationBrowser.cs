@@ -2,6 +2,7 @@ using System.Collections;
 using System.Diagnostics.CodeAnalysis;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Oidc;
+using TerraScale.Authentication.Hosting;
 
 namespace TerraScale.Authentication.Features.Impersonation;
 
@@ -40,8 +41,9 @@ public static class ImpersonationBrowser
                     && !HttpMethods.IsHead(context.Request.Method)
                     && !context.Request.Path.Equals(new PathString($"/ui/{tenant}/impersonation/end")))
             {
-                throw new ApiException(403, "impersonation_read_only",
-                    "You cannot change a password, email, username, MFA factor, passkey, linked provider or delete an account while impersonating. End the impersonation first.");
+                await ErrorEnvelopeMiddleware.WriteAsync(context, 403, "impersonation_read_only",
+                    "You cannot change a password, email, username, MFA factor, passkey, linked provider or delete an account while impersonating. End the impersonation first.", null);
+                return;
             }
         }
 

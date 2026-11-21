@@ -1,10 +1,14 @@
+using System.Diagnostics;
 using System.Text.Json;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.TerraBase.Contracts.Logs;
 
 namespace TerraScale.Dashboard.Features.Logs
 {
+    using NotFound = TerraScale.Dashboard.Errors.NotFound;
+
     public sealed record DatabaseLogPage(ShellModel Shell, DatabaseRecord Database, string Status, DatabaseLogBatch? Logs, string Error, LogDrain? Drain = null, string DrainError = "")
     {
         public bool Live => Status.Length == 0;
@@ -47,21 +51,34 @@ namespace TerraScale.Dashboard.Features.Logs
             }
 
             var databaseId = form["databaseId"].ToString();
-            try
+            if (delete)
             {
-                if (delete)
+                var deleted = await drains.DeleteAsync(context, http.RequestAborted);
+                if (deleted is not Done)
                 {
-                    await drains.DeleteAsync(context, http.RequestAborted);
-                }
-                else
-                {
-                    await drains.SaveAsync(context, form["url"], form["headerName"], form["headerValue"], http.RequestAborted);
+                    return deleted switch
+                    {
+                        NotFound error => await PageAsync(http, context, databaseId, "", databases, backend, drains, error.Message!, 404),
+                        Forbidden error => await PageAsync(http, context, databaseId, "", databases, backend, drains, error.Message, 403),
+                        Done => throw new UnreachableException(),
+                    };
                 }
             }
-            catch (Exception error) when (error is AccountAccessException or ArgumentException)
+            else
             {
-                return await PageAsync(http, context, databaseId, "", databases, backend, drains, error.Message, error is AccountAccessException access ? access.StatusCode : 422);
+                var saved = await drains.SaveAsync(context, form["url"], form["headerName"], form["headerValue"], http.RequestAborted);
+                if (saved is not Done)
+                {
+                    return saved switch
+                    {
+                        NotFound error => await PageAsync(http, context, databaseId, "", databases, backend, drains, error.Message!, 404),
+                        Forbidden error => await PageAsync(http, context, databaseId, "", databases, backend, drains, error.Message, 403),
+                        Validation error => await PageAsync(http, context, databaseId, "", databases, backend, drains, error.Message, 422),
+                        Done => throw new UnreachableException(),
+                    };
+                }
             }
+
             return HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "logs") + "#log-drain");
         }
 

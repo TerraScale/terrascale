@@ -1,22 +1,31 @@
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Features.Organizations.Projects
 {
+    using NotFound = TerraScale.Dashboard.Errors.NotFound;
+
+    public readonly union ProjectInvitationPageResult(TsAuthPlatformPage<TsAuthPlatformInvitation>, Forbidden, Validation, Unavailable);
+
+    public readonly union ProjectInvitationRevocation(Done, Forbidden, Validation, Unavailable, InvalidInvitation, NotFound, Conflict);
+
+    public sealed record InvalidInvitation(string Message);
+
     public sealed class ProjectInvitationService(AccountService accounts, ITsAuthPlatform platform)
     {
-        public async Task<TsAuthPlatformPage<TsAuthPlatformInvitation>> ReadAsync(AccountContext context,
+        public async Task<ProjectInvitationPageResult> ReadAsync(AccountContext context,
             string? after, CancellationToken cancellationToken)
         {
             context = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);
             if (!context.CanWriteProjectData || context.Project!.Role != "admin")
             {
-                throw new AccountAccessException("A project admin is required to manage project invitations.", 403);
+                return new Forbidden("A project admin is required to manage project invitations.");
             }
 
             if (after is not null && !ValidCursor(after))
             {
-                throw new AccountAccessException("The page cursor is invalid. Open the first page.", 400);
+                return new Validation("The page cursor is invalid. Open the first page.");
             }
 
             var page = await platform.ListProjectInvitationsAsync(context.Session, context.Organization!.Id, context.Project.Id, after, cancellationToken);
@@ -27,29 +36,45 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
                 page.Items.Select(item => item.Id).Distinct().Count() != page.Items.Count ||
                 page.Next is not null && (!ValidCursor(page.Next) || page.Next == after))
             {
-                throw new IOException("The project invitation page is invalid.");
+                return new Unavailable("The project invitation page is invalid.");
             }
 
             return page;
         }
 
-        public async Task RevokeAsync(AccountContext context, string invitationId, string? after, CancellationToken cancellationToken)
+        public async Task<ProjectInvitationRevocation> RevokeAsync(AccountContext context, string invitationId, string? after, CancellationToken cancellationToken)
         {
-            var page = await ReadAsync(context, after, cancellationToken);
+            return await ReadAsync(context, after, cancellationToken) switch
+            {
+                Forbidden error => error,
+                Validation error => error,
+                Unavailable error => error,
+                TsAuthPlatformPage<TsAuthPlatformInvitation> listed => await RevokeAsync(context, listed, invitationId, cancellationToken),
+            };
+        }
+
+        private async Task<ProjectInvitationRevocation> RevokeAsync(AccountContext context,
+            TsAuthPlatformPage<TsAuthPlatformInvitation> page, string invitationId, CancellationToken cancellationToken)
+        {
             if (!TerraScaleIds.IsValid(invitationId))
             {
-                throw new AccountAccessException("Choose a valid invitation from this project page.", 422);
+                return new InvalidInvitation("Choose a valid invitation from this project page.");
             }
             // The provider authorizes the invitation's immutable actual project. Bind it to this
             // selected project first, including when the caller administers multiple projects.
-            var invitation = page.Items.SingleOrDefault(item => item.Id == invitationId)
-                ?? throw new AccountAccessException("This invitation is unavailable on the selected project page. Reload before retrying.", 404);
+            var invitation = page.Items.SingleOrDefault(item => item.Id == invitationId);
+            if (invitation is null)
+            {
+                return new NotFound("This invitation is unavailable on the selected project page. Reload before retrying.");
+            }
+
             if (invitation.Status is not ("pending" or "expired"))
             {
-                throw new AccountAccessException("This invitation is no longer pending. Reload its current status.", 409);
+                return new Conflict("This invitation is no longer pending. Reload its current status.");
             }
 
             await platform.RevokeInvitationAsync(context.Session, context.Organization!.Id, invitation.Id, cancellationToken);
+            return new Done();
         }
 
         private static bool ValidCursor(string value)

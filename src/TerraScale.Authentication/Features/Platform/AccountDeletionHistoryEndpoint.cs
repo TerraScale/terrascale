@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Endpoints;
 
@@ -35,26 +36,38 @@ public sealed class AccountDeletionHistoryEndpoint(AccountDeletion accounts) : E
         this.HttpContext.Response.Headers.CacheControl = "no-store";
         try
         {
-            var hash = DeletionReceiptHeader.Read(this.HttpContext.Request, required: true)!;
-            var query = this.HttpContext.Request.Query;
-            string? organization = null;
-            if (query.TryGetValue("organization", out var values))
+            return await (DeletionReceiptHeader.Read(this.HttpContext.Request, required: true) switch
             {
-                if (values.Count != 1 || !PlatformDirectory.IsId(values[0]!))
-                {
-                    throw new ApiException(StatusCodes.Status400BadRequest, "invalid_request", "organization must be one canonical ULID.");
-                }
-
-                organization = values[0];
-            }
-
-            return await accounts.HistoryAsync(hash, organization, cancellationToken) is { } history
-                ? Results.Json(history, DeletionHistoryJson.Default.AccountDeletionHistory) : throw PlatformDirectory.NotFound();
+                Validation missing => ValueTask.FromResult(ErrorResults.ToResult(missing)),
+                string receipt => new ValueTask<IResult>(this.HistoryAsync(receipt, cancellationToken)),
+            });
         }
         catch (Exception error) when (error is HttpRequestException or TimeoutException)
         {
             throw ApiException.Unavailable(error);
         }
+    }
+
+    private async Task<IResult> HistoryAsync(string hash, CancellationToken cancellationToken)
+    {
+        var query = this.HttpContext.Request.Query;
+        string? organization = null;
+        if (query.TryGetValue("organization", out var values))
+        {
+            if (values.Count != 1 || !PlatformDirectory.IsId(values[0]!))
+            {
+                return ErrorResults.ToResult(new Validation("organization must be one canonical ULID."));
+            }
+
+            organization = values[0];
+        }
+
+        return await accounts.HistoryAsync(hash, organization, cancellationToken) switch
+        {
+            AccountDeletionHistory history => Results.Json(history, DeletionHistoryJson.Default.AccountDeletionHistory),
+            NotFound failure => ErrorResults.ToResult(failure),
+            Conflict failure => ErrorResults.ToResult(failure),
+        };
     }
 }
 

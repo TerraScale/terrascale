@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Features.AgentId;
@@ -19,8 +20,12 @@ public sealed class AgentIdProofEndpoint(PlatformAuthentication authentication, 
     {
         var transaction = this.HttpContext.GetRouteValue("transaction") as string ?? string.Empty;
         var request = await this.BodyAsync(AgentIdJson.Default.AgentIdProofRequest, cancellationToken);
-        await transactions.ProveAsync(transaction, request.Proof, cancellationToken);
-        return Results.NoContent();
+        return await transactions.ProveAsync(transaction, request.Proof, cancellationToken) switch
+        {
+            Done => Results.NoContent(),
+            NotFound notFound => ErrorResults.ToResult(notFound),
+            Unauthorized unauthorized => ErrorResults.ToResult(unauthorized),
+        };
     }
 
     protected override Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken) =>

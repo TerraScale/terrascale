@@ -1,6 +1,8 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using TerraScale.TerraBase.Contracts;
+using TerraScale.Dashboard.Errors;
+using ValidationCase = TerraScale.Dashboard.Errors.Validation;
 
 namespace TerraScale.Dashboard.Common.Databases
 {
@@ -32,7 +34,9 @@ namespace TerraScale.Dashboard.Common.Databases
                 ?? throw new HttpRequestException("This database's region is not a TerraBase region.");
         }
 
-        internal async Task<IReadOnlyList<DatabaseRegion>> ConfiguredPlacementAsync(IEnumerable<string> codes, CancellationToken cancellationToken)
+        public readonly union ConfiguredPlacement(IReadOnlyList<DatabaseRegion>, Failure);
+
+        internal async Task<ConfiguredPlacement> ConfiguredPlacementAsync(IEnumerable<string> codes, CancellationToken cancellationToken)
         {
             var catalog = await backend.RegionsAsync(cancellationToken);
             var placement = new List<DatabaseRegion>();
@@ -47,7 +51,7 @@ namespace TerraScale.Dashboard.Common.Databases
             }
             if (placement.Count == 0)
             {
-                throw new AccountAccessException("Choose at least one region.", 422);
+                return (Failure)new ValidationCase("Choose at least one region.");
             }
 
             return placement;
@@ -60,267 +64,310 @@ namespace TerraScale.Dashboard.Common.Databases
                 ?? throw new AccountAccessException("Choose regions listed by TerraScale discovery.", 422);
         }
 
-        public async Task<DatabaseRecord> CreateAsync(AccountContext context, string name, string homeRegion, CancellationToken cancellationToken, decimal? ttlHours = null, IReadOnlyList<string>? replicaRegions = null, bool allRegions = false)
+        public async Task<DatabaseMutation> CreateAsync(AccountContext context, string name, string homeRegion, CancellationToken cancellationToken, decimal? ttlHours = null, IReadOnlyList<string>? replicaRegions = null, bool allRegions = false)
         {
-            var ttlSeconds = DatabaseTtl.Seconds(ttlHours);
-            name = ValidName(name);
-            context = await CurrentAsync(context, cancellationToken);
-            var scope = Scope(context);
-            DemandProvision(context.Organization!, context.UserId);
-            DemandName(context.Project!, name);
-            DemandRoom(context.Organization!);
-            var discovery = await backend.DiscoveryAsync(cancellationToken);
-            var catalog = discovery.Regions;
-            var home = ResolveRegion(catalog, homeRegion);
-            var replicas = ReplicaIds(catalog, home, replicaRegions ?? []);
-            ManagedDatabase remote;
-            var recovered = false;
-            try { remote = await backend.CreateAsync(scope, name, home, replicas, allRegions, cancellationToken, ttlSeconds); }
-            catch (TerraBaseConflictException error) when (error.ErrorCode == "name_taken")
+            try
             {
-                // A prior provision whose dashboard commit failed is recovered by name. Other conflicts (database_limit, a
-                // plan allowance held in an unreachable region) reach the caller with TerraBase's own code and message.
-                remote = (await backend.ListAsync(scope, home, cancellationToken)).FirstOrDefault(database => database.Name == name)
-                    ?? throw new AccountAccessException("A database with this name already exists.", 409);
-                recovered = true;
-            }
-            if (remote.ProjectId != scope.ProjectId || remote.Name != name || string.IsNullOrEmpty(remote.Id))
-            {
-                throw new HttpRequestException("Database provisioning returned an invalid identity.");
-            }
-
-            if (recovered && discovery.Catalog.Count == 0 && remote.HomeRegion != home.Id)
-            {
-                throw new AccountAccessException("A database with this name already exists in another region.", 409);
-            }
-
-            if (ttlSeconds is not null && remote.ExpiresAt is null)
-                throw new HttpRequestException("Database provisioning did not confirm the requested TTL.");
-            var placement = await RemotePlacementAsync(remote, cancellationToken);
-            var expected = allRegions ? discovery.Catalog.Select(region => region.Id) : replicas.Prepend(home.Id);
-            if (discovery.Catalog.Count > 0 && !placement.Select(region => region.Id).ToHashSet(StringComparer.Ordinal).SetEquals(expected))
-            {
-                throw recovered ? new AccountAccessException("A database with this name already exists in other regions.", 409)
-                    : new HttpRequestException("Database provisioning returned a different placement.");
-            }
-
-            if (discovery.Catalog.Count == 0 && !recovered && placement[0].Id != home.Id)
-            {
-                throw new HttpRequestException("Database provisioning returned a different placement.");
-            }
-
-            var record = Record(remote, placement, "ready");
-            await accounts.UpdateOrganizationAsync(context, org =>
-            {
-                DemandProvision(org, context.UserId);
-                var project = org.Projects.GetValueOrDefault(scope.ProjectId) ?? throw new AccountAccessException("Project is unavailable.", 404);
-                if (project.Databases.ContainsKey(record.Id))
+                var ttlSeconds = DatabaseTtl.Seconds(ttlHours);
+                name = ValidName(name);
+                context = await CurrentAsync(context, cancellationToken);
+                var scope = Scope(context);
+                DemandProvision(context.Organization!, context.UserId);
+                DemandName(context.Project!, name);
+                DemandRoom(context.Organization!);
+                var discovery = await backend.DiscoveryAsync(cancellationToken);
+                var catalog = discovery.Regions;
+                var home = ResolveRegion(catalog, homeRegion);
+                var replicas = ReplicaIds(catalog, home, replicaRegions ?? []);
+                ManagedDatabase remote;
+                var recovered = false;
+                try { remote = await backend.CreateAsync(scope, name, home, replicas, allRegions, cancellationToken, ttlSeconds); }
+                catch (TerraBaseConflictException error) when (error.ErrorCode == "name_taken")
                 {
-                    return;
+                    var found = (await backend.ListAsync(scope, home, cancellationToken)).FirstOrDefault(database => database.Name == name);
+                    if (found is null) { return DatabaseMutations.MutationRefused(new Conflict("A database with this name already exists.")); }
+                    remote = found;
+                    recovered = true;
+                }
+                if (remote.ProjectId != scope.ProjectId || remote.Name != name || string.IsNullOrEmpty(remote.Id))
+                {
+                    throw new HttpRequestException("Database provisioning returned an invalid identity.");
                 }
 
-                DemandName(project, name);
-                DemandRoom(org);
-                project.Databases[record.Id] = record;
-                org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, "database.created", record.Name, "database", accounts.Now));
-            }, cancellationToken);
-            return record;
+                if (recovered && discovery.Catalog.Count == 0 && remote.HomeRegion != home.Id)
+                {
+                    return DatabaseMutations.MutationRefused(new Conflict("A database with this name already exists in another region."));
+                }
+
+                if (ttlSeconds is not null && remote.ExpiresAt is null)
+                    throw new HttpRequestException("Database provisioning did not confirm the requested TTL.");
+                var placement = await RemotePlacementAsync(remote, cancellationToken);
+                var expected = allRegions ? discovery.Catalog.Select(region => region.Id) : replicas.Prepend(home.Id);
+                if (discovery.Catalog.Count > 0 && !placement.Select(region => region.Id).ToHashSet(StringComparer.Ordinal).SetEquals(expected))
+                {
+                    if (recovered) { return DatabaseMutations.MutationRefused(new Conflict("A database with this name already exists in other regions.")); }
+                    throw new HttpRequestException("Database provisioning returned a different placement.");
+                }
+
+                if (discovery.Catalog.Count == 0 && !recovered && placement[0].Id != home.Id)
+                {
+                    throw new HttpRequestException("Database provisioning returned a different placement.");
+                }
+
+                var record = Record(remote, placement, "ready");
+                await accounts.UpdateOrganizationAsync(context, org =>
+                {
+                    DemandProvision(org, context.UserId);
+                    var project = org.Projects.GetValueOrDefault(scope.ProjectId) ?? throw new AccountAccessException("Project is unavailable.", 404);
+                    if (project.Databases.ContainsKey(record.Id))
+                    {
+                        return;
+                    }
+
+                    DemandName(project, name);
+                    DemandRoom(org);
+                    project.Databases[record.Id] = record;
+                    org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, "database.created", record.Name, "database", accounts.Now));
+                }, cancellationToken);
+                return record;
+            }
+            catch (AccountAccessException error) when (DatabaseMutations.Mappable(error))
+            {
+                return DatabaseMutations.ToFailure(error);
+            }
         }
 
-        public async Task<DatabaseRecord> BranchAsync(AccountContext context, string id, string name, CancellationToken cancellationToken, decimal? ttlHours = null)
+        public async Task<DatabaseMutation> BranchAsync(AccountContext context, string id, string name, CancellationToken cancellationToken, decimal? ttlHours = null)
         {
-            var ttlSeconds = DatabaseTtl.Seconds(ttlHours);
-            context = await CurrentAsync(context, cancellationToken);
-            var source = Database(context, id);
-            DemandProvision(context.Organization!, context.UserId);
-            if (source.Status != "ready")
+            try
             {
-                throw new AccountAccessException("Only a ready database can be branched.", 409);
-            }
-
-            name = ValidName(string.IsNullOrWhiteSpace(name) ? PreviewName(source.Name) : name);
-            DemandName(context.Project!, name);
-            DemandRoom(context.Organization!);
-            var scope = Scope(context);
-            var home = await HomeAsync(context, source, cancellationToken);
-            ManagedDatabase remote;
-            try { remote = await backend.BranchAsync(scope, home, id, name, cancellationToken, ttlSeconds); }
-            catch (TerraBaseConflictException error) when (error.ErrorCode == "name_taken")
-            {
-                remote = (await backend.ListAsync(scope, home, cancellationToken)).FirstOrDefault(database => database.Name == name && database.BranchedFrom == source.Id)
-                    ?? throw new AccountAccessException("A database with this name already exists.", 409);
-            }
-            if (remote.ProjectId != scope.ProjectId || remote.Name != name || string.IsNullOrEmpty(remote.Id) || remote.Id == source.Id || remote.BranchedFrom != source.Id)
-            {
-                throw new HttpRequestException("Database branching returned an invalid identity.");
-            }
-
-            if (remote.HomeRegion != home.Id)
-            {
-                throw new AccountAccessException("A branch with this name is in a different region.", 409);
-            }
-
-            if (ttlSeconds is not null && remote.ExpiresAt is null)
-                throw new HttpRequestException("Database provisioning did not confirm the requested TTL.");
-            var placement = await RemotePlacementAsync(remote, cancellationToken);
-            var record = Record(remote, placement, "ready");
-            await accounts.UpdateOrganizationAsync(context, org =>
-            {
-                DemandProvision(org, context.UserId);
-                var project = org.Projects.GetValueOrDefault(scope.ProjectId) ?? throw new AccountAccessException("Project is unavailable.", 404);
-                var currentSource = project.Databases.GetValueOrDefault(id);
-                if (currentSource is null || currentSource.Id != source.Id || currentSource.ProjectId != scope.ProjectId)
+                var ttlSeconds = DatabaseTtl.Seconds(ttlHours);
+                context = await CurrentAsync(context, cancellationToken);
+                var source = Database(context, id);
+                DemandProvision(context.Organization!, context.UserId);
+                if (source.Status != "ready")
                 {
-                    throw new AccountAccessException("Source database is unavailable.", 404);
+                    return DatabaseMutations.MutationRefused(new Conflict("Only a ready database can be branched."));
                 }
 
-                if (currentSource.Status != "ready")
+                name = ValidName(string.IsNullOrWhiteSpace(name) ? PreviewName(source.Name) : name);
+                DemandName(context.Project!, name);
+                DemandRoom(context.Organization!);
+                var scope = Scope(context);
+                var home = await HomeAsync(context, source, cancellationToken);
+                ManagedDatabase remote;
+                try { remote = await backend.BranchAsync(scope, home, id, name, cancellationToken, ttlSeconds); }
+                catch (TerraBaseConflictException error) when (error.ErrorCode == "name_taken")
                 {
-                    throw new AccountAccessException("Only a ready database can be branched.", 409);
+                    var found = (await backend.ListAsync(scope, home, cancellationToken)).FirstOrDefault(database => database.Name == name && database.BranchedFrom == source.Id);
+                    if (found is null) { return DatabaseMutations.MutationRefused(new Conflict("A database with this name already exists.")); }
+                    remote = found;
+                }
+                if (remote.ProjectId != scope.ProjectId || remote.Name != name || string.IsNullOrEmpty(remote.Id) || remote.Id == source.Id || remote.BranchedFrom != source.Id)
+                {
+                    throw new HttpRequestException("Database branching returned an invalid identity.");
                 }
 
-                if (project.Databases.ContainsKey(record.Id))
+                if (remote.HomeRegion != home.Id)
                 {
-                    return;
+                    return DatabaseMutations.MutationRefused(new Conflict("A branch with this name is in a different region."));
                 }
 
-                DemandName(project, name);
-                DemandRoom(org);
-                project.Databases[record.Id] = record;
-            }, cancellationToken);
-            return record;
+                if (ttlSeconds is not null && remote.ExpiresAt is null)
+                    throw new HttpRequestException("Database provisioning did not confirm the requested TTL.");
+                var placement = await RemotePlacementAsync(remote, cancellationToken);
+                var record = Record(remote, placement, "ready");
+                await accounts.UpdateOrganizationAsync(context, org =>
+                {
+                    DemandProvision(org, context.UserId);
+                    var project = org.Projects.GetValueOrDefault(scope.ProjectId) ?? throw new AccountAccessException("Project is unavailable.", 404);
+                    var currentSource = project.Databases.GetValueOrDefault(id);
+                    if (currentSource is null || currentSource.Id != source.Id || currentSource.ProjectId != scope.ProjectId)
+                    {
+                        throw new AccountAccessException("Source database is unavailable.", 404);
+                    }
+
+                    if (currentSource.Status != "ready")
+                    {
+                        throw new AccountAccessException("Only a ready database can be branched.", 409);
+                    }
+
+                    if (project.Databases.ContainsKey(record.Id))
+                    {
+                        return;
+                    }
+
+                    DemandName(project, name);
+                    DemandRoom(org);
+                    project.Databases[record.Id] = record;
+                }, cancellationToken);
+                return record;
+            }
+            catch (AccountAccessException error) when (DatabaseMutations.Mappable(error))
+            {
+                return DatabaseMutations.ToFailure(error);
+            }
         }
 
-        public async Task<DatabaseRecord> SetTtlAsync(AccountContext context, string id, decimal? ttlHours, CancellationToken cancellationToken)
+        public async Task<DatabaseMutation> SetTtlAsync(AccountContext context, string id, decimal? ttlHours, CancellationToken cancellationToken)
         {
-            var ttlSeconds = DatabaseTtl.Seconds(ttlHours);
-            context = await CurrentAsync(context, cancellationToken);
-            var database = Database(context, id);
-            if (!context.CanManage) { throw new AccountAccessException("Organization management access is required."); }
-            if (PlatformDatabases.IsPlatform(context.Organization!.Id)) { throw PlatformDatabases.ReadOnly(); }
-            var remote = await backend.SetTtlAsync(Scope(context), await HomeAsync(context, database, cancellationToken), id, ttlSeconds, cancellationToken);
-            if (remote.Id != id || remote.ProjectId != context.Project!.Id || remote.Name != database.Name ||
-                ttlSeconds is null && remote.ExpiresAt is not null || ttlSeconds is not null && remote.ExpiresAt is null)
+            try
             {
-                throw new HttpRequestException("The database expiry could not be confirmed. Reload Settings before retrying.");
+                var ttlSeconds = DatabaseTtl.Seconds(ttlHours);
+                context = await CurrentAsync(context, cancellationToken);
+                var database = Database(context, id);
+                if (!context.CanManage) { throw new AccountAccessException("Organization management access is required."); }
+                if (PlatformDatabases.IsPlatform(context.Organization!.Id)) { throw PlatformDatabases.ReadOnly(); }
+                var remote = await backend.SetTtlAsync(Scope(context), await HomeAsync(context, database, cancellationToken), id, ttlSeconds, cancellationToken);
+                if (remote.Id != id || remote.ProjectId != context.Project!.Id || remote.Name != database.Name ||
+                    ttlSeconds is null && remote.ExpiresAt is not null || ttlSeconds is not null && remote.ExpiresAt is null)
+                {
+                    throw new HttpRequestException("The database expiry could not be confirmed. Reload Settings before retrying.");
+                }
+                await accounts.UpdateOrganizationAsync(context, org =>
+                {
+                    if (!org.CanManage(context.UserId)) { throw new AccountAccessException("Organization management access is required."); }
+                    var current = org.Projects.GetValueOrDefault(context.Project.Id)?.Databases.GetValueOrDefault(id)
+                        ?? throw new AccountAccessException("Database is unavailable.", 404);
+                    current.ExpiresAt = remote.ExpiresAt;
+                    current.PlacementRevision = checked(current.PlacementRevision + 1);
+                }, cancellationToken);
+                database.ExpiresAt = remote.ExpiresAt;
+                return database;
             }
-            await accounts.UpdateOrganizationAsync(context, org =>
+            catch (AccountAccessException error) when (DatabaseMutations.Mappable(error))
             {
-                if (!org.CanManage(context.UserId)) { throw new AccountAccessException("Organization management access is required."); }
-                var current = org.Projects.GetValueOrDefault(context.Project.Id)?.Databases.GetValueOrDefault(id)
-                    ?? throw new AccountAccessException("Database is unavailable.", 404);
-                current.ExpiresAt = remote.ExpiresAt;
-                current.PlacementRevision = checked(current.PlacementRevision + 1);
-            }, cancellationToken);
-            database.ExpiresAt = remote.ExpiresAt;
-            return database;
+                return DatabaseMutations.ToFailure(error);
+            }
         }
 
-        public async Task<DatabaseRecord> RenameAsync(AccountContext context, string id, string name, string confirmation, CancellationToken cancellationToken)
+        public async Task<DatabaseMutation> RenameAsync(AccountContext context, string id, string name, string confirmation, CancellationToken cancellationToken)
         {
-            context = await CurrentAsync(context, cancellationToken);
-            var database = Database(context, id);
-            if (!context.CanManage)
+            try
             {
-                throw new AccountAccessException("Organization management access is required.");
-            }
-
-            if (database.Status != "ready")
-            {
-                throw new AccountAccessException("Only a ready database can be renamed.", 409);
-            }
-
-            if (confirmation != database.Name)
-            {
-                throw new AccountAccessException("Type the current database name to confirm the rename.", 422);
-            }
-
-            name = ValidName(name);
-
-            if (name == database.Name && database.ConflictOf is null)
-            {
-                throw new AccountAccessException("Choose a different database name.", 422);
-            }
-
-            if (context.Project!.Databases.Values.Any(other => other.Id != id && other.Name == name))
-            {
-                throw new AccountAccessException("A database with this name already exists.", 409);
-            }
-
-            if (PlatformDatabases.IsPlatform(context.Organization?.Id))
-            {
-                throw new AccountAccessException("Platform databases keep their names.", 409);
-            }
-
-            var scope = Scope(context);
-            (var remote, database, var home) = await RoutedAsync(context, database, async (current, route) => (await backend.RenameAsync(scope, route, id, name, cancellationToken), current, route), cancellationToken);
-            var placement = await RemotePlacementAsync(remote, cancellationToken);
-            if (remote.Id != id || remote.ProjectId != scope.ProjectId || remote.Name != name || remote.HomeRegion != home.Id ||
-                remote.CreatedAt != database.CreatedAt || remote.BranchedFrom != database.BranchedFrom || remote.AllRegions != database.AllRegions ||
-                !placement.Select(region => region.Code).Order(StringComparer.Ordinal).SequenceEqual(Regions(database).Order(StringComparer.Ordinal)))
-            {
-                throw new HttpRequestException("The rename returned an unexpected database identity or placement. Reload Settings to check its current name.");
-            }
-
-            await accounts.UpdateOrganizationAsync(context, org =>
-            {
-                if (!org.CanManage(context.UserId))
+                context = await CurrentAsync(context, cancellationToken);
+                var database = Database(context, id);
+                if (!context.CanManage)
                 {
                     throw new AccountAccessException("Organization management access is required.");
                 }
 
-                var current = org.Projects.GetValueOrDefault(scope.ProjectId)?.Databases.GetValueOrDefault(id)
-                    ?? throw new AccountAccessException("Database is unavailable.", 404);
-                current.Name = name;
-                current.PreviousName = remote.PreviousName;
-                current.ConflictOf = remote.ConflictOf;
-                org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, "database.renamed", name, "database", accounts.Now));
-            }, cancellationToken);
-            database.Name = name;
-            database.PreviousName = remote.PreviousName;
-            database.ConflictOf = remote.ConflictOf;
-            return database;
-        }
-
-        public async Task<DatabaseRecord> PlaceAsync(AccountContext context, string id, IReadOnlyList<string> replicaRegions, bool allRegions, CancellationToken cancellationToken)
-        {
-            context = await CurrentAsync(context, cancellationToken);
-            var database = DemandPlacement(context, id);
-            var home = await HomeAsync(context, database, cancellationToken);
-            var replicas = ReplicaIds(await backend.RegionsAsync(cancellationToken), home, replicaRegions);
-            var remote = await backend.PlaceAsync(Scope(context), home, id, replicas, allRegions, cancellationToken);
-            return await SavePlacementAsync(context, database, remote, "database.placement", cancellationToken);
-        }
-
-        public async Task<DatabaseRecord> MoveHomeAsync(AccountContext context, string id, string homeRegion, CancellationToken cancellationToken)
-        {
-            context = await CurrentAsync(context, cancellationToken);
-            var database = DemandPlacement(context, id);
-            var home = await HomeAsync(context, database, cancellationToken);
-            var target = DatabaseRegion.Resolve(await backend.RegionsAsync(cancellationToken), homeRegion.Trim());
-            if (target is null || target.Id == home.Id || !Regions(database).Skip(1).Any(code => code.Equals(target.Code, StringComparison.OrdinalIgnoreCase) || code == target.Id))
-            {
-                throw new AccountAccessException("Choose one of this database's regions.", 422);
-            }
-
-            ManagedDatabase remote;
-            try { remote = await backend.MoveHomeAsync(Scope(context), home, id, target.Id, cancellationToken); }
-            catch (TerraBaseException error) when (error.ErrorCode is "move_in_progress" or "replica_not_ready" or "move_unresolved")
-            {
-                throw new AccountAccessException(error.ErrorCode switch
+                if (database.Status != "ready")
                 {
-                    "move_in_progress" => "Another region change of this database is running. Try again when it finishes.",
-                    "replica_not_ready" => DatabaseFormat.Region(target.Id) + " was added and is still syncing. Save again in a moment to finish; until then " +
-                        DatabaseFormat.Region(home.Id) + " keeps serving.",
-                    _ => "The region change is still being settled, and writes are paused until it is. Try again."
-                }, error.Status, error.ErrorCode);
-            }
-            if (remote.HomeRegion != target.Id)
-            {
-                throw new HttpRequestException("The region change returned different regions. Reload to check them.");
-            }
+                    return DatabaseMutations.MutationRefused(new Conflict("Only a ready database can be renamed."));
+                }
 
-            return await SavePlacementAsync(context, database, remote, "database.home_moved", cancellationToken);
+                if (confirmation != database.Name)
+                {
+                    return DatabaseMutations.MutationRefused(new ValidationCase("Type the current database name to confirm the rename."));
+                }
+
+                name = ValidName(name);
+
+                if (name == database.Name && database.ConflictOf is null)
+                {
+                    return DatabaseMutations.MutationRefused(new ValidationCase("Choose a different database name."));
+                }
+
+                if (context.Project!.Databases.Values.Any(other => other.Id != id && other.Name == name))
+                {
+                    return DatabaseMutations.MutationRefused(new Conflict("A database with this name already exists."));
+                }
+
+                if (PlatformDatabases.IsPlatform(context.Organization?.Id))
+                {
+                    return DatabaseMutations.MutationRefused(new Conflict("Platform databases keep their names."));
+                }
+
+                var scope = Scope(context);
+                (var remote, database, var home) = await RoutedAsync(context, database, async (current, route) => (await backend.RenameAsync(scope, route, id, name, cancellationToken), current, route), cancellationToken);
+                var placement = await RemotePlacementAsync(remote, cancellationToken);
+                if (remote.Id != id || remote.ProjectId != scope.ProjectId || remote.Name != name || remote.HomeRegion != home.Id ||
+                    remote.CreatedAt != database.CreatedAt || remote.BranchedFrom != database.BranchedFrom || remote.AllRegions != database.AllRegions ||
+                    !placement.Select(region => region.Code).Order(StringComparer.Ordinal).SequenceEqual(Regions(database).Order(StringComparer.Ordinal)))
+                {
+                    throw new HttpRequestException("The rename returned an unexpected database identity or placement. Reload Settings to check its current name.");
+                }
+
+                await accounts.UpdateOrganizationAsync(context, org =>
+                {
+                    if (!org.CanManage(context.UserId))
+                    {
+                        throw new AccountAccessException("Organization management access is required.");
+                    }
+
+                    var current = org.Projects.GetValueOrDefault(scope.ProjectId)?.Databases.GetValueOrDefault(id)
+                        ?? throw new AccountAccessException("Database is unavailable.", 404);
+                    current.Name = name;
+                    current.PreviousName = remote.PreviousName;
+                    current.ConflictOf = remote.ConflictOf;
+                    org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, "database.renamed", name, "database", accounts.Now));
+                }, cancellationToken);
+                database.Name = name;
+                database.PreviousName = remote.PreviousName;
+                database.ConflictOf = remote.ConflictOf;
+                return database;
+            }
+            catch (AccountAccessException error) when (DatabaseMutations.Mappable(error))
+            {
+                return DatabaseMutations.ToFailure(error);
+            }
+        }
+
+        public async Task<DatabaseMutation> PlaceAsync(AccountContext context, string id, IReadOnlyList<string> replicaRegions, bool allRegions, CancellationToken cancellationToken)
+        {
+            try
+            {
+                context = await CurrentAsync(context, cancellationToken);
+                var database = DemandPlacement(context, id);
+                var home = await HomeAsync(context, database, cancellationToken);
+                var replicas = ReplicaIds(await backend.RegionsAsync(cancellationToken), home, replicaRegions);
+                var remote = await backend.PlaceAsync(Scope(context), home, id, replicas, allRegions, cancellationToken);
+                return await SavePlacementAsync(context, database, remote, "database.placement", cancellationToken);
+            }
+            catch (AccountAccessException error) when (DatabaseMutations.Mappable(error))
+            {
+                return DatabaseMutations.ToFailure(error);
+            }
+        }
+
+        public async Task<DatabaseMutation> MoveHomeAsync(AccountContext context, string id, string homeRegion, CancellationToken cancellationToken)
+        {
+            try
+            {
+                context = await CurrentAsync(context, cancellationToken);
+                var database = DemandPlacement(context, id);
+                var home = await HomeAsync(context, database, cancellationToken);
+                var target = DatabaseRegion.Resolve(await backend.RegionsAsync(cancellationToken), homeRegion.Trim());
+                if (target is null || target.Id == home.Id || !Regions(database).Skip(1).Any(code => code.Equals(target.Code, StringComparison.OrdinalIgnoreCase) || code == target.Id))
+                {
+                    return DatabaseMutations.MutationRefused(new ValidationCase("Choose one of this database's regions."));
+                }
+
+                ManagedDatabase remote;
+                try { remote = await backend.MoveHomeAsync(Scope(context), home, id, target.Id, cancellationToken); }
+                catch (TerraBaseException error) when (error.ErrorCode is "move_in_progress" or "replica_not_ready" or "move_unresolved")
+                {
+                    var message = error.ErrorCode switch
+                    {
+                        "move_in_progress" => "Another region change of this database is running. Try again when it finishes.",
+                        "replica_not_ready" => DatabaseFormat.Region(target.Id) + " was added and is still syncing. Save again in a moment to finish; until then " +
+                            DatabaseFormat.Region(home.Id) + " keeps serving.",
+                        _ => "The region change is still being settled, and writes are paused until it is. Try again."
+                    };
+                    return DatabaseMutations.MutationRefused(error.ErrorCode == "move_in_progress" ? new Conflict(message) : new Unavailable(message));
+                }
+                if (remote.HomeRegion != target.Id)
+                {
+                    throw new HttpRequestException("The region change returned different regions. Reload to check them.");
+                }
+
+                return await SavePlacementAsync(context, database, remote, "database.home_moved", cancellationToken);
+            }
+            catch (AccountAccessException error) when (DatabaseMutations.Mappable(error))
+            {
+                return DatabaseMutations.ToFailure(error);
+            }
         }
 
         private static DatabaseRecord DemandPlacement(AccountContext context, string id)
@@ -386,39 +433,47 @@ namespace TerraScale.Dashboard.Common.Databases
             return database;
         }
 
-        public async Task DeleteAsync(AccountContext context, string id, string confirmation, CancellationToken cancellationToken)
+        public async Task<DatabaseDeletion> DeleteAsync(AccountContext context, string id, string confirmation, CancellationToken cancellationToken)
         {
-            context = await CurrentAsync(context, cancellationToken);
-            var database = Database(context, id);
-            if (!context.CanManage)
+            try
             {
-                throw new AccountAccessException("Organization management access is required.");
-            }
-
-            if (confirmation != database.Name)
-            {
-                throw new AccountAccessException("Type the database name to confirm deletion.", 422);
-            }
-
-            var scope = Scope(context);
-            database = await RoutedAsync(context, database, async (current, route) =>
-            {
-                await backend.DeleteAsync(scope, route, id, cancellationToken);
-                return current;
-            }, cancellationToken);
-            await accounts.UpdateOrganizationAsync(context, org =>
-            {
-                if (!org.CanManage(context.UserId))
+                context = await CurrentAsync(context, cancellationToken);
+                var database = Database(context, id);
+                if (!context.CanManage)
                 {
                     throw new AccountAccessException("Organization management access is required.");
                 }
 
-                var project = org.Projects.GetValueOrDefault(scope.ProjectId) ?? throw new AccountAccessException("Project is unavailable.", 404);
-                if (project.Databases.Remove(id))
+                if (confirmation != database.Name)
                 {
-                    org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, "database.deleted", database.Name, "database", accounts.Now));
+                    return DatabaseMutations.DeletionRefused(new ValidationCase("Type the database name to confirm deletion."));
                 }
-            }, cancellationToken);
+
+                var scope = Scope(context);
+                database = await RoutedAsync(context, database, async (current, route) =>
+                {
+                    await backend.DeleteAsync(scope, route, id, cancellationToken);
+                    return current;
+                }, cancellationToken);
+                await accounts.UpdateOrganizationAsync(context, org =>
+                {
+                    if (!org.CanManage(context.UserId))
+                    {
+                        throw new AccountAccessException("Organization management access is required.");
+                    }
+
+                    var project = org.Projects.GetValueOrDefault(scope.ProjectId) ?? throw new AccountAccessException("Project is unavailable.", 404);
+                    if (project.Databases.Remove(id))
+                    {
+                        org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, "database.deleted", database.Name, "database", accounts.Now));
+                    }
+                }, cancellationToken);
+                return new Done();
+            }
+            catch (AccountAccessException error) when (DatabaseMutations.Mappable(error))
+            {
+                return DatabaseMutations.ToFailure(error);
+            }
         }
 
         // TerraBase owns databases; the project's records follow its listings. A database created outside the dashboard (the

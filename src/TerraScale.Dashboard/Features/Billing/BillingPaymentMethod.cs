@@ -1,4 +1,5 @@
 using System.Globalization;
+using TerraScale.Dashboard.Errors;
 
 namespace TerraScale.Dashboard.Features.Billing
 {
@@ -20,22 +21,20 @@ namespace TerraScale.Dashboard.Features.Billing
         };
     }
 
-    public sealed class BillingPaymentMethodUnavailableException(string message) : IOException(message);
-
     public sealed partial class StripeBilling
     {
-        public async Task<BillingCard?> PaymentMethodAsync(AccountContext context, CancellationToken cancellationToken)
+        public async Task<PaymentMethod> PaymentMethodAsync(AccountContext context, CancellationToken cancellationToken)
         {
             context = await MemberAsync(context, cancellationToken);
             if (context.Role != "owner" || context.Organization!.OwnerUserId != context.UserId)
             {
-                return null;
+                return new NoCard();
             }
 
             var binding = await ReadAsync(context.Organization.Id, cancellationToken);
             if (binding?.CustomerId is not { Length: > 0 })
             {
-                return null;
+                return new NoCard();
             }
 
             var index = await CustomerAsync(binding.CustomerId, cancellationToken);
@@ -53,7 +52,7 @@ namespace TerraScale.Dashboard.Features.Billing
             var customer = await customerRead;
             if (customer.Id != binding.CustomerId || customer.Deleted == true || customer.Metadata?.GetValueOrDefault("organization_id") != context.Organization.Id)
             {
-                throw new BillingPaymentMethodUnavailableException("Payment method customer ownership does not match.");
+                return new Unavailable("Payment method customer ownership does not match.");
             }
 
             var method = customer.InvoiceSettings?.DefaultPaymentMethod;
@@ -63,33 +62,33 @@ namespace TerraScale.Dashboard.Features.Billing
                 if (subscription.Id != binding.SubscriptionId || subscription.CustomerId != binding.CustomerId ||
                     subscription.Metadata?.GetValueOrDefault("organization_id") != context.Organization.Id)
                 {
-                    throw new BillingPaymentMethodUnavailableException("Payment method subscription ownership does not match.");
+                    return new Unavailable("Payment method subscription ownership does not match.");
                 }
 
                 method = subscription.DefaultPaymentMethod ?? method;
             }
             if (method is null)
             {
-                return null;
+                return new NoCard();
             }
 
             if (method.CustomerId != binding.CustomerId)
             {
-                throw new BillingPaymentMethodUnavailableException("Payment method belongs to a different customer.");
+                return new Unavailable("Payment method belongs to a different customer.");
             }
 
             if (method.Type != "card" || method.Card is not { } card)
             {
-                return null;
+                return new NoCard();
             }
 
             if (card.Last4 is not { Length: 4 } || card.Last4.Any(character => !char.IsAsciiDigit(character)) ||
                 card.ExpMonth is < 1 or > 12 || card.ExpYear is < 2000 or > 9999)
             {
-                throw new BillingPaymentMethodUnavailableException("Payment method card facts are invalid.");
+                return new Unavailable("Payment method card facts are invalid.");
             }
 
-            return new(card.Brand, card.Last4, card.ExpMonth, card.ExpYear);
+            return new BillingCard(card.Brand, card.Last4, card.ExpMonth, card.ExpYear);
         }
     }
 }

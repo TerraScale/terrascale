@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
@@ -24,7 +25,7 @@ public sealed class SendUnlinkCodeEndpoint(PlatformAuthentication authentication
         if (provider is not (SocialProviders.GitHub or SocialProviders.Google)
             || !caller.LinkedProviders.Any(identity => identity.Provider == provider))
         {
-            throw Invalid("Unknown provider.");
+            return ErrorResults.ToResult(new Validation("Unknown provider."));
         }
 
         using var reservation = mail.Reserve();

@@ -2,6 +2,7 @@ using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Storage;
 
 namespace TerraScale.Authentication.Features.Platform;
@@ -11,6 +12,8 @@ public sealed record DashboardDeletionProof(string Id, string Scope, string Subj
 public sealed record DashboardDeletionList(IReadOnlyList<DashboardDeletionProof> Items);
 
 public sealed record DashboardDeletionAcknowledgement(string Scope, string SubjectId, string? OrganizationId);
+
+public readonly union DeletionAcknowledgementResult(Done, NotFound, Conflict);
 
 public sealed record DeletionCursorRecord(string Name, string? After);
 
@@ -42,12 +45,12 @@ internal static class DashboardDeletionProofs
         return new([.. page.Select(Proof).OfType<DashboardDeletionProof>()]);
     }
 
-    internal static async Task AcknowledgeAsync(AuthData data, TimeProvider clock, string? id, DashboardDeletionAcknowledgement request, CancellationToken cancellationToken)
+    internal static async Task<DeletionAcknowledgementResult> AcknowledgeAsync(AuthData data, TimeProvider clock, string? id, DashboardDeletionAcknowledgement request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(clock);
         if (!PlatformDirectory.IsId(id) || !PlatformDirectory.IsId(request.SubjectId) || request.Scope is not ("account" or "organization" or "project"))
         {
-            throw Missing();
+            return Missing();
         }
 
         var key = DeletionJob.Key(PlatformDirectory.Instance, request.Scope, request.SubjectId);
@@ -57,17 +60,17 @@ internal static class DashboardDeletionProofs
                 cancellationToken).ConfigureAwait(false);
             if (job is null || Proof(job.Value) is not { } proof || proof != new DashboardDeletionProof(id!, request.Scope, request.SubjectId, request.OrganizationId))
             {
-                throw Missing();
+                return Missing();
             }
 
             if (job.Value.DashboardVerifiedAt is not null
                 || await data.SaveAsync(Change.Update(job, job.Value with { DashboardVerifiedAt = clock.GetUtcNow() }), cancellationToken).ConfigureAwait(false))
             {
-                return;
+                return new Done();
             }
         }
 
-        throw new ApiException(StatusCodes.Status409Conflict, "deletion_changed", "Retry acknowledgement of the same proof.");
+        return new Conflict("Retry acknowledgement of the same proof.", "deletion_changed");
     }
 
     private static IQueryable<DeletionJob> Proven(AuthDbContext db, IQueryable<DeletionJob> jobs) =>
@@ -82,5 +85,5 @@ internal static class DashboardDeletionProofs
             ? new(job.ErasureId!, job.Scope, job.SubjectId, job.Scope == "organization" ? job.SubjectId : job.OrganizationId)
             : null;
 
-    private static ApiException Missing() => new(StatusCodes.Status404NotFound, "not_found", "No such deletion proof.");
+    private static NotFound Missing() => new("No such deletion proof.", "not_found");
 }

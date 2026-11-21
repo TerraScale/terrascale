@@ -18,28 +18,6 @@ internal static class RegionalRetention
 
     internal static void Append(IncrementalHash hash, string key) => hash.AppendData(Encoding.UTF8.GetBytes(key + "\n"));
 
-    internal static async Task<RetainedManifest> ManifestAsync(IStorageEngine engine, CancellationToken token)
-    {
-        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        var count = 0;
-        string? after = null;
-        do
-        {
-            var page = await RecordsAsync(engine, after, token).ConfigureAwait(false);
-            foreach (var record in page.Records)
-            {
-                if (++count > MaxDatabases)
-                {
-                    throw new IOException("retained handoff database bound exceeded");
-                }
-                Append(hash, record.Id);
-            }
-            after = page.HasMore ? page.Records[^1].Id : null;
-        }
-        while (after is not null);
-        return new RetainedManifest(count, Convert.ToHexStringLower(hash.GetHashAndReset()));
-    }
-
     internal static async Task<RecordPage> RecordsAsync(IStorageEngine engine, string? after, CancellationToken token)
     {
         var store = await engine.OpenSystemDatabaseAsync(token).ConfigureAwait(false);

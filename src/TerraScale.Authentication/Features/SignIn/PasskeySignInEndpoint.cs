@@ -4,6 +4,7 @@ using Fido2NetLib.Objects;
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.WebAuthn;
 using TerraScale.Authentication.Hosting;
@@ -46,7 +47,7 @@ public sealed class PasskeySignInEndpoint(Sessions sessions, PasskeyCredentials 
 
         if (this.HttpContext.Request.Headers.Origin is not [{ } origin] || !SignInFlow.IsPublicOrigin(origin, options.PublicOrigin))
         {
-            throw Denied();
+            return ErrorResults.ToResult(Denied());
         }
 
         if (await hosted.LimitIpAsync(SignInFlow.Ip(this.HttpContext), mails: false, cancellationToken) is { } ipWait)
@@ -56,6 +57,11 @@ public sealed class PasskeySignInEndpoint(Sessions sessions, PasskeyCredentials 
         }
 
         var body = await this.BodyAsync(cancellationToken);
+        if (body is null)
+        {
+            return ErrorResults.ToResult(Denied());
+        }
+
         var raw = Map(body.Response);
         var next = SignInFlow.SafeNext(this.HttpContext, body.Next);
         var user = raw is null
@@ -64,16 +70,16 @@ public sealed class PasskeySignInEndpoint(Sessions sessions, PasskeyCredentials 
         if (user is null || await SignInFlow.OpenSessionAsync(sessions, user, cancellationToken) is not { } session)
         {
             AuthMetrics.SignIn("hosted_passkey", user is null ? "refused" : "expired");
-            throw Denied();
+            return ErrorResults.ToResult(Denied());
         }
 
         AuthMetrics.SignIn("hosted_passkey", "succeeded");
         return await SignInFlow.SignedInAsync(this.HttpContext, sessions, session, next, cancellationToken);
     }
 
-    private static ApiException Denied() => new(StatusCodes.Status403Forbidden, "passkey_denied", "The passkey sign-in failed; start again.");
+    internal static Forbidden Denied() => new("The passkey sign-in failed; start again.", "passkey_denied");
 
-    private async Task<PasskeySignInRequest> BodyAsync(CancellationToken cancellationToken)
+    private async Task<PasskeySignInRequest?> BodyAsync(CancellationToken cancellationToken)
     {
         try
         {
@@ -100,7 +106,7 @@ public sealed class PasskeySignInEndpoint(Sessions sessions, PasskeyCredentials 
         {
         }
 
-        throw Denied();
+        return null;
     }
 
     internal static AuthenticatorAssertionRawResponse? Map(PasskeyAssertionRequest? response)

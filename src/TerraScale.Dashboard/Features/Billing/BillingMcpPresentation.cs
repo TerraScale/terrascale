@@ -2,6 +2,7 @@ using TerraScale.TerraBase.Contracts;
 using System.ComponentModel;
 using System.Text.Json.Serialization;
 using Stripe;
+using TerraScale.Dashboard.Errors;
 
 namespace TerraScale.Dashboard.Features.Billing
 {
@@ -66,8 +67,11 @@ namespace TerraScale.Dashboard.Features.Billing
             BillingCard? paymentMethod = null;
             if (owner)
             {
-                try { paymentMethod = await PaymentMethodAsync(context, cancellationToken); }
-                catch (Exception error) when (error is TerraBaseException or HttpRequestException or StripeException or BillingPaymentMethodUnavailableException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+                try
+                {
+                    paymentMethod = await PaymentMethodAsync(context, cancellationToken) switch { BillingCard card => card, NoCard => null, Unavailable => null };
+                }
+                catch (Exception error) when (error is TerraBaseException or HttpRequestException or StripeException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
                 { /* Card facts remain absent when the vendor cannot report them. */ }
             }
 

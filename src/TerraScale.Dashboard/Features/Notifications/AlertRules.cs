@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Features.Billing;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.TerraBase.Contracts;
 using TerraBaseSqlErrorCodes = TerraScale.DotNet.TerraBase.TerraBaseSqlErrorCodes;
@@ -12,6 +13,8 @@ using TerraBaseSqlException = TerraScale.DotNet.TerraBase.TerraBaseSqlException;
 
 namespace TerraScale.Dashboard.Features.Notifications
 {
+    using NotFound = TerraScale.Dashboard.Errors.NotFound;
+
     public sealed record AlertRule(string Id, string Name, string Metric, double Threshold, string? DatabaseId, bool Email, string? WebhookUrl,
         DateTimeOffset CreatedAt, string State = "ok", DateTimeOffset? Since = null, string? AlertId = null, double? Value = null);
 
@@ -19,6 +22,12 @@ namespace TerraScale.Dashboard.Features.Notifications
     public sealed record AlertSeries(string DatabaseId, string DatabaseName, string Region, IReadOnlyList<AlertBucket> Buckets);
     public sealed record AlertAnalytics(DateTimeOffset To, IReadOnlyList<AlertSeries> Items);
     public sealed record AlertEmail(string OrganizationId, string ProjectId, string AlertId, string State, string RuleName, string Metric, string? DatabaseName, double Threshold, double Value);
+
+    public readonly union AlertRuleCreated(AlertRuleWithSecret, Validation, Conflict, Forbidden, NotFound);
+
+    public sealed record AlertRuleWithSecret(AlertRule Rule, string? Secret);
+
+    public readonly union AlertRuleChanged(Done, Validation, NotFound, Forbidden);
 
     public interface IAlertSource
     {
@@ -42,26 +51,37 @@ namespace TerraScale.Dashboard.Features.Notifications
             return [.. rows.Select(Rule)];
         }
 
-        public async Task<(AlertRule Rule, string? Secret)> CreateAsync(AccountContext context, IFormCollection form, CancellationToken cancellationToken)
+        public async Task<AlertRuleCreated> CreateAsync(AccountContext context, IFormCollection form, CancellationToken cancellationToken)
         {
-            var (organization, project) = Owner(context);
+            if (Owner(context) is not { } owner)
+            {
+                return context.Organization is null || context.Project is null
+                    ? new AlertRuleCreated(new NotFound("Select a project."))
+                    : new AlertRuleCreated(new Forbidden("Only organization owners manage alert rules."));
+            }
+
+            var (organization, project) = owner;
             var name = form["name"].ToString().Trim();
             if (name.Length is 0 or > 64 || name.Any(char.IsControl))
             {
-                throw new AccountAccessException("Name the rule in up to 64 characters.", 422);
+                return new Validation("Name the rule in up to 64 characters.");
             }
 
             var metric = form["metric"].ToString();
             if (!Metrics.Contains(metric))
             {
-                throw new AccountAccessException("Choose a metric.", 422);
+                return new Validation("Choose a metric.");
             }
 
-            var threshold = Threshold(form["threshold"]);
+            if (Threshold(form["threshold"]) is not { } threshold)
+            {
+                return new Validation("Enter a threshold greater than 0.");
+            }
+
             var databaseId = form["database"].ToString() is { Length: > 0 } selected ? selected : null;
             if (databaseId is not null && !project.Databases.ContainsKey(databaseId))
             {
-                throw new AccountAccessException("Choose a database of this project.", 422);
+                return new Validation("Choose a database of this project.");
             }
 
             var url = form["webhook"].ToString().Trim() is { Length: > 0 } text ? CustomerUrls.Validate(text).OriginalString : null;
@@ -102,7 +122,7 @@ namespace TerraScale.Dashboard.Features.Notifications
                 try
                 {
                     await db.SaveChangesAsync(cancellationToken);
-                    return (Rule(row), secret);
+                    return new AlertRuleWithSecret(Rule(row), secret);
                 }
                 catch (DbUpdateException error) when (error.InnerException is TerraBaseSqlException { Code: TerraBaseSqlErrorCodes.UniqueViolation })
                 {
@@ -110,36 +130,58 @@ namespace TerraScale.Dashboard.Features.Notifications
                 }
             }
 
-            throw new AccountAccessException($"A project can have up to {RuleLimit} alert rules.", 409);
+            return new Conflict($"A project can have up to {RuleLimit} alert rules.");
         }
 
-        public async Task DeleteAsync(AccountContext context, string id, CancellationToken cancellationToken)
+        public async Task<AlertRuleChanged> DeleteAsync(AccountContext context, string id, CancellationToken cancellationToken)
         {
-            var (organization, project) = Owner(context);
+            if (Owner(context) is not { } owner)
+            {
+                return context.Organization is null || context.Project is null
+                    ? new AlertRuleChanged(new NotFound("Select a project."))
+                    : new AlertRuleChanged(new Forbidden("Only organization owners manage alert rules."));
+            }
+
+            var (organization, project) = owner;
             await using var db = await storage.CreateDbContextAsync(cancellationToken);
             if (await db.AlertRules.Where(row => row.Id == id && row.OrganizationId == organization.Id && row.ProjectId == project.Id).ExecuteDeleteAsync(cancellationToken) == 0)
             {
-                throw new AccountAccessException("Alert rule is unavailable.", 404);
+                return new NotFound("Alert rule is unavailable.");
             }
+
+            return new Done();
         }
 
-        public async Task UpdateThresholdAsync(AccountContext context, string id, string? value, CancellationToken cancellationToken)
+        public async Task<AlertRuleChanged> UpdateThresholdAsync(AccountContext context, string id, string? value, CancellationToken cancellationToken)
         {
-            var (organization, project) = Owner(context);
-            var threshold = Threshold(value);
+            if (Owner(context) is not { } owner)
+            {
+                return context.Organization is null || context.Project is null
+                    ? new AlertRuleChanged(new NotFound("Select a project."))
+                    : new AlertRuleChanged(new Forbidden("Only organization owners manage alert rules."));
+            }
+
+            var (organization, project) = owner;
+            if (Threshold(value) is not { } threshold)
+            {
+                return new Validation("Enter a threshold greater than 0.");
+            }
+
             var version = AccountService.NewId();
             await using var db = await storage.CreateDbContextAsync(cancellationToken);
             if (await db.AlertRules.Where(row => row.Id == id && row.OrganizationId == organization.Id && row.ProjectId == project.Id)
                 .ExecuteUpdateAsync(row => row.SetProperty(rule => rule.Threshold, threshold).SetProperty(rule => rule.Version, version), cancellationToken) == 0)
             {
-                throw new AccountAccessException("Alert rule is unavailable.", 404);
+                return new NotFound("Alert rule is unavailable.");
             }
+
+            return new Done();
         }
 
-        private static double Threshold(string? value)
+        private static double? Threshold(string? value)
         {
             return double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var threshold) && double.IsFinite(threshold) && threshold is > 0 and <= 1e12
-                ? threshold : throw new AccountAccessException("Enter a threshold greater than 0.", 422);
+                ? threshold : null;
         }
 
         public async Task RunOnceAsync(CancellationToken cancellationToken)
@@ -388,19 +430,9 @@ namespace TerraScale.Dashboard.Features.Notifications
             item.WebhookStatus = code is >= 200 and <= 299 ? "delivered" : item.WebhookAttempts >= WebhookAttempts ? "failed" : "pending";
         }
 
-        private static (OrganizationRecord Organization, ProjectRecord Project) Owner(AccountContext context)
+        private static (OrganizationRecord Organization, ProjectRecord Project)? Owner(AccountContext context)
         {
-            if (context.Organization is not { } organization || context.Project is not { } project)
-            {
-                throw new AccountAccessException("Select a project.", 404);
-            }
-
-            if (context.Role != "owner")
-            {
-                throw new AccountAccessException("Only organization owners manage alert rules.");
-            }
-
-            return (organization, project);
+            return context.Organization is not { } organization || context.Project is not { } project || context.Role != "owner" ? null : (organization, project);
         }
 
         private static string Purpose(string projectId, string ruleId)

@@ -1,7 +1,6 @@
 # TerraScale.DotNet
 
-The official .NET SDK for TerraBase (its v1 HTTP API) and ts-auth. The package supports .NET 10 LTS and .NET 11; a .NET 11 toolchain builds
-both targets.
+The official .NET SDK for TerraBase (its v1 HTTP API) and ts-auth. The package targets .NET 11.
 
 The .NET SDK is a preview. The current source package version is `0.0.12`. NuGet publication remains on hold:
 use a `ProjectReference` to an immutable checkout or `dotnet pack` into a local package source.

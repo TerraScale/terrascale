@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.Sync;
 using TerraBase.Features.Clock;
 using TerraBase.Features.HomeApply;
@@ -69,7 +70,7 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
         var stamp = transaction.Hlc!.Value;
         _ = await clock.ObserveAsync(stamp, cancellationToken).ConfigureAwait(false);
 
-        Rejection rejection;
+        Rejection? rejection = null;
         IStorageTransaction? applying;
         try
         {
@@ -112,29 +113,51 @@ internal sealed partial class HomeApplier(IStorageEngine engine, IHlcClock clock
             {
                 foreach (var change in transaction.Changes!)
                 {
-                    await run.ApplyAsync(change).ConfigureAwait(false);
+                    switch (await run.ApplyAsync(change).ConfigureAwait(false))
+                    {
+                        case Done:
+                            break;
+                        case Rejection refusal:
+                            rejection = refusal;
+                            break;
+                    }
+
+                    if (rejection is not null)
+                    {
+                        break;
+                    }
                 }
 
-                await run.CheckForeignKeysAsync().ConfigureAwait(false);
-                var result = new HomeApplyResult(id, WriteStates.Confirmed, [.. run.Superseded.Select(conflict => conflict.Public)], []);
-                await RecordAsync(applying, transaction, result, run.Superseded, cancellationToken).ConfigureAwait(false);
-                var growth = await applying.MeasureSqlStorageAsync(cancellationToken).ConfigureAwait(false) - before;
-                if (growth != 0)
+                if (rejection is null)
                 {
-                    await applying.AddSqlStorageAsync(growth, cancellationToken).ConfigureAwait(false);
+                    switch (await run.CheckForeignKeysAsync().ConfigureAwait(false))
+                    {
+                        case Done:
+                            break;
+                        case Rejection refused:
+                            rejection = refused;
+                            break;
+                    }
                 }
 
-                _ = await applying.CommitAsync(cancellationToken).ConfigureAwait(false);
-                if (run.Superseded.Count > 0)
+                if (rejection is null)
                 {
-                    _superseded.Add(1, new KeyValuePair<string, object?>("region", region));
-                }
+                    var result = new HomeApplyResult(id, WriteStates.Confirmed, [.. run.Superseded.Select(conflict => conflict.Public)], []);
+                    await RecordAsync(applying, transaction, result, run.Superseded, cancellationToken).ConfigureAwait(false);
+                    var growth = await applying.MeasureSqlStorageAsync(cancellationToken).ConfigureAwait(false) - before;
+                    if (growth != 0)
+                    {
+                        await applying.AddSqlStorageAsync(growth, cancellationToken).ConfigureAwait(false);
+                    }
 
-                return result;
-            }
-            catch (RejectedException rejected)
-            {
-                rejection = rejected.Rejection;
+                    _ = await applying.CommitAsync(cancellationToken).ConfigureAwait(false);
+                    if (run.Superseded.Count > 0)
+                    {
+                        _superseded.Add(1, new KeyValuePair<string, object?>("region", region));
+                    }
+
+                    return result;
+                }
             }
             catch (SqlStatementException error) when (error.Failure is Busy or Interrupted or StorageFailure or StorageError)
             {

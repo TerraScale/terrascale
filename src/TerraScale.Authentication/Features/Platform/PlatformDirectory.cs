@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
@@ -977,6 +978,8 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
 
     internal static ApiException PlatformProjectProtected() =>
         Conflict("platform_project_protected", "This project holds a TerraScale service's own database and cannot be deleted.");
+
+    internal static NotFound NotFoundFailure() => new("No such resource.", "not_found");
 
     internal static Change Authority(OrganizationAccess access)
     {

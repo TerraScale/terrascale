@@ -11,6 +11,7 @@ using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Storage;
 using TerraScale.DotNet;
+using TerraScale.Authentication.Errors;
 using ZLogger;
 
 namespace TerraScale.Authentication.Features.AgentId;
@@ -26,6 +27,8 @@ public sealed record AgentIdProofRequest(string? Proof);
 public sealed record AgentIdPendingBody(string Status, string TransactionId, string ProofUrl, string ClientId, string ClientName, DateTimeOffset ExpiresAt);
 
 public sealed record AgentIdSignIn(AgentRecord Agent, UserRecord Owner, string Kid);
+
+public readonly union ProveResult(Done, NotFound, Unauthorized);
 
 public sealed record AgentIdFence(Versioned<AgentKeyRecord> Key, Versioned<AgentRecord> Agent, Versioned<UserRecord> Owner, AgentIdRegistration? Registration = null)
 {
@@ -66,14 +69,10 @@ public sealed class AgentIdTransactions(AuthData data, AgentAssertions assertion
         return Base64Url.EncodeToString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical.ToString())));
     }
 
-    public async Task LimitAsync(string purpose, string ip, string clientId, CancellationToken cancellationToken)
+    public async Task<TimeSpan?> LimitAsync(string purpose, string ip, string clientId, CancellationToken cancellationToken)
     {
-        if ((await limiter.AcquireAsync(AgentIdIssuer.Slug, purpose + "-ip", limiter.Fold(ip), AuthorizationsPerAddressMinute, Window, cancellationToken).ConfigureAwait(false)
-            ?? await limiter.AcquireAsync(AgentIdIssuer.Slug, purpose + "-client", limiter.Fold(clientId), RequestsPerClientMinute, Window, cancellationToken).ConfigureAwait(false))
-            is { } wait)
-        {
-            throw ApiException.RateLimited("Too many sign-in attempts; retry later.", wait);
-        }
+        return (await limiter.AcquireAsync(AgentIdIssuer.Slug, purpose + "-ip", limiter.Fold(ip), AuthorizationsPerAddressMinute, Window, cancellationToken).ConfigureAwait(false)
+            ?? await limiter.AcquireAsync(AgentIdIssuer.Slug, purpose + "-client", limiter.Fold(clientId), RequestsPerClientMinute, Window, cancellationToken).ConfigureAwait(false));
     }
 
     public async Task<AgentIdTransactionRecord> OpenAsync(string requestHash, string clientId, CancellationToken cancellationToken)
@@ -92,12 +91,12 @@ public sealed class AgentIdTransactions(AuthData data, AgentAssertions assertion
 
     public bool IsOpen(AgentIdTransactionRecord transaction) => transaction.CompletedAt is null && transaction.ExpiresAt > clock.GetUtcNow();
 
-    public async Task ProveAsync(string id, string? proof, CancellationToken cancellationToken)
+    public async Task<ProveResult> ProveAsync(string id, string? proof, CancellationToken cancellationToken)
     {
         var current = TerraScaleIds.IsValid(id) ? await this.FindAsync(id, cancellationToken).ConfigureAwait(false) : null;
         if (current is not { Value: var transaction } || !this.IsOpen(transaction))
         {
-            throw new ApiException(StatusCodes.Status404NotFound, "expired_transaction", Expired);
+            return new NotFound(Expired, "expired_transaction");
         }
 
         var (verified, refusedAgent, reason) = proof is { Length: > 0 }
@@ -107,13 +106,13 @@ public sealed class AgentIdTransactions(AuthData data, AgentAssertions assertion
             || !verified.Token.TryGetPayloadValue<string>(AgentIdIssuer.ProofTransactionClaim, out var bound) || bound != id
             || !verified.Token.TryGetPayloadValue<string>(AgentIdIssuer.ProofClientClaim, out var client) || client != transaction.ClientId)
         {
-            throw Refused(verified?.Agent.Value.Id ?? refusedAgent, verified is null ? reason : "transaction or client_id not bound");
+            return Refused(verified?.Agent.Value.Id ?? refusedAgent, verified is null ? reason : "transaction or client_id not bound");
         }
 
         var agent = verified.Agent.Value;
         if (transaction.ProvedAt is not null)
         {
-            throw Refused(agent.Id, "transaction already proved");
+            return Refused(agent.Id, "transaction already proved");
         }
 
         if ((await limiter.AcquireAsync(AgentIdIssuer.Slug, "agentid-proof-agent", agent.Id, ProofsPerAgentMinute, Window, cancellationToken).ConfigureAwait(false)
@@ -126,20 +125,22 @@ public sealed class AgentIdTransactions(AuthData data, AgentAssertions assertion
         var now = clock.GetUtcNow();
         if (transaction.ExpiresAt <= now || verified.AcceptedUntil <= now)
         {
-            throw Refused(agent.Id, "transaction or proof expired before the proof was recorded");
+            return Refused(agent.Id, "transaction or proof expired before the proof was recorded");
         }
 
         var proved = transaction with { AgentId = agent.Id, OwnerUserId = agent.OwnerUserId, Kid = verified.Key.Value.Kid, ProvedAt = now };
         if (!await data.SaveAsync([verified.Replay, Change.Update(current, proved), Change.Assert(verified.Key), Change.Assert(verified.Owner)], cancellationToken).ConfigureAwait(false))
         {
-            throw Refused(agent.Id, "proof replayed, or the transaction, key or owner changed");
+            return Refused(agent.Id, "proof replayed, or the transaction, key or owner changed");
         }
 
-        ApiException Refused(string? agentId, string why)
+        return new Done();
+
+        Unauthorized Refused(string? agentId, string why)
         {
             logger.ZLogInformation($"Agent sign-in proof refused for transaction {id} and agent {agentId ?? "unknown"}: {why}");
-            return new ApiException(StatusCodes.Status401Unauthorized, "invalid_proof",
-                "Sign an ES256 JWT with an active key of an active agent: iss and sub the agent id, aud this URL, txn this transaction, client_id the app's client_id, a jti, iat, and exp at most 300 seconds after iat.");
+            return new("Sign an ES256 JWT with an active key of an active agent: iss and sub the agent id, aud this URL, txn this transaction, client_id the app's client_id, a jti, iat, and exp at most 300 seconds after iat.",
+                "invalid_proof");
         }
     }
 

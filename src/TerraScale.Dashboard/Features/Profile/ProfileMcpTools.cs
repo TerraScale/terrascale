@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Text.Json.Serialization;
 using ModelContextProtocol.Server;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Mcp;
 
@@ -57,8 +58,11 @@ namespace TerraScale.Dashboard.Features.Profile
             [Description("Display name, 1–128 characters.")] string? name = null,
             [Description("Phone number with 7–15 digits, optionally starting with +; spaces, dots, dashes and parentheses are allowed. An empty string clears it.")] string? phone = null)
         {
-            await ProfileChanges.SaveAsync(accounts, Account().Session, name, phone, Cancellation);
-            return new(true);
+            return await ProfileChanges.SaveAsync(accounts, Account().Session, name, phone, Cancellation) switch
+            {
+                Done => new(true),
+                Validation error => throw new AccountAccessException(error.Message, 422, error.Code)
+            };
         }
 
         [McpAccess(McpAccess.Write)]

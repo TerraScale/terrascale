@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using OpenIddict.Abstractions;
+using OidcErrors = OpenIddict.Abstractions.OpenIddictConstants.Errors;
 using OpenIddict.Server.AspNetCore;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
@@ -79,14 +80,14 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
             || request.ClientSecret is not { } secret || !Matches(secret, keys.Digests(key))
             || await directory.OrganizationAsync(key.OrganizationId, cancellationToken) is null)
         {
-            return OidcResults.Forbid(Errors.InvalidClient, InvalidApiKeyNotice);
+            return OidcResults.Forbid(OidcErrors.InvalidClient, InvalidApiKeyNotice);
         }
 
         // A key stored narrowed by database name (before narrowing by ULID) would follow the name to another database;
         // it mints nothing, with a notice that says how to replace it, rather than a token TerraBase later refuses.
         if (key.Database is { } narrowed && !ApiKeys.IsDatabaseId(narrowed))
         {
-            return OidcResults.Forbid(Errors.InvalidClient, NameNarrowedKeyNotice);
+            return OidcResults.Forbid(OidcErrors.InvalidClient, NameNarrowedKeyNotice);
         }
 
         if (!await limiter.TryAcquireAsync(PlatformDirectory.Instance, "api-key-token", key.Id, KeyRequestsPerMinute, cancellationToken))
@@ -99,7 +100,7 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
         var found = project is null || key.ProjectId is not null && project != key.ProjectId ? null : await directory.ProjectAsync(project, cancellationToken);
         if (project is not null && (found is null || found.Value.OrganizationId != key.OrganizationId))
         {
-            return OidcResults.Forbid(Errors.InvalidTarget, "The project is not one this key reaches.");
+            return OidcResults.Forbid(OidcErrors.InvalidTarget, "The project is not one this key reaches.");
         }
 
         // A closure is accepted before every region confirms it (an account deletion closes its sole organizations): from
@@ -107,14 +108,14 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
         if (await directory.ClosureAsync("organization", key.OrganizationId, cancellationToken).ConfigureAwait(false) is not null
             || project is not null && await directory.ClosureAsync("project", project, cancellationToken).ConfigureAwait(false) is not null)
         {
-            return OidcResults.Forbid(Errors.InvalidClient, InvalidApiKeyNotice);
+            return OidcResults.Forbid(OidcErrors.InvalidClient, InvalidApiKeyNotice);
         }
 
         var allowed = key.Scopes.Where(scope => !TerraBaseScopes.IsAuth(scope)).ToArray();
         var requested = request.GetScopes();
         if (requested.Except(allowed).Any())
         {
-            return OidcResults.Forbid(Errors.InvalidScope, "A requested scope exceeds the key's.");
+            return OidcResults.Forbid(OidcErrors.InvalidScope, "A requested scope exceeds the key's.");
         }
 
         // Never past the key's own expiry; key_id and key_gen let TerraBase ask GET /v1/terrascale/api-keys/self whether the
@@ -177,12 +178,12 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
                 subject.GetClaim(OidcIssuer.MfaClaim), cancellationToken) is not { } user
             || subject.GetClaim(LiveAgents.Claim) is { } agentId && await agents.ActiveAsync(agentId, userId, cancellationToken) is null)
         {
-            return OidcResults.Forbid(Errors.InvalidGrant, "The subject token is not a live sign-in token of this client.");
+            return OidcResults.Forbid(OidcErrors.InvalidGrant, "The subject token is not a live sign-in token of this client.");
         }
 
         if (Parameter(request, "organization") is not { } organization)
         {
-            return OidcResults.Forbid(Errors.InvalidRequest, "The organization parameter is required.");
+            return OidcResults.Forbid(OidcErrors.InvalidRequest, "The organization parameter is required.");
         }
 
         var project = Parameter(request, "project");
@@ -199,25 +200,25 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
         }
         catch (ApiException error) when (error.Code == PlatformDirectory.MfaRequiredCode)
         {
-            return OidcResults.Forbid(Errors.AccessDenied, "mfa_required: the organization requires two-factor authentication; enrol at /ui/terrascale/security.");
+            return OidcResults.Forbid(OidcErrors.AccessDenied, "mfa_required: the organization requires two-factor authentication; enrol at /ui/terrascale/security.");
         }
 
         if (allowed.Count == 0)
         {
             // Unknown, unreachable and role-less (a collaborator's organization token) answer alike.
-            return OidcResults.Forbid(Errors.InvalidTarget, "The organization or project is not one this user reaches.");
+            return OidcResults.Forbid(OidcErrors.InvalidTarget, "The organization or project is not one this user reaches.");
         }
 
         allowed = [.. allowed.Where(scope => !TerraBaseScopes.IsAuth(scope))];
         var requested = request.GetScopes();
         if (requested.Except(allowed).Any())
         {
-            return OidcResults.Forbid(Errors.InvalidScope, "A requested scope exceeds the user's role.");
+            return OidcResults.Forbid(OidcErrors.InvalidScope, "A requested scope exceeds the user's role.");
         }
 
         if (!user.MultiFactor && !await mfa.AllowsPrimaryAuthenticationAsync(user, cancellationToken) || expires <= clock.GetUtcNow())
         {
-            return OidcResults.Forbid(Errors.InvalidGrant, "The subject token is not a live sign-in token of this client.");
+            return OidcResults.Forbid(OidcErrors.InvalidGrant, "The subject token is not a live sign-in token of this client.");
         }
 
         var lifetime = expires - clock.GetUtcNow();
@@ -246,20 +247,20 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
             || await directory.ProjectAsync(project, cancellationToken).ConfigureAwait(false) is not { } found
             || found.Value.OrganizationId != organization)
         {
-            return OidcResults.Forbid(Errors.InvalidClient, "The GitHub Actions workload is not bound to a live approved target.");
+            return OidcResults.Forbid(OidcErrors.InvalidClient, "The GitHub Actions workload is not bound to a live approved target.");
         }
 
         foreach (var (name, expected) in new[] { ("organization", organization), ("project", project), ("database", database) })
         {
             if (request.GetParameter(name) is { } target && (string?)target != expected)
             {
-                return OidcResults.Forbid(Errors.InvalidTarget, "The requested target differs from the binding.");
+                return OidcResults.Forbid(OidcErrors.InvalidTarget, "The requested target differs from the binding.");
             }
         }
 
         if (request.SubjectToken is not { Length: > 0 } encoded)
         {
-            return OidcResults.Forbid(Errors.InvalidRequest, "The subject_token parameter is required.");
+            return OidcResults.Forbid(OidcErrors.InvalidRequest, "The subject_token parameter is required.");
         }
 
         var validated = await new JsonWebTokenHandler().ValidateTokenAsync(encoded, new TokenValidationParameters
@@ -297,13 +298,13 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
         if (token is null || refused is not null)
         {
             logger.ZLogWarning($"GitHub Actions token refused: {refused}");
-            return OidcResults.Forbid(Errors.InvalidGrant, "The GitHub Actions token does not match the bound workload.");
+            return OidcResults.Forbid(OidcErrors.InvalidGrant, "The GitHub Actions token does not match the bound workload.");
         }
 
         var requested = request.GetScopes();
         if (requested.Except(GitHubActionsGrant.Scopes).Any())
         {
-            return OidcResults.Forbid(Errors.InvalidScope, "A requested scope exceeds the workload's.");
+            return OidcResults.Forbid(OidcErrors.InvalidScope, "A requested scope exceeds the workload's.");
         }
 
         var runId = Claim(claims, "run_id")!;
@@ -312,13 +313,13 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
         if (!await data.SaveAsync(Credentials.Claim(PlatformDirectory.Instance, GitHubActionsGrant.TokenIdKind, tokenId, runId), cancellationToken).ConfigureAwait(false))
         {
             logger.ZLogWarning($"GitHub Actions token refused: jti already used");
-            return OidcResults.Forbid(Errors.InvalidGrant, "The GitHub Actions token was already used.");
+            return OidcResults.Forbid(OidcErrors.InvalidGrant, "The GitHub Actions token was already used.");
         }
 
         var now = clock.GetUtcNow();
         if (deadline <= now)
         {
-            return OidcResults.Forbid(Errors.InvalidClient, "The workload binding has expired.");
+            return OidcResults.Forbid(OidcErrors.InvalidClient, "The workload binding has expired.");
         }
 
         var scopes = requested.IsEmpty ? GitHubActionsGrant.Scopes : [.. requested];
@@ -403,7 +404,7 @@ public sealed class ApiKeyFailureNotice(ApiKeys keys) : OpenIddict.Server.IOpenI
     public async ValueTask HandleAsync(OpenIddict.Server.OpenIddictServerEvents.ApplyTokenResponseContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
-        if (context.Response.Error == Errors.InvalidClient && context.Request?.IsClientCredentialsGrantType() == true
+        if (context.Response.Error == OidcErrors.InvalidClient && context.Request?.IsClientCredentialsGrantType() == true
             && context.Request.ClientId is { } clientId
             && await keys.FindAsync(clientId, context.CancellationToken).ConfigureAwait(false) is not null)
         {

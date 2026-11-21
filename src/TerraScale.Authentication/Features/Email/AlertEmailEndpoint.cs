@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
@@ -41,15 +42,25 @@ public sealed partial class AlertEmailEndpoint(PlatformDirectory directory, Owne
         {
             return refused;
         }
-        var request = await EmailApi.ReadAsync<EmailAlertRequest>(this.HttpContext, cancellationToken).ConfigureAwait(false);
+        return (await EmailApi.ReadAsync<EmailAlertRequest>(this.HttpContext, cancellationToken).ConfigureAwait(false) switch
+        {
+            EmailAlertRequest request => await SendAsync(request, cancellationToken),
+            Validation error => ErrorResults.ToResult(error),
+            PayloadTooLarge error => ErrorResults.ToResult(error),
+            UnsupportedMediaType error => ErrorResults.ToResult(error),
+        });
+    }
+
+    private async Task<IResult> SendAsync(EmailAlertRequest request, CancellationToken cancellationToken)
+    {
         if (!TerraScaleIds.IsValid(request.OrganizationId) || !TerraScaleIds.IsValid(request.ProjectId) || !TerraScaleIds.IsValid(request.AlertId) ||
             request.State is not ("firing" or "resolved") || request.Metric is not ("p95_latency_ms" or "error_rate_percent" or "storage_gb" or "operation_units_percent") ||
             request.RuleName?.Trim() is not { Length: > 0 and <= 100 } name || name.Any(char.IsControl) ||
             request.DatabaseName is { } database && !DatabaseName().IsMatch(database) ||
             request.Threshold is not { } threshold || !double.IsFinite(threshold) || request.Value is not { } value || !double.IsFinite(value))
         {
-            throw new ApiException(StatusCodes.Status400BadRequest, "invalid_request",
-                "organizationId, projectId and alertId must be ULIDs; state firing or resolved; ruleName 1 to 100 characters; a known metric; databaseName null or a database name; threshold and value finite numbers.");
+            return ErrorResults.ToResult(new Validation(
+                "organizationId, projectId and alertId must be ULIDs; state firing or resolved; ruleName 1 to 100 characters; a known metric; databaseName null or a database name; threshold and value finite numbers."));
         }
         var organization = request.OrganizationId!;
         if (await directory.OrganizationAsync(organization, cancellationToken).ConfigureAwait(false) is null ||

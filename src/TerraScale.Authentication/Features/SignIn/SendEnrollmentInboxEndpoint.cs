@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
+using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.SignIn;
@@ -29,6 +31,11 @@ public sealed class SendEnrollmentInboxEndpoint(AuthOptions options) : EndpointW
         }
 
         var pending = await VerifyEnrollmentInboxEndpoint.PendingAsync(this.HttpContext, form.Challenge, cancellationToken);
-        return await VerifyEnrollmentInboxEndpoint.SendAsync(this.HttpContext, pending.User, SignInFlow.SafeNext(this.HttpContext, form.Next), cancellationToken);
+        return pending switch
+        {
+            ChallengedSignIn challenged => await VerifyEnrollmentInboxEndpoint.SendAsync(this.HttpContext, challenged.User,
+                SignInFlow.SafeNext(this.HttpContext, form.Next), cancellationToken),
+            Forbidden error => ErrorResults.ToResult(error),
+        };
     }
 }

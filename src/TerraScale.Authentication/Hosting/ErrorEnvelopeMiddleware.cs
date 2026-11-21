@@ -31,39 +31,39 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema sch
         }
         catch (ApiException error) when (!context.Response.HasStarted && error.Status < 500)
         {
-            await WriteAsync(context, error);
+            await WriteAsync(context, error.Status, error.Code, error.Message, error.RetryAfter);
         }
         catch (ApiException error) when (!context.Response.HasStarted)
         {
             var level = error.Code == KeyRing.NoSigningKeysCode && schema.BootstrapPending ? LogLevel.Information : LogLevel.Error;
             Diagnose(context, error, () => logger.ZLog(level, error, $"Request failed with {error.Code:@Code}"));
-            await WriteAsync(context, error);
+            await WriteAsync(context, error.Status, error.Code, error.Message, error.RetryAfter);
         }
         catch (DbUpdateException conflict) when (!context.Response.HasStarted && AuthData.IsConflict(conflict))
         {
             var error = new ApiException(409, "conflict", "A concurrent change won; retry the request.", conflict);
             Diagnose(context, error, () => logger.ZLogWarning(error, $"Request failed with {error.Code:@Code}"));
-            await WriteAsync(context, error);
+            await WriteAsync(context, error.Status, error.Code, error.Message, error.RetryAfter);
         }
         catch (OpenIddictExceptions.ConcurrencyException conflict) when (!context.Response.HasStarted)
         {
             // A store's conditional write lost inside an OpenIddict flow: the same race as above, never a 500.
             var error = new ApiException(409, "conflict", "A concurrent change won; retry the request.", conflict);
             Diagnose(context, error, () => logger.ZLogWarning(error, $"Request failed with {error.Code:@Code}"));
-            await WriteAsync(context, error);
+            await WriteAsync(context, error.Status, error.Code, error.Message, error.RetryAfter);
         }
         catch (Exception busy) when (!context.Response.HasStarted && busy is not ApiException && AuthData.IsUnavailable(busy))
         {
             var error = ApiException.Unavailable(busy);
             Diagnose(context, error, () => logger.ZLogError(error, $"Request failed with {error.Code:@Code}"));
-            await WriteAsync(context, error);
+            await WriteAsync(context, error.Status, error.Code, error.Message, error.RetryAfter);
         }
         catch (TerraBaseUnavailableException unavailable) when (!context.Response.HasStarted)
         {
             // A storage outage is temporary: answer the retryable 503 every handler specifies, never a 500.
             var error = ApiException.Unavailable(unavailable);
             Diagnose(context, error, () => logger.ZLogError(error, $"Request failed with {error.Code:@Code}"));
-            await WriteAsync(context, error);
+            await WriteAsync(context, error.Status, error.Code, error.Message, error.RetryAfter);
         }
         catch (TimeoutException timeout) when (!context.Response.HasStarted)
         {
@@ -118,26 +118,28 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema sch
         }
     }
 
-    private static async Task WriteAsync(HttpContext context, ApiException error)
+    private static Task WriteAsync(HttpContext context, ApiException error) =>
+        WriteAsync(context, error.Status, error.Code, error.Message, error.RetryAfter);
+
+    internal static Task WriteAsync(HttpContext context, int status, string code, string message, TimeSpan? retryAfter)
     {
         try
         {
             context.Response.Clear();
-            context.Response.StatusCode = error.Status;
+            context.Response.StatusCode = status;
             context.Response.Headers.CacheControl = "no-store";
-            if (error.RetryAfter is { } wait)
+            if (retryAfter is { } wait)
             {
                 context.Response.Headers.RetryAfter = Math.Max(1, (long)Math.Ceiling(wait.TotalSeconds)).ToString(CultureInfo.InvariantCulture);
             }
 
             // A browser on a hosted page keeps its step, address and forms instead of a JSON envelope it cannot act on.
-            if (error.Status >= 500 && SignInFlow.HostedPage(context))
+            if (status >= 500 && SignInFlow.HostedPage(context))
             {
-                await SignInFlow.Transient(context).ExecuteAsync(context);
-                return;
+                return SignInFlow.Transient(context).ExecuteAsync(context);
             }
 
-            await context.Response.WriteAsJsonAsync(error.ToBody(), context.RequestAborted);
+            return context.Response.WriteAsJsonAsync(new ErrorBody(new ErrorDetail(code, message)), context.RequestAborted);
         }
         catch (Exception writeFailure) when (writeFailure is not OutOfMemoryException)
         {
@@ -145,6 +147,7 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema sch
             // be said on this connection.
             _ = writeFailure;
             context.Abort();
+            return Task.CompletedTask;
         }
     }
 }

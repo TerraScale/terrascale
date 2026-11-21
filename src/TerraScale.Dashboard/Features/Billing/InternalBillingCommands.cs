@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using TerraScale.TerraBase.Contracts;
+using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Auth;
@@ -30,13 +32,14 @@ namespace TerraScale.Dashboard.Features.Billing
                 return 0;
             }
             var command = args[0];
-            Arguments options;
-            try { options = Parse(args); }
-            catch (CommandRejectedException rejected)
+            var parsed = Parse(args);
+            if (parsed is CommandRejection rejection)
             {
-                error.WriteLine(command + ": " + rejected.Message);
+                error.WriteLine(command + ": " + rejection.Message);
                 return 1;
             }
+
+            var options = parsed switch { Arguments arguments => arguments, CommandRejection => throw new UnreachableException() };
 
             SessionRecord? grant = null;
             string? failure = null;
@@ -55,47 +58,29 @@ namespace TerraScale.Dashboard.Features.Billing
                 var context = await accounts.GetContextAsync(grant, cancellationToken);
                 if (!context.Session.Email.Equals(options.AdminEmail, StringComparison.OrdinalIgnoreCase))
                 {
-                    throw new AccountAccessException("Approved account does not match --admin-email.");
+                    failure = "Approved account does not match --admin-email.";
                 }
-
-                if (await application.Services.GetRequiredService<IPlatformRoleGateway>().PlatformRoleAsync(context.Session, cancellationToken) != "admin")
+                else if (await application.Services.GetRequiredService<IPlatformRoleGateway>().PlatformRoleAsync(context.Session, cancellationToken) != "admin")
                 {
-                    throw new AccountAccessException("Platform administrator authorization is required.");
+                    failure = "Platform administrator authorization is required.";
                 }
 
-                var internalBilling = application.Services.GetRequiredService<InternalBillingService>();
-                async Task<AccountContext> RefreshAuthorityAsync(CancellationToken token)
+                if (failure is null)
+                {
+                    await RunCommandAsync(application, auth, accounts, context, options, output, RefreshGrant, cancellationToken);
+                }
+
+                async Task<AccountContext> RefreshGrant(CancellationToken token)
                 {
                     try { grant = await auth.DeviceRefreshAsync(grant!, token); }
                     catch (SignInRejectedException) { throw new AccountAccessException("Authorization has expired.", 401); }
                     return await accounts.GetContextAsync(grant, token);
                 }
-                if (options.Command == Configure)
-                {
-                    await internalBilling.ConfigureAsync(context, new(options.OrganizationId, options.BasePlanKey,
-                        options.SpendCapCents, options.WriteCentsPerMillion, options.StorageCentsPerGBMonth), RefreshAuthorityAsync, cancellationToken);
-                    output.WriteLine($"configured report-only internal billing for organization {options.OrganizationId} using base plan {options.BasePlanKey}");
-                }
-                else
-                {
-                    var bill = await internalBilling.ReportAsync(context, options.OrganizationId, RefreshAuthorityAsync, cancellationToken);
-                    output.WriteLine(JsonSerializer.Serialize(bill, Json));
-                    if (!bill.Available)
-                    {
-                        throw new AccountAccessException(bill.Error ?? "Internal bill is unavailable.", 503);
-                    }
-                }
-            }
-            catch (InternalBillingReportException report)
-            {
-                output.WriteLine(JsonSerializer.Serialize(report.Bill, Json));
-                failure = report.InnerException is AccountAccessException rejected ? rejected.Message : "Internal billing dependencies are unavailable.";
             }
             catch (Exception dependency) when (DependencyFailure(dependency, cancellationToken))
             { failure = "Internal billing dependencies are unavailable."; }
             catch (AccountAccessException rejected) { failure = rejected.Message; }
             catch (OnboardingValidationException rejected) { failure = rejected.Message; }
-            catch (CommandRejectedException rejected) { failure = rejected.Message; }
             catch (DeviceSignInException rejected) { failure = rejected.Message; }
             catch (SignInRejectedException) { failure = "CLI authorization was rejected."; }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { failure = "Command canceled."; }
@@ -124,12 +109,40 @@ namespace TerraScale.Dashboard.Features.Billing
             return 0;
         }
 
-        private static Arguments Parse(string[] args)
+        private static async Task RunCommandAsync(WebApplication application, TsAuthGateway auth, AccountService accounts, AccountContext context,
+            Arguments options, TextWriter output, Func<CancellationToken, Task<AccountContext>> refreshAuthority, CancellationToken cancellationToken)
+        {
+            var internalBilling = application.Services.GetRequiredService<InternalBillingService>();
+            if (options.Command == Configure)
+            {
+                await internalBilling.ConfigureAsync(context, new(options.OrganizationId, options.BasePlanKey,
+                    options.SpendCapCents, options.WriteCentsPerMillion, options.StorageCentsPerGBMonth), refreshAuthority, cancellationToken);
+                output.WriteLine($"configured report-only internal billing for organization {options.OrganizationId} using base plan {options.BasePlanKey}");
+                return;
+            }
+
+            var reported = await internalBilling.ReportAsync(context, options.OrganizationId, refreshAuthority, cancellationToken);
+            switch (reported)
+            {
+                case InternalBillUnavailable unavailable:
+                    output.WriteLine(JsonSerializer.Serialize(unavailable.Bill, Json));
+                    throw new AccountAccessException(unavailable.Message, 503);
+                case InternalBill bill:
+                    output.WriteLine(JsonSerializer.Serialize(bill, Json));
+                    if (bill is not { Available: true })
+                    {
+                        throw new AccountAccessException(bill.Error ?? "Internal bill is unavailable.", 503);
+                    }
+                    break;
+            }
+        }
+
+        private static ParsedArguments Parse(string[] args)
         {
             var command = args[0];
             if (command is not (Configure or Report))
             {
-                throw new CommandRejectedException("Unknown command.");
+                return new CommandRejection("Unknown command.");
             }
 
             var names = command == Report ? new[] { "org", "admin-email" }
@@ -142,32 +155,32 @@ namespace TerraScale.Dashboard.Features.Billing
                 {
                     if (index != args.Length - 1)
                     {
-                        throw new CommandRejectedException("Unexpected positional arguments.");
+                        return new CommandRejection("Unexpected positional arguments.");
                     }
 
                     break;
                 }
                 if (argument.Length < 2 || argument[0] != '-')
                 {
-                    throw new CommandRejectedException("Unexpected positional arguments.");
+                    return new CommandRejection("Unexpected positional arguments.");
                 }
 
                 var option = argument[(argument[1] == '-' ? 2 : 1)..];
                 if (option.StartsWith('-'))
                 {
-                    throw new CommandRejectedException("Invalid flag syntax: " + argument + ".");
+                    return new CommandRejection("Invalid flag syntax: " + argument + ".");
                 }
 
                 var separator = option.IndexOf('=');
                 var name = separator < 0 ? option : option[..separator];
                 if (!names.Contains(name, StringComparer.Ordinal))
                 {
-                    throw new CommandRejectedException("Unknown argument --" + name + ".");
+                    return new CommandRejection("Unknown argument --" + name + ".");
                 }
 
                 if (separator < 0 && ++index >= args.Length)
                 {
-                    throw new CommandRejectedException("--" + name + " requires a value.");
+                    return new CommandRejection("--" + name + " requires a value.");
                 }
 
                 fields[name] = separator < 0 ? args[index] : option[(separator + 1)..];
@@ -176,7 +189,7 @@ namespace TerraScale.Dashboard.Features.Billing
             {
                 if (!fields.ContainsKey(name))
                 {
-                    throw new CommandRejectedException("--" + name + " is required.");
+                    return new CommandRejection("--" + name + " is required.");
                 }
             }
 
@@ -185,34 +198,45 @@ namespace TerraScale.Dashboard.Features.Billing
             var plan = fields.GetValueOrDefault("base-plan", "");
             if (org.Trim().Length == 0 || email.Length == 0 || command == Configure && plan.Trim().Length == 0)
             {
-                throw new CommandRejectedException("--org, --admin-email and --base-plan must not be empty.");
+                return new CommandRejection("--org, --admin-email and --base-plan must not be empty.");
             }
 
             if (org.Trim() != org || plan.Trim() != plan)
             {
-                throw new CommandRejectedException("--org and --base-plan must be exact IDs and keys without surrounding whitespace.");
+                return new CommandRejection("--org and --base-plan must be exact IDs and keys without surrounding whitespace.");
             }
 
             if (command == Report)
             {
-                return new(command, org, email, "", 0, 0, 0);
+                return new Arguments(command, org, email, "", 0, 0, 0);
             }
 
-            var cap = Integer(fields["spend-cap-cents"], "spend-cap-cents");
-            var writes = Integer(fields["write-cents-per-million"], "write-cents-per-million");
-            var storage = Integer(fields["storage-cents-per-gb-month"], "storage-cents-per-gb-month");
+            var fieldsToParse = new[] { "spend-cap-cents", "write-cents-per-million", "storage-cents-per-gb-month" };
+            var values = new long[fieldsToParse.Length];
+            for (var index = 0; index < fieldsToParse.Length; index++)
+            {
+                if (Integer(fields[fieldsToParse[index]], fieldsToParse[index], out values[index]) is { } invalid)
+                {
+                    return invalid;
+                }
+            }
+
+            var cap = values[0];
+            var writes = values[1];
+            var storage = values[2];
             if (cap <= 0 || writes < 0 || storage < 0)
             {
-                throw new CommandRejectedException("--spend-cap-cents must be positive and estimate rates non-negative.");
+                return new CommandRejection("--spend-cap-cents must be positive and estimate rates non-negative.");
             }
 
-            return new(command, org, email, plan, cap, writes, storage);
+            return new Arguments(command, org, email, plan, cap, writes, storage);
         }
 
         // Go's Int64 flag parser accepts decimal and explicit binary/octal/hex
         // integers, including legal separators, while rejecting signed overflow.
-        private static long Integer(string value, string name)
+        private static CommandRejection? Integer(string value, string name, out long parsed)
         {
+            parsed = 0;
             var digits = value.AsSpan();
             var negative = false;
             if (!digits.IsEmpty && digits[0] is '-' or '+') { negative = digits[0] == '-'; digits = digits[1..]; }
@@ -233,7 +257,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 {
                     if (!previousDigit && !(prefixed && count == 0))
                     {
-                        throw Invalid();
+                        return Invalid();
                     }
 
                     previousDigit = false; prefixed = false; continue;
@@ -241,24 +265,25 @@ namespace TerraScale.Dashboard.Features.Billing
                 var number = character is >= '0' and <= '9' ? character - '0' : character is >= 'a' and <= 'f' ? character - 'a' + 10 : character is >= 'A' and <= 'F' ? character - 'A' + 10 : -1;
                 if (number < 0 || number >= radix)
                 {
-                    throw Invalid();
+                    return Invalid();
                 }
 
                 total = total * radix + number;
                 if (total > (BigInteger)long.MaxValue + (negative ? 1 : 0))
                 {
-                    throw Invalid();
+                    return Invalid();
                 }
 
                 count++; previousDigit = true; prefixed = false;
             }
             if (count == 0 || !previousDigit)
             {
-                throw Invalid();
+                return Invalid();
             }
 
-            return (long)(negative ? -total : total);
-            CommandRejectedException Invalid()
+            parsed = (long)(negative ? -total : total);
+            return null;
+            CommandRejection Invalid()
             {
                 return new("--" + name + " requires a signed 64-bit integer.");
             }
@@ -269,9 +294,5 @@ namespace TerraScale.Dashboard.Features.Billing
             return error is TerraBaseException or HttpRequestException or IOException or JsonException or TimeoutException or InvalidOperationException or KeyNotFoundException or OverflowException ||
             error is OperationCanceledException && !cancellationToken.IsCancellationRequested;
         }
-
-        private sealed record Arguments(string Command, string OrganizationId, string AdminEmail, string BasePlanKey,
-            long SpendCapCents, long WriteCentsPerMillion, long StorageCentsPerGBMonth);
-        private sealed class CommandRejectedException(string message) : Exception(message);
     }
 }

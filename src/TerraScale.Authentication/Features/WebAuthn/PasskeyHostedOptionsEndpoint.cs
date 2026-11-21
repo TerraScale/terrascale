@@ -1,7 +1,9 @@
 using System.Text.Json;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.Ui;
 using TerraScale.Endpoints;
@@ -29,17 +31,26 @@ public sealed class PasskeyHostedOptionsEndpoint(Sessions sessions, PasskeyCrede
             return Results.NotFound();
         }
 
-        var pending = this.HttpContext.Request.Headers[RequiredMfaEnrollment.Header] is [{ } challenge]
-            ? await RequiredMfaEnrollment.ReadAsync(this.HttpContext, challenge, "passkey", cancellationToken) : null;
-        var live = pending is null ? await SecurityFlow.LiveAsync(this.HttpContext, sessions, cancellationToken) : null;
-        if (!PasskeyHostedVerifyEndpoint.SameOrigin(this.HttpContext, options)
-            || pending is null && (live is null || !SecurityFlow.Recent(this.HttpContext, live.Value.Session, SecurityFlow.FactorEnrollmentWindow))
-            || await passkeys.OptionsAsync(pending?.User ?? live!.Value.User, cancellationToken).ConfigureAwait(false) is not { } created)
+        var denied = new Forbidden("Sign in again before enrolling a passkey.", "passkey_denied");
+        ChallengedSignIn? pending = null;
+        if (this.HttpContext.Request.Headers[RequiredMfaEnrollment.Header] is [{ } challenge])
         {
-            throw new ApiException(403, "passkey_denied", "Sign in again before enrolling a passkey.");
+            switch (await RequiredMfaEnrollment.ReadAsync(this.HttpContext, challenge, "passkey", cancellationToken))
+            {
+                case ChallengedSignIn allowed:
+                    pending = allowed;
+                    break;
+                case Forbidden error:
+                    return ErrorResults.ToResult(error);
+            }
         }
 
-        return Results.Json(new PasskeyOptionsBody(created.Challenge, JsonDocument.Parse(created.Options.ToJson()).RootElement),
-            WebAuthnJson.Default.PasskeyOptionsBody);
+        var live = pending is null ? await SecurityFlow.LiveAsync(this.HttpContext, sessions, cancellationToken) : null;
+        return !PasskeyHostedVerifyEndpoint.SameOrigin(this.HttpContext, options)
+            || pending is null && (live is null || !SecurityFlow.Recent(this.HttpContext, live.Value.Session, SecurityFlow.FactorEnrollmentWindow))
+            || await passkeys.OptionsAsync(pending?.User ?? live!.Value.User, cancellationToken).ConfigureAwait(false) is not { } created
+            ? ErrorResults.ToResult(denied)
+            : Results.Json(new PasskeyOptionsBody(created.Challenge, JsonDocument.Parse(created.Options.ToJson()).RootElement),
+                WebAuthnJson.Default.PasskeyOptionsBody);
     }
 }

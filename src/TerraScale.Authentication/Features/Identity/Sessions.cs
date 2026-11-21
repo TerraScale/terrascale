@@ -67,28 +67,6 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
             : Change.Assert(session, version);
     }
 
-    public async Task<IssuedSession?> RotateAsync(string instanceId, string? token, CancellationToken cancellationToken = default)
-    {
-        if (await this.ReadLiveAsync(instanceId, token, cancellationToken).ConfigureAwait(false) is not { } live)
-        {
-            return null;
-        }
-
-        if (live.Session.Bindings.Count >= Credentials.MaxBindings)
-        {
-            throw new ApiException(401, "reauthentication_required", "This sign-in reached its rotation limit. Sign in again to continue.");
-        }
-
-        var binding = Credentials.New("session", live.Session.TokenHash);
-        if (!await this.TryRevokeAsync(live.Session, live.Version, binding, cancellationToken).ConfigureAwait(false))
-        {
-            return null;
-        }
-
-        var successor = await this.IssueAsync(live.User with { AuthenticationBindings = [.. live.Session.Bindings, binding] }, live.Session.CreatedAt, live.Session.ExpiresAt, cancellationToken).ConfigureAwait(false);
-        return successor is not null && successor.Session.ExpiresAt > clock.GetUtcNow() ? successor : null;
-    }
-
     public async Task<bool> RevokeAsync(string instanceId, string? token, CancellationToken cancellationToken = default) =>
         token is { Length: > 0 and <= MaxTokenLength } && await this.RevokeStoredAsync(instanceId, Tokens.Sha256Hex(token), cancellationToken).ConfigureAwait(false);
 

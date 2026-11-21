@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Features.AgentId;
@@ -16,8 +17,18 @@ public sealed class DeleteAgentIdClientEndpoint(PlatformAuthentication authentic
     protected override async Task<IResult> HandleOwnerAsync(UserRecord owner, CancellationToken cancellationToken)
     {
         var clientId = this.RouteId("client_id");
-        var proof = await proofs.PrepareHeaderAsync(owner, this.HttpContext.Request, "delete_oauth_client", null, cancellationToken) ?? throw StepUpProofs.Required();
-        await clients.DeleteAsync(proof, clientId, cancellationToken);
-        return Results.NoContent();
+        var proof = await proofs.PrepareHeaderAsync(owner, this.HttpContext.Request, "delete_oauth_client", null, cancellationToken);
+        if (proof is null)
+        {
+            return ErrorResults.ToResult(new Forbidden("A fresh, approved, purpose-bound single-use proof is required.", "step_up_required"));
+        }
+
+        return await clients.DeleteAsync(proof, clientId, cancellationToken) switch
+        {
+            Done => Results.NoContent(),
+            NotFound notFound => ErrorResults.ToResult(notFound),
+            Conflict conflict => ErrorResults.ToResult(conflict),
+            Forbidden forbidden => ErrorResults.ToResult(forbidden),
+        };
     }
 }

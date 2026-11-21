@@ -7,9 +7,12 @@ using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Features.Webhooks;
 using TerraScale.Authentication.Security;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Storage;
 
 namespace TerraScale.Authentication.Features.Impersonation;
+
+public readonly union StartImpersonationResult(ImpersonationTicket, Validation, NotFound, Forbidden);
 
 public sealed record ImpersonationRecord(string Id, string InstanceId, string OrganizationId, string UserId, string ActorId,
     string ActorEmail, string ActorStamp, long ActorEpoch, string UserStamp, long UserEpoch, string Reason, string ClientId,
@@ -28,31 +31,43 @@ public sealed class Impersonations(AuthData data, Credentials credentials, Tenan
 
     public static string Cookie(string tenant) => "__Host-tsauth_impersonation_" + tenant;
 
-    public async Task<ImpersonationTicket> StartAsync(UserRecord actor, string project, string target, StartImpersonationRequest request, CancellationToken cancellationToken)
+    public async Task<StartImpersonationResult> StartAsync(UserRecord actor, string project, string target, StartImpersonationRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(actor);
         ArgumentNullException.ThrowIfNull(request);
         if (!Tenancy.IsProject(project) || string.IsNullOrWhiteSpace(request.Reason) || request.Reason.Length > 500)
         {
-            throw new ApiException(400, "invalid_request", "Supply a reason of 1 to 500 characters and a project client_id.");
+            return new Validation("Supply a reason of 1 to 500 characters and a project client_id.");
         }
 
         await tenants.CheckAccessAsync(actor.Id, project, Roles.Admin, cancellationToken).ConfigureAwait(false);
-        var user = await data.ReadAsync((db, token) => db.Users.SingleOrDefaultAsync(row => row.InstanceId == project && row.Id == target && !row.Disabled, token), cancellationToken).ConfigureAwait(false)
-            ?? throw PlatformDirectory.NotFound();
-        var client = await data.ReadAsync((db, token) => db.OidcApplications.SingleOrDefaultAsync(row => row.InstanceId == project && row.ClientId == request.ClientId, token), cancellationToken).ConfigureAwait(false)
-            ?? throw PlatformDirectory.NotFound();
-        if (!client.Permissions.Contains(Permissions.GrantTypes.AuthorizationCode))
+        var user = await data.ReadAsync((db, token) => db.Users.SingleOrDefaultAsync(row => row.InstanceId == project && row.Id == target && !row.Disabled, token), cancellationToken).ConfigureAwait(false);
+        if (user is null)
         {
-            throw new ApiException(400, "invalid_request", "Choose an authorization-code client in this project.");
+            return new NotFound("No such resource.", "not_found");
         }
 
-        var organization = (await platform.ProjectAsync(project, cancellationToken).ConfigureAwait(false))?.Value.OrganizationId
-            ?? throw PlatformDirectory.NotFound();
+        var client = await data.ReadAsync((db, token) => db.OidcApplications.SingleOrDefaultAsync(row => row.InstanceId == project && row.ClientId == request.ClientId, token), cancellationToken).ConfigureAwait(false);
+        if (client is null)
+        {
+            return new NotFound("No such resource.", "not_found");
+        }
+
+        if (!client.Permissions.Contains(Permissions.GrantTypes.AuthorizationCode))
+        {
+            return new Validation("Choose an authorization-code client in this project.");
+        }
+
+        var organization = (await platform.ProjectAsync(project, cancellationToken).ConfigureAwait(false))?.Value.OrganizationId;
+        if (organization is null)
+        {
+            return new NotFound("No such resource.", "not_found");
+        }
+
         var proof = await credentials.RequireAsync(actor.InstanceId, actor.StepUpBindings, cancellationToken).ConfigureAwait(false);
         if (actor.StepUpBindings.Count == 0 || proof is null)
         {
-            throw StepUpProofs.Required();
+            return new Forbidden("A fresh, approved, purpose-bound single-use proof is required.", "step_up_required");
         }
 
         var ticket = Tokens.RandomToken(48);
@@ -66,7 +81,7 @@ public sealed class Impersonations(AuthData data, Credentials credentials, Tenan
             throw ApiException.Unavailable();
         }
 
-        return new(record.Id, ticket, record.TicketExpiresAt);
+        return new ImpersonationTicket(record.Id, ticket, record.TicketExpiresAt);
     }
 
     public async Task<(ImpersonationLive Live, string Cookie)> RedeemAsync(string tenant, string? client, string ticket, UserRecord? actor, Change? session, CancellationToken cancellationToken)

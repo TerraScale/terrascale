@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Endpoints;
 
@@ -21,19 +22,21 @@ public sealed class PasskeyRenameEndpoint(PasskeyCredentials passkeys, PlatformA
         var body = await this.BodyAsync(WebAuthnJson.Default.PasskeyRenameRequest, cancellationToken);
         if (body.Name is not { Length: > 0 and <= 64 })
         {
-            throw Invalid("The passkey name must be 1 to 64 characters.");
+            return ErrorResults.ToResult(new Validation("The passkey name must be 1 to 64 characters."));
         }
 
-        var entry = await passkeys.RenameAsync(caller, this.CredentialId(), body.Name, cancellationToken).ConfigureAwait(false);
-        if (entry is null)
+        if (this.HttpContext.GetRouteValue("id") is not (string id and { Length: > 0 and <= 1024 }))
         {
-            throw new ApiException(403, "passkey_denied", "Sign in again before renaming a passkey.");
+            return ErrorResults.ToResult(new NotFound("No passkey with this id is enrolled for the account.", "passkey_not_found"));
         }
 
-        return Results.Json(new PasskeyItemBody(entry.CredentialId, entry.Name, entry.Aaguid, entry.CreatedAt, entry.LastUsedAt), WebAuthnJson.Default.PasskeyItemBody);
+        return await passkeys.RenameAsync(caller, id, body.Name, cancellationToken).ConfigureAwait(false) switch
+        {
+            PasskeyCredentialEntry entry => Results.Json(new PasskeyItemBody(entry.CredentialId, entry.Name, entry.Aaguid, entry.CreatedAt, entry.LastUsedAt),
+                WebAuthnJson.Default.PasskeyItemBody),
+            Forbidden error => ErrorResults.ToResult(error),
+            NotFound error => ErrorResults.ToResult(error),
+            Conflict error => ErrorResults.ToResult(error),
+        };
     }
-
-    private string CredentialId() =>
-        this.HttpContext.GetRouteValue("id") is string value && value.Length is > 0 and <= 1024 ? value
-            : throw new ApiException(StatusCodes.Status404NotFound, "passkey_not_found", "No passkey with this id is enrolled for the account.");
 }

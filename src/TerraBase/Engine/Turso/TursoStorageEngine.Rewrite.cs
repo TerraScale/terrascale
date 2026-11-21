@@ -15,29 +15,35 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
 
     internal Action<string> DirectorySync { get; set; } = SyncDirectory;
 
-    public async ValueTask<HealthyRewrite> RewriteAsync(TenantContext? database, long minimumOffset, CancellationToken cancellationToken)
+    public async ValueTask<HealthyRewriteOutcome> RewriteAsync(TenantContext? database, long minimumOffset, CancellationToken cancellationToken)
     {
 
         using var openingDeadline = new CancellationTokenSource(DrainTimeout, TimeProvider.System);
         using var opening = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stopping.Token, openingDeadline.Token);
-        TursoDatabaseStore store;
+        TursoDatabaseStore? opened;
         try
         {
-            store = (TursoDatabaseStore?)(database is null
+            opened = (TursoDatabaseStore?)(database is null
                 ? await OpenSystemDatabaseAsync(opening.Token).ConfigureAwait(false)
-                : await OpenDatabaseAsync(database, opening.Token).ConfigureAwait(false))
-                ?? throw new RewriteRefusedException("the database does not exist");
+                : await OpenDatabaseAsync(database, opening.Token).ConfigureAwait(false));
         }
-        catch (OperationCanceledException error) when (openingDeadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested && !_stopping.IsCancellationRequested)
+        catch (OperationCanceledException) when (openingDeadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested && !_stopping.IsCancellationRequested)
         {
-            throw new RewriteRefusedException("the rewrite could not open the database in time", error, new Deadline());
+            return new RewriteRefused("the rewrite could not open the database in time", new Deadline());
         }
+        if (opened is null)
+        {
+            return new RewriteRefused("the database does not exist", new Safety());
+        }
+
+        var store = opened;
         var (key, path) = database is null ? ((Organization: SystemName, Project: SystemName, Database: SystemName), LocateSystem()) : Locate(database);
         var step = database ?? SystemCheckpoint;
         Io.Admit();
+        HealthyRewriteOutcome outcome;
         try
         {
-            return await Io.WithAdmissionAsync<HealthyRewrite>(async () =>
+            outcome = await Io.WithAdmissionAsync<HealthyRewriteOutcome>(async () =>
             {
                 using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stopping.Token, store.Refused, Ledger.Refused);
                 cancellationToken = lifetime.Token;
@@ -50,9 +56,14 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
                 var renamed = false;
                 try
                 {
-                    if (!store.TryBeginRewrite())
+                    switch (store.TryBeginRewrite())
                     {
-                        throw new RewriteRefusedException("another healthy rewrite owns this database");
+                        case TursoDatabaseStore.RewriteHeld:
+                            return BudgetRefused(budget, cancellationToken) ?? new RewriteRefused("another healthy rewrite owns this database", new Safety());
+                        case RewriteRefused refused:
+                            return BudgetRefused(budget, cancellationToken) ?? refused;
+                        case TursoDatabaseStore.RewriteLease:
+                            break;
                     }
 
                     ownsRewrite = true;
@@ -63,16 +74,23 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
                     var lineage = store.Lineage;
 
                     var uncaptured = await store.WithWriterAsync(_ => store.UncapturedCommits, "a rewrite's capture setup", budget.Token).ConfigureAwait(false);
-                    long offset;
-                    TursoChangeTap replay;
-                    Ulid target;
+                    TursoChangeTap? replay = null;
+                    Ulid target = default;
+                    long offset = 0;
                     using (StorageWork.Bulk())
                     {
-                        (offset, replay, target) = await store.WriteRewriteAsync(scratch, minimumOffset, null, default, finalPass: false, budget.Token).ConfigureAwait(false);
+                        switch (await store.WriteRewriteAsync(scratch, minimumOffset, null, default, finalPass: false, budget.Token).ConfigureAwait(false))
+                        {
+                            case TursoDatabaseStore.RewriteWrite initial:
+                                (offset, replay, target) = (initial.Offset, initial.Replay, initial.Incarnation);
+                                break;
+                            case RewriteRefused refused:
+                                return BudgetRefused(budget, cancellationToken) ?? refused;
+                        }
                     }
                     if (store.UncapturedCommits != uncaptured)
                     {
-                        throw new RewriteRefusedException($"an uncaptured transaction ({store.UncapturedBy}) committed during the rewrite");
+                        return BudgetRefused(budget, cancellationToken) ?? new RewriteRefused($"an uncaptured transaction ({store.UncapturedBy}) committed during the rewrite", new Safety());
                     }
 
                     using var lifecycle = CancellationTokenSource.CreateLinkedTokenSource(budget.Token);
@@ -81,9 +99,9 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
                     {
                         await EnterCreationAsync(lifecycle.Token, admitted: true).ConfigureAwait(false);
                     }
-                    catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested)
+                    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                     {
-                        throw new RewriteRefusedException("the rewrite could not acquire the lifecycle lock in time", error);
+                        return BudgetRefused(budget, cancellationToken) ?? new RewriteRefused("the rewrite could not acquire the lifecycle lock in time", new Safety());
                     }
                     ownsCreation = true;
                     ObjectDisposedException.ThrowIf(_disposed, this);
@@ -92,7 +110,7 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
                         (database is null ? !ReferenceEquals(_system, store)
                         : !_stores.TryGetValue(key, out var open) || !ReferenceEquals(open, store) || _initializing.ContainsKey(key) || _pendingIntents.Contains(key)))
                     {
-                        throw new RewriteRefusedException("the copied database or its lineage changed");
+                        return BudgetRefused(budget, cancellationToken) ?? new RewriteRefused("the copied database or its lineage changed", new Safety());
                     }
 
                     if (database is not null)
@@ -100,60 +118,105 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
                         await ThrowIfPurgeFencedAsync(key.Database, budget.Token).ConfigureAwait(false);
                     }
 
-                    await using var quiesced = (await store.QuiesceAsync(async token =>
-                    {
-                        await store.WriteRewriteAsync(scratch, minimumOffset, replay, target, finalPass: false, token).ConfigureAwait(false);
-                    }, async token =>
-                    {
-                        await store.WriteRewriteAsync(scratch, minimumOffset, replay, target, finalPass: false, token).ConfigureAwait(false);
-                        if (store.UncapturedCommits != uncaptured)
-                        {
-                            throw new RewriteRefusedException($"an uncaptured transaction ({store.UncapturedBy}) committed during the rewrite");
-                        }
-                    }, () =>
-                    {
-                        budget.StopPressure();
-                        heldBudget.CancelAfter(RewriteFinalBudget);
-                    }, final.Token, budget.Token).ConfigureAwait(false)).ConfigureAwait(false);
-
-                    if (store.UncapturedCommits != uncaptured)
-                    {
-                        throw new RewriteRefusedException($"an uncaptured transaction ({store.UncapturedBy}) committed during the rewrite");
-                    }
-                    (offset, _, _) = await store.WriteRewriteAsync(scratch, minimumOffset, replay, target, finalPass: true, final.Token).ConfigureAwait(false);
+                    TursoDatabaseStore.Quiesced? held = null;
                     try
                     {
-                        await store.WriteLane.RunAsync(() =>
+                        switch (await store.QuiesceAsync(async token =>
                         {
-                            Replace(path, scratch, step, store, final.Token, ref renamed);
-                            return true;
-                        }, final.Token).ConfigureAwait(false);
-                    }
-                    catch (Exception error) when (renamed)
-                    {
-                        store.Rewritten(target);
-                        store.NoteCopyFault("a healthy rewrite's rename may not be durable");
-                        await store.RecordCopyFaultAsync(store.CopyFault!).ConfigureAwait(false);
-                        throw new RewriteUncertainException(error);
-                    }
+                            return await store.WriteRewriteAsync(scratch, minimumOffset, replay, target, finalPass: false, token).ConfigureAwait(false) switch
+                            {
+                                TursoDatabaseStore.RewriteWrite => null,
+                                RewriteRefused refused => BudgetRefused(budget, cancellationToken) ?? refused,
+                            };
+                        }, async token =>
+                        {
+                            switch (await store.WriteRewriteAsync(scratch, minimumOffset, replay, target, finalPass: false, token).ConfigureAwait(false))
+                            {
+                                case TursoDatabaseStore.RewriteWrite:
+                                    break;
+                                case RewriteRefused refused:
+                                    return BudgetRefused(budget, cancellationToken) ?? refused;
+                            }
 
-                    store.RewroteHealthily(source, target);
-                    store.Rewritten(target);
-                    return new HealthyRewrite(source, target, offset);
+                            if (store.UncapturedCommits != uncaptured)
+                            {
+                                return BudgetRefused(budget, cancellationToken) ?? new RewriteRefused($"an uncaptured transaction ({store.UncapturedBy}) committed during the rewrite", new Safety());
+                            }
+
+                            return null;
+                        }, () =>
+                        {
+                            budget.StopPressure();
+                            heldBudget.CancelAfter(RewriteFinalBudget);
+                        }, final.Token, budget.Token).ConfigureAwait(false))
+                        {
+                            case TursoDatabaseStore.Quiesced quiesced:
+                                held = quiesced;
+                                break;
+                            case RewriteRefused refused:
+                                return BudgetRefused(budget, cancellationToken) ?? refused;
+                        }
+
+                        if (store.UncapturedCommits != uncaptured)
+                        {
+                            return BudgetRefused(budget, cancellationToken) ?? new RewriteRefused($"an uncaptured transaction ({store.UncapturedBy}) committed during the rewrite", new Safety());
+                        }
+                        switch (await store.WriteRewriteAsync(scratch, minimumOffset, replay, target, finalPass: true, final.Token).ConfigureAwait(false))
+                        {
+                            case TursoDatabaseStore.RewriteWrite finale:
+                                offset = finale.Offset;
+                                break;
+                            case RewriteRefused finalRefused:
+                                return BudgetRefused(budget, cancellationToken) ?? finalRefused;
+                        }
+
+                        RewriteRefused? replaced = null;
+                        try
+                        {
+                            await store.WriteLane.RunAsync(() =>
+                            {
+                                replaced = Replace(path, scratch, step, store, final.Token, ref renamed);
+                                return true;
+                            }, final.Token).ConfigureAwait(false);
+                        }
+                        catch (Exception error) when (renamed)
+                        {
+                            store.Rewritten(target);
+                            store.NoteCopyFault("a healthy rewrite's rename may not be durable");
+                            await store.RecordCopyFaultAsync(store.CopyFault!).ConfigureAwait(false);
+                            throw new RewriteUncertainException(error);
+                        }
+
+                        if (replaced is { } replaceRefused)
+                        {
+                            return BudgetRefused(budget, cancellationToken) ?? replaceRefused;
+                        }
+
+                        store.RewroteHealthily(source, target);
+                        store.Rewritten(target);
+                        return new HealthyRewrite(source, target, offset);
+                    }
+                    finally
+                    {
+                        if (held is not null)
+                        {
+                            await held.DisposeAsync().ConfigureAwait(false);
+                        }
+                    }
                 }
-                catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested && heldBudget.IsCancellationRequested)
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && heldBudget.IsCancellationRequested)
                 {
-                    throw new RewriteRefusedException("the final rewrite delta exceeded its time budget", error, new Budget());
+                    return new RewriteRefused("the final rewrite delta exceeded its time budget", new Budget());
                 }
-                catch (Exception error) when (!cancellationToken.IsCancellationRequested && budget.Expired && error is OperationCanceledException or RewriteRefusedException)
+                catch (Exception error) when (!cancellationToken.IsCancellationRequested && budget.Expired && error is OperationCanceledException)
                 {
-                    throw new RewriteRefusedException(budget.Reason is Pressure
+                    return new RewriteRefused(budget.Reason is Pressure
                         ? "the off-writer rewrite stopped under storage or memory pressure"
-                        : "the off-writer rewrite exceeded its total deadline", error, budget.Reason);
+                        : "the off-writer rewrite exceeded its total deadline", budget.Reason);
                 }
-                catch (Exception error) when (error is not (RewriteRefusedException or RewriteUncertainException or OperationCanceledException))
+                catch (Exception error) when (error is not (RewriteUncertainException or OperationCanceledException))
                 {
-                    throw new RewriteRefusedException("the rewrite failed; the old file stays in place", error);
+                    return new RewriteRefused("the rewrite failed; the old file stays in place", new Safety());
                 }
                 finally
                 {
@@ -182,19 +245,26 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
                 }
             }).ConfigureAwait(false);
         }
-        catch (RewriteRefusedException error)
-        {
-            _rewriteRefused.Add(1, new KeyValuePair<string, object?>("reason", error.Reason.Label));
-            _logger.ZLogInformation($"Healthy rewrite refused: {error.Reason.Label} ({error.Message})");
-            throw;
-        }
         finally
         {
             Io.Release();
         }
+
+        if (outcome is RewriteRefused refused)
+        {
+            _rewriteRefused.Add(1, new KeyValuePair<string, object?>("reason", refused.Reason.Label));
+            _logger.ZLogInformation($"Healthy rewrite refused: {refused.Reason.Label} ({refused.Message})");
+        }
+
+        return outcome;
     }
 
-    private void Replace(string path, string scratch, TenantContext step, TursoDatabaseStore store, CancellationToken token, ref bool renamed)
+    private static RewriteRefused? BudgetRefused(RewriteBudget budget, CancellationToken cancellationToken) =>
+        !budget.Expired || cancellationToken.IsCancellationRequested ? null : new RewriteRefused(budget.Reason is Pressure
+            ? "the off-writer rewrite stopped under storage or memory pressure"
+            : "the off-writer rewrite exceeded its total deadline", budget.Reason);
+
+    private RewriteRefused? Replace(string path, string scratch, TenantContext step, TursoDatabaseStore store, CancellationToken token, ref bool renamed)
     {
         var directory = Path.GetDirectoryName(path)!;
         RejectDatabaseLinks(path);
@@ -206,7 +276,7 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
 
                 if (new FileInfo(file + sidecar) is { Exists: true } log && log.Length != 0 && sidecar != "-shm")
                 {
-                    throw new RewriteRefusedException("a database log still holds frames");
+                    return new RewriteRefused("a database log still holds frames", new Safety());
                 }
             }
         }
@@ -234,6 +304,8 @@ internal sealed partial class TursoStorageEngine : IHealthyRewrite
         {
             DirectorySync(directory);
         }
+
+        return null;
     }
 
     private void DeleteRewriteScratch()

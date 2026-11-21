@@ -50,14 +50,20 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             {
                 if (!context.CanManageKeys)
                 {
-                    throw new AccountAccessException("Project member access is required.");
+                    const string denied = "Project member access is required.";
+                    return DatabaseEndpoints.WantsHtml(http)
+                        ? await ApiKeyPages.PageAsync(http, context, keys, databases, denied, status: StatusCodes.Status403Forbidden)
+                        : Results.Problem(denied, statusCode: StatusCodes.Status403Forbidden);
                 }
 
                 var ttl = form["previousSecretTtl"].ToString();
                 var previousSecretTtl = 0;
                 if (ttl.Length > 0 && !int.TryParse(ttl, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out previousSecretTtl))
                 {
-                    throw new AccountAccessException("The old secret's grace period must be between 0 and 86400 seconds.", 422);
+                    const string refused = "The old secret's grace period must be between 0 and 86400 seconds.";
+                    return DatabaseEndpoints.WantsHtml(http)
+                        ? await ApiKeyPages.PageAsync(http, context, keys, databases, refused, status: StatusCodes.Status422UnprocessableEntity)
+                        : Results.Problem(refused, statusCode: StatusCodes.Status422UnprocessableEntity);
                 }
 
                 var intent = StepUpFlow.Intent(http, context, "rotate_api_key");

@@ -5,6 +5,7 @@ using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.AgentId;
 using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.Oidc;
+using OidcErrors = OpenIddict.Abstractions.OpenIddictConstants.Errors;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 
 using TerraScale.DotNet;
@@ -68,7 +69,7 @@ public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimite
             refusal = CustomTokenEndpoint.Matches(context.Request.Path)
                 ? Results.Json(new ErrorBody(new ErrorDetail("temporarily_unavailable", "The token request could not be checked; retry shortly.")),
                     statusCode: StatusCodes.Status503ServiceUnavailable)
-                : Results.Json(new OAuthErrorBody(Errors.TemporarilyUnavailable, "The token request could not be checked; retry shortly."),
+                : Results.Json(new OAuthErrorBody(OidcErrors.TemporarilyUnavailable, "The token request could not be checked; retry shortly."),
                     statusCode: StatusCodes.Status503ServiceUnavailable);
         }
 

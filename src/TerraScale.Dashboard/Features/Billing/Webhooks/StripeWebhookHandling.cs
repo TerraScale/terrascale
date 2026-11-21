@@ -1,5 +1,6 @@
 using System.Text;
 using Microsoft.AspNetCore.Http.Features;
+using TerraScale.Dashboard.Errors;
 
 namespace TerraScale.Dashboard.Features.Billing.Webhooks
 {
@@ -56,13 +57,19 @@ namespace TerraScale.Dashboard.Features.Billing.Webhooks
             }
 
             var body = Encoding.UTF8.GetString(payload.GetBuffer(), 0, (int)payload.Length);
-            try { await billing.HandleWebhookAsync(body, http.Request.Headers["Stripe-Signature"].ToString(), http.RequestAborted); return Results.Ok(); }
-            catch (StripeWebhookRejectedException) { return Results.BadRequest(); }
-            catch (StripeWebhookDeferredException deferred)
+            return await billing.HandleWebhookAsync(body, http.Request.Headers["Stripe-Signature"].ToString(), http.RequestAborted) switch
             {
-                http.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("StripeWebhook").StripeEventWasNotAppliedAnswering(deferred.EventId, deferred.EventType, deferred.InnerException!.GetType().Name, deferred.InnerException.Message);
-                return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
-            }
+                Done => Results.Ok(),
+                Rejected => Results.BadRequest(),
+                Deferred deferred => DeferredReceipt(http, deferred)
+            };
+        }
+
+        private static IResult DeferredReceipt(HttpContext http, Deferred deferred)
+        {
+            http.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("StripeWebhook")
+                .StripeEventWasNotAppliedAnswering(deferred.EventId, deferred.EventType, deferred.Cause.GetType().Name, deferred.Cause.Message);
+            return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
         }
 
         private static async Task<IResult> RejectAfterLingeringDiscardAsync(HttpContext http, long length)

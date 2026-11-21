@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using OpenIddict.Abstractions;
+using OidcErrors = OpenIddict.Abstractions.OpenIddictConstants.Errors;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Oidc;
@@ -75,13 +76,13 @@ public sealed class AgentExchange(KeyRing ring, LiveAgents live, AuthOptions opt
         ArgumentNullException.ThrowIfNull(request);
         if (request.ClientId != OidcIssuer.DashboardClientId)
         {
-            return OidcResults.Forbid(Errors.UnauthorizedClient, "Only the TerraScale dashboard exchanges agent tokens.");
+            return OidcResults.Forbid(OidcErrors.UnauthorizedClient, "Only the TerraScale dashboard exchanges agent tokens.");
         }
 
         if (request.GetParameters().Any(parameter => !Accepted.Contains(parameter.Key)) || request.SubjectTokenType != SubjectTokenType
             || request.SubjectToken is not { Length: > 0 and <= MaxTokenLength } subject)
         {
-            return OidcResults.Forbid(Errors.InvalidRequest, $"Send grant_type, subject_token and subject_token_type {SubjectTokenType}; nothing else.");
+            return OidcResults.Forbid(OidcErrors.InvalidRequest, $"Send grant_type, subject_token and subject_token_type {SubjectTokenType}; nothing else.");
         }
 
         if (await this.ValidateAsync(subject).ConfigureAwait(false) is not var (ownerId, agentId, expires))
@@ -162,6 +163,6 @@ public sealed class AgentExchange(KeyRing ring, LiveAgents live, AuthOptions opt
     private IResult Refuse(string? agentId, string reason)
     {
         logger.ZLogInformation($"Agent token exchange refused for agent {agentId ?? "unknown"}: {reason}");
-        return OidcResults.Forbid(Errors.InvalidGrant, Refusal);
+        return OidcResults.Forbid(OidcErrors.InvalidGrant, Refusal);
     }
 }

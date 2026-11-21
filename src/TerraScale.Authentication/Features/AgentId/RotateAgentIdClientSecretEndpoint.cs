@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Http.Features;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Features.AgentId;
@@ -23,11 +24,22 @@ public sealed class RotateAgentIdClientSecretEndpoint(PlatformAuthentication aut
         var grace = body.GraceSeconds is { } seconds ? TimeSpan.FromSeconds(seconds) : AgentIdClients.DefaultGrace;
         if (grace < TimeSpan.Zero || grace > AgentIdClients.MaxGrace)
         {
-            throw Invalid("grace_seconds must be 0 to 86400 seconds.");
+            return ErrorResults.ToResult(new Validation("grace_seconds must be 0 to 86400 seconds."));
         }
 
         var clientId = this.RouteId("client_id");
-        var proof = await proofs.PrepareHeaderAsync(owner, sent, "rotate_oauth_client", null, cancellationToken) ?? throw StepUpProofs.Required();
-        return Results.Json(await clients.RotateAsync(proof, clientId, grace, cancellationToken), AgentIdClientJson.Default.AgentIdClientSecretBody);
+        var proof = await proofs.PrepareHeaderAsync(owner, sent, "rotate_oauth_client", null, cancellationToken);
+        if (proof is null)
+        {
+            return ErrorResults.ToResult(new Forbidden("A fresh, approved, purpose-bound single-use proof is required.", "step_up_required"));
+        }
+
+        return await clients.RotateAsync(proof, clientId, grace, cancellationToken) switch
+        {
+            AgentIdClientSecretBody rotated => Results.Json(rotated, AgentIdClientJson.Default.AgentIdClientSecretBody),
+            NotFound notFound => ErrorResults.ToResult(notFound),
+            Conflict conflict => ErrorResults.ToResult(conflict),
+            Forbidden forbidden => ErrorResults.ToResult(forbidden),
+        };
     }
 }

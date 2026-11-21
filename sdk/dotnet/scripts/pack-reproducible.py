@@ -1,7 +1,6 @@
 import hashlib
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
@@ -9,6 +8,7 @@ import tempfile
 import time
 import xml.etree.ElementTree as ET
 import zipfile
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -81,7 +81,7 @@ def main(destination):
                     raise SystemExit(f"Packed contract bytes differ from source: {path}")
                 contracts[path] = digest(source_bytes)
             assemblies = {framework: digest(package.read(f"lib/{framework}/TerraScale.DotNet.dll"))
-                          for framework in ("net10.0", "net11.0")}
+                          for framework in ("net11.0",)}
             nuspec = ET.fromstring(package.read("TerraScale.DotNet.nuspec"))
             namespace = {"n": "http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd"}
             repository = nuspec.find("n:metadata/n:repository", namespace)

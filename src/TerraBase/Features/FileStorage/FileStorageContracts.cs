@@ -14,6 +14,8 @@ public sealed record FileBucketPage(IReadOnlyList<FileBucket> Items, string? Nex
 public sealed record FileObjectPage(IReadOnlyList<FileObject> Items, string? Next);
 public sealed record FileObjectListing(IReadOnlyList<string> Keys, bool Truncated);
 public readonly union FileStorageResult(FileBucket, FileBucketPage, FileObject, FileObjectPage, FileSignedUrl, Done, Validation, Forbidden, NotFound, Conflict, QuotaExceeded, Unavailable);
+public readonly union FileSignedUrlEntry(FileSignedUrl, Unavailable);
+public readonly union FileVerify(bool, Unavailable);
 public interface IFileStorage
 {
     ValueTask<FileStorageResult> CreateBucketAsync(CreateFileBucketRequest request, CancellationToken cancellationToken);
@@ -29,9 +31,9 @@ public interface IFileStorage
 public interface IFileObjectStore
 {
     bool Configured { get; }
-    ValueTask<FileSignedUrl> UploadAsync(string region, string key, FileObject file, CancellationToken cancellationToken);
-    ValueTask<FileSignedUrl> DownloadAsync(string region, string key, FileObject file, CancellationToken cancellationToken);
-    ValueTask<bool> VerifyAsync(string region, string key, FileObject file, CancellationToken cancellationToken);
+    ValueTask<FileSignedUrlEntry> UploadAsync(string region, string key, FileObject file, CancellationToken cancellationToken);
+    ValueTask<FileSignedUrlEntry> DownloadAsync(string region, string key, FileObject file, CancellationToken cancellationToken);
+    ValueTask<FileVerify> VerifyAsync(string region, string key, FileObject file, CancellationToken cancellationToken);
     ValueTask DeleteAsync(string region, string key, CancellationToken cancellationToken);
     ValueTask<FileObjectListing> ListAsync(string region, string prefix, CancellationToken cancellationToken);
 }

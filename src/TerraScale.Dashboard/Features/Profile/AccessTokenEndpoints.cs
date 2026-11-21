@@ -36,7 +36,7 @@ namespace TerraScale.Dashboard.Features.Profile
                     retained = true;
                     return ProfileView.Create(new(ShellModel.For(http, context, "Profile"), "access-tokens", Tokens: await tokens.ListAsync(context, http.RequestAborted), CreatedToken: created, Sessions: await sessions.ListAsync(http, context.Session)));
                 }
-                catch (AccountAccessException error) { return await FailureAsync(http, context, sessions, tokens, error); }
+                catch (AccountAccessException error) { return await FailureAsync(http, context, sessions, tokens, error.Message, error.StatusCode); }
             }
             finally
             {
@@ -49,10 +49,10 @@ namespace TerraScale.Dashboard.Features.Profile
             }
         }
 
-        internal static async Task<IResult> FailureAsync(HttpContext http, AccountContext context, DashboardSessions sessions, IProfileTokens tokens, AccountAccessException error)
+        internal static async Task<IResult> FailureAsync(HttpContext http, AccountContext context, DashboardSessions sessions, IProfileTokens tokens, string message, int statusCode)
         {
-            var view = ProfileView.Create(new(ShellModel.For(http, context, "Profile"), "access-tokens", Error: error.Message, Tokens: await tokens.ListAsync(context, http.RequestAborted), Sessions: await sessions.ListAsync(http, context.Session)));
-            view.StatusCode = error.StatusCode;
+            var view = ProfileView.Create(new(ShellModel.For(http, context, "Profile"), "access-tokens", Error: message, Tokens: await tokens.ListAsync(context, http.RequestAborted), Sessions: await sessions.ListAsync(http, context.Session)));
+            view.StatusCode = statusCode;
             return view;
         }
     }

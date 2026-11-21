@@ -1,4 +1,7 @@
+using TerraScale.Dashboard.Common.Accounts;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Errors;
+using TerraScale.Dashboard.Platform.TsAuth;
 using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard.Features.Organizations.Projects
@@ -17,17 +20,23 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
             }
 
             context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, requireProject: true);
+            if (http.Request.Query["after"].Count > 1)
+            {
+                return ProjectInvitationEndpoints.Page(http, context, [], error: "Choose one page cursor. Open the first page.", status: 400);
+            }
+
+            var after = http.Request.Query["after"].Count == 0 ? null : http.Request.Query["after"].ToString();
             try
             {
-                if (http.Request.Query["after"].Count > 1)
+                var read = await invitations.ReadAsync(context, after, http.RequestAborted);
+                return read switch
                 {
-                    throw new AccountAccessException("Choose one page cursor. Open the first page.", 400);
-                }
-
-                var after = http.Request.Query["after"].Count == 0 ? null : http.Request.Query["after"].ToString();
-                var page = await invitations.ReadAsync(context, after, http.RequestAborted);
-                return ProjectInvitationEndpoints.Page(http, context, page.Items, page.Next, previous: after is not null, after: after ?? "",
-                    notice: http.Request.Query["revoked"] == "1" ? "Project invitation revoked. Its acceptance link no longer works." : "");
+                    TsAuthPlatformPage<TsAuthPlatformInvitation> page => ProjectInvitationEndpoints.Page(http, context, page.Items, page.Next, previous: after is not null, after: after ?? "",
+                        notice: http.Request.Query["revoked"] == "1" ? "Project invitation revoked. Its acceptance link no longer works." : ""),
+                    Forbidden error => ProjectInvitationEndpoints.Page(http, context, [], error: error.Message, status: 403),
+                    Validation error => ProjectInvitationEndpoints.Page(http, context, [], error: error.Message, status: 400),
+                    Unavailable => ProjectInvitationEndpoints.Page(http, context, [], error: "Project invitations could not be loaded. Reload this page to retry.", status: 503),
+                };
             }
             catch (AccountAccessException error) { return ProjectInvitationEndpoints.Page(http, context, [], error: error.Message, status: error.StatusCode); }
             catch (Exception error) when (error is IOException or HttpRequestException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)

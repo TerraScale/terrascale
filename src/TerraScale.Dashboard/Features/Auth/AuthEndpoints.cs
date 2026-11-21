@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Features.Profile;
 using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Common.UI;
@@ -98,31 +99,30 @@ namespace TerraScale.Dashboard.Features.Auth
                 if (flow.TokenName.Length != 0)
                 {
                     var tokenExpiresAt = AccessTokens.ExpiresAt(time, flow.TokenDays);
-                    return await AccessTokenEndpoints.IssueAsync(context, flow, await auth.ExchangeAsync(code, flow, tokenExpiresAt, context.RequestAborted), tokenExpiresAt);
+                    var exchanged = await auth.ExchangeAsync(code, flow, tokenExpiresAt, context.RequestAborted);
+                    return exchanged switch
+                    {
+                        SessionRecord fresh => await AccessTokenEndpoints.IssueAsync(context, flow, fresh, tokenExpiresAt),
+                        Validation error => ExchangeRefused(context, flow, error)
+                    };
                 }
 
                 if (flow.Mcp is not null)
                 {
                     var tokenExpiresAt = McpOAuth.TokenExpiresAt(time);
-                    return await McpOAuth.GrantAsync(context, flow.Mcp, await auth.ExchangeAsync(code, flow, tokenExpiresAt, context.RequestAborted), flow.StepUp, tokenExpiresAt);
+                    var exchanged = await auth.ExchangeAsync(code, flow, tokenExpiresAt, context.RequestAborted);
+                    return exchanged switch
+                    {
+                        SessionRecord fresh => await McpOAuth.GrantAsync(context, flow.Mcp, fresh, flow.StepUp, tokenExpiresAt),
+                        Validation error => ExchangeRefused(context, flow, error)
+                    };
                 }
 
-                var session = await auth.ExchangeAsync(code, flow, null, context.RequestAborted);
-                var account = await EnsureAccountAsync(context, session);
-                await sessions.StartAsync(context, session);
-                var target = flow.ReturnTo == "/" && !account.OnboardingCompleted ? "/onboarding" : flow.ReturnTo;
-                // API/CLI/MCP continuations retain their exact redirects. Organization choice is dashboard navigation.
-                var offersChoice = !target.StartsWith("/api/", StringComparison.Ordinal) && !target.StartsWith("/onboarding", StringComparison.Ordinal) &&
-                    !target.StartsWith("/organizations/choose", StringComparison.Ordinal);
-                var recorded = RecordSignInAsync(context, session, account);
-                var workspaces = offersChoice && session.OrganizationPicker ? context.RequestServices.GetRequiredService<AccountService>().GetContextAsync(session, context.RequestAborted) : null;
-                await recorded;
-                if (workspaces is not null && (await workspaces).Organizations.Count > 1)
+                return (await auth.ExchangeAsync(code, flow, null, context.RequestAborted)) switch
                 {
-                    return HttpRedirects.SeeOther("/organizations/choose?returnTo=" + Uri.EscapeDataString(target));
-                }
-
-                return HttpRedirects.SeeOther(target);
+                    SessionRecord fresh => await CompleteSignInAsync(context, sessions, flow, fresh),
+                    Validation error => ExchangeRefused(context, flow, error)
+                };
             }
             catch (AccountAccessException error) when (flow.StepUp is not null || flow.Mcp is not null)
             { return Failure(context, flow.ReturnTo, error.Message, error.StatusCode, nameof(AccountAccessException)); }
@@ -167,6 +167,31 @@ namespace TerraScale.Dashboard.Features.Auth
 
             await sessions.EndAsync(context);
             return HttpRedirects.SeeOther(await logout.EndSessionUrlAsync($"{context.Request.Scheme}://{context.Request.Host}", session?.IdToken, context.RequestAborted));
+        }
+
+        private static IResult ExchangeRefused(HttpContext context, OidcFlow flow, Validation error)
+        {
+            return flow.StepUp is not null || flow.Mcp is not null
+                ? Failure(context, flow.ReturnTo, error.Message, StatusCodes.Status422UnprocessableEntity, nameof(AccountAccessException))
+                : RequestError.Response(context, StatusCodes.Status422UnprocessableEntity, error.Message);
+        }
+
+        private static async Task<IResult> CompleteSignInAsync(HttpContext context, DashboardSessions sessions, OidcFlow flow, SessionRecord session)
+        {
+            var account = await EnsureAccountAsync(context, session);
+            await sessions.StartAsync(context, session);
+            var target = flow.ReturnTo == "/" && !account.OnboardingCompleted ? "/onboarding" : flow.ReturnTo;
+            var offersChoice = !target.StartsWith("/api/", StringComparison.Ordinal) && !target.StartsWith("/onboarding", StringComparison.Ordinal) &&
+                !target.StartsWith("/organizations/choose", StringComparison.Ordinal);
+            var recorded = RecordSignInAsync(context, session, account);
+            var workspaces = offersChoice && session.OrganizationPicker ? context.RequestServices.GetRequiredService<AccountService>().GetContextAsync(session, context.RequestAborted) : null;
+            await recorded;
+            if (workspaces is not null && (await workspaces).Organizations.Count > 1)
+            {
+                return HttpRedirects.SeeOther("/organizations/choose?returnTo=" + Uri.EscapeDataString(target));
+            }
+
+            return HttpRedirects.SeeOther(target);
         }
 
         // The sign-in joins the audit history of the organization it opens; ts-auth validates the membership.

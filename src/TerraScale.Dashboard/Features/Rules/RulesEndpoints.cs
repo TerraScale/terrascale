@@ -1,5 +1,6 @@
 using System.Text.Json;
 using TerraScale.Dashboard.Common.UI;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.TerraBase.Contracts;
 using TerraScale.TerraBase.Contracts.Management;
@@ -69,11 +70,14 @@ namespace TerraScale.Dashboard.Features.Rules
             var playground = Playground(form);
             try
             {
-                var deployed = await rules.DeployAsync(context!, database!, loaded.Length == 0 ? null : loaded, source, http.RequestAborted);
-                return deployed.Rules is { } saved
-                    ? await RenderAsync(http, rules, context!, database!, (source, saved.Version), playground, state: page => page with { Notice = "Rules deployed.", Warnings = saved.Warnings ?? [] })
-                    : await RenderAsync(http, rules, context!, database!, (source, loaded), playground,
-                        state: page => page with { Error = "The rules were not deployed.", Problems = deployed.Problems });
+                return await rules.DeployAsync(context!, database!, loaded.Length == 0 ? null : loaded, source, http.RequestAborted) switch
+                {
+                    TerraBaseRulesDeploy { Rules: { } saved } => await RenderAsync(http, rules, context!, database!, (source, saved.Version), playground,
+                        state: page => page with { Notice = "Rules deployed.", Warnings = saved.Warnings ?? [] }),
+                    TerraBaseRulesDeploy notDeployed => await RenderAsync(http, rules, context!, database!, (source, loaded), playground,
+                        state: page => page with { Error = "The rules were not deployed.", Problems = notDeployed.Problems }),
+                    Validation invalid => await RenderAsync(http, rules, context!, database!, (source, loaded), playground, state: page => Refused(page, invalid.Message)),
+                };
             }
             catch (Exception error) when (KnownFailure(error, http))
             {
@@ -94,8 +98,12 @@ namespace TerraScale.Dashboard.Features.Rules
             var playground = Playground(form);
             try
             {
-                var result = await rules.TestAsync(context!, database!, source, playground, http.RequestAborted);
-                return await RenderAsync(http, rules, context!, database!, (source, loaded), playground, state: page => page with { Result = result });
+                return await rules.TestAsync(context!, database!, source, playground, http.RequestAborted) switch
+                {
+                    TerraBaseRulesTestResult result => await RenderAsync(http, rules, context!, database!, (source, loaded), playground, state: page => page with { Result = result }),
+                    Validation invalid => await RenderAsync(http, rules, context!, database!, (source, loaded), playground,
+                        state: page => page with { PlaygroundError = invalid.Message }),
+                };
             }
             catch (Exception error) when (KnownFailure(error, http))
             {
@@ -132,6 +140,9 @@ namespace TerraScale.Dashboard.Features.Rules
             error is TerraBasePreconditionFailedException { ErrorCode: "version_mismatch" }
                 ? page with { Stale = true, Error = "These rules changed since you loaded them." }
                 : page with { Error = FailureText(error) };
+
+        private static RulesPage Refused(RulesPage page, string message) =>
+            page with { Error = message };
 
         private static async Task<(AccountContext? Context, DatabaseRecord? Database, IFormCollection Form, IResult? Refusal)> ReadAsync(HttpContext http, DashboardSessions sessions, AccountService accounts)
         {
@@ -171,9 +182,17 @@ namespace TerraScale.Dashboard.Features.Rules
                     versions = await rules.VersionsAsync(context, database, http.RequestAborted);
                     if (compare.Length > 0)
                     {
-                        var older = await rules.VersionAsync(context, database, compare, http.RequestAborted);
-                        comparison = new(versions.FirstOrDefault(item => item.Version == older.Version) ?? new(older.Version, older.UpdatedAt, older.UpdatedBy, ""),
-                            RulesDiff.Lines(RulesBackend.Source(older.Tables), RulesBackend.Source(current.Tables)));
+                        switch (await rules.VersionAsync(context, database, compare, http.RequestAborted))
+                        {
+                            case TerraBaseRules older:
+                                comparison = new(versions.FirstOrDefault(item => item.Version == older.Version) ?? new(older.Version, older.UpdatedAt, older.UpdatedBy, ""),
+                                    RulesDiff.Lines(RulesBackend.Source(older.Tables), RulesBackend.Source(current.Tables)));
+                                break;
+                            case Errors.NotFound missing:
+                                error = missing.Message ?? "This rules version does not exist.";
+                                status = 404;
+                                break;
+                        }
                     }
                 }
             }

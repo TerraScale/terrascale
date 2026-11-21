@@ -338,28 +338,25 @@ internal sealed class PointInTimeRestore(
         RestoredBackup restored;
         try
         {
-            restored = await backup.Reader.BuildAsync(file, BackupLayout.KeyScope(source), chosen, at, until: null, snapshots.Next, cancellationToken)
+            var built = await backup.Reader.BuildAsync(file, BackupLayout.KeyScope(source), chosen, at, until: null, snapshots.Next, cancellationToken)
                 .ConfigureAwait(false);
-        }
-        catch (BackupHistoryIncompleteException)
-        {
-            return HistoryIncomplete();
-        }
-        catch (BackupInventoryLimitException error)
-        {
-            return new Unavailable(error.Message, "backup_inventory_limit");
-        }
-        catch (RestorePointUnprovenException error)
-        {
-            return new Conflict("continuous backup cannot place pointInTime between two transactions: " + error.Message, "restore_point_unproven");
+            if (built is not RestoredBackup builtBackup)
+            {
+                return built switch
+                {
+                    BackupHistoryIncomplete => HistoryIncomplete(),
+                    RestorePointUnproven error => new Conflict("continuous backup cannot place pointInTime between two transactions: " + error.Reason, "restore_point_unproven"),
+                    BackupUnreadable => new Conflict("continuous backup of this database cannot be read: an object fails authentication or its integrity check", "backup_unreadable"),
+                    Unavailable error => error,
+                    RestoredBackup => throw new UnreachableException(),
+                };
+            }
+
+            restored = builtBackup;
         }
         catch (DatabaseShreddedException error)
         {
             return Shredded(error.ShreddedAt);
-        }
-        catch (InvalidDataException)
-        {
-            return new Conflict("continuous backup of this database cannot be read: an object fails authentication or its integrity check", "backup_unreadable");
         }
 
         return restored;

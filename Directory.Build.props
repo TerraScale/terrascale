@@ -10,9 +10,7 @@
 
   <PropertyGroup>
     <TargetFramework>net11.0</TargetFramework>
-    <!-- TerraBase's discriminated unions (`union` declarations) are a preview language feature; every other area is on 14.0. -->
-    <LangVersion Condition="'$(IsTerraBaseArea)' == 'true'">preview</LangVersion>
-    <LangVersion Condition="'$(IsTerraBaseArea)' != 'true'">14.0</LangVersion>
+    <LangVersion>preview</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>

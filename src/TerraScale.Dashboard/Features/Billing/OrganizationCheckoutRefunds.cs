@@ -1,18 +1,14 @@
 using System.Globalization;
 using System.Net;
 using Stripe;
+using TerraScale.Dashboard.Errors;
 using CheckoutSession = Stripe.Checkout.Session;
 
 namespace TerraScale.Dashboard.Features.Billing;
 
-internal sealed class OrganizationRefundUnsettledException(string status) : IOException("Organization invoice refund is " + status + ".")
-{
-    public string Status { get; } = status;
-}
-
 public sealed partial class StripeBilling
 {
-    private async Task<bool> CancelDraftPaymentAsync(PendingOrganizationCheckout draft, CancellationToken cancellationToken)
+    private async Task<RefundCancellation> CancelDraftPaymentAsync(PendingOrganizationCheckout draft, CancellationToken cancellationToken)
     {
         var client = await ClientAsync(cancellationToken);
         CheckoutSession checkout;
@@ -63,7 +59,12 @@ public sealed partial class StripeBilling
                     continue;
                 }
 
-                await RefundDraftPaymentAsync(client, payment, cancellationToken);
+                RefundCancellation settled = await RefundDraftPaymentAsync(client, payment, cancellationToken);
+                if (settled is OrganizationRefundPending pendingRefund)
+                {
+                    return pendingRefund;
+                }
+
                 paid += payment.AmountPaid.Value;
             }
 
@@ -119,7 +120,7 @@ public sealed partial class StripeBilling
         return true;
     }
 
-    private static async Task RefundDraftPaymentAsync(StripeClient client, InvoicePayment payment, CancellationToken cancellationToken)
+    private static async Task<RefundCancellation> RefundDraftPaymentAsync(StripeClient client, InvoicePayment payment, CancellationToken cancellationToken)
     {
         var options = payment.Payment switch
         {
@@ -134,7 +135,7 @@ public sealed partial class StripeBilling
         {
             if (refund.Status is "pending" or "requires_action")
             {
-                throw new OrganizationRefundUnsettledException(refund.Status);
+                return new OrganizationRefundPending(refund.Status);
             }
             if (refund.Status == "succeeded")
             {
@@ -148,16 +149,13 @@ public sealed partial class StripeBilling
 
         if (refunded >= payment.AmountPaid)
         {
-            return;
+            return true;
         }
 
         options.Amount = payment.AmountPaid - refunded;
         options.Reason = "requested_by_customer";
         var result = await client.V1.Refunds.CreateAsync(options,
             Idempotent("organization-refund-" + payment.Id + "-" + refunded.ToString(CultureInfo.InvariantCulture) + "-" + lastFailure), cancellationToken);
-        if (result.Status != "succeeded")
-        {
-            throw new OrganizationRefundUnsettledException(result.Status);
-        }
+        return result.Status == "succeeded" ? true : new OrganizationRefundPending(result.Status);
     }
 }

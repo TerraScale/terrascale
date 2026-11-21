@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.AgentId;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
@@ -40,9 +41,12 @@ public sealed record KeyRingRefresh
     public TimeSpan Interval { get; }
 }
 
+public sealed record Added;
+
+public readonly union RotateIfDueResult(Added, Done, Conflict);
+
 public sealed class KeyRing(AuthData data, AuthOptions options, TimeProvider clock, KeyRingRefresh? refresh = null)
 {
-    /// <summary>The most keys an instance holds, which bounds every lookup. A rotation that would exceed it after retirement is refused (409).</summary>
     public const int MaxKeys = 16;
 
     /// <summary>A scheduled rotation adds a key once the newest one is this old.</summary>
@@ -201,41 +205,23 @@ public sealed class KeyRing(AuthData data, AuthOptions options, TimeProvider clo
     public static ApiException NoSigningKeys() =>
         new(503, NoSigningKeysCode, "no signing keys: startup bootstrap pending (docs/auth/signing-keys.md)");
 
-    /// <summary>
-    /// Adds a key now, published at once and signing one refresh interval later, when every replica's cached JWKS holds it,
-    /// and retires keys superseded for at least <see cref="Overlap"/>. The caller owns the returned key and disposes it.
-    /// </summary>
-    public async Task<Es256Key> RotateAsync(string instanceId, CancellationToken cancellationToken) =>
-        await this.RotateAsync(instanceId, scheduled: false, cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidOperationException("An unscheduled rotation always adds a key.");
-
-    /// <summary>
-    /// The scheduled rotation: once the newest key is <see cref="RotationAge"/> old, adds a key that signs after
-    /// <see cref="Overlap"/>, and retires keys superseded for at least <see cref="Overlap"/>. Returns whether it added a key.
-    /// </summary>
-    public async Task<bool> RotateIfDueAsync(string instanceId, CancellationToken cancellationToken)
-    {
-        using var key = await this.RotateAsync(instanceId, scheduled: true, cancellationToken).ConfigureAwait(false);
-        return key is not null;
-    }
-
-    // Every key is verified and opened first, so a rotation never adds to keys this replica cannot use.
-    private async Task<Es256Key?> RotateAsync(string instanceId, bool scheduled, CancellationToken cancellationToken)
+    public async Task<RotateIfDueResult> RotateIfDueAsync(string instanceId, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(instanceId);
         var current = await this.ReadAsync(this.authority, instanceId, fresh: true, cancellationToken).ConfigureAwait(false);
         if (current.Keys.Count == 0)
         {
             RequireImplicitFirstKey(instanceId);
-            return await this.CreateAsync(instanceId, TimeSpan.Zero, cancellationToken).ConfigureAwait(false);
+            (await this.CreateAsync(instanceId, TimeSpan.Zero, cancellationToken).ConfigureAwait(false)).Dispose();
+            return new Added();
         }
 
         var keys = this.Verify(instanceId, current);
         this.Restore(instanceId, keys).ForEach(key => key.Key.Dispose());
         var now = clock.GetUtcNow().ToUnixTimeSeconds();
-        if (scheduled && now < keys.Max(key => key.CreatedAt) + (long)RotationAge.TotalSeconds)
+        if (now < keys.Max(key => key.CreatedAt) + (long)RotationAge.TotalSeconds)
         {
-            return null;
+            return new Done();
         }
 
         // Never retires the newest key or one whose successor is not yet signing.
@@ -243,7 +229,7 @@ public sealed class KeyRing(AuthData data, AuthOptions options, TimeProvider clo
         var retired = byActivation.TakeWhile((_, index) => index < byActivation.Count - 1 && byActivation[index + 1].ActivatesAt + (long)Overlap.TotalSeconds <= now).ToList();
         if (keys.Length - retired.Count >= MaxKeys)
         {
-            throw new ApiException(409, "signing_key_limit", "The signing key ring is full until its superseded keys pass the overlap.");
+            return new Conflict("The signing key ring is full until its superseded keys pass the overlap.", "signing_key_limit");
         }
 
         // Retired first, so the instance never holds more than MaxKeys keys.
@@ -254,10 +240,11 @@ public sealed class KeyRing(AuthData data, AuthOptions options, TimeProvider clo
             _ = await Guard(() => data.SaveAsync(Change.Delete(record, version), cancellationToken), cancellationToken).ConfigureAwait(false);
         }
 
-        var key = await this.CreateAsync(instanceId, scheduled ? Overlap : this.refreshInterval, cancellationToken).ConfigureAwait(false);
+        var key = await this.CreateAsync(instanceId, Overlap, cancellationToken).ConfigureAwait(false);
         // This replica serves the new set from its next read.
         this.authority.Cached.TryRemove(instanceId, out _);
-        return key;
+        key.Dispose();
+        return new Added();
     }
 
     // The platform issuer's first key comes only from ProvisionAsync: an empty ring there is lost or wiped state, and a

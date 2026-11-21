@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using OpenIddict.Abstractions;
+using OidcErrors = OpenIddict.Abstractions.OpenIddictConstants.Errors;
 using OpenIddict.Server;
 using OpenIddict.Server.AspNetCore;
 using TerraScale.Authentication.Configuration;
@@ -57,7 +58,7 @@ public sealed class AgentTokens(AuthData data, AgentAssertions assertions, KeyRi
             || !TryScopes(request.GetParameter(Parameters.Scope)?.GetRawValue(), out var scopes)
             || subject is not (null or "owner" or "agent"))
         {
-            return Error(Errors.InvalidRequest, "Send grant_type, one assertion, and optionally scope and requested_subject (owner or agent); nothing else.");
+            return Error(OidcErrors.InvalidRequest, "Send grant_type, one assertion, and optionally scope and requested_subject (owner or agent); nothing else.");
         }
 
         return await this.IssueAsync(project, assertion, scopes, subject is "agent", cancellationToken).ConfigureAwait(false);
@@ -166,7 +167,7 @@ public sealed class AgentTokens(AuthData data, AgentAssertions assertions, KeyRi
     private IResult Refuse(string project, string? agentId, string reason)
     {
         logger.ZLogInformation($"Agent token refused in project {project} for agent {agentId ?? "unknown"}: {reason}");
-        return Error(Errors.InvalidGrant, Refusal);
+        return Error(OidcErrors.InvalidGrant, Refusal);
     }
 
     private static IResult Error(string error, string description) =>
