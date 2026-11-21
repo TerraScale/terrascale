@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.RateLimiting;
@@ -30,6 +31,8 @@ public sealed record AgentBody(string Id, string ProjectId, string OwnerUserId, 
     IReadOnlyList<AgentKeyBody> Keys, DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt, DateTimeOffset? RevokedAt, DateTimeOffset? LastUsedAt, bool ShareOwnerEmail);
 public sealed record AgentSharingRequest(bool? ShareOwnerEmail);
 public sealed record AgentPageBody(IReadOnlyList<AgentBody> Items, string? Next);
+
+public readonly union GetAgentResult(AgentBody, NotFound);
 
 public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, AgentLifecycleEvents events, AttemptLimiter limiter, TimeProvider clock, ILogger<AgentDirectory> logger)
 {
@@ -102,11 +105,12 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
         return Body(agent, [stored], new(user.Value.Id, user.Value.AuthEpoch, stamp, false));
     }
 
-    public async Task<AgentBody> GetAsync(string project, string agentId, CancellationToken cancellationToken)
+    public async Task<GetAgentResult> GetAsync(string project, string agentId, CancellationToken cancellationToken)
     {
-        var agent = await data.ReadAsync((db, token) => db.Agents.SingleOrDefaultAsync(row => row.ProjectId == project && row.Id == agentId, token), cancellationToken).ConfigureAwait(false)
-            ?? throw PlatformDirectory.NotFound();
-        return (await this.BodiesAsync(project, [agent], cancellationToken).ConfigureAwait(false))[0];
+        var agent = await data.ReadAsync((db, token) => db.Agents.SingleOrDefaultAsync(row => row.ProjectId == project && row.Id == agentId, token), cancellationToken).ConfigureAwait(false);
+        return agent is null
+            ? new NotFound()
+            : (await this.BodiesAsync(project, [agent], cancellationToken).ConfigureAwait(false))[0];
     }
 
     public async Task<AgentPageBody> ListAsync(string project, string? owner, int limit, string? after, CancellationToken cancellationToken)
