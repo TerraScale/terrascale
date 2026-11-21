@@ -10,12 +10,18 @@ calling: version 2 authorizes a permanent project fence and TerraBase's purge of
 the project's databases, TerraBase API keys and backup
 destinations.
 
-The result is the existing `TerraBaseProjectClosure`: only HTTP 200 with
-`status: "accepted"` or HTTP 202 with `status: "pending"`, both naming the supplied
-`closureId`, are valid. Pending is not completed erasure. Other success statuses,
-contradictory states and another closure ID throw `invalid_response`. Failures,
-including 404, do not prove completion. Requests are sent once; a caller retry
-must retain the same closure ID and authority organization.
+The result is `ProjectClosureResult`: the existing `TerraBaseProjectClosure`
+when HTTP 200 answers `status: "accepted"` or HTTP 202 answers
+`status: "pending"`, both naming the supplied `closureId`, and a refusal case
+otherwise — `Conflict`, `Validation`, `Unauthorized`, `Forbidden`,
+`QuotaExceeded`, `Unavailable` or `TerraBaseClosureUnsupported`. Pending is not
+completed erasure. Other success statuses, contradictory states and another
+closure ID answer `Unavailable` with code `invalid_response`. A 404, 405 or
+501, and a 400 `unsupported`, `unsupported_version` or `invalid_request`,
+answer `TerraBaseClosureUnsupported`: this TerraBase cannot serve the closure
+contract, which neither proves closure completed nor refuses it. No refusal
+case proves completion. Requests are sent once; a caller retry must retain the
+same closure ID and authority organization.
 
 `CloseProjectAsync` continues sending version 1 and remains empty-project-only.
 The new method is additive; no package version or storage format changes here.

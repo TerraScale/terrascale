@@ -3,6 +3,8 @@ using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Storage;
 using TerraScale.DotNet.TerraBase;
+using SdkConflict = TerraScale.DotNet.Errors.Conflict;
+using SdkErrors = TerraScale.DotNet.Errors;
 using ZLogger;
 
 namespace TerraScale.Authentication.Features.Platform;
@@ -45,22 +47,28 @@ public sealed class Closures(
     {
         ArgumentNullException.ThrowIfNull(job);
         using var home = HomeReads.Begin();
-        TerraBaseProjectClosure? answer;
+        ProjectClosureResult? result;
         try
         {
-            answer = job.Value.ProjectClosureVersion == 2
+            result = job.Value.ProjectClosureVersion == 2
                 ? await this.EraseOrCloseAsync(job.Value, cancellationToken).ConfigureAwait(false)
                 : await terraBase.CloseProjectAsync(job.Value.SubjectId, job.Value.OrganizationId!, job.Value.Id, cancellationToken).ConfigureAwait(false);
         }
-        catch (TerraBaseConflictException error) when (error.ErrorCode is "not_empty" or "closure_conflict" or "binding_conflict" or "platform_project_protected")
+        catch (Exception error) when (error is HttpRequestException or TimeoutException or ApiException { Status: StatusCodes.Status503ServiceUnavailable }
+            && !cancellationToken.IsCancellationRequested)
+        {
+            await this.DeferAsync(job, "terrabase_unavailable", cancellationToken).ConfigureAwait(false);
+            return false;
+        }
+        if (result is SdkConflict { Code: "not_empty" or "closure_conflict" or "binding_conflict" or "platform_project_protected" } refusal)
         {
             // TerraBase wrote nothing for this request. Once an earlier answer showed the fence, a machine that has not received
             // it yet can refuse, so the refusal no longer proves the fence was never written: stay pending.
-            var refused = error.ErrorCode switch
+            var refused = refusal.Code switch
             {
                 "not_empty" => PlatformDirectory.Conflict("not_empty", "Delete the project's databases, TerraBase API keys and backup destination first."),
                 "platform_project_protected" => PlatformDirectory.PlatformProjectProtected(),
-                _ => PlatformDirectory.Conflict(error.ErrorCode, "TerraBase holds this project id under another closure or organization."),
+                _ => PlatformDirectory.Conflict(refusal.Code, "TerraBase holds this project id under another closure or organization."),
             };
             return await this.CancelAsync(job, cancellationToken).ConfigureAwait(false) switch
             {
@@ -70,22 +78,11 @@ public sealed class Closures(
                 _ => false,
             };
         }
-        catch (Exception error) when (error is TerraBaseException or HttpRequestException or TimeoutException or ApiException { Status: StatusCodes.Status503ServiceUnavailable }
-            && !cancellationToken.IsCancellationRequested)
+        if (result is not TerraBaseProjectClosure answer)
         {
-            // No answer is evidence of absence or acceptance; a 404 can be a wrong listener or mapping.
-            await this.DeferAsync(job, error is TerraBaseException { ErrorCode: { } code } && code.Length <= 64 && code.All(character => char.IsAsciiLetterLower(character) || character == '_') ? code : "terrabase_unavailable",
-                cancellationToken).ConfigureAwait(false);
+            await this.DeferAsync(job, result is null ? "terrabase_erasure_unsupported" : FailureCode(result.GetValueOrDefault()), cancellationToken).ConfigureAwait(false);
             return false;
         }
-
-        if (answer is null)
-        {
-            // The older contract refused contents or could not read a newer fence. Neither disproves an existing fence.
-            await this.DeferAsync(job, "terrabase_erasure_unsupported", cancellationToken).ConfigureAwait(false);
-            return false;
-        }
-
         // TerraBase showed the fence: record it before anything else, so no later refusal can cancel this intent.
         if (await this.MarkFenceSeenAsync(job, cancellationToken).ConfigureAwait(false) is not { } seen)
         {
@@ -103,27 +100,32 @@ public sealed class Closures(
             || await this.WithoutIntentAsync(job, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<TerraBaseProjectClosure?> EraseOrCloseAsync(ClosureJob job, CancellationToken cancellationToken)
+    private static string FailureCode(ProjectClosureResult result) => result switch
     {
-        try
+        SdkErrors.Validation { Code: { Length: > 0 and <= 64 } code } when code.All(character => char.IsAsciiLetterLower(character) || character == '_') => code,
+        SdkErrors.Unavailable { Code: { Length: > 0 and <= 64 } code } when code.All(character => char.IsAsciiLetterLower(character) || character == '_') => code,
+        SdkErrors.Conflict { Code: { Length: > 0 and <= 64 } code } when code.All(character => char.IsAsciiLetterLower(character) || character == '_') => code,
+        SdkErrors.Unauthorized { Code: { Length: > 0 and <= 64 } code } when code.All(character => char.IsAsciiLetterLower(character) || character == '_') => code,
+        SdkErrors.Forbidden { Code: { Length: > 0 and <= 64 } code } when code.All(character => char.IsAsciiLetterLower(character) || character == '_') => code,
+        SdkErrors.QuotaExceeded { Code: { Length: > 0 and <= 64 } code } when code.All(character => char.IsAsciiLetterLower(character) || character == '_') => code,
+        TerraBaseClosureUnsupported { Code: { Length: > 0 and <= 64 } code } when code.All(character => char.IsAsciiLetterLower(character) || character == '_') => code,
+        _ => "terrabase_unavailable",
+    };
+
+    private async Task<ProjectClosureResult?> EraseOrCloseAsync(ClosureJob job, CancellationToken cancellationToken)
+    {
+        var erased = await terraBase.EraseProjectAsync(job.SubjectId, job.OrganizationId!, job.Id, cancellationToken).ConfigureAwait(false);
+        if (erased is not TerraBaseClosureUnsupported)
         {
-            return await terraBase.EraseProjectAsync(job.SubjectId, job.OrganizationId!, job.Id, cancellationToken).ConfigureAwait(false);
+            return erased;
         }
-        catch (TerraBaseException error) when (error.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.MethodNotAllowed or System.Net.HttpStatusCode.NotImplemented
-            || error is TerraBaseValidationException && error.ErrorCode is "invalid_request" or "unsupported" or "unsupported_version")
+
+        var legacy = await terraBase.CloseProjectAsync(job.SubjectId, job.OrganizationId!, job.Id, cancellationToken).ConfigureAwait(false);
+        if (legacy is SdkConflict { Code: "not_empty" or "closure_conflict" })
         {
-            try
-            {
-                // Same authority and closure id, using today's empty-only path. It never authorizes destructive completion.
-                var legacy = await terraBase.CloseProjectAsync(job.SubjectId, job.OrganizationId!, job.Id, cancellationToken).ConfigureAwait(false);
-                return legacy with { EvidenceVersion = 0 };
-            }
-            catch (TerraBaseConflictException refused) when (refused.ErrorCode is "not_empty" or "closure_conflict")
-            {
-                // An earlier v2 fence may exist even when its response was lost before auth recorded FenceSeen.
-                return null;
-            }
+            return null;
         }
+        return legacy is TerraBaseProjectClosure closure ? closure with { EvidenceVersion = 0 } : legacy;
     }
 
     // This intent vanished (a concurrent refusal cancelled it) after TerraBase showed the fence: done when the root is gone,

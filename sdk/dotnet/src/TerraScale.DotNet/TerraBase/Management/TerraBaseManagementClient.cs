@@ -1,5 +1,7 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json.Serialization.Metadata;
+using TerraScale.DotNet.Errors;
 
 namespace TerraScale.DotNet.TerraBase;
 
@@ -113,11 +115,11 @@ public sealed class TerraBaseManagementClient
     /// Served only on TerraBase's private listener behind the peer credential, so use a client without
     /// <see cref="TerraBaseManagementClientOptions.AccessTokenProvider"/>;
     /// no user acts. Idempotent: retry with the same <paramref name="closureId"/> after a lost response. A refusal writes
-    /// nothing and throws <see cref="TerraBaseConflictException"/> (<c>not_empty</c>, <c>closure_conflict</c>,
+    /// nothing and answers <see cref="Conflict"/> (<c>not_empty</c>, <c>closure_conflict</c>,
     /// <c>binding_conflict</c>, or <c>platform_project_protected</c> for the ts-auth and ts-dashboard platform projects).
-    /// Any other failure, a 404 included, proves nothing about the project.
+    /// Any other outcome proves nothing about the project.
     /// </summary>
-    public Task<TerraBaseProjectClosure> CloseProjectAsync(string projectId, string authorityOrganizationId, string closureId, CancellationToken cancellationToken = default) =>
+    public Task<ProjectClosureResult> CloseProjectAsync(string projectId, string authorityOrganizationId, string closureId, CancellationToken cancellationToken = default) =>
         SendProjectClosureAsync(projectId, authorityOrganizationId, closureId, 1, cancellationToken);
 
     /// <summary>
@@ -126,22 +128,43 @@ public sealed class TerraBaseManagementClient
     /// destinations. Served only on TerraBase's private listener behind the peer credential; use a client without
     /// <see cref="TerraBaseManagementClientOptions.AccessTokenProvider"/>. The caller must obtain consent before calling.
     /// Idempotent: retry with the same <paramref name="closureId"/> after a lost response. A pending response is not proof
-    /// of completed erasure. Any failure, a 404 included, proves nothing about completion.
+    /// of completed erasure. Any failure proves nothing about completion.
     /// </summary>
-    public Task<TerraBaseProjectClosure> EraseProjectAsync(string projectId, string authorityOrganizationId, string closureId, CancellationToken cancellationToken = default) =>
+    public Task<ProjectClosureResult> EraseProjectAsync(string projectId, string authorityOrganizationId, string closureId, CancellationToken cancellationToken = default) =>
         SendProjectClosureAsync(projectId, authorityOrganizationId, closureId, 2, cancellationToken);
 
-    private async Task<TerraBaseProjectClosure> SendProjectClosureAsync(string projectId, string authorityOrganizationId, string closureId, int version, CancellationToken cancellationToken)
+    private async Task<ProjectClosureResult> SendProjectClosureAsync(string projectId, string authorityOrganizationId, string closureId, int version, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(authorityOrganizationId);
         ArgumentException.ThrowIfNullOrEmpty(closureId);
         var body = TerraBaseConnection.Json(new RequestBody { Version = version, ClosureId = closureId, AuthorityOrganizationId = authorityOrganizationId }, Json.RequestBody);
-        var (closure, status) = await connection.SendAsync(HttpMethod.Put, "/admin/projects/" + TerraBaseConnection.Segment(projectId, nameof(projectId)) + "/closure",
-            body, Json.TerraBaseProjectClosure, null, cancellationToken).ConfigureAwait(false);
+        TerraBaseProjectClosure closure;
+        HttpStatusCode status;
+        try
+        {
+            (closure, status) = await connection.SendAsync(HttpMethod.Put, "/admin/projects/" + TerraBaseConnection.Segment(projectId, nameof(projectId)) + "/closure",
+                body, Json.TerraBaseProjectClosure, null, cancellationToken).ConfigureAwait(false);
+        }
+        catch (TerraBaseException error)
+        {
+            return error switch
+            {
+                TerraBaseNotFoundException or TerraBaseException { StatusCode: HttpStatusCode.MethodNotAllowed or HttpStatusCode.NotImplemented }
+                    => new TerraBaseClosureUnsupported(error.ErrorCode),
+                TerraBaseValidationException { ErrorCode: "invalid_request" or "unsupported" or "unsupported_version" }
+                    => new TerraBaseClosureUnsupported(error.ErrorCode),
+                TerraBaseValidationException => (ProjectClosureResult)new Validation(error.Message, error.ErrorCode ?? "invalid_request"),
+                TerraBaseAuthenticationException => new Unauthorized(error.Message, error.ErrorCode ?? "unauthorized"),
+                TerraBaseForbiddenException => new Forbidden(error.Message, error.ErrorCode ?? "forbidden"),
+                TerraBaseConflictException => new Conflict(error.Message, error.ErrorCode ?? "conflict"),
+                TerraBaseRateLimitedException => new QuotaExceeded(error.Message, error.ErrorCode ?? "quota_exceeded"),
+                _ => new Unavailable(error.Message, error.ErrorCode ?? "unavailable"),
+            };
+        }
         // A body that does not answer this closure, or contradicts its status code, is not evidence either way.
-        return closure.ClosureId == closureId && (status, closure.Status) is (System.Net.HttpStatusCode.OK, "accepted") or (System.Net.HttpStatusCode.Accepted, "pending")
+        return (int)status is 200 or 202 && closure.ClosureId == closureId && closure.Status == (status is HttpStatusCode.OK ? "accepted" : "pending")
             ? closure
-            : throw new TerraBaseException(status, "TerraBase answered a project closure with a status or closure id that does not match the request.", "invalid_response", null);
+            : new Unavailable("TerraBase answered a project closure with a status or closure id that does not match the request.", "invalid_response");
     }
 
     private async Task<T> SendAsync<T>(
