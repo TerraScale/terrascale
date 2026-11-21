@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.WebAuthn;
 using TerraScale.Endpoints;
 
@@ -44,7 +45,10 @@ public sealed class PasskeySignInOptionsEndpoint(PasskeyCredentials passkeys, Ho
 
         var assertion = await passkeys.SignInOptionsAsync(SignInFlow.Tenant(this.HttpContext), form.Email ?? string.Empty, cancellationToken);
         return assertion is null
-            ? throw ApiException.Unavailable()
+            ? ErrorResults.ToResult(new Unavailable("The storage engine is unavailable; retry shortly.", "temporarily_unavailable")
+            {
+                Details = new Dictionary<string, string> { ["retry_after"] = "2" },
+            })
             : Results.Json(new PasskeyOptionsBody(assertion.Value.Challenge, JsonDocument.Parse(assertion.Value.Options.ToJson()).RootElement),
                 WebAuthnJson.Default.PasskeyOptionsBody);
     }
