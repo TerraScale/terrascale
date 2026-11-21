@@ -1,4 +1,3 @@
-using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;

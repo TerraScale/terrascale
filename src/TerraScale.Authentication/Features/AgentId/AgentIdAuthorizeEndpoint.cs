@@ -52,9 +52,16 @@ public abstract class AgentIdAuthorizeEndpoint(AgentIdTransactions transactions,
         List<KeyValuePair<string, StringValues>> parameters = HttpMethods.IsPost(this.HttpContext.Request.Method)
             ? [.. await this.HttpContext.Request.ReadFormAsync(cancellationToken)]
             : [.. this.HttpContext.Request.Query];
-        if (await transactions.LimitAsync("agentid-authorize", SignInFlow.Ip(this.HttpContext), clientId, cancellationToken) is { } limited)
+        try
         {
-            return HostedAuth.TooMany(limited);
+            if (await transactions.LimitAsync("agentid-authorize", SignInFlow.Ip(this.HttpContext), clientId, cancellationToken) is { } limited)
+            {
+                return HostedAuth.TooMany(limited);
+            }
+        }
+        catch (ApiException unavailable) when (unavailable.RetryAfter is { } wait)
+        {
+            return HostedAuth.TooMany(wait);
         }
 
         var browser = this.HttpContext.Request.GetTypedHeaders().Accept.Any(media => media.MediaType.Equals("text/html", StringComparison.OrdinalIgnoreCase));
