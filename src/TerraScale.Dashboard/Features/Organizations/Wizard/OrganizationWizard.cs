@@ -57,13 +57,15 @@ public static class OrganizationWizard
 
             if (form["step"] != "project")
             {
-                throw new AccountAccessException("Choose an organization setup step.", 400);
+                return await RenderAsync(http, context, placement, "organization", form["name"].ToString(), form["plan"].ToString(),
+                    form["interval"].ToString(), "Choose an organization setup step.", 400, form);
             }
 
             context = await SelectAsync(http, context, accounts, form["organizationID"].ToString());
             if (context.Organization?.Kind != "business" || context.Role != "owner")
             {
-                throw new AccountAccessException("Business organization ownership is required.");
+                return await RenderAsync(http, context, placement, "project", form["name"].ToString(), form["plan"].ToString(),
+                    form["interval"].ToString(), "Business organization ownership is required.", 403, form);
             }
 
             if (context.Organization.Projects.Count > 0)
