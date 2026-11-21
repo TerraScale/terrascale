@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http.Metadata;
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Endpoints;
 
@@ -45,9 +46,19 @@ public sealed class EmailAdmissionEndpoint(AuthOptions options, EmailAdmission a
         {
             return TypedResults.Unauthorized();
         }
-        var request = await EmailApi.ReadAsync<EmailAdmissionRequest>(this.HttpContext, cancellationToken).ConfigureAwait(false);
+        return (await EmailApi.ReadAsync<EmailAdmissionRequest>(this.HttpContext, cancellationToken).ConfigureAwait(false) switch
+        {
+            EmailAdmissionRequest request => await AdmitAsync(request, cancellationToken),
+            Validation error => ErrorResults.ToResult(error),
+            PayloadTooLarge error => ErrorResults.ToResult(error),
+            UnsupportedMediaType error => ErrorResults.ToResult(error),
+        });
+    }
+
+    private async Task<IResult> AdmitAsync(EmailAdmissionRequest request, CancellationToken cancellationToken)
+    {
         var now = clock.GetUtcNow();
-        if (request is null || !NUlid.Ulid.TryParse(request.AttemptId, out var id) || id.Time < now - TimeSpan.FromMinutes(5) || id.Time > now + TimeSpan.FromMinutes(1))
+        if (!NUlid.Ulid.TryParse(request.AttemptId, out var id) || id.Time < now - TimeSpan.FromMinutes(5) || id.Time > now + TimeSpan.FromMinutes(1))
         {
             return EmailApi.Error(StatusCodes.Status400BadRequest, "invalid_request", "A fresh attempt ULID is required.");
         }

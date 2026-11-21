@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
@@ -40,7 +41,17 @@ public sealed class AllowanceEmailEndpoint(PlatformDirectory directory, OwnerDel
         {
             return refused;
         }
-        var request = await EmailApi.ReadAsync<AllowanceEmailRequest>(this.HttpContext, cancellationToken).ConfigureAwait(false);
+        return (await EmailApi.ReadAsync<AllowanceEmailRequest>(this.HttpContext, cancellationToken).ConfigureAwait(false) switch
+        {
+            AllowanceEmailRequest request => await SendAsync(request, cancellationToken),
+            Validation error => ErrorResults.ToResult(error),
+            PayloadTooLarge error => ErrorResults.ToResult(error),
+            UnsupportedMediaType error => ErrorResults.ToResult(error),
+        });
+    }
+
+    private async Task<IResult> SendAsync(AllowanceEmailRequest request, CancellationToken cancellationToken)
+    {
         var month = clock.GetUtcNow().ToString("yyyy-MM", CultureInfo.InvariantCulture);
         if (!TerraScaleIds.IsValid(request.OrganizationId) || request.BillingMonth != month || request.Metric is not ("operations" or "storage") ||
             request.Threshold is not (80 or 100) || request.Used < 0 || request.Allowance <= 0 ||
