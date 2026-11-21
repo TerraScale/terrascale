@@ -94,12 +94,12 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 return value.ValueKind == JsonValueKind.Number && value.TryGetDecimal(out var ttl) ? ttl : throw new McpProtocolException("ttlHours must be a number.", McpErrorCode.InvalidParams);
             }
             var scope = credential.Scope;
-            if (!Tools.Contains(tool)) throw new AccountAccessException("This tool requires a dashboard sign-in. API keys reach database tools only.");
+            if (!Tools.Contains(tool)) return Failure("This tool requires a dashboard sign-in. API keys reach database tools only.");
             if (Text("organizationId", scope.OrganizationId) != scope.OrganizationId || Text("projectId", scope.ProjectId) != scope.ProjectId)
-                throw new AccountAccessException("Project is unavailable.", 404);
+                return Failure("Project is unavailable.");
             var databaseId = Text("databaseId");
             if (credential.DatabaseId is { } only && databaseId.Length > 0 && databaseId != only)
-                throw new AccountAccessException("Database was not found in this project.", 404);
+                return Failure("Database was not found in this project.");
             if (McpDeletion.IsDelete(tool))
             {
                 var resource = tool switch
@@ -122,7 +122,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 var access = Text("access", "read_write");
                 var ttl = Number("ttlSeconds") ?? 3600;
                 if (!TerraScaleIds.IsValid(databaseId) || access is not ("read" or "read_write") || ttl is < 60 or > 2_592_000)
-                    throw new AccountAccessException("Pass a database ULID, access read or read_write, and ttlSeconds between 60 and 2,592,000.", 422);
+                    return Failure("Pass a database ULID, access read or read_write, and ttlSeconds between 60 and 2,592,000.");
                 var client = new TsAuthClient(http.CreateClient("platform"));
                 try
                 {
@@ -141,16 +141,19 @@ namespace TerraScale.Dashboard.Platform.Mcp
             if (tool is "execute_sql" or "run_sql" or "check_sql")
             {
                 if (SqlValidation.Diagnostics(sql).FirstOrDefault(item => item.Severity == "error") is { } problem)
-                    throw new AccountAccessException(problem.Message, 422);
+                    return Failure(problem.Message);
                 write = !SqlValidation.IsRead(sql);
-                if (write && tool == "run_sql") throw new AccountAccessException("run_sql accepts read-only statements. Use execute_sql for writes.", 422);
+                if (write && tool == "run_sql") return Failure("run_sql accepts read-only statements. Use execute_sql for writes.");
             }
             var permission = dataTool ? write ? "sql:write" : "sql:read" : write ? "databases:write" : "databases:read";
-            if (!credential.Scopes.Contains(permission, StringComparer.Ordinal)) throw new AccountAccessException("The API key does not grant " + permission + ".");
+            if (!credential.Scopes.Contains(permission, StringComparer.Ordinal)) return Failure("The API key does not grant " + permission + ".");
             if (tool == "check_sql") return Reply(SqlValidation.Analyze(sql), McpAgentJson.Default.SqlAnalysis);
             var regions = await databases.RegionsAsync(ct);
-            var region = DatabaseRegion.Resolve(regions, Text("region", Environment.GetEnvironmentVariable("TS_REGION") ?? regions[0].Id))
-                ?? throw new AccountAccessException("Choose a region listed by TerraScale discovery.", 422);
+            var region = DatabaseRegion.Resolve(regions, Text("region", Environment.GetEnvironmentVariable("TS_REGION") ?? regions[0].Id));
+            if (region is null)
+            {
+                return Failure("Choose a region listed by TerraScale discovery.");
+            }
             var management = rpc.User<IManagementService>(scope.AccessToken, region.Id).WithCancellationToken(ct);
             if (tool == "create_database")
             {
@@ -160,11 +163,11 @@ namespace TerraScale.Dashboard.Platform.Mcp
             if (tool == "list_databases")
             {
                 var limit = Number("limit") ?? 100;
-                if (limit is < 1 or > 100) throw new AccountAccessException("limit must be between 1 and 100.", 422);
+                if (limit is < 1 or > 100) return Failure("limit must be between 1 and 100.");
                 var page = await management.ListDatabasesAsync(scope.ProjectId, Text("after") is { Length: > 0 } after ? after : null, (int)limit);
                 return Reply(new McpDatabaseList([.. page.Items.Select(Output)], page.Next, page.Next is not null, (int)limit), McpAgentJson.Default.McpDatabaseList);
             }
-            if (!TerraScaleIds.IsValid(databaseId)) throw new AccountAccessException(DatabaseService.DatabaseIdRule, 422);
+            if (!TerraScaleIds.IsValid(databaseId)) return Failure(DatabaseService.DatabaseIdRule);
             // Scoped data keys have no catalog scope. SQL routes accept ULIDs, so no privileged listing is needed.
             if (dataTool)
             {
@@ -205,7 +208,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                                 return FunctionMcpOutput.Reply(await FunctionMcpOutput.CompleteAsync(call, canReadLogs, ReadNewestAsync, logger, ct), FunctionMcpJson.Default.McpFunctionRun);
                             case "list_functions":
                                 var limit = Number("limit") ?? 100;
-                                if (limit is < 1 or > 100) throw new AccountAccessException("limit must be between 1 and 100.", 422);
+                                if (limit is < 1 or > 100) return Failure("limit must be between 1 and 100.");
                                 var items = (await AtHomeAsync(async client => await client.ListAsync(scope.ProjectId, databaseId), ct)).Select(FunctionBackend.Record).ToArray();
                                 FunctionBackend.Validate(items);
                                 var page = CursorPaging.Page(items, item => item.Name, scope.OrganizationId + ":" + scope.ProjectId + ":" + databaseId + ":functions", (int)limit, Text("after"));
@@ -293,7 +296,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
             {
                 var hours = Hours();
                 var clear = arguments?.TryGetValue("clear", out var value) == true && value.GetBoolean();
-                if (clear == (hours is not null)) throw new AccountAccessException("Supply ttlHours or clear=true, exclusively.", 422);
+                if (clear == (hours is not null)) return Failure("Supply ttlHours or clear=true, exclusively.");
                 var ttl = DatabaseTtl.Seconds(hours);
                 var updated = ttl is { } seconds ? await management.SetDatabaseTtlAsync(scope.ProjectId, databaseId, new(seconds))
                     : await management.ClearDatabaseTtlAsync(scope.ProjectId, databaseId);
@@ -319,8 +322,11 @@ namespace TerraScale.Dashboard.Platform.Mcp
             var backupId = Text("backupId");
             if (backupId.Length == 0)
             {
-                backupId = (await backups.ListAsync(scope, region, databaseId, ct)).OrderByDescending(backup => backup.CreatedAt).FirstOrDefault()?.Id
-                    ?? throw new AccountAccessException("That restore point is no longer available.", 404);
+                backupId = (await backups.ListAsync(scope, region, databaseId, ct)).OrderByDescending(backup => backup.CreatedAt).FirstOrDefault()?.Id ?? "";
+                if (backupId.Length == 0)
+                {
+                    return Failure("That restore point is no longer available.");
+                }
             }
             var requested = Text("name");
             var started = await backups.StartRestoreAsync(scope, region, databaseId, backupId, requested is { Length: > 0 } ? requested : null, ct);
@@ -329,6 +335,11 @@ namespace TerraScale.Dashboard.Platform.Mcp
 
         private static McpDatabase Output(TerraBaseManagedDatabase db) => new(db.Id, db.Name, "ready", db.HomeRegion.Length > 0 ? db.HomeRegion : db.Region,
             [.. (db.ReplicaRegions ?? []).Prepend(db.HomeRegion)], db.CreatedAt, db.AllRegions, db.ExpiresAt);
+        private static CallToolResult Failure(string message) => new()
+        {
+            IsError = true,
+            Content = [new TextContentBlock { Text = message }]
+        };
         private static CallToolResult Reply<T>(T value, JsonTypeInfo<T> type) => new()
         {
             StructuredContent = JsonSerializer.SerializeToElement(value, type),
