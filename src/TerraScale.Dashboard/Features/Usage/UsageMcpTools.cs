@@ -1,12 +1,17 @@
 using System.ComponentModel;
+using System.Text.Json;
 using System.Text.Json.Serialization;
+using ModelContextProtocol;
+using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Common.Formatting;
 
 namespace TerraScale.Dashboard.Features.Usage
 {
+    using NotFound = TerraScale.Dashboard.Errors.NotFound;
     public sealed record UsageToolAllowance(string Name, string Allowance, long Limit,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? Used, bool Measured,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] double? Percent);
@@ -38,17 +43,13 @@ namespace TerraScale.Dashboard.Features.Usage
     public sealed class UsageMcpTools(IHttpContextAccessor http, AccountService accounts, SpendingService spending, IUsageMeasurements measurements, TimeProvider time)
     {
         [McpAccess(McpAccess.Read)]
-        [McpServerTool(Name = "get_usage", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true), Description("Read organization plan allowances and producer measurements for an authorized project/database. Missing measurements remain unavailable.")]
-        public Task<UsageToolReport> Read(string databaseId = "",
+        [McpServerTool(Name = "get_usage", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true, OutputSchemaType = typeof(UsageToolReport)), Description("Read organization plan allowances and producer measurements for an authorized project/database. Missing measurements remain unavailable.")]
+        public async Task<CallToolResult> Read(string databaseId = "",
             [Description("1h, 24h, 7d, or 30d. Defaults to 7d; other values are rejected.")] string range = "7d",
             string? organizationId = null, string? projectId = null)
         {
-            return ReportAsync(Scope(organizationId, projectId), databaseId, range);
-        }
-
-        private async Task<UsageToolReport> ReportAsync(AccountContext context, string databaseId, string range)
-        {
-            context = await AccountScope.RefreshAsync(accounts, context, Cancellation, requireProject: !context.Organization!.ContainsMember(context.UserId));
+            var scoped = Scope(organizationId, projectId);
+            var context = await AccountScope.RefreshAsync(accounts, scoped, Cancellation, requireProject: !scoped.Organization!.ContainsMember(scoped.UserId));
             if (range is not ("1h" or "24h" or "7d" or "30d"))
             {
                 throw new AccountAccessException("Choose 1h, 24h, 7d or 30d.", 400);
@@ -59,8 +60,17 @@ namespace TerraScale.Dashboard.Features.Usage
                 throw new AccountAccessException("Database is unavailable.", 404);
             }
 
-            var selection = UsageSelection.For(context, context.Project?.Id ?? "", databaseId, range);
-            context = selection.Context;
+            return UsageSelection.TryFor(context, context.Project?.Id ?? "", databaseId, range) switch
+            {
+                UsageSelection selection => await ReportAsync(selection, databaseId, range),
+                NotFound failure => throw new AccountAccessException(failure.Message ?? "Not found.", 404),
+                Forbidden failure => throw new AccountAccessException(failure.Message),
+            };
+        }
+
+        private async Task<CallToolResult> ReportAsync(UsageSelection selection, string databaseId, string range)
+        {
+            var context = selection.Context;
             var controls = await spending.ReadAsync(context, Cancellation, requireProject: !selection.Member);
             var measured = await measurements.ReadAsync(selection, Cancellation);
             var plan = PlanCatalog.For(context.Organization!);
@@ -139,7 +149,7 @@ namespace TerraScale.Dashboard.Features.Usage
                 : measured.Monthly.Values.Any(value => value.State == UsageSourceState.Unavailable) || complete
                     ? "Usage is temporarily unavailable. Try again in a moment." : "";
             var scopeBytes = scope?.LogicalBytes;
-            return new(context.Organization!.Id, context.Project?.Id ?? "", databaseId, plan?.Name ?? "No billing plan",
+            var report = new UsageToolReport(context.Organization!.Id, context.Project?.Id ?? "", databaseId, plan?.Name ?? "No billing plan",
                 [Allowance("Operation units this month", plan?.OperationsAllowance, limits.MonthlyOperations,
                     complete && reads is not null ? measured.OperationUnits(controls.Projects.Select(project => project.Id), time.GetUtcNow()) : null),
                  Allowance("Function invocations this month", plan?.OperationsAllowance, limits.MonthlyOperations,
@@ -157,7 +167,14 @@ namespace TerraScale.Dashboard.Features.Usage
                 InternalBill = context.Organization.InternalBilling is not null
                     ? InternalBillingService.Estimate(context.Organization, measured, time.GetUtcNow()) : null
             };
+            return Reply(report);
         }
+
+        private static CallToolResult Reply(UsageToolReport report) => new()
+        {
+            StructuredContent = JsonSerializer.SerializeToElement(report, UsageMcpJson.Default.UsageToolReport),
+            Content = [new TextContentBlock { Text = JsonSerializer.Serialize(report, UsageMcpJson.Default.UsageToolReport) }]
+        };
 
         private static UsageToolAllowance Allowance(string name, string? label, long limit, long? used)
         {
@@ -172,4 +189,8 @@ namespace TerraScale.Dashboard.Features.Usage
 
         private CancellationToken Cancellation => http.HttpContext?.RequestAborted ?? default;
     }
+
+    [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonSerializable(typeof(UsageToolReport))]
+    internal sealed partial class UsageMcpJson : JsonSerializerContext;
 }

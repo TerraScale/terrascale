@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
+using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.TerraBase.Contracts.FileStorage;
 
@@ -12,7 +13,11 @@ namespace TerraScale.Dashboard.Features.FileStorage
         [McpServerTool(Name = "list_file_storage", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List project buckets and completed files in the selected bucket (or first bucket). Pass buckets.next as bucketAfter and files.next as after to continue each listing. Requires data read access.")]
         public Task<FileStorageListing> List(string? bucketId = null, string? after = null, string? bucketAfter = null, string? organizationId = null, string? projectId = null)
         {
-            return Request(() => files.ListAsync(Scope(organizationId, projectId), bucketId, after, bucketAfter, Cancellation));
+            return Request(async () => await files.ListAsync(Scope(organizationId, projectId), bucketId, after, bucketAfter, Cancellation) switch
+            {
+                FileStorageListing listing => listing,
+                Validation failure => throw new AccountAccessException(failure.Message, 422),
+            });
         }
 
         [McpAccess(McpAccess.Destructive)]
@@ -41,7 +46,11 @@ namespace TerraScale.Dashboard.Features.FileStorage
         [McpServerTool(Name = "create_file_upload", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Reserve file storage and return a private five-minute upload capability. Upload size is 1–104857600 bytes, sha256 is base64, and metadata is a JSON object. PUT the exact bytes with every returned header, then call complete_file_upload. Never log or share the URL or headers. Requires project data write access.")]
         public Task<TerraBaseFileUrl> Upload(string bucketId, TerraBaseFileUpload upload, string? organizationId = null, string? projectId = null)
         {
-            return Request(() => files.UploadAsync(Scope(organizationId, projectId), bucketId, upload, Cancellation));
+            return Request(async () => await files.UploadAsync(Scope(organizationId, projectId), bucketId, upload, Cancellation) switch
+            {
+                TerraBaseFileUrl url => url,
+                Forbidden failure => throw new AccountAccessException(failure.Message),
+            });
         }
 
         [McpAccess(McpAccess.Write)]
@@ -66,9 +75,31 @@ namespace TerraScale.Dashboard.Features.FileStorage
             return Request(() => files.DownloadAsync(Scope(organizationId, projectId), bucketId, fileId, Cancellation));
         }
 
-        private static Task<McpFileStorageSaved> Save(Func<Task> operation)
+        private static Task<McpFileStorageSaved> Save(Func<Task<CreateBucketResult>> operation)
         {
-            return Request(async () => { await operation(); return new McpFileStorageSaved(true); });
+            return Request(async () => await operation() switch
+            {
+                TerraBaseFileBucket => new McpFileStorageSaved(true),
+                Forbidden failure => throw new AccountAccessException(failure.Message),
+            });
+        }
+
+        private static Task<McpFileStorageSaved> Save(Func<Task<SetRulesResult>> operation)
+        {
+            return Request(async () => await operation() switch
+            {
+                Done => new McpFileStorageSaved(true),
+                Forbidden failure => throw new AccountAccessException(failure.Message),
+            });
+        }
+
+        private static Task<McpFileStorageSaved> Save(Func<Task<CompleteUploadResult>> operation)
+        {
+            return Request(async () => await operation() switch
+            {
+                Done => new McpFileStorageSaved(true),
+                Forbidden failure => throw new AccountAccessException(failure.Message),
+            });
         }
 
         private static async Task<T> Request<T>(Func<Task<T>> operation)
