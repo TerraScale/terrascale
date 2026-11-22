@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Storage;
@@ -11,52 +12,94 @@ public sealed partial class ProjectOrganizationDirectory
     public static ProjectOrganizationDomainBody DomainBody(ProjectOrganizationDomain domain) =>
         new(domain.Domain, "_terrascale-org." + domain.Domain, "terrascale-org=" + domain.VerificationToken, domain.VerifiedAt);
 
-    public async Task<ProjectOrganizationDomainBody> AddDomainAsync(string project, string id, string? domain, CancellationToken cancellationToken)
+    public async Task<DomainAdded> AddDomainAsync(string project, string id, string? domain, CancellationToken cancellationToken)
     {
         domain = domain?.Trim().ToLowerInvariant();
         if (domain is not { Length: >= 4 and <= 253 } || !domain.Contains('.', StringComparison.Ordinal)
             || domain.Split('.').Any(label => label.Length is < 1 or > 63 || label[0] == '-' || label[^1] == '-')
             || Uri.CheckHostName(domain) != UriHostNameType.Dns || domain.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not ('.' or '-')))
         {
-            throw Invalid("domain must be a DNS domain without a scheme or path.");
+            return new Validation("domain must be a DNS domain without a scheme or path.");
         }
 
         var org = await this.ReadAsync(project, id, cancellationToken).ConfigureAwait(false);
+        if (org is null)
+        {
+            return NoSuchOrganization();
+        }
+
         var count = await data.ReadAsync((db, token) => db.ProjectOrganizationDomains
             .CountAsync(row => row.ProjectId == project && row.OrganizationId == org.Value.Id, token), cancellationToken).ConfigureAwait(false);
         if (count >= 100)
         {
-            throw Conflict("domain_limit", "An organization has at most 100 domains.");
+            return new Conflict("An organization has at most 100 domains.", "domain_limit");
         }
 
         var record = new ProjectOrganizationDomain(project, org.Value.Id, domain, Tokens.RandomToken(40), null);
-        await this.CommitAsync([Change.Update(org, org.Value), Change.Insert(record), this.Event(org.Value, "organizationDomain.created", domain)], cancellationToken).ConfigureAwait(false);
-        return DomainBody(record);
+        return await data.SaveAsync([Change.Update(org, org.Value), Change.Insert(record), this.Event(org.Value, "organizationDomain.created", domain)], cancellationToken).ConfigureAwait(false)
+            ? new DomainAdded(DomainBody(record))
+            : Refused();
     }
 
-    public async Task<ProjectOrganizationDomainPage> DomainsAsync(string project, string id, CancellationToken cancellationToken)
-    {
-        var org = (await this.ReadAsync(project, id, cancellationToken).ConfigureAwait(false)).Value.Id;
-        var rows = await data.ReadAsync((db, token) => db.ProjectOrganizationDomains.Where(row => row.ProjectId == project && row.OrganizationId == org)
-            .OrderBy(row => row.Domain).Take(100).ToListAsync(token), cancellationToken).ConfigureAwait(false);
-        return new([.. rows.Select(DomainBody)]);
-    }
-
-    public async Task<ProjectOrganizationDomainBody?> ChangeDomainAsync(string project, string id, string domain, bool remove, CancellationToken cancellationToken)
+    public async Task<DomainsListed> DomainsAsync(string project, string id, CancellationToken cancellationToken)
     {
         var org = await this.ReadAsync(project, id, cancellationToken).ConfigureAwait(false);
-        var row = await data.ReadAsync((db, token) => db.ProjectOrganizationDomains
-            .Where(row => row.ProjectId == project && row.OrganizationId == org.Value.Id && row.Domain == domain)
-            .WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
-        if (!remove && !await this.PublishedAsync(row.Value, cancellationToken).ConfigureAwait(false))
+        if (org is null)
         {
-            throw Conflict("domain_unverified", "The verification TXT record was not found.");
+            return NoSuchOrganization();
         }
 
-        var updated = row.Value with { VerifiedAt = row.Value.VerifiedAt ?? clock.GetUtcNow(), CheckedAt = clock.GetUtcNow(), FailedChecks = 0 };
-        await this.CommitAsync([Change.Update(org, org.Value), remove ? Change.Delete(row) : Change.Update(row, updated),
-            this.Event(org.Value, remove ? "organizationDomain.deleted" : "organizationDomain.updated", domain)], cancellationToken).ConfigureAwait(false);
-        return remove ? null : DomainBody(updated);
+        var rows = await data.ReadAsync((db, token) => db.ProjectOrganizationDomains.Where(row => row.ProjectId == project && row.OrganizationId == org.Value.Id)
+            .OrderBy(row => row.Domain).Take(100).ToListAsync(token), cancellationToken).ConfigureAwait(false);
+        return new ProjectOrganizationDomainPage([.. rows.Select(DomainBody)]);
+    }
+
+    public async Task<DomainVerified> VerifyDomainAsync(string project, string id, string domain, CancellationToken cancellationToken)
+    {
+        var found = await this.DomainAsync(project, id, domain, cancellationToken).ConfigureAwait(false);
+        if (found is not OrganizationDomainPair pair)
+        {
+            return NoSuchOrganization();
+        }
+
+        if (!await this.PublishedAsync(pair.Row.Value, cancellationToken).ConfigureAwait(false))
+        {
+            return new Conflict("The verification TXT record was not found.", "domain_unverified");
+        }
+
+        var updated = pair.Row.Value with { VerifiedAt = pair.Row.Value.VerifiedAt ?? clock.GetUtcNow(), CheckedAt = clock.GetUtcNow(), FailedChecks = 0 };
+        return await data.SaveAsync([Change.Update(pair.Org, pair.Org.Value), Change.Update(pair.Row, updated),
+            this.Event(pair.Org.Value, "organizationDomain.updated", domain)], cancellationToken).ConfigureAwait(false)
+            ? DomainBody(updated)
+            : Refused();
+    }
+
+    public async Task<DomainDeleted> DeleteDomainAsync(string project, string id, string domain, CancellationToken cancellationToken)
+    {
+        var found = await this.DomainAsync(project, id, domain, cancellationToken).ConfigureAwait(false);
+        if (found is not OrganizationDomainPair pair)
+        {
+            return NoSuchOrganization();
+        }
+
+        return await data.SaveAsync([Change.Update(pair.Org, pair.Org.Value), Change.Delete(pair.Row),
+            this.Event(pair.Org.Value, "organizationDomain.deleted", domain)], cancellationToken).ConfigureAwait(false)
+            ? new Done()
+            : Refused();
+    }
+
+    private async Task<Found<OrganizationDomainPair>> DomainAsync(string project, string id, string domain, CancellationToken cancellationToken)
+    {
+        var org = await this.ReadAsync(project, id, cancellationToken).ConfigureAwait(false);
+        if (org is null)
+        {
+            return NoSuchOrganization();
+        }
+
+        var row = await data.ReadAsync((db, token) => db.ProjectOrganizationDomains
+            .Where(row => row.ProjectId == project && row.OrganizationId == org.Value.Id && row.Domain == domain)
+            .WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
+        return row is null ? NoSuchOrganization() : new OrganizationDomainPair(org, row);
     }
 
     public async Task<IReadOnlyList<OrganizationClaims>> AutoJoinAsync(UserRecord user, CancellationToken cancellationToken)
@@ -134,41 +177,80 @@ public sealed partial class ProjectOrganizationDirectory
         return [];
     }
 
-    public async Task JoinSuggestedAsync(UserRecord user, string id, CancellationToken cancellationToken)
+    public async Task<SuggestionHandled> JoinSuggestedAsync(UserRecord user, string id, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(user);
-        var (org, proof) = await this.SuggestionAsync(user, id, cancellationToken).ConfigureAwait(false);
-        await this.CommitAsync([Change.Assert(user), Change.Assert(proof), Change.Update(org, AddMember(org.Value, "member")),
-            Change.Insert(new ProjectOrganizationMembership(user.InstanceId, org.Value.Id, user.Id, "member", clock.GetUtcNow())),
-            this.Event(org.Value, "organizationMembership.created", user.Id, "member"),
-            .. await this.ClearDismissalAsync(user.InstanceId, org.Value.Id, user.Id, cancellationToken).ConfigureAwait(false)], cancellationToken).ConfigureAwait(false);
-    }
-
-    public async Task DismissSuggestionAsync(UserRecord user, string id, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(user);
-        var (org, proof) = await this.SuggestionAsync(user, id, cancellationToken).ConfigureAwait(false);
-        var dismissed = await data.ReadAsync((db, token) => db.ProjectOrganizationDismissals
-            .AnyAsync(row => row.ProjectId == user.InstanceId && row.OrganizationId == org.Value.Id && row.UserId == user.Id, token),
-            cancellationToken).ConfigureAwait(false);
-        if (!dismissed)
+        var suggestion = await this.SuggestionAsync(user, id, cancellationToken).ConfigureAwait(false);
+        if (suggestion is not OrganizationDomainSuggestion join)
         {
-            await this.CommitAsync([Change.Assert(user), Change.Assert(proof), Change.Update(org, org.Value),
-                Change.Insert(new ProjectOrganizationDismissal(user.InstanceId, org.Value.Id, user.Id))], cancellationToken).ConfigureAwait(false);
+            return NoSuchOrganization();
         }
+
+        if (RefusesMembership(join.Org.Value, "member") is { } refused)
+        {
+            return refused;
+        }
+
+        return await data.SaveAsync([Change.Assert(user), Change.Assert(join.Proof), Change.Update(join.Org, AddMember(join.Org.Value, "member")),
+            Change.Insert(new ProjectOrganizationMembership(user.InstanceId, join.Org.Value.Id, user.Id, "member", clock.GetUtcNow())),
+            this.Event(join.Org.Value, "organizationMembership.created", user.Id, "member"),
+            .. await this.ClearDismissalAsync(user.InstanceId, join.Org.Value.Id, user.Id, cancellationToken).ConfigureAwait(false)], cancellationToken).ConfigureAwait(false)
+            ? new Done()
+            : Refused();
     }
 
-    private async Task<(Versioned<ProjectOrganizationRecord> Org, Versioned<ProjectOrganizationDomain> Proof)> SuggestionAsync(
-        UserRecord user, string id, CancellationToken cancellationToken)
+    public async Task<SuggestionHandled> DismissSuggestionAsync(UserRecord user, string id, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+        var suggestion = await this.SuggestionAsync(user, id, cancellationToken).ConfigureAwait(false);
+        if (suggestion is not OrganizationDomainSuggestion dismiss)
+        {
+            return NoSuchOrganization();
+        }
+
+        var dismissed = await data.ReadAsync((db, token) => db.ProjectOrganizationDismissals
+            .AnyAsync(row => row.ProjectId == user.InstanceId && row.OrganizationId == dismiss.Org.Value.Id && row.UserId == user.Id, token),
+            cancellationToken).ConfigureAwait(false);
+        if (dismissed)
+        {
+            return new Done();
+        }
+
+        return await data.SaveAsync([Change.Assert(user), Change.Assert(dismiss.Proof), Change.Update(dismiss.Org, dismiss.Org.Value),
+            Change.Insert(new ProjectOrganizationDismissal(user.InstanceId, dismiss.Org.Value.Id, user.Id))], cancellationToken).ConfigureAwait(false)
+            ? new Done()
+            : Refused();
+    }
+
+    private async Task<Found<OrganizationDomainSuggestion>> SuggestionAsync(UserRecord user, string id, CancellationToken cancellationToken)
     {
         var domain = user.Email[(user.Email.LastIndexOf('@') + 1)..];
         var org = await this.ReadAsync(user.InstanceId, id, cancellationToken).ConfigureAwait(false);
+        if (org is null)
+        {
+            return NoSuchOrganization();
+        }
+
         var proof = await data.ReadAsync((db, token) => db.ProjectOrganizationDomains
             .Where(row => row.ProjectId == user.InstanceId && row.OrganizationId == org.Value.Id && row.Domain == domain && row.VerifiedAt != null)
-            .WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
-        return org.Value.DomainJoin == "suggest" ? (org, proof) : throw PlatformDirectory.NotFound();
+            .WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
+        return proof is null || org.Value.DomainJoin != "suggest" ? NoSuchOrganization() : new OrganizationDomainSuggestion(org, proof);
     }
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Organization auto-join skipped for project {ProjectId}, organization {OrganizationId}: {Reason}.")]
     private static partial void AutoJoinSkipped(ILogger logger, string projectId, string organizationId, string reason);
 }
+
+public readonly union DomainAdded(ProjectOrganizationDomainBody, NotFound, Validation, Conflict);
+
+public readonly union DomainsListed(ProjectOrganizationDomainPage, NotFound);
+
+public readonly union DomainVerified(ProjectOrganizationDomainBody, NotFound, Conflict);
+
+public readonly union DomainDeleted(Done, NotFound, Conflict);
+
+public sealed record OrganizationDomainPair(Versioned<ProjectOrganizationRecord> Org, Versioned<ProjectOrganizationDomain> Row);
+
+public sealed record OrganizationDomainSuggestion(Versioned<ProjectOrganizationRecord> Org, Versioned<ProjectOrganizationDomain> Proof);
+
+public readonly union SuggestionHandled(Done, NotFound, Conflict);

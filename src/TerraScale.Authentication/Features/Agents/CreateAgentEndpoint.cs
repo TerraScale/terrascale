@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -13,10 +14,17 @@ public sealed class CreateAgentEndpoint(TenantDirectory tenants, PlatformAuthent
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
     }
 
-    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
+    protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(AgentJson.Default.CreateAgentRequest, cancellationToken);
-        return Results.Json(await agents.CreateAsync(project, this.RouteId("user"), caller.Id, request, static _ => [], null, cancellationToken), AgentJson.Default.AgentBody, statusCode: 201);
+        return await agents.CreateAsync(project, this.RouteId("user"), caller.Id, request, static _ => [], null, cancellationToken) switch
+        {
+            AgentBody agent => Results.Json(agent, AgentJson.Default.AgentBody, statusCode: 201),
+            Validation error => new Failure(error),
+            NotFound error => new Failure(error),
+            QuotaExceeded error => new Failure(error),
+            Conflict error => new Failure(error),
+        };
     }
 }

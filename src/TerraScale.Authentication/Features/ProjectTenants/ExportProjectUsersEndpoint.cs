@@ -48,14 +48,14 @@ public sealed class ExportProjectUsersEndpoint(TenantDirectory tenants, Platform
         this.Describe("export_project_users", "Export an end-user directory page", "Needs admin on every page. limit 1..100 (default 100); after is the previous next; format json (default) or csv. X-Export-Next carries the continuation for either format; absent means complete. X-Export-Created-Before is the fixed creation cutoff. Immutable storage-id order, not ULID order. Later creations are excluded; deletions disappear and profile fields are read per page, not a transaction snapshot. Retry the same cursor to resume; retain each page once. Replication lag and creator clock skew can omit accounts; retries may reflect changed fields, so deduplicate by id. Email possession was proven at account creation; only email, linked provider/client/subject and public profile fields are exported; no credentials or sessions are portable. Every returned page is audited.", "Project tenants", null, StatusCodes.Status200OK, typeof(DirectoryPageBody), paged: true);
     }
 
-    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
+    protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var (limit, after) = this.Paging(100);
         var format = this.HttpContext.Request.Query["format"].ToString();
         if (format is not ("" or "json" or "csv"))
         {
-            return ErrorResults.ToResult(new Validation("format must be json or csv."));
+            return new Failure(new Validation("format must be json or csv."));
         }
 
         var cutoff = clock.GetUtcNow();
@@ -74,13 +74,13 @@ public sealed class ExportProjectUsersEndpoint(TenantDirectory tenants, Platform
             }
             catch (Exception error) when (error is FormatException or JsonException)
             {
-                return ErrorResults.ToResult(new Validation("after must be a cursor from this export."));
+                return new Failure(new Validation("after must be a cursor from this export."));
             }
         }
 
         if (position is not null && !PlatformDirectory.IsId(position))
         {
-            return ErrorResults.ToResult(new Validation("after must be a cursor from this project's export."));
+            return new Failure(new Validation("after must be a cursor from this project's export."));
         }
 
         var from = position ?? string.Empty;

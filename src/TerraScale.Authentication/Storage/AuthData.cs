@@ -8,17 +8,18 @@ public sealed class AuthData(IDbContextFactory<AuthDbContext> contexts)
 {
     private readonly AsyncLocal<WriteAudit?> audit = new();
 
-    public async Task<T> AuditWritesAsync<T>(Change success, Func<CancellationToken, Task<T>> write, CancellationToken cancellationToken)
+    public async Task<T> AuditWritesAsync<T>(Change success, Func<CancellationToken, Task<T>> write, Func<T, bool> completed, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(success);
         ArgumentNullException.ThrowIfNull(write);
+        ArgumentNullException.ThrowIfNull(completed);
         var previous = this.audit.Value;
         var current = new WriteAudit(success);
         this.audit.Value = current;
         try
         {
             var result = await write(cancellationToken).ConfigureAwait(false);
-            if (!current.Committed && !await this.SaveAsync([], cancellationToken).ConfigureAwait(false))
+            if (!current.Committed && completed(result) && !await this.SaveAsync([], cancellationToken).ConfigureAwait(false))
             {
                 throw ApiException.Unavailable();
             }

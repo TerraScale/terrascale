@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http.Features;
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Security;
@@ -17,7 +18,7 @@ public sealed class RotateProjectClientEndpoint(TenantDirectory tenants, IOpenId
         this.Describe("rotate_project_client_secret", "Rotate an OAuth client's secret", "Issues a new client_secret for a confidential client and answers it exactly once; only its OpenIddict hash is kept. The previous secret keeps working for grace_seconds (default 3600, 0 to 86400), then is refused like any wrong secret; rotating again inside the grace replaces the previous secret. Needs the admin project role.", "Project tenants", typeof(RotateClientRequest), StatusCodes.Status200OK, typeof(ClientSecretBody));
     }
 
-    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
+    protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var person = caller.RequirePerson();
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
@@ -28,7 +29,7 @@ public sealed class RotateProjectClientEndpoint(TenantDirectory tenants, IOpenId
         var grace = TimeSpan.FromSeconds(body.GraceSeconds ?? 3600);
         if (grace < TimeSpan.Zero || grace > TimeSpan.FromDays(1))
         {
-            throw Invalid("grace_seconds must be 0 to 86400 seconds.");
+            return new Failure(new Validation("grace_seconds must be 0 to 86400 seconds.", "invalid_request"));
         }
 
         _ = await proofs.ConsumeHeaderAsync(person, this.HttpContext.Request, "rotate_oauth_client", null, cancellationToken);
@@ -39,12 +40,12 @@ public sealed class RotateProjectClientEndpoint(TenantDirectory tenants, IOpenId
             if (await applications.FindByClientIdAsync(this.RouteId("client_id"), cancellationToken) is not OidcApplication application
                 || application.InstanceId != projectId)
             {
-                throw PlatformDirectory.NotFound();
+                return new Failure(new NotFound("No such resource.", "not_found"));
             }
 
             if (application.ClientType != ClientTypes.Confidential)
             {
-                throw Invalid("type must be confidential.");
+                return new Failure(new Validation("type must be confidential.", "invalid_request"));
             }
 
             application.PreviousSecretHash = grace > TimeSpan.Zero ? application.ClientSecret : null;

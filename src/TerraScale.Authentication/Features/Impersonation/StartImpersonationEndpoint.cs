@@ -15,7 +15,7 @@ public sealed class StartImpersonationEndpoint(TenantDirectory tenants, Platform
             "Impersonation", typeof(StartImpersonationRequest), 201, typeof(ImpersonationTicket));
     }
 
-    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
+    protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var person = caller.RequirePerson();
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);

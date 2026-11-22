@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Platform;
 
@@ -13,9 +14,11 @@ public sealed class DeleteProjectClientEndpoint(TenantDirectory tenants, Platfor
         this.Describe("delete_project_client", "Delete an OAuth client", "Needs the admin project role.", "Project tenants", null, StatusCodes.Status204NoContent, null);
     }
 
-    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
+    protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
-        return await this.Tenants.DeleteClientAsync(projectId, this.RouteId("client_id"), cancellationToken) ? Results.NoContent() : throw PlatformDirectory.NotFound();
+        return await this.Tenants.DeleteClientAsync(projectId, this.RouteId("client_id"), cancellationToken)
+            ? Results.NoContent()
+            : new Failure(new NotFound("No such resource.", "not_found"));
     }
 }

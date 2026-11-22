@@ -15,15 +15,19 @@ public sealed class VerifyUserApiKeyEndpoint(TenantDirectory tenants, PlatformAu
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
     }
 
-    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
+    protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         if (caller is not ProjectCaller.SecretKey)
         {
-            return ErrorResults.ToResult(new Forbidden("Your role does not allow this.", "forbidden_role"));
+            return new Failure(new Forbidden("Your role does not allow this.", "forbidden_role"));
         }
 
         var project = await this.AccessAsync(caller, Roles.Viewer, cancellationToken, TerraBaseScopes.AuthRead);
         var request = await this.BodyAsync(UserApiKeyJson.Default.VerifyUserApiKeyRequest, cancellationToken);
-        return Results.Json(await keys.VerifyAsync(project, request.Key, cancellationToken), UserApiKeyJson.Default.VerifyUserApiKeyBody);
+        return await keys.VerifyAsync(project, request.Key, cancellationToken) switch
+        {
+            VerifyUserApiKeyBody verified => Results.Json(verified, UserApiKeyJson.Default.VerifyUserApiKeyBody),
+            QuotaExceeded error => new Failure(error),
+        };
     }
 }

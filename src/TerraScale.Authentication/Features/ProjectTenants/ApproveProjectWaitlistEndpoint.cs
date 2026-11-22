@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Platform;
 
@@ -13,10 +14,15 @@ public sealed class ApproveProjectWaitlistEndpoint(TenantDirectory tenants, Plat
         this.Describe("approve_project_waitlist", "Approve a waitlist entry", "Needs the admin project role.", "Project tenants", null, StatusCodes.Status204NoContent, null);
     }
 
-    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
+    protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
-        await invitations.DecideAsync(projectId, this.RouteId("entry"), true, caller switch { ProjectCaller.SignedIn(var person) => person.Email, ProjectCaller.SecretKey(var key) => key.Name, _ => throw new UnreachableException() }, AuthEmails.Locale(this.HttpContext.Request), cancellationToken);
-        return Results.NoContent();
+        return await invitations.DecideAsync(projectId, this.RouteId("entry"), true, caller switch { ProjectCaller.SignedIn(var person) => person.Email, ProjectCaller.SecretKey(var key) => key.Name, _ => throw new UnreachableException() }, AuthEmails.Locale(this.HttpContext.Request), cancellationToken) switch
+        {
+            Done => Results.NoContent(),
+            NotFound error => new Failure(error),
+            Validation error => new Failure(error),
+            Conflict error => new Failure(error),
+        };
     }
 }

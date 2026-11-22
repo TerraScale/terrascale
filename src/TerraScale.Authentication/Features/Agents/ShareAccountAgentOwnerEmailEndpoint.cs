@@ -37,6 +37,7 @@ public sealed class ShareAccountAgentOwnerEmailEndpoint(PlatformAuthentication a
         {
             AgentBody agent => Results.Json(agent, AgentJson.Default.AgentBody),
             NotFound notFound => ErrorResults.ToResult(notFound),
+            Conflict conflict => ErrorResults.ToResult(conflict),
         };
     }
 }

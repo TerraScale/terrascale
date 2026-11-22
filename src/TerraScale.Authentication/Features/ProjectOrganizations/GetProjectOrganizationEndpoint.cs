@@ -1,3 +1,5 @@
+using TerraScale.Authentication.Errors;
+using TerraScale.Authentication.Storage;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -12,9 +14,12 @@ public sealed class GetProjectOrganizationEndpoint(ProjectOrganizationDirectory 
         this.Describe("get_project_organization", "Get an organization", "Project-scoped organizations, separate from platform organizations. Reads require auth:read; mutations require auth:write. Membership changes preserve an admin and enforce max_members. Organization deletion cascades memberships, invitations and domains.", "Project tenants", null, 200, typeof(ProjectOrganizationBody), paged: false, conflict: true);
     }
 
-    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
+    protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var project = await this.AccessAsync(caller, Roles.Viewer, cancellationToken);
-        return Results.Json(ProjectOrganizationDirectory.Body((await organizations.ReadAsync(project, this.Org, cancellationToken)).Value), ProjectOrganizationsJson.Default.ProjectOrganizationBody);
+        var org = await organizations.ReadAsync(project, this.Org, cancellationToken);
+        return org is null
+            ? new Failure(ProjectOrganizationDirectory.NoSuchOrganization())
+            : Results.Json(ProjectOrganizationDirectory.Body(org.Value), ProjectOrganizationsJson.Default.ProjectOrganizationBody);
     }
 }

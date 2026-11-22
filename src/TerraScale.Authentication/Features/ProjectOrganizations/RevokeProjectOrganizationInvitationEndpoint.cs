@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -12,10 +13,14 @@ public sealed class RevokeProjectOrganizationInvitationEndpoint(ProjectOrganizat
         this.Describe("revoke_project_organization_invitation", "Revoke an organization invitation", "Project-scoped organizations, separate from platform organizations. Reads require auth:read; mutations require auth:write. Membership changes preserve an admin and enforce max_members. Organization deletion cascades memberships, invitations and domains.", "Project tenants", null, 204, null, paged: false, conflict: true);
     }
 
-    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
+    protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
-        await organizations.RevokeInvitationAsync(project, this.Org, this.RouteId("invitation"), cancellationToken);
-        return Results.NoContent();
+        return await organizations.RevokeInvitationAsync(project, this.Org, this.RouteId("invitation"), cancellationToken) switch
+        {
+            Done => Results.NoContent(),
+            NotFound error => new Failure(error),
+            Conflict error => new Failure(error),
+        };
     }
 }

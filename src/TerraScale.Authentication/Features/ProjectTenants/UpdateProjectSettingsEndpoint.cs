@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using TerraScale.Authentication.Features.AttackProtection;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Features.ProjectTenants;
@@ -15,7 +16,7 @@ public sealed partial class UpdateProjectSettingsEndpoint(TenantDirectory tenant
         this.Describe("update_project_settings", "Change a project tenant's settings", "Omitted methods are unchanged and a sent branding replaces the branding (null clears a value). At least one of passcode, password and magic_link stays on; magic_link emails a browser-bound ten-minute link and username requires a case-insensitive username at sign-up; logo_url and footer links are https, colours #rrggbb, name 1 to 64 characters, title_size 20 to 40, default_theme light/dark/system and email_message at most 500 plain-text characters (only newline controls). Name, logo and accent also brand verification, sign-in and reset emails; sender stays TerraScale. Configuration replaces the project redirect allowlist (at most 100 exact URLs; empty adds no restriction) and session lifetime (300 to 2592000 seconds). require_mfa requires an enrolled allowed factor before sign-in; allow_totp and allow_passkey select the allowed factors, with at least one required when require_mfa is true. inactivity_timeout_minutes is null (off) or 15 to 43200 minutes (30 days). single_session supersedes prior sessions on each sign-in. These policies cannot extend session_lifetime_seconds. organization_picker defaults to false; omitted leaves it unchanged. Only the reserved platform tenant uses the bootstrap auth project setting to request organization choice at dashboard sign-in. Needs the admin project role.", "Project tenants", typeof(UpdateSettingsRequest), StatusCodes.Status200OK, typeof(SettingsBody));
     }
 
-    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
+    protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(ProjectTenantJson.Default.UpdateSettingsRequest, cancellationToken);
@@ -30,7 +31,7 @@ public sealed partial class UpdateProjectSettingsEndpoint(TenantDirectory tenant
                 || branding.FooterLinks is { } links && (links.Count > 5 || links.Any(link => link is null || string.IsNullOrWhiteSpace(link.Label)
                     || link.Label.Length > 24 || link.Label.Any(char.IsControl) || !Https(link.Url))))
             {
-                throw Invalid("Invalid branding: use a name of 1 to 64 characters, https URLs, #rrggbb colours, title_size 20 to 40, light/dark/system, at most five labelled footer links and email_message of at most 500 plain-text characters without controls except newline.");
+                return new Failure(new Validation("Invalid branding: use a name of 1 to 64 characters, https URLs, #rrggbb colours, title_size 20 to 40, light/dark/system, at most five labelled footer links and email_message of at most 500 plain-text characters without controls except newline.", "invalid_request"));
             }
         }
 
@@ -40,17 +41,17 @@ public sealed partial class UpdateProjectSettingsEndpoint(TenantDirectory tenant
                 || configuration.RequireMfa && !configuration.AllowTotp && !configuration.AllowPasskey || configuration.RedirectUrls is null
                 || configuration.RedirectUrls.Count > 100 || configuration.RedirectUrls.Any(value => !Redirect(value))))
         {
-            throw Invalid("configuration requires at least one allowed factor when MFA is required, inactivity_timeout_minutes null or 15 to 43200, session_lifetime_seconds 300 to 2592000 and at most 100 exact https redirect URLs (http only on loopback), without userinfo or fragments.");
+            return new Failure(new Validation("configuration requires at least one allowed factor when MFA is required, inactivity_timeout_minutes null or 15 to 43200, session_lifetime_seconds 300 to 2592000 and at most 100 exact https redirect URLs (http only on loopback), without userinfo or fragments.", "invalid_request"));
         }
 
         if (request.AttackProtection is { BotChallenge: true } && !this.HttpContext.RequestServices.GetRequiredService<TurnstileKeys>().Configured)
         {
-            throw Invalid("Bot challenge requires configured Cloudflare Turnstile site and secret keys.");
+            return new Failure(new Validation("Bot challenge requires configured Cloudflare Turnstile site and secret keys.", "invalid_request"));
         }
 
         if (request.Methods?.SignUpMode is not (null or "public" or "restricted" or "waitlist"))
         {
-            throw Invalid("sign_up_mode must be public, restricted or waitlist.");
+            return new Failure(new Validation("sign_up_mode must be public, restricted or waitlist.", "invalid_request"));
         }
 
         var restrictions = request.Restrictions is { } sentRestrictions ? SignUpRestrictions.Normalize(sentRestrictions) : null;

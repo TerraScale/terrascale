@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
@@ -14,10 +15,14 @@ public sealed class DeleteProjectUserEndpoint(TenantDirectory tenants, Users use
         this.Describe("delete_project_user", "Delete an end user", "Needs the admin project role. Its email is released and its sessions and tokens stop working at once.", "Project tenants", null, StatusCodes.Status204NoContent, null);
     }
 
-    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
+    protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
-        _ = await this.Tenants.UserAsync(projectId, this.RouteId("user"), cancellationToken);
+        if (await this.Tenants.UserAsync(projectId, this.RouteId("user"), cancellationToken) is NotFound missing)
+        {
+            return new Failure(missing);
+        }
+
         await users.DeleteAsync(projectId, this.RouteId("user"), cancellationToken);
         return Results.NoContent();
     }

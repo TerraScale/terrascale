@@ -1,3 +1,5 @@
+using TerraScale.Authentication.Errors;
+using TerraScale.Authentication.Storage;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Ui;
@@ -26,13 +28,20 @@ public sealed class OrganizationInvitationPageEndpoint(ProjectOrganizationDirect
         }
 
         var secret = this.HttpContext.Request.Query["token"].ToString();
-        var invite = await organizations.InvitationAsync(tenant, secret, cancellationToken);
+        var invitation = await organizations.InvitationAsync(tenant, secret, cancellationToken);
+        if (invitation is not Versioned<ProjectOrganizationInvitation> invite)
+        {
+            return ErrorResults.ToResult(new NotFound("No such resource.", "not_found"));
+        }
+
         if (await sessions.ResolveAsync(tenant, this.HttpContext.Request.Cookies[Tenancy.SessionCookie(tenant)], cancellationToken) is null)
         {
             return Results.Redirect($"/ui/{tenant}/sign-in?next={Uri.EscapeDataString(this.HttpContext.Request.Path + this.HttpContext.Request.QueryString)}");
         }
 
         var org = await organizations.ReadAsync(tenant, invite.Value.OrganizationId, cancellationToken);
-        return OrganizationPageModel.Render(this.HttpContext, new(tenant, "", $"Join {org.Value.Name}", invite.Value.Email, secret));
+        return org is null
+            ? ErrorResults.ToResult(new NotFound("No such resource.", "not_found"))
+            : OrganizationPageModel.Render(this.HttpContext, new(tenant, "", $"Join {org.Value.Name}", invite.Value.Email, secret));
     }
 }

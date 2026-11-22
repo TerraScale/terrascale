@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -11,10 +12,15 @@ public sealed class SetAgentPolicyEndpoint(TenantDirectory tenants, PlatformAuth
         this.Describe("set_agent_policy", "Set agent policy", "Agent identities. Requires the admin role or the corresponding project key scope.", "Agents", typeof(AgentPolicyBody), 200, typeof(AgentPolicyBody), conflict: true);
     }
 
-    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
+    protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(AgentJson.Default.AgentPolicyBody, cancellationToken);
-        return Results.Json(await agents.SetPolicyAsync(project, request.AllowedScopes, caller.Id, cancellationToken), AgentJson.Default.AgentPolicyBody);
+        return await agents.SetPolicyAsync(project, request.AllowedScopes, caller.Id, cancellationToken) switch
+        {
+            AgentPolicyBody policy => Results.Json(policy, AgentJson.Default.AgentPolicyBody),
+            Validation error => new Failure(error),
+            Conflict error => new Failure(error),
+        };
     }
 }

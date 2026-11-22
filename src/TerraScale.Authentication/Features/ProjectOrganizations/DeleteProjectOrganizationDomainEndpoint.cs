@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -12,10 +13,14 @@ public sealed class DeleteProjectOrganizationDomainEndpoint(ProjectOrganizationD
         this.Describe("delete_project_organization_domain", "Delete an organization domain", "Project-scoped verified domains. Publish record_name with record_value as DNS TXT before verifying. A domain belongs to one organization per project.", "Project tenants", null, 204, null, conflict: true);
     }
 
-    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
+    protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
-        await organizations.ChangeDomainAsync(project, this.Org, (string)this.HttpContext.GetRouteValue("domain")!, true, cancellationToken);
-        return Results.NoContent();
+        return await organizations.DeleteDomainAsync(project, this.Org, (string)this.HttpContext.GetRouteValue("domain")!, cancellationToken) switch
+        {
+            Done => Results.NoContent(),
+            NotFound error => new Failure(error),
+            Conflict error => new Failure(error),
+        };
     }
 }

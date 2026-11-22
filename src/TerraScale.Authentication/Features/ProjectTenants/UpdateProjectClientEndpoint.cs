@@ -1,5 +1,6 @@
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using static OpenIddict.Abstractions.OpenIddictConstants;
@@ -15,14 +16,30 @@ public sealed class UpdateProjectClientEndpoint(TenantDirectory tenants, IOpenId
         this.Describe("update_project_client", "Update an OAuth client", "Changes a client's display name and redirect URIs, or a machine app's allowed_scopes, allowed_audiences and token_lifetime_minutes (5 to 60); machine apps require no redirect URIs; its client_id stays the same and no secret is answered. redirect_uris holds 1 to 10 absolute https URLs (http only on loopback hosts) without userinfo or fragments, and each URI must additionally exactly match an entry in the project's redirect allowlist when nonempty. allowed_origins holds at most 10 exact browser origins (https://host[:port], or http on a loopback host; lowercase, no default port, path, trailing slash, wildcard, userinfo, query or fragment) whose cross-origin token, userinfo, revocation and guest requests get CORS; allow_anonymous (default false) admits guests at /{project}/oauth/anonymous. Machine apps take neither. An omitted allowed_origins or allow_anonymous stays unchanged. Needs the admin project role.", "Project tenants", typeof(UpdateClientRequest), StatusCodes.Status200OK, typeof(ClientBody));
     }
 
-    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
+    protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var person = caller.RequirePerson();
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(ProjectTenantJson.Default.UpdateClientRequest, cancellationToken);
-        var name = PlatformDirectory.Name(request.Name) ?? throw Invalid("name must be 1 to 128 characters with a letter or digit.");
+        var name = PlatformDirectory.Name(request.Name);
+        if (name is null)
+        {
+            return new Failure(new Validation("name must be 1 to 128 characters with a letter or digit.", "invalid_request"));
+        }
+
         var origins = ClientOrigins.Validate(request.AllowedOrigins);
-        List<Uri> redirects = [.. (request.RedirectUris ?? []).Select(value => ClientRedirect(value) ?? throw Invalid("Each redirect URI must be an absolute https URL, or http on a loopback host, without userinfo or fragments."))];
+        List<Uri> redirects = [];
+        foreach (var value in request.RedirectUris ?? [])
+        {
+            var redirect = ClientRedirect(value);
+            if (redirect is null)
+            {
+                return new Failure(new Validation("Each redirect URI must be an absolute https URL, or http on a loopback host, without userinfo or fragments.", "invalid_request"));
+            }
+
+            redirects.Add(redirect);
+        }
+
         if (redirects.Count > 10)
         {
             throw Invalid("redirect_uris must hold 1 to 10 URIs.");
@@ -32,7 +49,7 @@ public sealed class UpdateProjectClientEndpoint(TenantDirectory tenants, IOpenId
         {
             if (!await OidcResults.AllowsRedirectAsync(settings, projectId, redirect, cancellationToken))
             {
-                throw Invalid("Each redirect URI must also exactly match the project's redirect allowlist.");
+                return new Failure(new Validation("Each redirect URI must also exactly match the project's redirect allowlist.", "invalid_request"));
             }
         }
 
@@ -43,23 +60,23 @@ public sealed class UpdateProjectClientEndpoint(TenantDirectory tenants, IOpenId
         {
             if (await applications.FindByClientIdAsync(this.RouteId("client_id"), cancellationToken) is not OidcApplication application)
             {
-                throw PlatformDirectory.NotFound();
+                return new Failure(new NotFound("No such resource.", "not_found"));
             }
 
             var policy = MachineClients.Policy(application);
             if (policy is null && (request.AllowedScopes is not null || request.AllowedAudiences is not null || request.TokenLifetimeMinutes is not null))
             {
-                throw Invalid("Machine policies require a machine app.");
+                return new Failure(new Validation("Machine policies require a machine app.", "invalid_request"));
             }
 
             if (policy is not null ? redirects.Count != 0 : redirects.Count == 0)
             {
-                throw Invalid("Interactive apps need redirect URIs; machine apps need none.");
+                return new Failure(new Validation("Interactive apps need redirect URIs; machine apps need none.", "invalid_request"));
             }
 
             if (policy is not null && (origins is { Count: > 0 } || request.AllowAnonymous == true))
             {
-                throw Invalid("Machine apps take no allowed_origins or allow_anonymous.");
+                return new Failure(new Validation("Machine apps take no allowed_origins or allow_anonymous.", "invalid_request"));
             }
 
             var descriptor = new OpenIddictApplicationDescriptor();

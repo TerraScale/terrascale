@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Configuration;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.SignIn;
@@ -33,7 +34,12 @@ public sealed class AcceptOrganizationInvitationEndpoint(ProjectOrganizationDire
             return Results.Unauthorized();
         }
 
-        var org = await organizations.AcceptAsync(live.User, (await this.HttpContext.Request.ReadFormAsync(cancellationToken))["token"].ToString(), cancellationToken);
-        return OrganizationPageModel.Render(this.HttpContext, new(tenant, "", org.Slug, Done: "Invitation accepted"));
+        return await organizations.AcceptAsync(live.User, (await this.HttpContext.Request.ReadFormAsync(cancellationToken))["token"].ToString(), cancellationToken) switch
+        {
+            OrganizationClaims org => OrganizationPageModel.Render(this.HttpContext, new(tenant, "", org.Slug, Done: "Invitation accepted")),
+            NotFound error => ErrorResults.ToResult(error),
+            Forbidden error => ErrorResults.ToResult(error),
+            Conflict error => ErrorResults.ToResult(error),
+        };
     }
 }

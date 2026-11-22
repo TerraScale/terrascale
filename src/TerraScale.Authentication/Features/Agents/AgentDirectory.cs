@@ -36,6 +36,22 @@ public readonly union GetAgentResult(AgentBody, NotFound);
 
 public readonly union ShareOwnerEmailResult(AgentBody, NotFound);
 
+public readonly union AgentPolicySet(AgentPolicyBody, Validation, Conflict);
+
+public readonly union AgentCreated(AgentBody, Validation, NotFound, QuotaExceeded, Conflict);
+
+public readonly union AgentKeyAdded(AgentKeyBody, Validation, NotFound, Conflict);
+
+public readonly union AgentKeyRevoked(Done, NotFound, Conflict);
+
+public readonly union AgentRevoked(Done, NotFound, Conflict);
+
+public readonly union AgentStored(Stored, Conflict);
+
+public sealed record Stored;
+
+public readonly union AgentSaved(AgentBody, NotFound, Conflict);
+
 public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, AgentLifecycleEvents events, AttemptLimiter limiter, TimeProvider clock, ILogger<AgentDirectory> logger)
 {
     public static readonly IReadOnlyList<string> PlatformScopes = ["mcp:read", "mcp:write"];
@@ -48,21 +64,24 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
         !Tenancy.IsProject(project) ? new(PlatformScopes) : new(await data.ReadAsync((db, token) => db.AgentPolicies.Where(row => row.ProjectId == project)
             .Select(row => row.AllowedScopes).SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false) ?? []);
 
-    public async Task<AgentPolicyBody> SetPolicyAsync(string project, IReadOnlyList<string> scopes, string actor, CancellationToken cancellationToken)
+    public async Task<AgentPolicySet> SetPolicyAsync(string project, IReadOnlyList<string> scopes, string actor, CancellationToken cancellationToken)
     {
         if (scopes is null || scopes.Count != 0 && !MachineClients.ValidScopes(scopes))
         {
-            throw new ApiException(400, "invalid_request", "allowed_scopes must be empty or 1 to 64 unique scopes.");
+            return new Validation("allowed_scopes must be empty or 1 to 64 unique scopes.", "invalid_request");
         }
 
         var current = await data.ReadAsync((db, token) => db.AgentPolicies.Where(row => row.ProjectId == project).WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
         var policy = new AgentPolicyRecord(project, scopes);
-        await this.SaveAsync(project, actor, "agent.policy_updated", project, null,
-            [current is null ? Change.Insert(policy) : Change.Update(current, policy)], cancellationToken).ConfigureAwait(false);
-        return new(scopes);
+        return await this.SaveAsync(project, actor, "agent.policy_updated", project, null,
+            [current is null ? Change.Insert(policy) : Change.Update(current, policy)], cancellationToken).ConfigureAwait(false) switch
+        {
+            Stored => new AgentPolicyBody(scopes),
+            Conflict refused => refused,
+        };
     }
 
-    public async Task<AgentBody> CreateAsync(string project, string userId, string actor, CreateAgentRequest request, Func<AgentKeyRecord, IReadOnlyList<Change>> bound,
+    public async Task<AgentCreated> CreateAsync(string project, string userId, string actor, CreateAgentRequest request, Func<AgentKeyRecord, IReadOnlyList<Change>> bound,
         DateTimeOffset? deadline, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -76,14 +95,23 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
         if (name is not { Length: <= 64 } || request.AllowedScopes is not { } scopes || !MachineClients.ValidScopes(scopes) || allowed is null
             || scopes.Except(allowed, StringComparer.Ordinal).Any() || request.ExpiresAt <= now)
         {
-            throw new ApiException(400, "invalid_request", "Supply a name of 1 to 64 characters, 1 to 64 unique scopes from the project's agent policy, a public_jwk and an optional future expiry.");
+            return new Validation("Supply a name of 1 to 64 characters, 1 to 64 unique scopes from the project's agent policy, a public_jwk and an optional future expiry.", "invalid_request");
         }
 
-        var key = AgentJwk.Parse(request.PublicJwk);
+        AgentPublicKey key;
+        try
+        {
+            key = AgentJwk.Parse(request.PublicJwk);
+        }
+        catch (ApiException error) when (error.Status == StatusCodes.Status400BadRequest)
+        {
+            return new Validation(error.Message, error.Code);
+        }
+
         var user = await data.ReadAsync((db, token) => db.Users.Where(row => row.InstanceId == project && row.Id == userId).WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
         if (user is null || user.Value.Disabled)
         {
-            throw PlatformDirectory.NotFound();
+            return new NotFound("No such resource.", "not_found");
         }
 
         var stamp = user.Value.AuthStamp ?? throw new InvalidDataException("The user has no authentication stamp.");
@@ -91,20 +119,23 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
             && (row.ExpiresAt == null || row.ExpiresAt > now) && row.OwnerAuthEpoch == user.Value.AuthEpoch && row.OwnerAuthStamp == stamp, token), cancellationToken).ConfigureAwait(false);
         if (live >= MaxLiveAgentsPerUser)
         {
-            throw new ApiException(409, "agent_limit", $"A user can have at most {MaxLiveAgentsPerUser} live agents.");
+            return new Conflict($"A user can have at most {MaxLiveAgentsPerUser} live agents.", "agent_limit");
         }
 
         if (await limiter.AcquireAsync(project, "agent-create", userId, 100, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false) is { } wait)
         {
-            throw ApiException.RateLimited("Too many agents created.", wait);
+            return new QuotaExceeded("Too many agents created.", "rate_limited", RetryAfter: wait);
         }
 
         var agent = new AgentRecord(project, AuthIds.New(), userId, name, AgentStatus.Active, scopes, request.AllowSelfSubject, now, request.ExpiresAt, null, null, user.Value.AuthEpoch, stamp);
         var stored = new AgentKeyRecord(project, AuthIds.New(), agent.Id, key.Jwk, key.Thumbprint, now, null);
-        await this.SaveAsync(project, actor, "agent.created", agent.Id, key.Thumbprint,
+        return await this.SaveAsync(project, actor, "agent.created", agent.Id, key.Thumbprint,
             [Change.Insert(agent), Change.Insert(stored), .. policy is null ? [] : new[] { Change.Assert(policy) }, Change.Update(user, user.Value),
-                .. Event(project, () => events.Created(project, userId, agent.Id, stored.Kid)), .. bound(stored)], cancellationToken, deadline).ConfigureAwait(false);
-        return Body(agent, [stored], new(user.Value.Id, user.Value.AuthEpoch, stamp, false));
+                .. Event(project, () => events.Created(project, userId, agent.Id, stored.Kid)), .. bound(stored)], cancellationToken, deadline).ConfigureAwait(false) switch
+        {
+            Stored => Body(agent, [stored], new(user.Value.Id, user.Value.AuthEpoch, stamp, false)),
+            Conflict refused => refused,
+        };
     }
 
     public async Task<GetAgentResult> GetAsync(string project, string agentId, CancellationToken cancellationToken)
@@ -124,34 +155,51 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
         return new(await this.BodiesAsync(project, page.Items, cancellationToken).ConfigureAwait(false), page.Next);
     }
 
-    public async Task<AgentKeyBody> AddKeyAsync(string project, string agentId, string actor, AddAgentKeyRequest request, CancellationToken cancellationToken)
+    public async Task<AgentKeyAdded> AddKeyAsync(string project, string agentId, string actor, AddAgentKeyRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var key = AgentJwk.Parse(request.PublicJwk);
-        var agent = await data.ReadAsync((db, token) => db.Agents.Where(row => row.ProjectId == project && row.Id == agentId).WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false)
-            ?? throw PlatformDirectory.NotFound();
+        AgentPublicKey key;
+        try
+        {
+            key = AgentJwk.Parse(request.PublicJwk);
+        }
+        catch (ApiException error) when (error.Status == StatusCodes.Status400BadRequest)
+        {
+            return new Validation(error.Message, error.Code);
+        }
+
+        var agent = await data.ReadAsync((db, token) => db.Agents.Where(row => row.ProjectId == project && row.Id == agentId).WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
+        if (agent is null)
+        {
+            return new NotFound("No such resource.", "not_found");
+        }
+
         var owner = await data.ReadAsync((db, token) => db.Users.Where(row => row.InstanceId == project && row.Id == agent.Value.OwnerUserId)
             .WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
         var now = clock.GetUtcNow();
         if (owner is null || Status(agent.Value, Owner(owner.Value)) != AgentStatus.Active || agent.Value.ExpiresAt <= now)
         {
-            throw new ApiException(409, "agent_inactive", "The agent is revoked or expired, or its owner signed out everywhere or was disabled.");
+            return new Conflict("The agent is revoked or expired, or its owner signed out everywhere or was disabled.", "agent_inactive");
         }
 
         var active = await data.ReadAsync((db, token) => db.AgentKeys.CountAsync(row => row.ProjectId == project && row.AgentId == agentId && row.RevokedAt == null, token), cancellationToken).ConfigureAwait(false);
         if (active >= MaxActiveKeysPerAgent)
         {
-            throw new ApiException(409, "agent_key_limit", $"An agent can have at most {MaxActiveKeysPerAgent} active keys; revoke one first.");
+            return new Conflict($"An agent can have at most {MaxActiveKeysPerAgent} active keys; revoke one first.", "agent_key_limit");
         }
 
         var stored = new AgentKeyRecord(project, AuthIds.New(), agentId, key.Jwk, key.Thumbprint, now, null);
-        await this.SaveAsync(project, actor, "agent.key_added", stored.Kid, key.Thumbprint,
+        return await this.SaveAsync(project, actor, "agent.key_added", stored.Kid, key.Thumbprint,
             [Change.Insert(stored), Change.Update(agent, agent.Value), Change.Assert(owner),
-                .. Event(project, () => events.KeyAdded(project, agent.Value.OwnerUserId, agentId, stored.Kid))], cancellationToken).ConfigureAwait(false);
-        return KeyBody(stored);
+                .. Event(project, () => events.KeyAdded(project, agent.Value.OwnerUserId, agentId, stored.Kid))], cancellationToken).ConfigureAwait(false) switch
+        {
+            Stored => KeyBody(stored),
+            Conflict refused => refused,
+        };
     }
 
-    public async Task RevokeKeyAsync(string project, string agentId, string kid, string actor, CancellationToken cancellationToken)
+
+    public async Task<AgentKeyRevoked> RevokeKeyAsync(string project, string agentId, string kid, string actor, CancellationToken cancellationToken)
     {
         var (agent, key) = await data.ReadAsync(async (db, token) => (
             await db.Agents.Where(row => row.ProjectId == project && row.Id == agentId).WithVersion().SingleOrDefaultAsync(token).ConfigureAwait(false),
@@ -159,20 +207,24 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
             cancellationToken).ConfigureAwait(false);
         if (agent is null || key is null)
         {
-            throw PlatformDirectory.NotFound();
+            return new NotFound("No such resource.", "not_found");
         }
 
         if (key.Value.RevokedAt is not null)
         {
-            return;
+            return new Done();
         }
 
-        await this.SaveAsync(project, actor, "agent.key_revoked", kid, null,
+        return await this.SaveAsync(project, actor, "agent.key_revoked", kid, null,
             [Change.Update(key, key.Value with { RevokedAt = clock.GetUtcNow() }), Change.Update(agent, agent.Value),
-                .. Event(project, () => events.KeyRevoked(project, agent.Value.OwnerUserId, agentId, kid))], cancellationToken).ConfigureAwait(false);
+                .. Event(project, () => events.KeyRevoked(project, agent.Value.OwnerUserId, agentId, kid))], cancellationToken).ConfigureAwait(false) switch
+        {
+            Stored => new Done(),
+            Conflict refused => refused,
+        };
     }
 
-    public async Task RevokeAsync(string project, string agentId, string? owner, string actor, CancellationToken cancellationToken)
+    public async Task<AgentRevoked> RevokeAsync(string project, string agentId, string? owner, string actor, CancellationToken cancellationToken)
     {
         var (agent, keys) = await data.ReadAsync(async (db, token) => (
             await db.Agents.Where(row => row.ProjectId == project && row.Id == agentId && (owner == null || row.OwnerUserId == owner)).WithVersion().SingleOrDefaultAsync(token).ConfigureAwait(false),
@@ -180,36 +232,46 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
             cancellationToken).ConfigureAwait(false);
         if (agent is null)
         {
-            throw PlatformDirectory.NotFound();
+            return new NotFound("No such resource.", "not_found");
         }
 
         if (agent.Value.Status == AgentStatus.Revoked)
         {
-            return;
+            return new Done();
         }
 
         var now = clock.GetUtcNow();
-        await this.SaveAsync(project, actor, "agent.revoked", agentId, null,
+        return await this.SaveAsync(project, actor, "agent.revoked", agentId, null,
             [Change.Update(agent, agent.Value with { Status = AgentStatus.Revoked, RevokedAt = now }),
                 .. keys.Select(key => Change.Update(key, key.Value with { RevokedAt = now })),
-                .. Event(project, () => events.Revoked(project, agent.Value.OwnerUserId, agentId))], cancellationToken).ConfigureAwait(false);
+                .. Event(project, () => events.Revoked(project, agent.Value.OwnerUserId, agentId))], cancellationToken).ConfigureAwait(false) switch
+        {
+            Stored => new Done(),
+            Conflict refused => refused,
+        };
     }
 
-    public async Task<ShareOwnerEmailResult> ShareOwnerEmailAsync(string project, string agentId, string owner, bool share, CancellationToken cancellationToken)
+    public async Task<AgentSaved> ShareOwnerEmailAsync(string project, string agentId, string owner, bool share, CancellationToken cancellationToken)
     {
         using var home = HomeReads.Begin();
         var agent = await data.ReadAsync((db, token) => db.Agents.Where(row => row.ProjectId == project && row.Id == agentId && row.OwnerUserId == owner).WithVersion()
             .SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
         if (agent is null)
         {
-            return new NotFound("No such resource.");
+            return new NotFound("No such resource.", "not_found");
         }
 
         var shared = agent.Value with { ShareOwnerEmail = share };
         if (agent.Value.ShareOwnerEmail != share)
         {
-            await this.SaveAsync(project, owner, share ? "agent.owner_email_shared" : "agent.owner_email_unshared", agentId, null, [Change.Update(agent, shared)], cancellationToken)
-                .ConfigureAwait(false);
+            switch (await this.SaveAsync(project, owner, share ? "agent.owner_email_shared" : "agent.owner_email_unshared", agentId, null,
+                [Change.Update(agent, shared)], cancellationToken).ConfigureAwait(false))
+            {
+                case Stored:
+                    break;
+                case Conflict refused:
+                    return refused;
+            }
         }
 
         return (await this.BodiesAsync(project, [shared], cancellationToken).ConfigureAwait(false))[0];
@@ -250,7 +312,7 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
 
     private static AgentKeyBody KeyBody(AgentKeyRecord key) => new(key.Kid, key.Thumbprint, key.CreatedAt, key.RevokedAt);
 
-    private async Task SaveAsync(string project, string actor, string action, string target, string? thumbprint, IReadOnlyList<Change> changes, CancellationToken cancellationToken,
+    private async Task<AgentStored> SaveAsync(string project, string actor, string action, string target, string? thumbprint, IReadOnlyList<Change> changes, CancellationToken cancellationToken,
         DateTimeOffset? deadline = null)
     {
         var organization = Tenancy.IsProject(project)
@@ -258,7 +320,7 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
             : null;
         if (deadline <= clock.GetUtcNow())
         {
-            throw new ApiException(409, "approval_expired", "The approval deadline passed before the agent could be stored.");
+            return new Conflict("The approval deadline passed before the agent could be stored.", "approval_expired");
         }
 
         if (await data.SaveAsync([.. changes, .. organization is null ? [] : new[] { platform.Audit(organization, actor, action, target) }], cancellationToken).ConfigureAwait(false))
@@ -268,15 +330,12 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
                 logger.ZLogInformation($"Platform agent audit: {action} {target} by {actor}");
             }
 
-            return;
+            return new Stored();
         }
 
-        if (thumbprint is not null && await data.ReadAsync((db, token) => db.AgentKeys.AnyAsync(row => row.ProjectId == project && row.Thumbprint == thumbprint, token), cancellationToken).ConfigureAwait(false))
-        {
-            throw new ApiException(409, "agent_key_in_use", "This public key is already registered in the project; generate a new key pair.");
-        }
-
-        throw new ApiException(409, "version_conflict", "The agent, its owner or the agent policy changed concurrently.");
+        return thumbprint is not null && await data.ReadAsync((db, token) => db.AgentKeys.AnyAsync(row => row.ProjectId == project && row.Thumbprint == thumbprint, token), cancellationToken).ConfigureAwait(false)
+            ? new Conflict("This public key is already registered in the project; generate a new key pair.", "agent_key_in_use")
+            : new Conflict("The agent, its owner or the agent policy changed concurrently.", "version_conflict");
     }
 }
 

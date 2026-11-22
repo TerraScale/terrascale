@@ -16,7 +16,7 @@ public sealed class CreateProjectUserEndpoint(TenantDirectory tenants, PlatformA
             "Project tenants", typeof(CreateProjectUserRequest), StatusCodes.Status201Created, typeof(ProjectUserBody), conflict: true);
     }
 
-    protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
+    protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(UserProfileJson.Default.CreateProjectUserRequest, cancellationToken);
