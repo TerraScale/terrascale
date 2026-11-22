@@ -1,30 +1,59 @@
-name: Require the journey on the released main commit
-description: Reject a revision without a successful main push CI run and both journey shards.
+name: Qualify the exact main revision
+description: Require successful code checks and journey shards on a completed main push CI run.
 inputs:
   revision:
     description: Exact source revision being published or deployed.
     required: true
+  qualification:
+    description: Strict CI success or TerraBase maintenance qualification.
+    default: strict
 runs:
   using: composite
   steps:
-    - name: Require successful CI and journey for the exact revision
+    - name: Require successful code checks and journey for the exact revision
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
         REVISION: ${{ inputs.revision }}
+        QUALIFICATION: ${{ inputs.qualification }}
       run: |
         set -euo pipefail
         [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]
+        [[ "$QUALIFICATION" == strict || "$QUALIFICATION" == terrabase-maintenance ]]
         run=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$REVISION&branch=main&event=push&per_page=100" \
           --jq '.workflow_runs | max_by(.id) // empty')
-        jq -e --arg sha "$REVISION" --arg repo "$GITHUB_REPOSITORY" '
+        jq -e --arg sha "$REVISION" --arg repo "$GITHUB_REPOSITORY" --arg qualification "$QUALIFICATION" '
           .head_sha == $sha and .head_branch == "main" and .event == "push"
-          and .head_repository.full_name == $repo and .status == "completed" and .conclusion == "success"
-        ' <<< "$run" > /dev/null
+          and .head_repository.full_name == $repo and .repository.full_name == $repo
+          and .path == ".github/workflows/ci.yml"
+          and .status == "completed"
+          and (.conclusion == "success" or ($qualification == "terrabase-maintenance" and .conclusion == "failure"))
+        ' <<< "$run" > /dev/null || { echo "::error::No eligible completed main CI run for $REVISION"; exit 1; }
         id=$(jq -r .id <<< "$run")
+        conclusion=$(jq -r .conclusion <<< "$run")
         gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?filter=latest&per_page=100" | \
-          jq -e '[.[].jobs[]] as $jobs
-            | [$jobs[] | select(.name | startswith("journey / journey "))] as $journey
-            | ($journey | length) >= 2 and all($journey[]; .conclusion == "success")
-              and any($jobs[]; .name == "all-green" and .conclusion == "success")' > /dev/null
+          jq -e --arg conclusion "$conclusion" '
+            def live_auth_failure:
+              .name == "main-auth" and .conclusion == "failure"
+              and ([.steps[] | select(.conclusion != "success" and .conclusion != "skipped")] | length == 1
+                and all(.[]; .status == "completed" and .conclusion == "failure"
+                  and (.name | IN("Report live ts-auth readiness HTTP 503", "Record the released source for the production journey"))));
+            ["changes", "checks", "all-green",
+              ("journey / " + ("build terrabase", "build ts-auth", "build dashboard", "runner go", "runner rust",
+                "build engine rollback baseline", "engine crash selection guard",
+                "engine crash recovery (admission)", "engine crash recovery (idle)", "engine crash recovery (integrity)",
+                "engine crash recovery (proofs)", "engine crash recovery (publication)", "engine crash recovery (recovery)",
+                "keyring recovery and rotation", "replication frontier",
+                "journey desktop and paid", "journey phone and flows", "journey session limits", "journey write guarantees",
+                "journey multi-region faults", "journey multi-region retired source",
+                "journey multi-region home moves and receipt handoffs"))] as $required
+            | [.[].jobs[]] as $jobs
+            | [$jobs[] | select(.conclusion != "success" and .conclusion != "skipped")] as $unsuccessful
+            | all($jobs[]; .status == "completed")
+              and all($jobs[] | select(.name | startswith("journey / ")); .conclusion == "success")
+              and all($required[]; . as $name
+                | any($jobs[]; .name == $name and .conclusion == "success"))
+              and (if $conclusion == "success" then $unsuccessful == []
+                   else ($unsuccessful | length == 1 and all(.[]; live_auth_failure)) end)
+          ' > /dev/null || { echo "::error::Main CI run $id lacks successful code and journey qualification for $REVISION"; exit 1; }
         echo "Qualified $REVISION with main CI run $id and its successful journey" >> "$GITHUB_STEP_SUMMARY"
