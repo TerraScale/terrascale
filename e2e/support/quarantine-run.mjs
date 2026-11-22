@@ -19,9 +19,9 @@ if (process.env.GITHUB_EVENT_NAME === 'pull_request' && quarantine().length) {
   const entries = quarantine();
   const filters = new Set();
   const summary = [];
-  const flat = test => [test.project, test.spec, ...test.titles, ...test.tags].join(' ');
-  const ambiguous = test => test.tags.length > 0 || inventory.some(candidate => flat(candidate) === flat(test)
-    && JSON.stringify([candidate.project, candidate.spec, candidate.titles]) !== JSON.stringify([test.project, test.spec, test.titles]));
+  const flat = test => [test.project, test.spec, ...test.titles].join(' ');
+  const ambiguous = test => inventory.some(candidate => (flat(candidate) === flat(test)
+    && JSON.stringify([candidate.project, candidate.spec, candidate.titles]) !== JSON.stringify([test.project, test.spec, test.titles])) || candidate.tags.length);
   for (const test of inventory) {
     const issue = quarantined(test, entries, inventory);
     if (!issue) continue;

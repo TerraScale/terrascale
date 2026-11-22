@@ -1,13 +1,13 @@
 import { deleteAccount } from '../support/account';
 import { test, expect } from '../support/audit';
-import { onLocalStack } from '../support/stack';
+import { onLocalStack, production } from '../support/stack';
 import { journey, setupFinished } from '../support/state';
 
 test.beforeAll(({}, info) => {
   expect(setupFinished(info), 'setup did not finish').toBe(true);
 });
 
-test('the account is deleted through the profile danger tab and a new sign-in is refused', { tag: '@production-cleanup' }, async ({ page, audit, browser }, info) => {
+test('the account is deleted through the profile danger tab and a new sign-in is refused', production ? { tag: '@production-cleanup' } : {}, async ({ page, audit, browser }, info) => {
   await page.goto('/databases');
   await expect(page.locator('main tr').filter({ hasText: journey().databaseName }), 'the account still holds its database').toHaveCount(1);
   const pending: string[] = [];
