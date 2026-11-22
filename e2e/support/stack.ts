@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { mailPollMs } from './production-envelope.mjs';
 
 const target = process.env.E2E_TARGET ?? 'local';
 if (target !== 'local' && target !== 'production') throw new Error(`E2E_TARGET is local or production, not ${target}`);
@@ -25,7 +26,7 @@ export const mailpit = `http://127.0.0.1:${localPort('mailpit', 8025)}`;
 export const cloudflareSink = `http://127.0.0.1:${localPort('cloudflare', 8026)}`;
 export const stripeStandIn = `http://127.0.0.1:${localPort('stripe', 8027)}`;
 export const r2StandIn = `http://127.0.0.1:${localPort('r2', 8028)}`;
-export const mailWait = production ? 120_000 : 30_000;
+export const mailWait = production ? mailPollMs : 30_000;
 export const browserHome = production ? join(stateDir, 'browser-home') : join(stateDir, 'pki', 'browser-home');
 export const sessionFile = (setup: string) => join(stateDir, `${setup}.session.json`);
 const hostnames = readFileSync(join(e2eRoot, 'env', 'hostnames'), 'utf8').split('\n').filter(Boolean);

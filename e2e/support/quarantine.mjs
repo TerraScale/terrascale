@@ -87,6 +87,7 @@ async function reports(run) {
         const report = JSON.parse(execFileSync('unzip', ['-p', zip, file], { encoding: 'utf8', maxBuffer: 10_000_000 }));
         const attempt = Number(artifact.name.split('-')[2]);
         if (report.run !== String(run.id) || report.attempt !== attempt) throw new Error('Journey result identity mismatch');
+        if (report.infrastructure === true) continue;
         for (const test of report.tests) {
           if (!/^[\w/-]+\.spec\.ts$/.test(test.spec) || test.spec.split('/').includes('..') || typeof test.title !== 'string' || !Array.isArray(test.titles) || !test.titles.length || test.titles.some(title => typeof title !== 'string') || test.title !== test.titles.join(' › ')) throw new Error('Invalid journey test identity');
           result.push({ ...test, attempt });
