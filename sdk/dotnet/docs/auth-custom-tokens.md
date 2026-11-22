@@ -35,7 +35,7 @@ Claims have at most 32 members and 1000 serialized bytes; names match `[a-z][a-z
 Values are strings up to 256 characters, finite numbers, booleans, or arrays of up to 64 strings or numbers.
 Roles belong in `claims.roles`. Authorize every claim on the backend; holders can read the claims.
 
-The route is `POST /v1/{project}/custom-tokens`. `TerraScaleAuthException` preserves `403 insufficient_scope`,
+The route is `POST /v1/{project}/custom-tokens`. The returned `AuthRefused` preserves `403 insufficient_scope`,
 `404 not_found`, and `429 rate_limited` with `RetryAfter`. Every mint is sent once, including rate refusals.
 Tokens have no refresh token: request another from your backend before `ExpiresIn` elapses.
 The token's diagnostic representation is redacted.

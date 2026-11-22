@@ -1,6 +1,8 @@
 using System.Net;
 using System.Text.Json.Serialization;
 
+using TerraScale.DotNet.Errors;
+
 namespace TerraScale.DotNet;
 
 /// <summary>A purpose-bound step-up request. ReturnUri is the registered dashboard origin's /auth/step-up/callback. OrganizationId is required for and binds delete_organization, start_ownership_transfer and change_plan proofs.</summary>
@@ -50,17 +52,17 @@ public sealed record TerraScaleAuthAccountDeletion(bool Completed, string? Opera
 public sealed partial class TerraScaleAuthPlatformClient
 {
     /// <summary>Starts a five-minute step-up attempt. Sends once; existing authentication alone never approves it.</summary>
-    public Task<TerraScaleAuthStepUp> BeginStepUpAsync(string accessToken, TerraScaleAuthStepUpRequest request,
+    public Task<AuthResult<TerraScaleAuthStepUp>> BeginStepUpAsync(string accessToken, TerraScaleAuthStepUpRequest request,
         CancellationToken cancellationToken = default) =>
         client.SendAuthenticatedJsonAsync(HttpMethod.Post, "/v1/terrascale/step-up",
             request ?? throw new ArgumentNullException(nameof(request)), TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthStepUpRequest,
             TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthStepUp,
             TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.Created, 16 * 1024, cancellationToken);
 
-    /// <summary>Consumes a proof once before side effects. Returns null for create_pat, change_plan and delete_organization (204),
+    /// <summary>Consumes a proof once before side effects. Done for create_pat, change_plan and delete_organization (204),
     /// or the account-deletion operation_grant (200) to retain with the receipt. A lost/rejected response never authorizes continuation.
     /// DeleteOrganizationAsync consumes its delete_organization proof itself; never consume that proof first.</summary>
-    public async Task<string?> ConsumeStepUpAsync(string accessToken, TerraScaleAuthStepUpConsume request,
+    public async Task<StepUpConsumed> ConsumeStepUpAsync(string accessToken, TerraScaleAuthStepUpConsume request,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -70,14 +72,22 @@ public sealed partial class TerraScaleAuthPlatformClient
                 request, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthStepUpConsume,
                 TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthStepUpGrant,
                 TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.OK, 16 * 1024, cancellationToken).ConfigureAwait(false);
-            if (!IsCapability(grant.OperationGrant))
-                throw new TerraScaleAuthException(HttpStatusCode.OK, "ts-auth returned an invalid deletion grant.", "invalid_response", null);
-            return grant.OperationGrant;
+            return grant switch
+            {
+                TerraScaleAuthStepUpGrant answered => IsCapability(answered.OperationGrant)
+                    ? answered
+                    : TerraScaleAuthErrors.InvalidResponse("ts-auth returned an invalid deletion grant."),
+                AuthRefused refused => refused,
+            };
         }
-        await client.SendAuthenticatedForStatusAsync(HttpMethod.Post, "/v1/terrascale/step-up/consume",
+        var consumed = await client.SendAuthenticatedForStatusAsync(HttpMethod.Post, "/v1/terrascale/step-up/consume",
             request, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthStepUpConsume,
             TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.NoContent, 16 * 1024, cancellationToken).ConfigureAwait(false);
-        return null;
+        return consumed switch
+        {
+            Done done => done,
+            AuthRefused refused => refused,
+        };
     }
 
     internal static bool IsCapability(string? value) => value is { Length: > 0 and <= 8192 }

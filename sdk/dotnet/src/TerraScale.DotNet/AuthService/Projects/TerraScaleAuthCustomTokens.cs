@@ -2,6 +2,8 @@ using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
+using TerraScale.DotNet.Errors;
+
 namespace TerraScale.DotNet;
 
 /// <summary>A backend-asserted custom token signed by the project tenant; no refresh token or configurable lifetime.</summary>
@@ -35,9 +37,9 @@ public sealed partial class TerraScaleAuthProjectsClient
     /// platform JWTs and cookies cannot authenticate. The backend must verify the user and authorize the asserted
     /// claims; never relay browser-supplied claims. Trusted claims follow the server's 32-member, 1000-byte limit. The token lives 300 seconds. No user account is provisioned. Revocation stops future
     /// minting, not offline issued tokens. Answers JSON 200; 400 invalid_request, 401 unauthorized,
-    /// 403 insufficient_scope, 404 not_found, 429 rate_limited (Retry-After), and 503 throw TerraScaleAuthException.
+    /// 403 insufficient_scope, 404 not_found, 429 rate_limited (Retry-After), and 503 are refused with AuthRefused.
     /// </summary>
-    public Task<TerraScaleAuthCustomToken> MintCustomTokenAsync(string projectApiKey, string projectId, string userId,
+    public Task<AuthResult<TerraScaleAuthCustomToken>> MintCustomTokenAsync(string projectApiKey, string projectId, string userId,
         string? database = null, IReadOnlyDictionary<string, JsonElement>? claims = null, CancellationToken cancellationToken = default)
     {
         TerraScaleIds.Validate(projectId);

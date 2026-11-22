@@ -1,6 +1,8 @@
 using System.Net;
 using System.Text.Json.Serialization;
 
+using TerraScale.DotNet.Errors;
+
 namespace TerraScale.DotNet;
 
 /// <summary>Replaces the organization's MFA policy. Both true and false must be supplied explicitly; false removes the requirement.</summary>
@@ -19,14 +21,14 @@ public sealed record TerraScaleAuthPlatformAccountMfa(
 public sealed partial class TerraScaleAuthPlatformClient
 {
     /// <summary>get_account_mfa: GET /v1/terrascale/account/mfa. Reads the sign-in caller's own status once.</summary>
-    public Task<TerraScaleAuthPlatformAccountMfa> GetAccountMfaAsync(string accessToken, CancellationToken cancellationToken = default) =>
+    public Task<AuthResult<TerraScaleAuthPlatformAccountMfa>> GetAccountMfaAsync(string accessToken, CancellationToken cancellationToken = default) =>
         client.SendAuthenticatedJsonAsync(HttpMethod.Get, "/v1/terrascale/account/mfa",
             null, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformName,
             TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformAccountMfa,
             TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.OK, 16 * 1024, cancellationToken);
 
     /// <summary>set_organization_mfa_policy: PUT …/organizations/{organization}/mfa-policy. Requires owner; enabling needs the caller's active factor (409 mfa_not_enrolled). Sent once; no enrollment or retries.</summary>
-    public Task<TerraScaleAuthPlatformOrganization> SetOrganizationMfaPolicyAsync(string accessToken, string organizationId,
+    public Task<AuthResult<TerraScaleAuthPlatformOrganization>> SetOrganizationMfaPolicyAsync(string accessToken, string organizationId,
         TerraScaleAuthPlatformMfaPolicy request, CancellationToken cancellationToken = default) =>
         client.SendAuthenticatedJsonAsync(HttpMethod.Put, $"/v1/terrascale/organizations/{Id(organizationId)}/mfa-policy",
             request ?? throw new ArgumentNullException(nameof(request)), TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformMfaPolicy,

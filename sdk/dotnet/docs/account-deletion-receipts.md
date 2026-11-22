@@ -30,17 +30,19 @@ default Authorization header before sending a status request. Keep receipts out
 of URLs, logs, browser storage, and client-visible responses. The dashboard keeps
 its receipt server-side. Status exposes no user data and performs no deletion.
 
-The account methods return `true` only for 204 and `false` only for 202. A 404 means the
-receipt is unknown and throws `TerraScaleAuthException`; a 401 also throws.
-Neither response proves completion. Other unexpected successes also throw.
+The account deletion methods return `AuthCompletion`: `Done` only for 204 and
+`InProgress` only for 202. Neither response proves completion; a 404 (unknown
+receipt) or 401 is an `AuthRefused` case. Other unexpected successes refuse as
+`invalid_response`.
 Calls are cancellation-aware, bounded by the SDK request deadline, and sent once;
 the caller controls subsequent polling. Paid cancellation behavior is unchanged.
 
 For each original candidate organization, call
 `AccountDeletionOrganizationCompletedAsync` with its ULID. This uses the same
-receipt-only GET with `?organization=<ULID>`: 204 means the account deletion
-completed and that organization's atomic deletion fence exists. A 202 returns
-`false` and may mean incomplete deletion or a surviving shared organization;
-it does not promise eventual removal. A noncandidate organization returns 404
-and throws. Remove each local organization only after its explicit 204; account
+receipt-only GET with `?organization=<ULID>`: `Done` (204) means the account
+deletion completed and that organization's atomic deletion fence exists.
+`InProgress` (202) may mean incomplete deletion or a surviving shared
+organization; it does not promise eventual removal. A noncandidate
+organization refuses with a 404 `AuthRefused`. Remove each local organization
+only after its explicit `Done`; account
 completion alone does not prove every original organization was removed.

@@ -5,6 +5,7 @@ using TerraScale.Dashboard.Common.Accounts;
 using TerraScale.Dashboard.Features.Logs;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet;
+using TerraScale.DotNet.Errors;
 using TerraScale.DotNet.TerraBase;
 
 internal static partial class BackgroundJourney
@@ -14,7 +15,12 @@ internal static partial class BackgroundJourney
         using var authHttp = new HttpClient(TerraBaseHttp.CreateHandler());
         var auth = new TerraScaleAuthClient(authHttp, new() { BaseAddress = new("https://auth.terrascale.tech"), InstanceSlug = "terrascale" });
         var keyId = owner.ApiKey.StartsWith("sk_", StringComparison.Ordinal) ? owner.ApiKey[3..29] : owner.ApiKey[..26];
-        var token = await auth.Oidc.RequestClientCredentialsTokenAsync(keyId, owner.ApiKey, project: owner.ProjectId, cancellationToken: cancellationToken);
+        var token = await auth.Oidc.RequestClientCredentialsTokenAsync(keyId, owner.ApiKey, project: owner.ProjectId, cancellationToken: cancellationToken) switch
+        {
+            TerraScaleAuthTokenResponse answered => answered,
+            AuthRefused refused => throw new IOException($"ts-auth refused the background token: {(int?)refused.Status} {refused.ErrorCode}"),
+            null => throw new IOException("ts-auth returned no token."),
+        };
         var state = Environment.GetEnvironmentVariable("E2E_STATE") ?? throw new IOException("E2E_STATE is required.");
         await File.WriteAllTextAsync(Path.Combine(state, "secrets.d", "background-token-" + AccountService.NewId()), token.AccessToken, cancellationToken);
         return new TerraBaseDatabaseClient(client, new() { AccessTokenProvider = _ => ValueTask.FromResult(token.AccessToken), Region = owner.DatabaseRegion.ToLowerInvariant() }).Project(owner.ProjectId);

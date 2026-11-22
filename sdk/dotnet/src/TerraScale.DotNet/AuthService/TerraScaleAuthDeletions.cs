@@ -1,6 +1,8 @@
 using System.Net;
 using System.Text.Json.Serialization;
 
+using TerraScale.DotNet.Errors;
+
 namespace TerraScale.DotNet;
 
 public sealed partial class TerraScaleAuthPlatformClient
@@ -9,18 +11,20 @@ public sealed partial class TerraScaleAuthPlatformClient
     /// GET /v1/{slug}/deletions with service client Basic credentials. Returns at most 20 completed,
     /// unacknowledged deletion proofs. Validates every proof before returning the page; sent once.
     /// </summary>
-    public async Task<TerraScaleAuthDeletionPage> ListDeletionsAsync(
+    public async Task<AuthResult<TerraScaleAuthDeletionPage>> ListDeletionsAsync(
         string clientId, string clientSecret, CancellationToken ct = default)
     {
         var page = await client.SendAuthenticatedJsonAsync(HttpMethod.Get, client.ManagementRoute("/deletions"),
             null, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthAcknowledgeDeletion,
             TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthDeletionPage,
             TerraScaleAuthCredentials.Basic(clientId, clientSecret), HttpStatusCode.OK, 16 * 1024, ct).ConfigureAwait(false);
-        if (page.Items is null || page.Items.Count > 20 || page.Items.Any(proof => !ValidDeletionProof(proof)))
+        return page switch
         {
-            throw new TerraScaleAuthException(HttpStatusCode.OK, "ts-auth returned an invalid deletion proof page.", "invalid_response", null);
-        }
-        return page;
+            TerraScaleAuthDeletionPage listed => listed.Items is null || listed.Items.Count > 20 || listed.Items.Any(proof => !ValidDeletionProof(proof))
+                ? TerraScaleAuthErrors.InvalidResponse("ts-auth returned an invalid deletion proof page.")
+                : listed,
+            AuthRefused refused => refused,
+        };
     }
 
     /// <summary>
@@ -28,7 +32,7 @@ public sealed partial class TerraScaleAuthPlatformClient
     /// scope, subject and organization. Requires 204. The server compares the exact proof idempotently;
     /// acknowledge only after durable consumer cleanup. Each call is sent once, without automatic retries.
     /// </summary>
-    public Task AcknowledgeDeletionAsync(string clientId, string clientSecret,
+    public Task<AuthOutcome> AcknowledgeDeletionAsync(string clientId, string clientSecret,
         TerraScaleAuthDeletionProof proof, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(proof);

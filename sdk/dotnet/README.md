@@ -387,7 +387,7 @@ var organizations = await auth.Platform.ListOrganizationsAsync(signInAccessToken
 The auth client calls its `BaseAddress` directly; there is no regional discovery or proxy switch. This does not
 route database requests. `AddTerraScaleAuthClient` supplies dependency-injection registration
 with redirects disabled. Every auth operation is sent once; retry behavior and body/deadline bounds are fixed by the SDK.
-`TerraScaleAuthException` exposes typed status/retry metadata and only
+`AuthRefused` exposes typed status/retry metadata and only
 known fixed error codes. Messages are fixed safe diagnostics; arbitrary
 producer messages, codes and response bodies are never retained. Options
 formatting omits credentials.
@@ -395,7 +395,7 @@ formatting omits credentials.
 Project and API-key IP allowlists use typed CIDR records and setters; see [CIDR contracts and examples](contracts/auth/cidrs.md).
 Account MFA status and organization MFA policies use typed records and operations; see [MFA policy contracts and examples](contracts/auth/mfa-policy.md).
 Organization SSO connections (get, put, verify, delete) use typed records whose OIDC client secret is sent once and never echoed.
-End-user lifecycle webhook deliveries are verified by `TerraScaleWebhooks.VerifyWebhook` (Standard Webhooks `v1` HMAC-SHA256, 5-minute timestamp tolerance); it returns the parsed event or throws `TerraScaleWebhookException`.
+End-user lifecycle webhook deliveries are verified by `TerraScaleWebhooks.VerifyWebhook` (Standard Webhooks `v1` HMAC-SHA256, 5-minute timestamp tolerance); it returns the `WebhookVerification` union of the parsed event or a fixed `WebhookRefused`.
 
 ## Verification and package distribution
 

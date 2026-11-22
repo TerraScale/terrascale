@@ -1,6 +1,6 @@
 # Request identity on SDK errors
 
-`TerraBaseException.RequestId` and `TerraScaleAuthException.RequestId` expose
+`TerraBaseException.RequestId` and the refused auth result's `RequestId` expose
 `X-Request-ID` after the response has been disposed. This includes HTTP failures
 and malformed successful responses rejected while the transport reads them.
 The value is diagnostic correlation, never authorization or tenant identity.

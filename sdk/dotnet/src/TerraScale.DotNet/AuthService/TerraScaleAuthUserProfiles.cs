@@ -2,6 +2,8 @@ using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
+using TerraScale.DotNet.Errors;
+
 namespace TerraScale.DotNet;
 
 /// <summary>Creates a project user without sending email.</summary>
@@ -62,19 +64,19 @@ public sealed record TerraScaleAuthImportUsersResult(
 public sealed partial class TerraScaleAuthProjectsClient
 {
     /// <summary>CreateUser with auth:write or the project admin role. Sent once.</summary>
-    public Task<TerraScaleAuthProjectUser> CreateUserAsync(string accessToken, string projectId, TerraScaleAuthCreateUser request,
+    public Task<AuthResult<TerraScaleAuthProjectUser>> CreateUserAsync(string accessToken, string projectId, TerraScaleAuthCreateUser request,
         CancellationToken cancellationToken = default) =>
         client.SendAuthenticatedJsonAsync(HttpMethod.Post, Route(projectId, "/users"), request, Json.TerraScaleAuthCreateUser,
             Json.TerraScaleAuthProjectUser, TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.Created, 32 * 1024, cancellationToken);
 
     /// <summary>UpdateUser with auth:write or the project admin role. Sent once.</summary>
-    public Task<TerraScaleAuthProjectUser> UpdateUserAsync(string accessToken, string projectId, string userId, TerraScaleAuthUpdateUser request,
+    public Task<AuthResult<TerraScaleAuthProjectUser>> UpdateUserAsync(string accessToken, string projectId, string userId, TerraScaleAuthUpdateUser request,
         CancellationToken cancellationToken = default) =>
         client.SendAuthenticatedJsonAsync(HttpMethod.Patch, Route(projectId, "/users/" + Id(userId)), request, Json.TerraScaleAuthUpdateUser,
             Json.TerraScaleAuthProjectUser, TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.OK, 32 * 1024, cancellationToken);
 
     /// <summary>ImportUsers with auth:write or the project admin role. Sent once.</summary>
-    public Task<TerraScaleAuthImportUsersResult> ImportUsersAsync(string accessToken, string projectId, TerraScaleAuthImportUsers request,
+    public Task<AuthResult<TerraScaleAuthImportUsersResult>> ImportUsersAsync(string accessToken, string projectId, TerraScaleAuthImportUsers request,
         CancellationToken cancellationToken = default) =>
         client.SendAuthenticatedJsonAsync(HttpMethod.Post, Route(projectId, "/users/import"), request, Json.TerraScaleAuthImportUsers,
             Json.TerraScaleAuthImportUsersResult, TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.OK, 16 * 1024 * 1024, cancellationToken);

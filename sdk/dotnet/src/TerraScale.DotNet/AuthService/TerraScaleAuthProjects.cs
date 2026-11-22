@@ -2,6 +2,8 @@ using System.Globalization;
 using System.Net;
 using System.Text.Json.Serialization.Metadata;
 
+using TerraScale.DotNet.Errors;
+
 namespace TerraScale.DotNet;
 
 /// <summary>Project tenant management under <c>/v1/{project}</c>. Credential arguments accept a terrascale
@@ -14,13 +16,13 @@ public sealed partial class TerraScaleAuthProjectsClient(TerraScaleAuthClient cl
     private static TerraScaleAuthIntegrationJsonContext Json => TerraScaleAuthIntegrationJsonContext.Default;
 
     /// <summary>GET /v1/{project}/settings (viewer).</summary>
-    public Task<TerraScaleAuthProjectSettings> GetSettingsAsync(
+    public Task<AuthResult<TerraScaleAuthProjectSettings>> GetSettingsAsync(
         string accessToken, string projectId, CancellationToken cancellationToken = default) =>
         SendAsync(HttpMethod.Get, accessToken, projectId, "/settings", Json.TerraScaleAuthProjectSettings, HttpStatusCode.OK, cancellationToken);
 
     /// <summary>PUT /v1/{project}/settings (admin). Omitted parts stay unchanged; 400 <c>invalid_request</c> when
     /// passcode, password and magic_link would all be off or branding is invalid.</summary>
-    public Task<TerraScaleAuthProjectSettings> UpdateSettingsAsync(
+    public Task<AuthResult<TerraScaleAuthProjectSettings>> UpdateSettingsAsync(
         string accessToken, string projectId, TerraScaleAuthProjectSettingsUpdate request, CancellationToken cancellationToken = default) =>
         client.SendAuthenticatedJsonAsync(HttpMethod.Put, Route(projectId, "/settings"),
             request ?? throw new ArgumentNullException(nameof(request)), Json.TerraScaleAuthProjectSettingsUpdate,
@@ -28,19 +30,19 @@ public sealed partial class TerraScaleAuthProjectsClient(TerraScaleAuthClient cl
 
     /// <summary>PUT /v1/{project}/providers/{provider} (admin). Provider is google, github, apple, microsoft, gitlab, linkedin, slack, discord, facebook, x, oidc or oauth2; 400
     /// <c>invalid_request</c> when a value is invalid or the first configuration has no secret.</summary>
-    public Task<TerraScaleAuthProjectSettings> SetProviderAsync(
+    public Task<AuthResult<TerraScaleAuthProjectSettings>> SetProviderAsync(
         string accessToken, string projectId, string provider, TerraScaleAuthProjectProviderUpdate request, CancellationToken cancellationToken = default) =>
         client.SendAuthenticatedJsonAsync(HttpMethod.Put, Route(projectId, "/providers/" + Provider(provider)),
             request ?? throw new ArgumentNullException(nameof(request)), Json.TerraScaleAuthProjectProviderUpdate,
             Json.TerraScaleAuthProjectSettings, TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.OK, MaxRequestBytes, cancellationToken);
 
     /// <summary>DELETE /v1/{project}/providers/{provider} (admin). Answers the settings without the provider.</summary>
-    public Task<TerraScaleAuthProjectSettings> DeleteProviderAsync(
+    public Task<AuthResult<TerraScaleAuthProjectSettings>> DeleteProviderAsync(
         string accessToken, string projectId, string provider, CancellationToken cancellationToken = default) =>
         SendAsync(HttpMethod.Delete, accessToken, projectId, "/providers/" + Provider(provider), Json.TerraScaleAuthProjectSettings, HttpStatusCode.OK, cancellationToken);
 
     /// <summary>GET /v1/{project}/users (viewer). <paramref name="query"/> matches an email substring.</summary>
-    public Task<TerraScaleAuthPlatformPage<TerraScaleAuthProjectUser>> ListUsersAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformPage<TerraScaleAuthProjectUser>>> ListUsersAsync(
         string accessToken, string projectId, string? query = null, int? limit = null, string? after = null,
         CancellationToken cancellationToken = default) =>
         SendAsync(HttpMethod.Get, accessToken, projectId, "/users" + PageQuery("q", query, limit, after),
@@ -59,7 +61,7 @@ public sealed partial class TerraScaleAuthProjectsClient(TerraScaleAuthClient cl
     /// <param name="limit">Page size, 1 to 100; null uses the producer default of 100.</param>
     /// <param name="after">The opaque cursor from the previous page, at most 8192 characters.</param>
     /// <param name="cancellationToken">Cancels the request.</param>
-    public Task<TerraScaleAuthUserExportPage> ExportUsersAsync(
+    public Task<AuthResult<TerraScaleAuthUserExportPage>> ExportUsersAsync(
         string accessToken, string projectId, int? limit = null, string? after = null, CancellationToken cancellationToken = default)
     {
         if (after is { Length: > MaxExportCursorLength })
@@ -69,51 +71,51 @@ public sealed partial class TerraScaleAuthProjectsClient(TerraScaleAuthClient cl
     }
 
     /// <summary>GET /v1/{project}/users/{user} (viewer).</summary>
-    public Task<TerraScaleAuthProjectUser> GetUserAsync(
+    public Task<AuthResult<TerraScaleAuthProjectUser>> GetUserAsync(
         string accessToken, string projectId, string userId, CancellationToken cancellationToken = default) =>
         SendAsync(HttpMethod.Get, accessToken, projectId, "/users/" + Id(userId), Json.TerraScaleAuthProjectUser, HttpStatusCode.OK, cancellationToken);
 
     /// <summary>POST /v1/{project}/users/{user}/disable (admin). Ends every session and token of the user.</summary>
-    public Task<TerraScaleAuthProjectUser> DisableUserAsync(
+    public Task<AuthResult<TerraScaleAuthProjectUser>> DisableUserAsync(
         string accessToken, string projectId, string userId, CancellationToken cancellationToken = default) =>
         SendAsync(HttpMethod.Post, accessToken, projectId, $"/users/{Id(userId)}/disable", Json.TerraScaleAuthProjectUser, HttpStatusCode.OK, cancellationToken);
 
     /// <summary>POST /v1/{project}/users/{user}/enable (admin).</summary>
-    public Task<TerraScaleAuthProjectUser> EnableUserAsync(
+    public Task<AuthResult<TerraScaleAuthProjectUser>> EnableUserAsync(
         string accessToken, string projectId, string userId, CancellationToken cancellationToken = default) =>
         SendAsync(HttpMethod.Post, accessToken, projectId, $"/users/{Id(userId)}/enable", Json.TerraScaleAuthProjectUser, HttpStatusCode.OK, cancellationToken);
 
     /// <summary>DELETE /v1/{project}/users/{user} (admin).</summary>
-    public Task DeleteUserAsync(
+    public Task<AuthOutcome> DeleteUserAsync(
         string accessToken, string projectId, string userId, CancellationToken cancellationToken = default) =>
         DeleteAsync(accessToken, projectId, "/users/" + Id(userId), cancellationToken);
 
     /// <summary>POST /v1/{project}/users/{user}/sign-out (admin). Ends every session and refresh token.</summary>
-    public Task SignOutUserAsync(
+    public Task<AuthOutcome> SignOutUserAsync(
         string accessToken, string projectId, string userId, CancellationToken cancellationToken = default) =>
         client.SendAuthenticatedForStatusAsync(HttpMethod.Post, Route(projectId, "/users/" + Id(userId) + "/sign-out"), null, Json.TerraScaleAuthPlatformName,
             TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.NoContent, MaxRequestBytes, cancellationToken);
 
     /// <summary>GET /v1/{project}/sessions (viewer). Live sessions only, optionally of one user.</summary>
-    public Task<TerraScaleAuthPlatformPage<TerraScaleAuthProjectSession>> ListSessionsAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformPage<TerraScaleAuthProjectSession>>> ListSessionsAsync(
         string accessToken, string projectId, string? userId = null, int? limit = null, string? after = null,
         CancellationToken cancellationToken = default) =>
         SendAsync(HttpMethod.Get, accessToken, projectId, "/sessions" + PageQuery("user", userId is null ? null : Id(userId), limit, after),
             Json.TerraScaleAuthPlatformPageTerraScaleAuthProjectSession, HttpStatusCode.OK, cancellationToken);
 
     /// <summary>DELETE /v1/{project}/sessions/{session} (admin).</summary>
-    public Task RevokeSessionAsync(
+    public Task<AuthOutcome> RevokeSessionAsync(
         string accessToken, string projectId, string sessionId, CancellationToken cancellationToken = default) =>
         DeleteAsync(accessToken, projectId, "/sessions/" + Id(sessionId), cancellationToken);
 
     /// <summary>GET /v1/{project}/clients (viewer). One page holding every client; Next is always null.</summary>
-    public Task<TerraScaleAuthPlatformPage<TerraScaleAuthProjectOAuthClient>> ListClientsAsync(
+    public Task<AuthResult<TerraScaleAuthPlatformPage<TerraScaleAuthProjectOAuthClient>>> ListClientsAsync(
         string accessToken, string projectId, CancellationToken cancellationToken = default) =>
         SendAsync(HttpMethod.Get, accessToken, projectId, "/clients",
             Json.TerraScaleAuthPlatformPageTerraScaleAuthProjectOAuthClient, HttpStatusCode.OK, cancellationToken);
 
     /// <summary>POST /v1/{project}/clients (admin, create_oauth_client/ts-auth proof). A confidential client's secret is returned once.</summary>
-    public Task<TerraScaleAuthProjectOAuthClient> CreateClientAsync(
+    public Task<AuthResult<TerraScaleAuthProjectOAuthClient>> CreateClientAsync(
         string accessToken, string projectId, TerraScaleAuthProjectCreateOAuthClient request, string stepUpProof, CancellationToken cancellationToken = default) =>
         client.SendAuthenticatedJsonAsync(HttpMethod.Post, Route(projectId, "/clients"),
             request ?? throw new ArgumentNullException(nameof(request)), Json.TerraScaleAuthProjectCreateOAuthClient,
@@ -121,7 +123,7 @@ public sealed partial class TerraScaleAuthProjectsClient(TerraScaleAuthClient cl
 
     /// <summary>PUT /v1/{project}/clients/{client_id} (admin, update_oauth_client/ts-auth proof). Replaces the
     /// client's name and redirect URIs; the client_id, type and secret stay unchanged and no secret is answered.</summary>
-    public Task<TerraScaleAuthProjectOAuthClient> UpdateProjectClientAsync(
+    public Task<AuthResult<TerraScaleAuthProjectOAuthClient>> UpdateProjectClientAsync(
         string accessToken, string projectId, string clientId, TerraScaleAuthProjectUpdateOAuthClient request, string stepUpProof, CancellationToken cancellationToken = default) =>
         client.SendAuthenticatedJsonAsync(HttpMethod.Put, Route(projectId, "/clients/" + Id(clientId)),
             request ?? throw new ArgumentNullException(nameof(request)), Json.TerraScaleAuthProjectUpdateOAuthClient,
@@ -130,23 +132,23 @@ public sealed partial class TerraScaleAuthProjectsClient(TerraScaleAuthClient cl
     /// <summary>POST /v1/{project}/clients/{client_id}/secret/rotate (admin, rotate_oauth_client/ts-auth proof).
     /// Issues a new secret for a confidential client, answered exactly once; the previous secret keeps working
     /// until PreviousSecretExpiresAt (null when the grace was zero).</summary>
-    public Task<TerraScaleAuthProjectClientSecret> RotateProjectClientSecretAsync(
+    public Task<AuthResult<TerraScaleAuthProjectClientSecret>> RotateProjectClientSecretAsync(
         string accessToken, string projectId, string clientId, string stepUpProof, TerraScaleAuthProjectRotateOAuthClient? request = null, CancellationToken cancellationToken = default) =>
         client.SendAuthenticatedJsonAsync(HttpMethod.Post, Route(projectId, "/clients/" + Id(clientId) + "/secret/rotate"),
             request, Json.TerraScaleAuthProjectRotateOAuthClient,
             Json.TerraScaleAuthProjectClientSecret, TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.OK, MaxRequestBytes, cancellationToken, TerraScaleAuthPlatformClient.Proof(stepUpProof));
 
     /// <summary>DELETE /v1/{project}/clients/{client_id} (admin).</summary>
-    public Task DeleteClientAsync(
+    public Task<AuthOutcome> DeleteClientAsync(
         string accessToken, string projectId, string clientId, CancellationToken cancellationToken = default) =>
         DeleteAsync(accessToken, projectId, "/clients/" + Id(clientId), cancellationToken);
 
-    private Task<TResponse> SendAsync<TResponse>(HttpMethod method, string accessToken, string projectId, string relative,
+    private Task<AuthResult<TResponse>> SendAsync<TResponse>(HttpMethod method, string accessToken, string projectId, string relative,
         JsonTypeInfo<TResponse> responseType, HttpStatusCode expectedStatus, CancellationToken cancellationToken) =>
         client.SendAuthenticatedJsonAsync(method, Route(projectId, relative), null, Json.TerraScaleAuthPlatformName,
             responseType, TerraScaleAuthCredentials.Bearer(accessToken), expectedStatus, MaxRequestBytes, cancellationToken);
 
-    private Task DeleteAsync(string accessToken, string projectId, string relative, CancellationToken cancellationToken) =>
+    private Task<AuthOutcome> DeleteAsync(string accessToken, string projectId, string relative, CancellationToken cancellationToken) =>
         client.SendAuthenticatedForStatusAsync(HttpMethod.Delete, Route(projectId, relative), null, Json.TerraScaleAuthPlatformName,
             TerraScaleAuthCredentials.Bearer(accessToken), HttpStatusCode.NoContent, MaxRequestBytes, cancellationToken);
 
