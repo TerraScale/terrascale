@@ -111,10 +111,13 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
             || (Tenancy.IsProject(user.InstanceId) || viaSso) && policy.AllowPasskey && await data.ReadAsync((db, token) => db.Passkeys.AnyAsync(key => key.InstanceId == user.InstanceId && key.UserId == user.Id, token), cancellationToken).ConfigureAwait(false);
     }
 
-    public Task<bool> CompleteAsync(ChallengedSignIn challenged, string code, CancellationToken cancellationToken = default)
+    public async Task<(bool Completed, TimeSpan? Wait)> CompleteAsync(ChallengedSignIn challenged, string code, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(challenged);
-        return this.VerifyAsync(challenged.User, code, new MfaAuthorization(Credentials.Claim(challenged.User.InstanceId, challenged.Completion), challenged.ExpiresAt), cancellationToken);
+        var wait = await this.LimitAsync(challenged.User, cancellationToken).ConfigureAwait(false);
+        return wait is { } limited ? (false, limited)
+            : (await this.VerifyCoreAsync(challenged.User, code,
+                new MfaAuthorization(Credentials.Claim(challenged.User.InstanceId, challenged.Completion), challenged.ExpiresAt), cancellationToken).ConfigureAwait(false), null);
     }
 
     public async Task<UserRecord?> PrimaryUserAsync(string instanceId, string userId, string? authEpoch, string? authStamp, string? multiFactorMethod, CancellationToken cancellationToken = default)
@@ -209,7 +212,11 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
     internal async Task<IssuedRecoveryCodes?> ActivateAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(caller);
-        await this.LimitAsync(caller, cancellationToken).ConfigureAwait(false);
+        if (await this.LimitAsync(caller, cancellationToken).ConfigureAwait(false) is { } wait)
+        {
+            throw RateLimited(wait);
+        }
+
         if (await this.CurrentUserAsync(caller, cancellationToken).ConfigureAwait(false) is not { } user
             || await this.ReadAsync(caller, cancellationToken).ConfigureAwait(false) is not { } current
             || current.Record.Enabled || current.Record.SecretBox is null || current.Record.EnrollmentEpoch != caller.AuthEpoch
@@ -244,7 +251,16 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
     internal async Task<bool> VerifyAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(caller);
-        await this.LimitAsync(caller, cancellationToken).ConfigureAwait(false);
+        if (await this.LimitAsync(caller, cancellationToken).ConfigureAwait(false) is { } wait)
+        {
+            throw RateLimited(wait);
+        }
+
+        return await this.VerifyCoreAsync(caller, code, authorization, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<bool> VerifyCoreAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken)
+    {
         if (await this.CurrentUserAsync(caller, cancellationToken).ConfigureAwait(false) is not { } user
             || await this.ReadAsync(caller, cancellationToken).ConfigureAwait(false) is not { } current
             || this.Consume(caller, current.Record, code) is not { } proof)
@@ -264,7 +280,11 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
     internal async Task<UserRecord?> DisabledUserAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(caller);
-        await this.LimitAsync(caller, cancellationToken).ConfigureAwait(false);
+        if (await this.LimitAsync(caller, cancellationToken).ConfigureAwait(false) is { } wait)
+        {
+            throw RateLimited(wait);
+        }
+
         if (await this.CurrentUserAsync(caller, cancellationToken).ConfigureAwait(false) is not { } user
             || await this.ReadAsync(caller, cancellationToken).ConfigureAwait(false) is not { } current
             || this.Consume(caller, current.Record, code) is null)
@@ -282,7 +302,11 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
     internal async Task<IssuedRecoveryCodes?> RegenerateAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(caller);
-        await this.LimitAsync(caller, cancellationToken).ConfigureAwait(false);
+        if (await this.LimitAsync(caller, cancellationToken).ConfigureAwait(false) is { } wait)
+        {
+            throw RateLimited(wait);
+        }
+
         if (await this.CurrentUserAsync(caller, cancellationToken).ConfigureAwait(false) is not { } user
             || await this.ReadAsync(caller, cancellationToken).ConfigureAwait(false) is not { } current
             || this.Consume(caller, current.Record, code) is not { } proof)
@@ -416,13 +440,13 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
         return await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task LimitAsync(UserRecord caller, CancellationToken cancellationToken)
+    private async Task<TimeSpan?> LimitAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        if (await limiter.AcquireAsync(caller.InstanceId, "mfa-proof", caller.Id, 10, AttemptWindow, cancellationToken).ConfigureAwait(false) is { } wait)
-        {
-            throw ApiException.RateLimited("Too many MFA attempts; retry after the Retry-After delay.", wait);
-        }
+        return await limiter.AcquireAsync(caller.InstanceId, "mfa-proof", caller.Id, 10, AttemptWindow, cancellationToken).ConfigureAwait(false);
     }
+
+    private static ApiException RateLimited(TimeSpan wait) =>
+        ApiException.RateLimited("Too many MFA attempts; retry after the Retry-After delay.", wait);
 
     private static string Context(UserRecord user) => Context(user.InstanceId, user.Id);
 

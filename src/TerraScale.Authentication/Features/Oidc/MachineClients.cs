@@ -9,6 +9,7 @@ using OpenIddict.Server.AspNetCore;
 using static OpenIddict.Server.OpenIddictServerEvents;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Features.SignIn;
 using static OpenIddict.Abstractions.OpenIddictConstants;
@@ -30,7 +31,7 @@ internal static class MachineClients
         && scopes.All(scope => scope is { Length: >= 1 and <= 128 } && scope.All(character => character is >= (char)0x21 and <= (char)0x7e and not '"' and not '\\')
             && scope is not (Scopes.OpenId or Scopes.OfflineAccess));
 
-    public static MachineClientPolicy Validate(IReadOnlyList<string>? scopes, IReadOnlyList<string>? audiences, int? minutes)
+    public static Valid<MachineClientPolicy> Validate(IReadOnlyList<string>? scopes, IReadOnlyList<string>? audiences, int? minutes)
     {
         audiences ??= [];
         if (scopes is null || !ValidScopes(scopes) || minutes is < 5 or > 60 || audiences.Count > 64
@@ -38,15 +39,15 @@ internal static class MachineClients
             || audiences.Any(audience => audience is not { Length: >= 1 and <= 512 } || audience.Any(char.IsWhiteSpace) || audience.Any(char.IsControl)
                 || !Uri.TryCreate(audience, UriKind.Absolute, out var uri) || !string.IsNullOrEmpty(uri.Fragment)))
         {
-            throw new ApiException(400, "invalid_request", "Supply 1 to 64 unique OAuth allowed_scopes, at most 64 allowed_audiences and token_lifetime_minutes from 5 to 60.");
+            return new Validation("Supply 1 to 64 unique OAuth allowed_scopes, at most 64 allowed_audiences and token_lifetime_minutes from 5 to 60.");
         }
 
         if (audiences.Any(audience => new Uri(audience).AbsolutePath.StartsWith(AuthOptions.ProjectDataPath, StringComparison.OrdinalIgnoreCase)))
         {
-            throw new ApiException(400, "invalid_request", "allowed_audiences cannot name a project data audience; a machine needing data uses a project API key.");
+            return new Validation("allowed_audiences cannot name a project data audience; a machine needing data uses a project API key.");
         }
 
-        return new(scopes, audiences, minutes ?? 15);
+        return new MachineClientPolicy(scopes, audiences, minutes ?? 15);
     }
 
     public static void Configure(OpenIddictApplicationDescriptor descriptor, MachineClientPolicy policy)

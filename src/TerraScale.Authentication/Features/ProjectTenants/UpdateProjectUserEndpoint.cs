@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
 
@@ -20,6 +21,12 @@ public sealed class UpdateProjectUserEndpoint(TenantDirectory tenants, PlatformA
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var patch = await this.BodyAsync(UserProfileJson.Default.UserProfilePatch, cancellationToken);
-        return Results.Json(Map(await profiles.UpdateAsync(project, this.RouteId("user"), patch, cancellationToken)), ProjectTenantJson.Default.ProjectUserBody);
+        return await profiles.UpdateAsync(project, this.RouteId("user"), patch, cancellationToken) switch
+        {
+            UserRecord updated => Results.Json(Map(updated), ProjectTenantJson.Default.ProjectUserBody),
+            NotFound error => ErrorResults.ToResult(error),
+            Validation error => ErrorResults.ToResult(error),
+            Conflict error => ErrorResults.ToResult(error),
+        };
     }
 }

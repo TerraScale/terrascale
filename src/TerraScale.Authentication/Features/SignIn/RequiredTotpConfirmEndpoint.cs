@@ -69,8 +69,21 @@ public sealed class RequiredTotpConfirmEndpoint(Sessions sessions, TotpCredentia
                     sso.AdvanceEnrollment(this.HttpContext, challenged.User, issued.User);
                 }
 
-                var session = await sessions.CreateAsync(issued.User with { MultiFactor = true, MfaMethod = "totp" }, cancellationToken);
-                completed = await SignInFlow.EnrolledAsync(this.HttpContext, sessions, session, cancellationToken);
+                if (await sessions.CreateAsync(issued.User with { MultiFactor = true, MfaMethod = "totp" }, cancellationToken) is not { } session)
+                {
+                    if (!viaSso)
+                    {
+                        return ErrorResults.ToResult(new Unauthorized("Authentication could not be completed.", "invalid_credentials"));
+                    }
+
+                    SsoSignIn.Clear(this.HttpContext);
+                    this.HttpContext.RequestServices.GetRequiredService<ILogger<RequiredTotpConfirmEndpoint>>()
+                        .ZLogError($"SSO enrollment completion failed for user {challenged.User.Id:@UserId}, request {this.HttpContext.TraceIdentifier:@RequestId}");
+                }
+                else
+                {
+                    completed = await SignInFlow.EnrolledAsync(this.HttpContext, sessions, session, cancellationToken);
+                }
             }
             catch (Exception) when (viaSso && !this.HttpContext.Response.HasStarted)
             {

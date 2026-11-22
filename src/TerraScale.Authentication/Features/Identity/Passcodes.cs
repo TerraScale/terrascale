@@ -155,14 +155,7 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
             return null;
         }
 
-        try
-        {
-            return await sessions.CreateAsync(user, cancellationToken).ConfigureAwait(false);
-        }
-        catch (ApiException error) when (error.Status == 401 && error.Code == "invalid_credentials")
-        {
-            return null;
-        }
+        return await sessions.CreateAsync(user, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<UserRecord?> RedeemAsync(string instanceId, string email, string code, PasscodePurpose purpose, string? issueId = null, CancellationToken cancellationToken = default)

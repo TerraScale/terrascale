@@ -69,15 +69,11 @@ public sealed class MfaSignInEndpoint(Sessions sessions, TotpCredentials mfa, Pl
         }
 
         var code = (form.Code ?? string.Empty).Replace(" ", string.Empty, StringComparison.Ordinal).Trim();
-        bool completed;
-        try
-        {
-            completed = await mfa.CompleteAsync(challenged, code, cancellationToken);
-        }
-        catch (ApiException limited) when (limited is { Status: StatusCodes.Status429TooManyRequests, RetryAfter: { } accountWait })
+        var (completed, accountWait) = await mfa.CompleteAsync(challenged, code, cancellationToken);
+        if (accountWait is { } limited)
         {
             AuthMetrics.SignIn("hosted_mfa", "rate_limited");
-            return SignInFlow.Limited(this.HttpContext, SignInStep.Mfa, accountWait, user.Email, next, challenge: form.Challenge);
+            return SignInFlow.Limited(this.HttpContext, SignInStep.Mfa, limited, user.Email, next, challenge: form.Challenge);
         }
 
         if (!completed)

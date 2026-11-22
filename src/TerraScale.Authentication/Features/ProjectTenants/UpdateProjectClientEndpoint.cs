@@ -1,5 +1,8 @@
+using System.Diagnostics;
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
+using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using static OpenIddict.Abstractions.OpenIddictConstants;
@@ -17,11 +20,29 @@ public sealed class UpdateProjectClientEndpoint(TenantDirectory tenants, IOpenId
 
     protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
-        var person = caller.RequirePerson();
+        if (caller.RequirePerson() is not UserRecord person)
+        {
+            return ErrorResults.ToResult(ProjectCaller.PersonRequired);
+        }
+
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(ProjectTenantJson.Default.UpdateClientRequest, cancellationToken);
         var name = PlatformDirectory.Name(request.Name) ?? throw Invalid("name must be 1 to 128 characters with a letter or digit.");
-        var origins = ClientOrigins.Validate(request.AllowedOrigins);
+        IReadOnlyList<string>? origins = null;
+        if (request.AllowedOrigins is not null)
+        {
+            var validatedOrigins = ClientOrigins.Validate(request.AllowedOrigins);
+            if (validatedOrigins is Validation invalidOrigins)
+            {
+                return ErrorResults.ToResult(invalidOrigins);
+            }
+
+            origins = validatedOrigins switch
+            {
+                IReadOnlyList<string> list => list,
+                Validation => throw new UnreachableException(),
+            };
+        }
         List<Uri> redirects = [.. (request.RedirectUris ?? []).Select(value => ClientRedirect(value) ?? throw Invalid("Each redirect URI must be an absolute https URL, or http on a loopback host, without userinfo or fragments."))];
         if (redirects.Count > 10)
         {
@@ -66,8 +87,18 @@ public sealed class UpdateProjectClientEndpoint(TenantDirectory tenants, IOpenId
             await applications.PopulateAsync(descriptor, application, cancellationToken);
             if (policy is not null)
             {
-                MachineClients.Configure(descriptor, MachineClients.Validate(request.AllowedScopes ?? policy.AllowedScopes,
-                    request.AllowedAudiences ?? policy.AllowedAudiences, request.TokenLifetimeMinutes ?? policy.TokenLifetimeMinutes));
+                var validated = MachineClients.Validate(request.AllowedScopes ?? policy.AllowedScopes,
+                    request.AllowedAudiences ?? policy.AllowedAudiences, request.TokenLifetimeMinutes ?? policy.TokenLifetimeMinutes);
+                if (validated is Validation invalid)
+                {
+                    return ErrorResults.ToResult(invalid);
+                }
+
+                MachineClients.Configure(descriptor, validated switch
+                {
+                    MachineClientPolicy machine => machine,
+                    Validation => throw new UnreachableException(),
+                });
             }
 
             if (request.AllowAnonymous is { } anonymous && policy is null)

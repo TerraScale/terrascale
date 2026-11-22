@@ -1,3 +1,6 @@
+using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
+using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -16,7 +19,11 @@ public sealed class ListImpersonationsEndpoint(TenantDirectory tenants, Platform
 
     protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
-        _ = caller.RequirePerson();
+        if (caller.RequirePerson() is not UserRecord)
+        {
+            return ErrorResults.ToResult(ProjectCaller.PersonRequired);
+        }
+
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         return Results.Json(new ImpersonationPage(await impersonations.ListAsync(project, cancellationToken)), ImpersonationJson.Default.ImpersonationPage);
     }

@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Http.Features;
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
+using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Security;
@@ -19,7 +21,11 @@ public sealed class RotateProjectClientEndpoint(TenantDirectory tenants, IOpenId
 
     protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
-        var person = caller.RequirePerson();
+        if (caller.RequirePerson() is not UserRecord person)
+        {
+            return ErrorResults.ToResult(ProjectCaller.PersonRequired);
+        }
+
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var sent = this.HttpContext.Request;
         var empty = sent.ContentLength is 0

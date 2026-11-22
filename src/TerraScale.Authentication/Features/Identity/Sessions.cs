@@ -26,7 +26,7 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
                 ?? ConfigurationBody.Default.SessionLifetimeSeconds)
             : Lifetime;
 
-    public async Task<IssuedSession> CreateAsync(UserRecord user, CancellationToken cancellationToken = default)
+    public async Task<IssuedSession?> CreateAsync(UserRecord user, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(user);
         var project = Tenancy.IsProject(user.InstanceId)
@@ -36,8 +36,7 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
             : TimeSpan.FromSeconds(project.Configuration?.SessionLifetimeSeconds ?? ConfigurationBody.Default.SessionLifetimeSeconds);
         var createdAt = clock.GetUtcNow();
         var signedIn = await outbox.CreateAsync(user.InstanceId, "user.signed_in", user.Id, user.Email, null, cancellationToken).ConfigureAwait(false);
-        return await this.IssueAsync(user, createdAt, createdAt + lifetime, cancellationToken, signedIn, project?.Configuration?.SingleSession == true).ConfigureAwait(false)
-            ?? throw new ApiException(401, "invalid_credentials", "Authentication could not be completed.");
+        return await this.IssueAsync(user, createdAt, createdAt + lifetime, cancellationToken, signedIn, project?.Configuration?.SingleSession == true).ConfigureAwait(false);
     }
 
     public async Task<(SessionRecord Session, UserRecord User)?> ResolveAsync(string instanceId, string? token, CancellationToken cancellationToken = default) =>

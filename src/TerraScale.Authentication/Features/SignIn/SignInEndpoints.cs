@@ -876,17 +876,8 @@ internal static class SignInFlow
     }
 
     /// <summary>A primary-only session for <paramref name="user"/>, or null when MFA or a newer epoch refuses one.</summary>
-    public static async Task<IssuedSession?> OpenSessionAsync(Sessions sessions, UserRecord user, CancellationToken cancellationToken)
-    {
-        try
-        {
-            return await sessions.CreateAsync(user, cancellationToken);
-        }
-        catch (ApiException error) when (error.Status == StatusCodes.Status401Unauthorized && error.Code == "invalid_credentials")
-        {
-            return null;
-        }
-    }
+    public static Task<IssuedSession?> OpenSessionAsync(Sessions sessions, UserRecord user, CancellationToken cancellationToken) =>
+        sessions.CreateAsync(user, cancellationToken);
 
     public static async Task<IResult> SignedInAsync(HttpContext context, Sessions sessions, IssuedSession session, string? next, CancellationToken cancellationToken, AttemptLimiter.Reservation? reservation = null)
     {

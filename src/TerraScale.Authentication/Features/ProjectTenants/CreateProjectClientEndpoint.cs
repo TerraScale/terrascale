@@ -1,5 +1,8 @@
+using System.Diagnostics;
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
+using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.Oidc;
 using static OpenIddict.Abstractions.OpenIddictConstants;
@@ -17,19 +20,47 @@ public sealed class CreateProjectClientEndpoint(TenantDirectory tenants, IOpenId
 
     protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
-        var person = caller.RequirePerson();
+        if (caller.RequirePerson() is not UserRecord person)
+        {
+            return ErrorResults.ToResult(ProjectCaller.PersonRequired);
+        }
+
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(ProjectTenantJson.Default.CreateClientRequest, cancellationToken);
         var name = PlatformDirectory.Name(request.Name) ?? throw Invalid("name must be 1 to 128 characters with a letter or digit.");
         var type = request.Type is ClientTypes.Public or ClientTypes.Confidential or "machine" ? request.Type : throw Invalid("type must be public, confidential or machine.");
         List<Uri> redirects = [.. (request.RedirectUris ?? []).Select(value => ClientRedirect(value) ?? throw Invalid("Each redirect URI must be an absolute https URL, or http on a loopback host, without userinfo or fragments."))];
-        var policy = type == "machine" ? MachineClients.Validate(request.AllowedScopes, request.AllowedAudiences, request.TokenLifetimeMinutes) : null;
-        if (policy is null && (request.AllowedScopes is not null || request.AllowedAudiences is not null || request.TokenLifetimeMinutes is not null))
+        var validatedOrigins = ClientOrigins.Validate(request.AllowedOrigins);
+        if (validatedOrigins is Validation invalidOrigins)
+        {
+            return ErrorResults.ToResult(invalidOrigins);
+        }
+
+        var origins = validatedOrigins switch
+        {
+            IReadOnlyList<string> list => list,
+            Validation => throw new UnreachableException(),
+        };
+        MachineClientPolicy? policy = null;
+        if (type == "machine")
+        {
+            var validated = MachineClients.Validate(request.AllowedScopes, request.AllowedAudiences, request.TokenLifetimeMinutes);
+            if (validated is Validation invalid)
+            {
+                return ErrorResults.ToResult(invalid);
+            }
+
+            policy = validated switch
+            {
+                MachineClientPolicy machine => machine,
+                Validation => throw new UnreachableException(),
+            };
+        }
+        else if (request.AllowedScopes is not null || request.AllowedAudiences is not null || request.TokenLifetimeMinutes is not null)
         {
             throw Invalid("Machine policies require type machine.");
         }
 
-        var origins = ClientOrigins.Validate(request.AllowedOrigins) ?? [];
         if (policy is not null && (origins.Count != 0 || request.AllowAnonymous == true))
         {
             throw Invalid("Machine apps take no allowed_origins or allow_anonymous.");

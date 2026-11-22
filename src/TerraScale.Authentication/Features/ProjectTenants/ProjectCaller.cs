@@ -1,6 +1,9 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 
 namespace TerraScale.Authentication.Features.ProjectTenants;
+
+public readonly union PersonResult(UserRecord, Forbidden);
 
 public abstract record ProjectCaller
 {
@@ -8,30 +11,18 @@ public abstract record ProjectCaller
 
     public abstract string Id { get; }
 
-    public UserRecord RequirePerson()
-    {
-        if (this is not SignedIn(var user))
-        {
-            throw new ApiException(StatusCodes.Status403Forbidden, "person_required",
-                "This operation requires a person's sign-in access token; project API keys are not allowed.");
-        }
+    public PersonResult RequirePerson() => this is SignedIn(var user) ? user : PersonRequired;
 
-        return user;
-    }
-
-    public abstract UserRecord Person { get; }
+    public static readonly Forbidden PersonRequired = new(
+        "This operation requires a person's sign-in access token; project API keys are not allowed.", "person_required");
 
     public sealed record SignedIn(UserRecord User) : ProjectCaller
     {
         public override string Id => User.Id;
-
-        public override UserRecord Person => User;
     }
 
     public sealed record SecretKey(ApiKeyRecord Key) : ProjectCaller
     {
         public override string Id => Key.Id;
-
-        public override UserRecord Person => this.RequirePerson();
     }
 }

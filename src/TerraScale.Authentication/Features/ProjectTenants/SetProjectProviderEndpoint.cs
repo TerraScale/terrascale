@@ -1,5 +1,7 @@
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
+using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
 using ZLogger;
 
@@ -19,7 +21,11 @@ public sealed class SetProjectProviderEndpoint(TenantDirectory tenants, ProjectA
     protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(caller);
-        _ = caller.RequirePerson();
+        if (caller.RequirePerson() is not UserRecord)
+        {
+            return ErrorResults.ToResult(ProjectCaller.PersonRequired);
+        }
+
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var provider = this.HttpContext.GetRouteValue("provider") is string name && SocialProviders.Names.Contains(name) ? name : throw PlatformDirectory.NotFound();
 

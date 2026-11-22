@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -15,7 +16,11 @@ public sealed class CreateWebhookEndpointEndpoint(TenantDirectory tenants, Platf
 
     protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
-        _ = caller.Person;
+        if (caller.RequirePerson() is not UserRecord person)
+        {
+            return ErrorResults.ToResult(ProjectCaller.PersonRequired);
+        }
+
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(WebhooksJson.Default.CreateWebhookEndpointRequest, cancellationToken);
         if (!Uri.TryCreate(request.Url, UriKind.Absolute, out var uri)
@@ -30,7 +35,7 @@ public sealed class CreateWebhookEndpointEndpoint(TenantDirectory tenants, Platf
             throw Invalid("event_types must be a non-empty subset of the lifecycle events without duplicates.");
         }
 
-        _ = await proofs.ConsumeHeaderAsync(caller.Person, this.HttpContext.Request, "create_webhook_endpoint", null, cancellationToken);
+        _ = await proofs.ConsumeHeaderAsync(person, this.HttpContext.Request, "create_webhook_endpoint", null, cancellationToken);
         var (endpoint, secret) = await webhooks.CreateAsync(projectId, uri.AbsoluteUri, [.. events], cancellationToken);
         return Results.Json(new WebhookEndpointBody(endpoint.Id, endpoint.Url, endpoint.EventTypes, endpoint.CreatedAt, secret),
             WebhooksJson.Default.WebhookEndpointBody, statusCode: StatusCodes.Status201Created)

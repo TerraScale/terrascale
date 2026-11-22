@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.RateLimiting;
@@ -46,13 +47,18 @@ public sealed class ImportProjectUsersEndpoint(TenantDirectory tenants, Platform
                 continue;
             }
 
-            try
+            var imported = await profiles.ImportAsync(project, row, cancellationToken);
+            switch (imported)
             {
-                items.Add(new(index, Map(await profiles.ImportAsync(project, row, cancellationToken))));
-            }
-            catch (ApiException error) when (error.Status is StatusCodes.Status400BadRequest or StatusCodes.Status409Conflict)
-            {
-                errors.Add(new(index, error.Status == StatusCodes.Status409Conflict ? "user_conflict" : "invalid_request", error.Message));
+                case UserRecord created:
+                    items.Add(new(index, Map(created)));
+                    break;
+                case Validation invalid:
+                    errors.Add(new(index, invalid.Code, invalid.Message));
+                    break;
+                case Conflict conflict:
+                    errors.Add(new(index, conflict.Code, conflict.Message));
+                    break;
             }
         }
 

@@ -1,7 +1,9 @@
 using System.Collections.Frozen;
+using System.Diagnostics;
 using System.IO.Compression;
 using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Storage;
@@ -23,10 +25,25 @@ public sealed class SignUpRestrictions(AuthData data, ProjectAuthSettings settin
 
     private static readonly FrozenSet<string> DisposableDomains = LoadDomains();
 
-    public static RestrictionsBody Normalize(RestrictionsBody restrictions)
+    public static Valid<RestrictionsBody> Normalize(RestrictionsBody restrictions)
     {
         ArgumentNullException.ThrowIfNull(restrictions);
-        return restrictions with { Allowlist = NormalizeList(restrictions.Allowlist), Blocklist = NormalizeList(restrictions.Blocklist) };
+        var allowlist = NormalizeList(restrictions.Allowlist);
+        if (allowlist is Validation allowlistError)
+        {
+            return allowlistError;
+        }
+
+        var blocklist = NormalizeList(restrictions.Blocklist);
+        return blocklist switch
+        {
+            Validation blocklistError => blocklistError,
+            _ => restrictions with
+            {
+                Allowlist = allowlist switch { IReadOnlyList<string> list => list, Validation => throw new UnreachableException() },
+                Blocklist = blocklist switch { IReadOnlyList<string> list => list, Validation => throw new UnreachableException() }
+            },
+        };
     }
 
     public static bool Blocked(RestrictionsBody restrictions, string email)
@@ -135,24 +152,27 @@ public sealed class SignUpRestrictions(AuthData data, ProjectAuthSettings settin
         }
     }
 
-    private static string[] NormalizeList(IReadOnlyList<string>? entries)
+    private static Valid<IReadOnlyList<string>> NormalizeList(IReadOnlyList<string>? entries)
     {
         if (entries is null || entries.Count > 1000)
         {
-            throw new ApiException(400, "invalid_request", "Lists accept at most 1000 emails or domains.");
+            return new Validation("Lists accept at most 1000 emails or domains.");
         }
 
-        return [.. entries.Select(entry =>
+        List<string> normalized = [];
+        foreach (var entry in entries)
         {
             var value = entry?.Trim();
-            var normalized = value is null ? null : value.Contains('@', StringComparison.Ordinal) ? Users.NormalizeEmail(value) : Users.NormalizeDomain(value);
-            if (normalized is null || normalized.Length > 254)
+            var candidate = value is null ? null : value.Contains('@', StringComparison.Ordinal) ? Users.NormalizeEmail(value) : Users.NormalizeDomain(value);
+            if (candidate is null || candidate.Length > 254)
             {
-                throw new ApiException(400, "invalid_request", "Each list entry must be an email address or domain.");
+                return new Validation("Each list entry must be an email address or domain.");
             }
 
-            return normalized;
-        }).Distinct(StringComparer.Ordinal)];
+            normalized.Add(candidate);
+        }
+
+        return new Valid<IReadOnlyList<string>>([.. normalized.Distinct(StringComparer.Ordinal)]);
     }
 
     private static FrozenSet<string> LoadDomains()

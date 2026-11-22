@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Net.Http.Headers;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Storage;
 
 namespace TerraScale.Authentication.Features.Oidc;
@@ -20,19 +21,28 @@ public static class ClientOrigins
         && uri.GetComponents(UriComponents.SchemeAndServer, UriFormat.UriEscaped) == value
             ? value : null;
 
-    public static IReadOnlyList<string>? Validate(IReadOnlyList<string>? values)
+    public static Valid<IReadOnlyList<string>> Validate(IReadOnlyList<string>? values)
     {
         if (values is null)
         {
-            return null;
+            return new Valid<IReadOnlyList<string>>([]);
         }
 
-        List<string> origins = [.. values.Select(value => Canonical(value) ?? throw Invalid())];
-        return origins.Count <= MaxPerClient && origins.Distinct(StringComparer.Ordinal).Count() == origins.Count ? origins : throw Invalid();
+        List<string> origins = [];
+        foreach (var value in values)
+        {
+            if (Canonical(value) is not { } origin)
+            {
+                return Invalid();
+            }
+
+            origins.Add(origin);
+        }
+
+        return origins.Count <= MaxPerClient && origins.Distinct(StringComparer.Ordinal).Count() == origins.Count ? origins : Invalid();
     }
 
-    private static ApiException Invalid() => new(StatusCodes.Status400BadRequest, "invalid_request",
-        "allowed_origins holds at most 10 unique exact origins: https://host[:port], or http on a loopback host, in lowercase, without a default port, path, trailing slash, wildcard, userinfo, query or fragment.");
+    private static Validation Invalid() => new("allowed_origins holds at most 10 unique exact origins: https://host[:port], or http on a loopback host, in lowercase, without a default port, path, trailing slash, wildcard, userinfo, query or fragment.");
 
     public static void UseClientCors(this WebApplication app) => app.Use(async (HttpContext context, RequestDelegate next) =>
     {
