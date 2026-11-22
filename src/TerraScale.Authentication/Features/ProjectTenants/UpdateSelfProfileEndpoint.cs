@@ -85,7 +85,12 @@ public sealed class UpdateSelfProfileEndpoint(Sessions sessions, UserProfiles pr
             return ErrorResults.ToResult(new Validation("Only first_name, last_name and unsafe_metadata are accepted."));
         }
 
-        var updated = await profiles.UpdateSelfAsync(live.User, patch, Sessions.Live(live.Session, live.Version, clock.GetUtcNow()), cancellationToken);
-        return Results.Json(SelfProfileBody.From(updated), UserProfileJson.Default.SelfProfileBody);
+        return await profiles.UpdateSelfAsync(live.User, patch, Sessions.Live(live.Session, live.Version, clock.GetUtcNow()), cancellationToken) switch
+        {
+            UserRecord updated => Results.Json(SelfProfileBody.From(updated), UserProfileJson.Default.SelfProfileBody),
+            NotFound error => ErrorResults.ToResult(error),
+            Validation error => ErrorResults.ToResult(error),
+            Conflict error => ErrorResults.ToResult(error),
+        };
     }
 }

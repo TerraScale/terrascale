@@ -1,3 +1,6 @@
+using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
+using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -16,9 +19,17 @@ public sealed class EndImpersonationEndpoint(TenantDirectory tenants, PlatformAu
 
     protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
-        _ = caller.RequirePerson();
+        if (caller.RequirePerson() is not UserRecord)
+        {
+            return ErrorResults.ToResult(ProjectCaller.PersonRequired);
+        }
+
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
-        await impersonations.EndAsync(project, this.RouteId("impersonation"), caller.Id, "manual", cancellationToken);
-        return Results.NoContent();
+        return await impersonations.EndAsync(project, this.RouteId("impersonation"), caller.Id, "manual", cancellationToken) switch
+        {
+            Done => Results.NoContent(),
+            NotFound error => ErrorResults.ToResult(error),
+            Conflict error => ErrorResults.ToResult(error),
+        };
     }
 }

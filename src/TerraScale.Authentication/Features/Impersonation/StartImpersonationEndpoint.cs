@@ -1,6 +1,8 @@
+using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
+using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
-using TerraScale.Authentication.Errors;
 
 namespace TerraScale.Authentication.Features.Impersonation;
 
@@ -17,7 +19,11 @@ public sealed class StartImpersonationEndpoint(TenantDirectory tenants, Platform
 
     protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
-        var person = caller.RequirePerson();
+        if (caller.RequirePerson() is not UserRecord person)
+        {
+            return ErrorResults.ToResult(ProjectCaller.PersonRequired);
+        }
+
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(ImpersonationJson.Default.StartImpersonationRequest, cancellationToken);
         person = await proofs.ConsumeHeaderAsync(person, this.HttpContext.Request, "start_impersonation", project + ":" + this.RouteId("user"), cancellationToken);

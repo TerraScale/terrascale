@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 using TerraScale.Authentication.Features.AttackProtection;
 using TerraScale.Authentication.Contracts;
@@ -54,7 +55,22 @@ public sealed partial class UpdateProjectSettingsEndpoint(TenantDirectory tenant
             return new Failure(new Validation("sign_up_mode must be public, restricted or waitlist.", "invalid_request"));
         }
 
-        var restrictions = request.Restrictions is { } sentRestrictions ? SignUpRestrictions.Normalize(sentRestrictions) : null;
+        RestrictionsBody? normalized = null;
+        if (request.Restrictions is { } sentRestrictions)
+        {
+            var validated = SignUpRestrictions.Normalize(sentRestrictions);
+            if (validated is Validation restrictionsError)
+            {
+                return ErrorResults.ToResult(restrictionsError);
+            }
+
+            normalized = validated switch
+            {
+                RestrictionsBody body => body,
+                Validation => throw new UnreachableException(),
+            };
+        }
+
         var methods = request.Methods;
         var updated = await settings.UpdateAsync(projectId, current =>
         {
@@ -73,7 +89,7 @@ public sealed partial class UpdateProjectSettingsEndpoint(TenantDirectory tenant
             } : next;
             next = request.Configuration is { } policy ? next with { Configuration = policy } : next;
             next = request.AttackProtection is { } protection ? next with { AttackProtection = protection } : next;
-            next = restrictions is not null ? next with { Restrictions = restrictions } : next;
+            next = normalized is not null ? next with { Restrictions = normalized } : next;
             return next.Passcode || next.Password || next.MagicLink ? next : throw Invalid("At least one of passcode, password and magic_link must stay on.");
         }, cancellationToken);
         return Results.Json(await this.SettingsAsync(projectId, updated, cancellationToken), ProjectTenantJson.Default.SettingsBody);

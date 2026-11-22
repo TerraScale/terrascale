@@ -111,8 +111,18 @@ public sealed class ProjectStepUpEndpoint(PlatformAuthentication authentication,
         {
             var factor = request.Code.Length == 6 ? "totp" : "recovery";
             if (await mfa.PrimaryUserAsync(project, caller.Id, caller.AuthEpoch.ToString(CultureInfo.InvariantCulture),
-                    caller.AuthStamp, factor, cancellationToken) is null
-                || !await mfa.VerifyAsync(caller, request.Code, cancellationToken))
+                    caller.AuthStamp, factor, cancellationToken) is null)
+            {
+                return Denied();
+            }
+
+            var proof = await mfa.VerifyAsync(caller, request.Code, cancellationToken);
+            if (proof is QuotaExceeded quota)
+            {
+                return ErrorResults.ToResult(quota);
+            }
+
+            if (proof is not true)
             {
                 return Denied();
             }

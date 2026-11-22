@@ -14,6 +14,12 @@ namespace TerraScale.Authentication.Features.Impersonation;
 
 public readonly union StartImpersonationResult(ImpersonationTicket, Validation, NotFound, Forbidden);
 
+public readonly union EndImpersonationResult(Done, NotFound, Conflict);
+
+public readonly union RedeemImpersonationResult(RedeemedImpersonation, Validation);
+
+public sealed record RedeemedImpersonation(ImpersonationLive Live, string Cookie);
+
 public sealed record ImpersonationRecord(string Id, string InstanceId, string OrganizationId, string UserId, string ActorId,
     string ActorEmail, string ActorStamp, long ActorEpoch, string UserStamp, long UserEpoch, string Reason, string ClientId,
     string TicketHash, DateTimeOffset CreatedAt, DateTimeOffset TicketExpiresAt, DateTimeOffset? RedeemedAt = null,
@@ -84,11 +90,11 @@ public sealed class Impersonations(AuthData data, Credentials credentials, Tenan
         return new ImpersonationTicket(record.Id, ticket, record.TicketExpiresAt);
     }
 
-    public async Task<(ImpersonationLive Live, string Cookie)> RedeemAsync(string tenant, string? client, string ticket, UserRecord? actor, Change? session, CancellationToken cancellationToken)
+    public async Task<RedeemImpersonationResult> RedeemAsync(string tenant, string? client, string ticket, UserRecord? actor, Change? session, CancellationToken cancellationToken)
     {
         if (!Tenancy.IsProject(tenant) || ticket.Length is < 1 or > 256)
         {
-            throw InvalidTicket();
+            return InvalidTicket();
         }
 
         var hash = Tokens.Sha256Hex(ticket);
@@ -100,25 +106,21 @@ public sealed class Impersonations(AuthData data, Credentials credentials, Tenan
             || current.Value.EndedAt is not null || current.Value.TicketExpiresAt <= clock.GetUtcNow()
             || await this.SubjectAsync(current.Value, cancellationToken).ConfigureAwait(false) is not { } user)
         {
-            throw InvalidTicket();
+            return InvalidTicket();
         }
 
         var lineage = await credentials.RequireAsync(actor.InstanceId, actor.AuthenticationBindings, cancellationToken).ConfigureAwait(false);
         if (lineage is null)
         {
-            throw InvalidTicket();
+            return InvalidTicket();
         }
 
         var cookie = Tokens.RandomToken(48);
         var binding = Credentials.New("impersonation-ticket", hash);
         var now = clock.GetUtcNow();
         var updated = current.Value with { RedeemedAt = now, ExpiresAt = now.AddMinutes(60), CookieHash = Tokens.Sha256Hex(cookie), TicketOwner = binding.OwnerId };
-        if (!await data.SaveAsync([.. lineage, session, Change.Assert(actor), Change.Assert(user), Change.Update(current, updated), Credentials.Claim(tenant, binding), this.Audit(updated, "redeemed")], cancellationToken).ConfigureAwait(false))
-        {
-            throw InvalidTicket();
-        }
-
-        return (new(updated, Bind(user, updated)), cookie);
+        return await data.SaveAsync([.. lineage, session, Change.Assert(actor), Change.Assert(user), Change.Update(current, updated), Credentials.Claim(tenant, binding), this.Audit(updated, "redeemed")], cancellationToken)
+            ? new RedeemedImpersonation(new(updated, Bind(user, updated)), cookie) : InvalidTicket();
     }
 
     public async Task<ImpersonationLive?> ResolveAsync(string tenant, string? cookie, CancellationToken cancellationToken)
@@ -147,20 +149,24 @@ public sealed class Impersonations(AuthData data, Credentials credentials, Tenan
         return [.. rows.Select(row => new ImpersonationBody(row.Id, row.UserId, row.ActorId, row.ActorEmail, row.ClientId, row.Reason, row.ExpiresAt!.Value))];
     }
 
-    public async Task EndAsync(string project, string id, string endedBy, string reason, CancellationToken cancellationToken)
+    public async Task<EndImpersonationResult> EndAsync(string project, string id, string endedBy, string reason, CancellationToken cancellationToken)
     {
         var current = await data.ReadAsync((db, token) => db.Impersonations.Where(row => row.InstanceId == project && row.Id == id)
-            .WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+            .WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
+        if (current is null)
+        {
+            return new NotFound("No such resource.", "not_found");
+        }
+
         if (current.Value.EndedAt is not null)
         {
-            return;
+            return new Done();
         }
 
         var ended = current.Value with { EndedAt = clock.GetUtcNow() };
-        if (!await data.SaveAsync([Change.Update(current, ended), .. ImpersonationEndings.Events(ended, reason, endedBy, outbox, clock)], cancellationToken).ConfigureAwait(false))
-        {
-            throw new ApiException(409, "impersonation_conflict", "The impersonation changed. Reload its current state.");
-        }
+        return !await data.SaveAsync([Change.Update(current, ended), .. ImpersonationEndings.Events(ended, reason, endedBy, outbox, clock)], cancellationToken).ConfigureAwait(false)
+            ? new Conflict("The impersonation changed. Reload its current state.", "impersonation_conflict")
+            : new Done();
     }
 
     public async Task ExpireAsync(CancellationToken cancellationToken)
@@ -174,7 +180,7 @@ public sealed class Impersonations(AuthData data, Credentials credentials, Tenan
             {
                 if ((record.ExpiresAt ?? record.TicketExpiresAt) <= clock.GetUtcNow())
                 {
-                    await this.EndAsync(record.InstanceId, record.Id, record.ActorId, record.RedeemedAt is null ? "ticket_expired" : "expired", cancellationToken).ConfigureAwait(false);
+                    _ = await this.EndAsync(record.InstanceId, record.Id, record.ActorId, record.RedeemedAt is null ? "ticket_expired" : "expired", cancellationToken).ConfigureAwait(false);
                 }
                 else
                 {
@@ -200,7 +206,7 @@ public sealed class Impersonations(AuthData data, Credentials credentials, Tenan
 
         if (expires <= clock.GetUtcNow())
         {
-            await this.EndAsync(record.InstanceId, record.Id, record.ActorId, "expired", cancellationToken).ConfigureAwait(false);
+            _ = await this.EndAsync(record.InstanceId, record.Id, record.ActorId, "expired", cancellationToken).ConfigureAwait(false);
             return null;
         }
 
@@ -211,7 +217,7 @@ public sealed class Impersonations(AuthData data, Credentials credentials, Tenan
 
         if (record.TicketOwner is null || !await credentials.AreCurrentAsync(record.InstanceId, [TicketBinding(record)], cancellationToken).ConfigureAwait(false))
         {
-            await this.EndAsync(record.InstanceId, record.Id, record.ActorId, "ticket_revoked", cancellationToken).ConfigureAwait(false);
+            _ = await this.EndAsync(record.InstanceId, record.Id, record.ActorId, "ticket_revoked", cancellationToken).ConfigureAwait(false);
             return null;
         }
 
@@ -223,7 +229,7 @@ public sealed class Impersonations(AuthData data, Credentials credentials, Tenan
         var actor = await data.ReadAsync((db, token) => db.Users.SingleOrDefaultAsync(row => row.InstanceId == OidcIssuer.InstanceId && row.Id == record.ActorId, token), cancellationToken).ConfigureAwait(false);
         if (actor is null || actor.Disabled || actor.AuthEpoch != record.ActorEpoch || actor.AuthStamp != record.ActorStamp)
         {
-            await this.EndAsync(record.InstanceId, record.Id, record.ActorId, actor is null ? "admin_deleted" : actor.Disabled ? "admin_disabled" : "admin_changed", cancellationToken).ConfigureAwait(false);
+            _ = await this.EndAsync(record.InstanceId, record.Id, record.ActorId, actor is null ? "admin_deleted" : actor.Disabled ? "admin_disabled" : "admin_changed", cancellationToken).ConfigureAwait(false);
             return null;
         }
 
@@ -233,14 +239,14 @@ public sealed class Impersonations(AuthData data, Credentials credentials, Tenan
         }
         catch (ApiException error) when (error.Status is 403 or 404)
         {
-            await this.EndAsync(record.InstanceId, record.Id, record.ActorId, "admin_role_lost", cancellationToken).ConfigureAwait(false);
+            _ = await this.EndAsync(record.InstanceId, record.Id, record.ActorId, "admin_role_lost", cancellationToken).ConfigureAwait(false);
             return null;
         }
 
         var user = await data.ReadAsync((db, token) => db.Users.SingleOrDefaultAsync(row => row.InstanceId == record.InstanceId && row.Id == record.UserId, token), cancellationToken).ConfigureAwait(false);
         if (user is null || user.Disabled || user.AuthEpoch != record.UserEpoch || user.AuthStamp != record.UserStamp)
         {
-            await this.EndAsync(record.InstanceId, record.Id, record.ActorId, user is null ? "target_deleted" : user.Disabled ? "target_disabled" : "target_changed", cancellationToken).ConfigureAwait(false);
+            _ = await this.EndAsync(record.InstanceId, record.Id, record.ActorId, user is null ? "target_deleted" : user.Disabled ? "target_disabled" : "target_changed", cancellationToken).ConfigureAwait(false);
             return null;
         }
 
@@ -259,5 +265,5 @@ public sealed class Impersonations(AuthData data, Credentials credentials, Tenan
     private Change Event(ImpersonationRecord record, string action) =>
         Change.Insert(outbox.NewEvent(record.InstanceId, "impersonation." + action, record.UserId, sessionId: record.Id) with { ActorId = record.ActorId, Reason = record.Reason });
 
-    private static ApiException InvalidTicket() => new(400, "invalid_impersonation_ticket", "The impersonation ticket is expired, consumed or not valid for this client.");
+    private static Validation InvalidTicket() => new("The impersonation ticket is expired, consumed or not valid for this client.", "invalid_impersonation_ticket");
 }

@@ -16,7 +16,11 @@ public sealed class CreateWebhookEndpointEndpoint(TenantDirectory tenants, Platf
 
     protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
-        _ = caller.Person;
+        if (caller.RequirePerson() is not UserRecord person)
+        {
+            return ErrorResults.ToResult(ProjectCaller.PersonRequired);
+        }
+
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(WebhooksJson.Default.CreateWebhookEndpointRequest, cancellationToken);
         if (!Uri.TryCreate(request.Url, UriKind.Absolute, out var uri)
@@ -31,7 +35,7 @@ public sealed class CreateWebhookEndpointEndpoint(TenantDirectory tenants, Platf
             throw Invalid("event_types must be a non-empty subset of the lifecycle events without duplicates.");
         }
 
-        _ = await proofs.ConsumeHeaderAsync(caller.Person, this.HttpContext.Request, "create_webhook_endpoint", null, cancellationToken);
+        _ = await proofs.ConsumeHeaderAsync(person, this.HttpContext.Request, "create_webhook_endpoint", null, cancellationToken);
         return await webhooks.CreateAsync(projectId, uri.AbsoluteUri, [.. events], cancellationToken) switch
         {
             WebhookEndpointSecret issued => Results.Json(new WebhookEndpointBody(issued.Endpoint.Id, issued.Endpoint.Url, issued.Endpoint.EventTypes, issued.Endpoint.CreatedAt, issued.Secret),

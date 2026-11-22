@@ -96,7 +96,11 @@ public sealed class PasskeyHostedVerifyEndpoint(Sessions sessions, PasskeyCreden
     {
         if (finishEnrollment)
         {
-            var session = await sessions.CreateAsync(caller with { MultiFactor = true, MfaMethod = "passkey" }, cancellationToken);
+            if (await sessions.CreateAsync(caller with { MultiFactor = true, MfaMethod = "passkey" }, cancellationToken) is not { } session)
+            {
+                return ErrorResults.ToResult(new Unauthorized("Authentication could not be completed.", "invalid_credentials"));
+            }
+
             if (!await SignInFlow.EnrolledAsync(context, sessions, session, cancellationToken))
             {
                 return ErrorResults.ToResult(new Forbidden("Start sign-in again before enrolling a passkey.", "passkey_denied"));

@@ -16,9 +16,13 @@ public sealed class RotateWebhookSecretEndpoint(TenantDirectory tenants, Platfor
 
     protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
-        _ = caller.Person;
+        if (caller.RequirePerson() is not UserRecord person)
+        {
+            return ErrorResults.ToResult(ProjectCaller.PersonRequired);
+        }
+
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
-        var prepared = await proofs.PrepareHeaderAsync(caller.Person, this.HttpContext.Request, "rotate_webhook_secret", null, cancellationToken) ?? throw StepUpProofs.Required();
+        var prepared = await proofs.PrepareHeaderAsync(person, this.HttpContext.Request, "rotate_webhook_secret", null, cancellationToken) ?? throw StepUpProofs.Required();
         return await webhooks.RotateAsync(projectId, this.RouteId("id"), prepared.Operations, cancellationToken) switch
         {
             WebhookEndpointSecret issued => Results.Json(new WebhookSecretBody(issued.Endpoint.Id, issued.Secret, issued.Endpoint.PreviousSecretExpiresAt), WebhooksJson.Default.WebhookSecretBody),

@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Http.Metadata;
 using QRCoder;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
@@ -69,18 +70,14 @@ public sealed class MfaSignInEndpoint(Sessions sessions, TotpCredentials mfa, Pl
         }
 
         var code = (form.Code ?? string.Empty).Replace(" ", string.Empty, StringComparison.Ordinal).Trim();
-        bool completed;
-        try
-        {
-            completed = await mfa.CompleteAsync(challenged, code, cancellationToken);
-        }
-        catch (ApiException limited) when (limited is { Status: StatusCodes.Status429TooManyRequests, RetryAfter: { } accountWait })
+        var proof = await mfa.CompleteAsync(challenged, code, cancellationToken);
+        if (proof is QuotaExceeded { RetryAfter: { } limited })
         {
             AuthMetrics.SignIn("hosted_mfa", "rate_limited");
-            return SignInFlow.Limited(this.HttpContext, SignInStep.Mfa, accountWait, user.Email, next, challenge: form.Challenge);
+            return SignInFlow.Limited(this.HttpContext, SignInStep.Mfa, limited, user.Email, next, challenge: form.Challenge);
         }
 
-        if (!completed)
+        if (proof is not true)
         {
             AuthMetrics.SignIn("hosted_mfa", "refused");
             var wrong = new SignInPageModel(SignInStep.Mfa, tenant, user.Email, next, "Enter the current code from your authenticator app, or an unused recovery code.")
@@ -241,7 +238,13 @@ public sealed class TotpConfirmEndpoint(Sessions sessions, TotpCredentials mfa, 
 
         var tenant = SignInFlow.Tenant(this.HttpContext);
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
-        if (await mfa.ConfirmAsync(live.User, (form.Code ?? string.Empty).Trim(), SecurityFlow.Consumed(live.Session, live.Version), cancellationToken) is not { } issued)
+        var confirmed = await mfa.ConfirmAsync(live.User, (form.Code ?? string.Empty).Trim(), SecurityFlow.Consumed(live.Session, live.Version), cancellationToken);
+        if (confirmed is QuotaExceeded quota)
+        {
+            return ErrorResults.ToResult(quota);
+        }
+
+        if (confirmed is not IssuedRecoveryCodes issued)
         {
             return await SecurityFlow.RefusedAsync(this.HttpContext, sessions, mfa, live.User, ("That code is wrong or expired", "Enter the current code from your authenticator app, or start the setup again."),
                 StatusCodes.Status401Unauthorized, cancellationToken);
@@ -293,8 +296,13 @@ public sealed class TotpDisableEndpoint(Sessions sessions, TotpCredentials mfa, 
 
         var tenant = SignInFlow.Tenant(this.HttpContext);
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
-        if (await mfa.DisabledUserAsync(live.User, (form.Code ?? string.Empty).Replace(" ", string.Empty, StringComparison.Ordinal).Trim(), SecurityFlow.Consumed(live.Session, live.Version), cancellationToken)
-            is not { } user)
+        var disabled = await mfa.DisabledUserAsync(live.User, (form.Code ?? string.Empty).Replace(" ", string.Empty, StringComparison.Ordinal).Trim(), SecurityFlow.Consumed(live.Session, live.Version), cancellationToken);
+        if (disabled is QuotaExceeded quota)
+        {
+            return ErrorResults.ToResult(quota);
+        }
+
+        if (disabled is not UserRecord user)
         {
             return await SecurityFlow.RefusedAsync(this.HttpContext, sessions, mfa, live.User, ("That code is wrong or already used", "Enter the current code from your authenticator app, or an unused recovery code."),
                 StatusCodes.Status401Unauthorized, cancellationToken);
@@ -350,8 +358,14 @@ public sealed class RecoveryRegenerateEndpoint(Sessions sessions, TotpCredential
         }
 
         var tenant = SignInFlow.Tenant(this.HttpContext);
-        if (await mfa.RegenerateAsync(live.User, (form.Code ?? string.Empty).Replace(" ", string.Empty, StringComparison.Ordinal).Trim(),
-                SecurityFlow.Fresh(this.HttpContext, live.Session, live.Version), cancellationToken) is not { } issued)
+        var regenerated = await mfa.RegenerateAsync(live.User, (form.Code ?? string.Empty).Replace(" ", string.Empty, StringComparison.Ordinal).Trim(),
+            SecurityFlow.Fresh(this.HttpContext, live.Session, live.Version), cancellationToken);
+        if (regenerated is QuotaExceeded quota)
+        {
+            return ErrorResults.ToResult(quota);
+        }
+
+        if (regenerated is not IssuedRecoveryCodes issued)
         {
             return await SecurityFlow.RefusedAsync(this.HttpContext, sessions, mfa, live.User, ("That code is wrong or already used", "Enter the current code from your authenticator app, or an unused recovery code."),
                 StatusCodes.Status401Unauthorized, cancellationToken);

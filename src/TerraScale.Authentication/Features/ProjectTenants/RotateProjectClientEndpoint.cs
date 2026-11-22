@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Http.Features;
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Errors;
+using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Security;
@@ -20,7 +21,11 @@ public sealed class RotateProjectClientEndpoint(TenantDirectory tenants, IOpenId
 
     protected override async Task<Answer> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
-        var person = caller.RequirePerson();
+        if (caller.RequirePerson() is not UserRecord person)
+        {
+            return new Failure(ProjectCaller.PersonRequired);
+        }
+
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var sent = this.HttpContext.Request;
         var empty = sent.ContentLength is 0
@@ -29,7 +34,7 @@ public sealed class RotateProjectClientEndpoint(TenantDirectory tenants, IOpenId
         var grace = TimeSpan.FromSeconds(body.GraceSeconds ?? 3600);
         if (grace < TimeSpan.Zero || grace > TimeSpan.FromDays(1))
         {
-            return new Failure(new Validation("grace_seconds must be 0 to 86400 seconds.", "invalid_request"));
+            throw Invalid("grace_seconds must be 0 to 86400 seconds.");
         }
 
         _ = await proofs.ConsumeHeaderAsync(person, this.HttpContext.Request, "rotate_oauth_client", null, cancellationToken);
@@ -40,12 +45,12 @@ public sealed class RotateProjectClientEndpoint(TenantDirectory tenants, IOpenId
             if (await applications.FindByClientIdAsync(this.RouteId("client_id"), cancellationToken) is not OidcApplication application
                 || application.InstanceId != projectId)
             {
-                return new Failure(new NotFound("No such resource.", "not_found"));
+                throw PlatformDirectory.NotFound();
             }
 
             if (application.ClientType != ClientTypes.Confidential)
             {
-                return new Failure(new Validation("type must be confidential.", "invalid_request"));
+                throw Invalid("type must be confidential.");
             }
 
             application.PreviousSecretHash = grace > TimeSpan.Zero ? application.ClientSecret : null;

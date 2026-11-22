@@ -11,6 +11,7 @@ using OidcErrors = OpenIddict.Abstractions.OpenIddictConstants.Errors;
 using OpenIddict.Server.AspNetCore;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Agents;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Impersonation;
@@ -214,21 +215,14 @@ public abstract class AuthorizeEndpoint(Impersonations impersonations, Sessions 
                 return OidcResults.Forbid(OidcErrors.InvalidRequest, "Supply exactly one impersonation ticket.");
             }
 
-            try
+            var admin = await sessions.ResolveVersionedAsync(OidcIssuer.InstanceId,
+                this.HttpContext.Request.Cookies[Tenancy.SessionCookie(OidcIssuer.InstanceId)], cancellationToken);
+            return await impersonations.RedeemAsync(tenant, request.ClientId, ticketParameter[0]!, admin?.User,
+                admin is { } liveAdmin ? Sessions.Live(liveAdmin.Session, liveAdmin.Version, clock.GetUtcNow()) : null, cancellationToken) switch
             {
-                var admin = await sessions.ResolveVersionedAsync(OidcIssuer.InstanceId,
-                    this.HttpContext.Request.Cookies[Tenancy.SessionCookie(OidcIssuer.InstanceId)], cancellationToken);
-                var redeemed = await impersonations.RedeemAsync(tenant, request.ClientId, ticketParameter[0]!, admin?.User,
-                    admin is { } liveAdmin ? Sessions.Live(liveAdmin.Session, liveAdmin.Version, clock.GetUtcNow()) : null, cancellationToken);
-                this.HttpContext.Response.Cookies.Append(Impersonations.Cookie(tenant), redeemed.Cookie, ImpersonationBrowser.CookieOptions(redeemed.Live.Record.ExpiresAt));
-                this.HttpContext.Response.Headers["Referrer-Policy"] = "no-referrer";
-                return OidcResults.SignIn(options, redeemed.Live.User, redeemed.Live.Record.RedeemedAt!.Value, request.GetScopes(),
-                    OidcResults.Audiences(tenant, options, request.ClientId), impersonation: redeemed.Live.Record);
-            }
-            catch (ApiException error) when (error.Status == 400)
-            {
-                return OidcResults.Forbid(OidcErrors.InvalidRequest, error.Message);
-            }
+                RedeemedImpersonation redeemed => ImpersonationSignIn(options, redeemed, tenant, request),
+                Validation invalid => OidcResults.Forbid(OidcErrors.InvalidRequest, invalid.Message),
+            };
         }
 
         if (this.HttpContext.Request.Cookies.TryGetValue(Impersonations.Cookie(tenant), out var actingCookie))
@@ -332,6 +326,14 @@ public abstract class AuthorizeEndpoint(Impersonations impersonations, Sessions 
 
         return OidcResults.SignIn(options, signedIn.User, authenticatedAt!.Value, request.GetScopes(), OidcResults.Audiences(tenant, options, request.ClientId), organization: organization,
             organizationPicker: await OidcResults.OrganizationPickerAsync(settings, tenant, request.ClientId, cancellationToken));
+    }
+
+    private IResult ImpersonationSignIn(AuthOptions options, RedeemedImpersonation redeemed, string tenant, OpenIddictRequest request)
+    {
+        this.HttpContext.Response.Cookies.Append(Impersonations.Cookie(tenant), redeemed.Cookie, ImpersonationBrowser.CookieOptions(redeemed.Live.Record.ExpiresAt));
+        this.HttpContext.Response.Headers["Referrer-Policy"] = "no-referrer";
+        return OidcResults.SignIn(options, redeemed.Live.User, redeemed.Live.Record.RedeemedAt!.Value, request.GetScopes(),
+            OidcResults.Audiences(tenant, options, request.ClientId), impersonation: redeemed.Live.Record);
     }
 }
 
@@ -705,7 +707,7 @@ public abstract class LogoutEndpoint(Impersonations impersonations, Sessions ses
         {
             if (acting is not null)
             {
-                await impersonations.EndAsync(tenant, acting.Record.Id, acting.Record.ActorId, "manual", cancellationToken);
+                _ = await impersonations.EndAsync(tenant, acting.Record.Id, acting.Record.ActorId, "manual", cancellationToken);
             }
 
             this.HttpContext.Response.Cookies.Delete(Impersonations.Cookie(tenant), ImpersonationBrowser.CookieOptions(null));

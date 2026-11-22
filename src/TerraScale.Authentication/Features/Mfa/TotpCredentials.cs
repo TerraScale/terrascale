@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using OtpNet;
 using TerraScale.Authentication.Configuration;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Oidc;
@@ -111,10 +112,16 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
             || (Tenancy.IsProject(user.InstanceId) || viaSso) && policy.AllowPasskey && await data.ReadAsync((db, token) => db.Passkeys.AnyAsync(key => key.InstanceId == user.InstanceId && key.UserId == user.Id, token), cancellationToken).ConfigureAwait(false);
     }
 
-    public Task<bool> CompleteAsync(ChallengedSignIn challenged, string code, CancellationToken cancellationToken = default)
+    public async Task<TotpVerificationResult> CompleteAsync(ChallengedSignIn challenged, string code, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(challenged);
-        return this.VerifyAsync(challenged.User, code, new MfaAuthorization(Credentials.Claim(challenged.User.InstanceId, challenged.Completion), challenged.ExpiresAt), cancellationToken);
+        if (await this.LimitAsync(challenged.User, cancellationToken).ConfigureAwait(false) is { } wait)
+        {
+            return RateLimited(wait);
+        }
+
+        return await this.VerifyCoreAsync(challenged.User, code,
+            new MfaAuthorization(Credentials.Claim(challenged.User.InstanceId, challenged.Completion), challenged.ExpiresAt), cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<UserRecord?> PrimaryUserAsync(string instanceId, string userId, string? authEpoch, string? authStamp, string? multiFactorMethod, CancellationToken cancellationToken = default)
@@ -192,31 +199,32 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
         return new TotpEnrollment(encoded, new OtpUri(OtpType.Totp, encoded, user.Email, "TerraScale").ToString(), expires);
     }
 
-    public Task<IssuedRecoveryCodes?> ConfirmAsync(UserRecord caller, string code, CancellationToken cancellationToken = default) =>
-        this.ConfirmAsync(caller, code, null, cancellationToken);
-
-    internal async Task<IssuedRecoveryCodes?> ConfirmAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken = default)
+    internal async Task<TotpCodesResult> ConfirmAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken = default)
     {
         var issued = await this.ActivateAsync(caller, code, authorization, cancellationToken).ConfigureAwait(false);
-        if (issued is not null)
+        if (issued is IssuedRecoveryCodes activated)
         {
-            await FactorEnrollmentNotice.SendAsync(email, issued.User, cancellationToken).ConfigureAwait(false);
+            await FactorEnrollmentNotice.SendAsync(email, activated.User, cancellationToken).ConfigureAwait(false);
         }
 
         return issued;
     }
 
-    internal async Task<IssuedRecoveryCodes?> ActivateAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken)
+    internal async Task<TotpCodesResult> ActivateAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(caller);
-        await this.LimitAsync(caller, cancellationToken).ConfigureAwait(false);
+        if (await this.LimitAsync(caller, cancellationToken).ConfigureAwait(false) is { } wait)
+        {
+            return RateLimited(wait);
+        }
+
         if (await this.CurrentUserAsync(caller, cancellationToken).ConfigureAwait(false) is not { } user
             || await this.ReadAsync(caller, cancellationToken).ConfigureAwait(false) is not { } current
             || current.Record.Enabled || current.Record.SecretBox is null || current.Record.EnrollmentEpoch != caller.AuthEpoch
             || current.Record.EnrollmentExpiresAt is not { } expires || expires <= clock.GetUtcNow()
             || this.Step(caller, current.Record, code) is not { } step)
         {
-            return null;
+            return new TotpCodeRejected();
         }
 
         var codes = Enumerable.Range(0, RecoveryCount).Select(_ => Tokens.RandomToken(24)).ToArray();
@@ -232,19 +240,25 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
         var advanced = Users.BindAuthenticationState(user with { AuthEpoch = checked(user.AuthEpoch + 1), AuthStamp = AuthIds.New() });
         if (!await this.CommitAsync(user, active, current.Version, advanced, authorization, cancellationToken).ConfigureAwait(false))
         {
-            return null;
+            return new TotpCodeRejected();
         }
 
         return new IssuedRecoveryCodes(advanced, codes, recoveryExpires);
     }
 
-    public Task<bool> VerifyAsync(UserRecord caller, string code, CancellationToken cancellationToken = default) =>
-        this.VerifyAsync(caller, code, null, cancellationToken);
-
-    internal async Task<bool> VerifyAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken = default)
+    public async Task<TotpVerificationResult> VerifyAsync(UserRecord caller, string code, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(caller);
-        await this.LimitAsync(caller, cancellationToken).ConfigureAwait(false);
+        if (await this.LimitAsync(caller, cancellationToken).ConfigureAwait(false) is { } wait)
+        {
+            return RateLimited(wait);
+        }
+
+        return await this.VerifyCoreAsync(caller, code, null, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<bool> VerifyCoreAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken)
+    {
         if (await this.CurrentUserAsync(caller, cancellationToken).ConfigureAwait(false) is not { } user
             || await this.ReadAsync(caller, cancellationToken).ConfigureAwait(false) is not { } current
             || this.Consume(caller, current.Record, code) is not { } proof)
@@ -255,39 +269,41 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
         return await this.CommitAsync(user, proof, current.Version, null, authorization, cancellationToken).ConfigureAwait(false);
     }
 
-    public Task<bool> DisableAsync(UserRecord caller, string code, CancellationToken cancellationToken = default) =>
-        this.DisableAsync(caller, code, null, cancellationToken);
-
-    internal async Task<bool> DisableAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken = default) =>
-        await this.DisabledUserAsync(caller, code, authorization, cancellationToken).ConfigureAwait(false) is not null;
-
-    internal async Task<UserRecord?> DisabledUserAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken = default)
+    internal async Task<TotpDisabledResult> DisabledUserAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(caller);
-        await this.LimitAsync(caller, cancellationToken).ConfigureAwait(false);
+        if (await this.LimitAsync(caller, cancellationToken).ConfigureAwait(false) is { } wait)
+        {
+            return RateLimited(wait);
+        }
+
         if (await this.CurrentUserAsync(caller, cancellationToken).ConfigureAwait(false) is not { } user
             || await this.ReadAsync(caller, cancellationToken).ConfigureAwait(false) is not { } current
             || this.Consume(caller, current.Record, code) is null)
         {
-            return null;
+            return new TotpCodeRejected();
         }
 
         var disabled = current.Record with { SecretBox = null, Enabled = false, EnrollmentExpiresAt = null, LastAcceptedStep = -1, RecoveryHashes = [], RecoveryExpiresAt = null };
         var advanced = Users.BindAuthenticationState(user with { AuthEpoch = checked(user.AuthEpoch + 1), AuthStamp = AuthIds.New() });
         return await this.CommitAsync(user, disabled, current.Version, advanced, authorization, cancellationToken).ConfigureAwait(false)
             ? advanced
-            : null;
+            : new TotpCodeRejected();
     }
 
-    internal async Task<IssuedRecoveryCodes?> RegenerateAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken = default)
+    internal async Task<TotpCodesResult> RegenerateAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(caller);
-        await this.LimitAsync(caller, cancellationToken).ConfigureAwait(false);
+        if (await this.LimitAsync(caller, cancellationToken).ConfigureAwait(false) is { } wait)
+        {
+            return RateLimited(wait);
+        }
+
         if (await this.CurrentUserAsync(caller, cancellationToken).ConfigureAwait(false) is not { } user
             || await this.ReadAsync(caller, cancellationToken).ConfigureAwait(false) is not { } current
             || this.Consume(caller, current.Record, code) is not { } proof)
         {
-            return null;
+            return new TotpCodeRejected();
         }
 
         var codes = Enumerable.Range(0, RecoveryCount).Select(_ => Tokens.RandomToken(24)).ToArray();
@@ -295,7 +311,7 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
         var regenerated = proof with { RecoveryHashes = codes.Select(Tokens.Sha256Hex).ToArray(), RecoveryExpiresAt = recoveryExpires };
         return await this.CommitAsync(user, regenerated, current.Version, null, authorization, cancellationToken).ConfigureAwait(false)
             ? new IssuedRecoveryCodes(user, codes, recoveryExpires)
-            : null;
+            : new TotpCodeRejected();
     }
 
     private async Task<UserRecord?> CurrentUserAsync(UserRecord caller, CancellationToken cancellationToken) =>
@@ -416,13 +432,13 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
         return await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task LimitAsync(UserRecord caller, CancellationToken cancellationToken)
+    private async Task<TimeSpan?> LimitAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        if (await limiter.AcquireAsync(caller.InstanceId, "mfa-proof", caller.Id, 10, AttemptWindow, cancellationToken).ConfigureAwait(false) is { } wait)
-        {
-            throw ApiException.RateLimited("Too many MFA attempts; retry after the Retry-After delay.", wait);
-        }
+        return await limiter.AcquireAsync(caller.InstanceId, "mfa-proof", caller.Id, 10, AttemptWindow, cancellationToken).ConfigureAwait(false);
     }
+
+    private static QuotaExceeded RateLimited(TimeSpan wait) =>
+        new("Too many MFA attempts; retry after the Retry-After delay.", "rate_limited", RetryAfter: wait);
 
     private static string Context(UserRecord user) => Context(user.InstanceId, user.Id);
 
@@ -433,6 +449,14 @@ public sealed record ChallengedSignIn(UserRecord User, CredentialBinding Complet
 {
     internal string? SsoProof { get; init; }
 }
+
+public sealed record TotpCodeRejected;
+
+public readonly union TotpCodesResult(IssuedRecoveryCodes, TotpCodeRejected, QuotaExceeded);
+
+public readonly union TotpVerificationResult(bool, QuotaExceeded);
+
+public readonly union TotpDisabledResult(UserRecord, TotpCodeRejected, QuotaExceeded);
 
 internal sealed record MfaChallenge(string Id, string UserId, long AuthEpoch, string? AuthStamp, DateTimeOffset ExpiresAt, IReadOnlyList<CredentialBinding> Bindings, string Purpose, bool InboxProven,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SsoProof = null);

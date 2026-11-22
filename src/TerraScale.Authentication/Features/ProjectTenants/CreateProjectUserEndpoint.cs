@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
 
@@ -20,7 +21,11 @@ public sealed class CreateProjectUserEndpoint(TenantDirectory tenants, PlatformA
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(UserProfileJson.Default.CreateProjectUserRequest, cancellationToken);
-        return Results.Json(Map(await profiles.CreateAsync(project, request, cancellationToken)), ProjectTenantJson.Default.ProjectUserBody,
-            statusCode: StatusCodes.Status201Created);
+        return await profiles.CreateAsync(project, request, cancellationToken) switch
+        {
+            UserRecord created => Results.Json(Map(created), ProjectTenantJson.Default.ProjectUserBody, statusCode: StatusCodes.Status201Created),
+            Validation error => ErrorResults.ToResult(error),
+            Conflict error => ErrorResults.ToResult(error),
+        };
     }
 }
