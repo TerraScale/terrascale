@@ -23,7 +23,7 @@ public sealed class TenantDirectory(AuthData data, Users users, Sessions session
     public async Task CheckAccessAsync(string userId, string projectId, string minimum, CancellationToken cancellationToken)
     {
         var project = await platform.ProjectAsync(projectId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
-        PlatformDirectory.RequireRole(await platform.ProjectAccessAsync(userId, project.Value.OrganizationId, projectId, cancellationToken).ConfigureAwait(false), minimum);
+        PlatformDirectory.RequireRole(await platform.RequireProjectAsync(userId, project.Value.OrganizationId, projectId, cancellationToken).ConfigureAwait(false), minimum);
     }
 
     public async Task CheckKeyAccessAsync(ApiKeyRecord key, string projectId, string scope, IPAddress? address, CancellationToken cancellationToken)

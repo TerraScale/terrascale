@@ -144,9 +144,12 @@ public sealed class CreateInvitationEndpoint(Invitations invitations, PlatformAu
             throw Invalid(body.ProjectId is null ? "role must be viewer, member, admin or owner." : "role must be viewer, member or admin for a project.");
         }
 
-        var (invitation, token) = await invitations.CreateAsync(caller, this.RouteId("organization"), email, role, body.ProjectId,
-            AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage), cancellationToken);
-        return Results.Json(new InvitationCreatedBody(this.Map(invitations, invitation), token), PlatformApiJson.Default.InvitationCreatedBody, statusCode: StatusCodes.Status201Created);
+        return await invitations.CreateAsync(caller, this.RouteId("organization"), email, role, body.ProjectId,
+            AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage), cancellationToken) switch
+        {
+            InvitationIssued issued => Results.Json(new InvitationCreatedBody(this.Map(invitations, issued.Invitation), issued.Token), PlatformApiJson.Default.InvitationCreatedBody, statusCode: StatusCodes.Status201Created),
+            Failure failure => ErrorResults.ToResult(failure),
+        };
     }
 }
 
@@ -170,8 +173,11 @@ public sealed class ListInvitationsEndpoint(Invitations invitations, PlatformAut
             throw Invalid("project_id must be a project id.");
         }
 
-        var page = await invitations.ListAsync(caller.Id, this.RouteId("organization"), projectId, limit, after, cancellationToken);
-        return Results.Json(new InvitationPageBody([.. page.Items.Select(item => this.Map(invitations, item))], page.Next), PlatformApiJson.Default.InvitationPageBody);
+        return await invitations.ListAsync(caller.Id, this.RouteId("organization"), projectId, limit, after, cancellationToken) switch
+        {
+            Page<InvitationRecord> page => Results.Json(new InvitationPageBody([.. page.Items.Select(item => this.Map(invitations, item))], page.Next), PlatformApiJson.Default.InvitationPageBody),
+            Failure failure => ErrorResults.ToResult(failure),
+        };
     }
 }
 
@@ -188,7 +194,11 @@ public sealed class RevokeInvitationEndpoint(Invitations invitations, PlatformAu
     /// <inheritdoc />
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        await invitations.RevokeAsync(caller.Id, this.RouteId("organization"), this.HttpContext.GetRouteValue("invitation") as string ?? string.Empty, cancellationToken);
+        if (await invitations.RevokeAsync(caller.Id, this.RouteId("organization"), this.HttpContext.GetRouteValue("invitation") as string ?? string.Empty, cancellationToken) is Failure failure)
+        {
+            return ErrorResults.ToResult(failure);
+        }
+
         return Results.NoContent();
     }
 }
@@ -207,9 +217,12 @@ public sealed class LookupInvitationEndpoint(Invitations invitations, PlatformAu
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
         var token = (await this.BodyAsync(PlatformApiJson.Default.InvitationTokenRequest, cancellationToken)).Token ?? throw Invalid("token is required.");
-        var (invitation, organization, project) = await invitations.LookupAsync(token, cancellationToken);
-        return Results.Json(new InvitationLookupBody(new(invitation.OrganizationId, organization), project is null ? null : new(invitation.ProjectId!, project),
-            invitation.Email, invitation.Role, invitation.ExpiresAt), PlatformApiJson.Default.InvitationLookupBody);
+        return await invitations.LookupAsync(token, cancellationToken) switch
+        {
+            InvitationView view => Results.Json(new InvitationLookupBody(new(view.Invitation.OrganizationId, view.OrganizationName), view.ProjectName is null ? null : new(view.Invitation.ProjectId!, view.ProjectName),
+                view.Invitation.Email, view.Invitation.Role, view.Invitation.ExpiresAt), PlatformApiJson.Default.InvitationLookupBody),
+            Failure failure => ErrorResults.ToResult(failure),
+        };
     }
 }
 
@@ -227,8 +240,11 @@ public sealed class AcceptInvitationEndpoint(Invitations invitations, PlatformAu
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
         var token = (await this.BodyAsync(PlatformApiJson.Default.InvitationTokenRequest, cancellationToken)).Token ?? throw Invalid("token is required.");
-        var invitation = await invitations.AcceptAsync(caller, token, cancellationToken);
-        return Results.Json(new AcceptedInvitationBody(invitation.OrganizationId, invitation.ProjectId, invitation.Role), PlatformApiJson.Default.AcceptedInvitationBody);
+        return await invitations.AcceptAsync(caller, token, cancellationToken) switch
+        {
+            InvitationRecord invitation => Results.Json(new AcceptedInvitationBody(invitation.OrganizationId, invitation.ProjectId, invitation.Role), PlatformApiJson.Default.AcceptedInvitationBody),
+            Failure failure => ErrorResults.ToResult(failure),
+        };
     }
 }
 
@@ -246,7 +262,11 @@ public sealed class DeclineInvitationEndpoint(Invitations invitations, PlatformA
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
         var token = (await this.BodyAsync(PlatformApiJson.Default.InvitationTokenRequest, cancellationToken)).Token ?? throw Invalid("token is required.");
-        await invitations.DeclineAsync(caller, token, cancellationToken);
+        if (await invitations.DeclineAsync(caller, token, cancellationToken) is Failure failure)
+        {
+            return ErrorResults.ToResult(failure);
+        }
+
         return Results.NoContent();
     }
 }
@@ -278,11 +298,12 @@ public sealed class StartOwnershipTransferEndpoint(PlatformDirectory platform, P
         };
     }
 
-    private async Task<IResult> StartTransferAsync(UserRecord caller, string nominee, CancellationToken cancellationToken)
-    {
-        var transfer = await platform.StartTransferAsync(caller.Id, this.RouteId("organization"), nominee, cancellationToken);
-        return Results.Json(Map(transfer), PlatformApiJson.Default.OwnershipTransferBody, statusCode: StatusCodes.Status201Created);
-    }
+    private async Task<IResult> StartTransferAsync(UserRecord caller, string nominee, CancellationToken cancellationToken) =>
+        await platform.StartTransferAsync(caller.Id, this.RouteId("organization"), nominee, cancellationToken) switch
+        {
+            OwnershipTransferRecord transfer => Results.Json(Map(transfer), PlatformApiJson.Default.OwnershipTransferBody, statusCode: StatusCodes.Status201Created),
+            Failure failure => ErrorResults.ToResult(failure),
+        };
 
     internal static OwnershipTransferBody Map(OwnershipTransferRecord transfer) => new(transfer.FromUserId, transfer.ToUserId, transfer.CreatedAt, transfer.ExpiresAt);
 }
@@ -299,7 +320,11 @@ public sealed class GetOwnershipTransferEndpoint(PlatformDirectory platform, Pla
 
     /// <inheritdoc />
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken) =>
-        Results.Json(StartOwnershipTransferEndpoint.Map(await platform.TransferAsync(caller.Id, this.RouteId("organization"), cancellationToken)), PlatformApiJson.Default.OwnershipTransferBody);
+        await platform.TransferAsync(caller.Id, this.RouteId("organization"), cancellationToken) switch
+        {
+            OwnershipTransferRecord transfer => Results.Json(StartOwnershipTransferEndpoint.Map(transfer), PlatformApiJson.Default.OwnershipTransferBody),
+            Failure failure => ErrorResults.ToResult(failure),
+        };
 }
 
 /// <summary><c>DELETE /v1/terrascale/organizations/{organization}/ownership-transfer</c>.</summary>
@@ -315,7 +340,11 @@ public sealed class CancelOwnershipTransferEndpoint(PlatformDirectory platform, 
     /// <inheritdoc />
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        await platform.CancelTransferAsync(caller.Id, this.RouteId("organization"), cancellationToken);
+        if (await platform.CancelTransferAsync(caller.Id, this.RouteId("organization"), cancellationToken) is Failure failure)
+        {
+            return ErrorResults.ToResult(failure);
+        }
+
         return Results.NoContent();
     }
 }
@@ -333,8 +362,11 @@ public sealed class ConfirmOwnershipTransferEndpoint(PlatformDirectory platform,
     /// <inheritdoc />
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        var (member, email) = await platform.ConfirmTransferAsync(caller.Id, this.RouteId("organization"), cancellationToken);
-        return Results.Json(Map(member, email), PlatformApiJson.Default.MemberBody);
+        return await platform.ConfirmTransferAsync(caller.Id, this.RouteId("organization"), cancellationToken) switch
+        {
+            MemberEmail member => Results.Json(Map(member.Member, member.Email), PlatformApiJson.Default.MemberBody),
+            Failure failure => ErrorResults.ToResult(failure),
+        };
     }
 }
 
@@ -352,8 +384,11 @@ public sealed class ListAuditEventsEndpoint(PlatformDirectory platform, Platform
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
         var (limit, after) = this.Paging();
-        var page = await platform.AuditEventsAsync(caller.Id, this.RouteId("organization"), limit, after, cancellationToken);
-        return Results.Json(new AuditEventPageBody([.. page.Items.Select(item => new AuditEventBody(item.Id, item.Actor, item.Action, item.Target, item.Detail, item.OccurredAt))], page.Next),
-            PlatformApiJson.Default.AuditEventPageBody);
+        return await platform.AuditEventsAsync(caller.Id, this.RouteId("organization"), limit, after, cancellationToken) switch
+        {
+            Page<AuditEventRecord> page => Results.Json(new AuditEventPageBody([.. page.Items.Select(item => new AuditEventBody(item.Id, item.Actor, item.Action, item.Target, item.Detail, item.OccurredAt))], page.Next),
+                PlatformApiJson.Default.AuditEventPageBody),
+            Failure failure => ErrorResults.ToResult(failure),
+        };
     }
 }

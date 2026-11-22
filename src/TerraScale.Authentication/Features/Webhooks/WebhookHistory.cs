@@ -15,6 +15,10 @@ public sealed record WebhookAttemptRecord(string Id, string DeliveryId, string P
 
 public sealed record WebhookEventBody(string Id, string Type, DateTimeOffset Timestamp, WebhookEventData Data);
 
+public readonly union WebhookMutation(Done, NotFound, Conflict);
+
+public readonly union WebhookEvent(WebhookEventBody, Conflict);
+
 public sealed record WebhookEventData(string UserId, string? Email, string? Provider, string? SessionId, string? EndpointId, string? ActorId = null, string? Reason = null, string? OrganizationId = null, string? OrganizationRole = null, [property: JsonPropertyName("agent_id")] string? AgentId = null, [property: JsonPropertyName("agent_key_id")] string? AgentKeyId = null);
 
 public sealed record WebhookEventPage(IReadOnlyList<WebhookEventBody> Items, string? Next);
@@ -49,7 +53,7 @@ public sealed class WebhookHistory(AuthData data, WebhookOutbox outbox, TimeProv
 
     public async Task<WebhookDeliveryPage> DeliveriesAsync(string projectId, string endpointId, CancellationToken cancellationToken)
     {
-        await this.EndpointAsync(projectId, endpointId, cancellationToken).ConfigureAwait(false);
+        _ = await this.EndpointAsync(projectId, endpointId, cancellationToken).ConfigureAwait(false);
         var rows = await data.ReadAsync((db, token) =>
             (from delivery in db.WebhookDeliveries.Where(row => row.ProjectId == projectId && row.EndpointId == endpointId)
                 .OrderByDescending(row => row.Id).Take(20)
@@ -66,41 +70,46 @@ public sealed class WebhookHistory(AuthData data, WebhookOutbox outbox, TimeProv
         return new WebhookDeliveryPage(items, null);
     }
 
-    public async Task ReplayAsync(string projectId, string endpointId, string deliveryId, CancellationToken cancellationToken)
+    public async Task<WebhookMutation> ReplayAsync(string projectId, string endpointId, string deliveryId, CancellationToken cancellationToken)
     {
         var endpoint = await this.EndpointAsync(projectId, endpointId, cancellationToken).ConfigureAwait(false);
         var now = clock.GetUtcNow();
         if (endpoint.Value.DisabledAt is not null)
         {
-            throw new ApiException(409, "webhook_endpoint_disabled", "Register a working endpoint before sending more events.");
+            return new Conflict("Register a working endpoint before sending more events.", "webhook_endpoint_disabled");
         }
 
-        var row = await data.ReadAsync((db, token) => db.WebhookDeliveries
-            .Where(row => row.Id == deliveryId && row.ProjectId == projectId && row.EndpointId == endpointId).WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false)
-            ?? throw new ApiException(404, "not_found", "No such delivery.");
+        if (await data.ReadAsync((db, token) => db.WebhookDeliveries
+            .Where(row => row.Id == deliveryId && row.ProjectId == projectId && row.EndpointId == endpointId).WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false) is not { } row)
+        {
+            return new NotFound("No such delivery.");
+        }
+
         if (endpoint.Value.LeaseUntil > now || row.Value.Status == "sending")
         {
-            throw new ApiException(409, "delivery_in_progress", "The endpoint is delivering an event.");
+            return new Conflict("The endpoint is delivering an event.", "delivery_in_progress");
         }
 
         if (!await data.SaveAsync([Change.Assert(endpoint), Change.Update(row, row.Value with { Status = "pending", NextAttemptAt = now, StartedAt = now, CycleAttempts = 0 })], cancellationToken).ConfigureAwait(false))
         {
-            throw new ApiException(409, "version_conflict", "The delivery changed concurrently.");
+            return new Conflict("The delivery changed concurrently.", "version_conflict");
         }
+
+        return new Done();
     }
 
-    public async Task<WebhookEventBody> TestAsync(string projectId, string endpointId, CancellationToken cancellationToken)
+    public async Task<WebhookEvent> TestAsync(string projectId, string endpointId, CancellationToken cancellationToken)
     {
         var endpoint = await this.EndpointAsync(projectId, endpointId, cancellationToken).ConfigureAwait(false);
         if (endpoint.Value.DisabledAt is not null)
         {
-            throw new ApiException(409, "webhook_endpoint_disabled", "Register a working endpoint before sending more events.");
+            return new Conflict("Register a working endpoint before sending more events.", "webhook_endpoint_disabled");
         }
 
         var row = outbox.NewEvent(projectId, "webhook.test", "", endpointId: endpointId) with { Status = "expanded" };
         if (!await data.SaveAsync([Change.Insert(row), Change.Insert(NewDelivery(row, endpointId))], cancellationToken).ConfigureAwait(false))
         {
-            throw new ApiException(409, "version_conflict", "The endpoint changed concurrently.");
+            return new Conflict("The endpoint changed concurrently.", "version_conflict");
         }
 
         return Body(row);
@@ -112,5 +121,7 @@ public sealed class WebhookHistory(AuthData data, WebhookOutbox outbox, TimeProv
     internal async Task<Versioned<WebhookEndpointStateRecord>> EndpointAsync(string projectId, string endpointId, CancellationToken cancellationToken) =>
         await data.ReadAsync((db, token) => db.WebhookEndpointStates.Where(row => row.ProjectId == projectId && row.EndpointId == endpointId)
             .WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false)
-        ?? throw new ApiException(404, "not_found", "No such endpoint.");
+        ?? throw ToException(new NotFound("No such endpoint."));
+
+    private static ApiException ToException(NotFound failure) => new(StatusCodes.Status404NotFound, failure.Code, failure.Message ?? "No such resource.");
 }

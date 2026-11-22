@@ -10,10 +10,11 @@ internal static class ErrorResults
         NotFound e => Result(StatusCodes.Status404NotFound, e.Message ?? "Not found.", e.Code),
         Conflict e => Result(StatusCodes.Status409Conflict, e.Message, e.Code),
         Validation e => Result(StatusCodes.Status400BadRequest, e.Message, e.Code),
+        Unprocessable e => Result(StatusCodes.Status422UnprocessableEntity, e.Message, e.Code),
         PreconditionFailed e => Result(StatusCodes.Status412PreconditionFailed, e.Message, e.Code),
         Unauthorized e => Result(StatusCodes.Status401Unauthorized, e.Message ?? "Unauthorized.", e.Code),
         Forbidden e => Result(StatusCodes.Status403Forbidden, e.Message, e.Code),
-        QuotaExceeded e => Result(StatusCodes.Status429TooManyRequests, e.Message, e.Code),
+        QuotaExceeded e => Result(StatusCodes.Status429TooManyRequests, e.Message, e.Code, details: e.Details, retryAfter: e.RetryAfter),
         Unavailable e => Result(StatusCodes.Status503ServiceUnavailable, e.Message, e.Code, e.Details),
         PayloadTooLarge e => Result(StatusCodes.Status413PayloadTooLarge, e.Message, e.Code),
         UnsupportedMediaType e => Result(StatusCodes.Status415UnsupportedMediaType, e.Message, e.Code),
@@ -22,8 +23,8 @@ internal static class ErrorResults
         OutcomeUnknown e => Result(StatusCodes.Status503ServiceUnavailable, e.Message, e.Code),
     };
 
-    private static EnvelopeResult Result(int status, string message, string code, IReadOnlyDictionary<string, string>? details = null) =>
-        new(status, code, message, RetryAfter(details));
+    private static EnvelopeResult Result(int status, string message, string code, IReadOnlyDictionary<string, string>? details = null, TimeSpan? retryAfter = null) =>
+        new(status, code, message, retryAfter ?? RetryAfter(details));
 
     internal static TimeSpan? RetryAfter(IReadOnlyDictionary<string, string>? details)
     {

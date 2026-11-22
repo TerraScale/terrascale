@@ -101,12 +101,12 @@ public sealed class SupportEmailEndpoint(AuthData data, PlatformDirectory direct
             request.Severity is not ("low" or "normal" or "high" or "urgent") ||
             subject.Length is 0 or > 150 || subject.Any(char.IsControl) || message.Length is 0 or > 8000)
         {
-            throw new ApiException(StatusCodes.Status422UnprocessableEntity, "invalid_request", "A severity, a one-line subject of at most 150 characters and a message of at most 8000 characters are required.");
+            return ErrorResults.ToResult(new Unprocessable("A severity, a one-line subject of at most 150 characters and a message of at most 8000 characters are required."));
         }
 
         var user = await users.GetAsync(OidcIssuer.InstanceId, request.UserId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
         var (organizationName, projectName) = request.ProjectId is null
-            ? ((await directory.OrganizationAccessAsync(user.Id, request.OrganizationId, cancellationToken).ConfigureAwait(false)).Organization.Value.Name, null)
+            ? ((await directory.RequireOrganizationAsync(user.Id, request.OrganizationId, cancellationToken).ConfigureAwait(false)).Organization.Value.Name, null)
             : await ProjectNamesAsync(user.Id, request, cancellationToken).ConfigureAwait(false);
 
         if (await this.ReadAsync(request, cancellationToken).ConfigureAwait(false) is { } recorded)
@@ -173,7 +173,7 @@ public sealed class SupportEmailEndpoint(AuthData data, PlatformDirectory direct
 
     private async Task<(string Organization, string? Project)> ProjectNamesAsync(string userId, EmailSupportRequest request, CancellationToken cancellationToken)
     {
-        var access = await directory.ProjectAccessAsync(userId, request.OrganizationId, request.ProjectId!, cancellationToken).ConfigureAwait(false);
+        var access = await directory.RequireProjectAsync(userId, request.OrganizationId, request.ProjectId!, cancellationToken).ConfigureAwait(false);
         return (access.Organization.Value.Name, access.Project.Value.Name);
     }
 

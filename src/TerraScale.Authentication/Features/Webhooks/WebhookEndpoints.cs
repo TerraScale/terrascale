@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Security;
@@ -29,6 +30,10 @@ public sealed record WebhookEndpointPageBody(IReadOnlyList<WebhookEndpointBody> 
 
 public sealed record WebhookSecretBody(string Id, string Secret, DateTimeOffset? PreviousSecretExpiresAt);
 
+public readonly record struct WebhookEndpointSecret(WebhookEndpointRecord Endpoint, string Secret);
+
+public readonly union WebhookRegistration(WebhookEndpointSecret, NotFound, Conflict, Forbidden);
+
 public sealed class WebhookEndpoints(AuthData data, ProjectAuthSettings settings, AuthOptions options, TimeProvider clock)
 {
     public const int MaxPerProject = 3;
@@ -42,12 +47,12 @@ public sealed class WebhookEndpoints(AuthData data, ProjectAuthSettings settings
         "organizationMembership.deleted", "organizationInvitation.created", "organizationInvitation.accepted", "organizationInvitation.revoked", "organizationDomain.created", "organizationDomain.updated", "organizationDomain.deleted",
     }.ToFrozenSet(StringComparer.Ordinal);
 
-    public async Task<(WebhookEndpointRecord Endpoint, string Secret)> CreateAsync(string projectId, string url, IReadOnlyList<string> eventTypes, CancellationToken cancellationToken)
+    public async Task<WebhookRegistration> CreateAsync(string projectId, string url, IReadOnlyList<string> eventTypes, CancellationToken cancellationToken)
     {
         var (current, settingsVersion) = await settings.ReadVersionedAsync(projectId, cancellationToken).ConfigureAwait(false);
         if ((await this.ListAsync(projectId, cancellationToken).ConfigureAwait(false)).Count >= MaxPerProject)
         {
-            throw new ApiException(409, "webhook_endpoint_limit", $"A project registers at most {MaxPerProject} webhook endpoints.");
+            return new Conflict($"A project registers at most {MaxPerProject} webhook endpoints.", "webhook_endpoint_limit");
         }
 
         var id = AuthIds.New();
@@ -61,10 +66,10 @@ public sealed class WebhookEndpoints(AuthData data, ProjectAuthSettings settings
                 ProjectAuthSettings.Write(current with { InstanceId = projectId }, settingsVersion),
             ], cancellationToken).ConfigureAwait(false))
         {
-            throw new ApiException(409, "version_conflict", "The project's webhook endpoints changed concurrently; read them again and retry.");
+            return new Conflict("The project's webhook endpoints changed concurrently; read them again and retry.", "version_conflict");
         }
 
-        return (endpoint, secret);
+        return new WebhookEndpointSecret(endpoint, secret);
     }
 
     public async Task<IReadOnlyList<WebhookEndpointBody>> ListAsync(string projectId, CancellationToken cancellationToken) =>
@@ -85,10 +90,13 @@ public sealed class WebhookEndpoints(AuthData data, ProjectAuthSettings settings
         return await data.SaveAsync(Change.Delete(row), cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<(WebhookEndpointRecord Endpoint, string Secret)> RotateAsync(string projectId, string id,
+    public async Task<WebhookRegistration> RotateAsync(string projectId, string id,
         IReadOnlyList<Change> consumption, CancellationToken cancellationToken)
     {
-        var row = await this.ReadAsync(projectId, id, cancellationToken).ConfigureAwait(false) ?? throw new ApiException(404, "not_found", "No such resource.");
+        if (await this.ReadAsync(projectId, id, cancellationToken).ConfigureAwait(false) is not { } row)
+        {
+            return new NotFound("No such resource.");
+        }
         var endpoint = row.Value;
         var secret = NewSecret();
         var rotated = endpoint with
@@ -99,12 +107,12 @@ public sealed class WebhookEndpoints(AuthData data, ProjectAuthSettings settings
         };
         if (!await data.SaveAsync([.. consumption, Change.Update(row, rotated)], cancellationToken).ConfigureAwait(false))
         {
-            throw (await this.ReadAsync(projectId, id, cancellationToken).ConfigureAwait(false))?.Version == row.Version
-                ? StepUpProofs.Required()
-                : new ApiException(409, "version_conflict", "The webhook endpoint changed; read it again and retry.");
+            return (await this.ReadAsync(projectId, id, cancellationToken).ConfigureAwait(false))?.Version == row.Version
+                ? StepUpProofs.StepUpRequired()
+                : new Conflict("The webhook endpoint changed; read it again and retry.", "version_conflict");
         }
 
-        return (rotated, secret);
+        return new WebhookEndpointSecret(rotated, secret);
     }
 
     private Task<Versioned<WebhookEndpointRecord>?> ReadAsync(string projectId, string id, CancellationToken cancellationToken) =>

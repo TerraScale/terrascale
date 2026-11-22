@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 
@@ -18,7 +19,12 @@ public sealed class RotateWebhookSecretEndpoint(TenantDirectory tenants, Platfor
         _ = caller.Person;
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var prepared = await proofs.PrepareHeaderAsync(caller.Person, this.HttpContext.Request, "rotate_webhook_secret", null, cancellationToken) ?? throw StepUpProofs.Required();
-        var (endpoint, secret) = await webhooks.RotateAsync(projectId, this.RouteId("id"), prepared.Operations, cancellationToken);
-        return Results.Json(new WebhookSecretBody(endpoint.Id, secret, endpoint.PreviousSecretExpiresAt), WebhooksJson.Default.WebhookSecretBody);
+        return await webhooks.RotateAsync(projectId, this.RouteId("id"), prepared.Operations, cancellationToken) switch
+        {
+            WebhookEndpointSecret issued => Results.Json(new WebhookSecretBody(issued.Endpoint.Id, issued.Secret, issued.Endpoint.PreviousSecretExpiresAt), WebhooksJson.Default.WebhookSecretBody),
+            NotFound failure => ErrorResults.ToResult(failure),
+            Forbidden failure => ErrorResults.ToResult(failure),
+            Conflict failure => ErrorResults.ToResult(failure),
+        };
     }
 }

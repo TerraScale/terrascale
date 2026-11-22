@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
@@ -27,7 +28,7 @@ public sealed class AccountDeletion(
     {
         ArgumentNullException.ThrowIfNull(user);
         using var home = HomeReads.Begin();
-        var intent = await platform.CommitAsync(async () =>
+        return await platform.CommitAsync(async () =>
         {
             var current = await platform.ClosureAsync("account", user.Id, cancellationToken).ConfigureAwait(false);
             var created = ClosureJob.New(PlatformDirectory.Instance, "account", user.Id, null, user.Id, clock);
@@ -81,12 +82,20 @@ public sealed class AccountDeletion(
             }
 
             return new PlatformDirectory.Plan<ClosureJob>(operations, closure);
-        }, cancellationToken).ConfigureAwait(false);
+        }, cancellationToken).ConfigureAwait(false) switch
+        {
+            ClosureJob closure => await this.AdvanceAttachedAsync(user, closure, cancellationToken).ConfigureAwait(false),
+            Failure failure => throw PlatformDirectory.ToException(failure),
+        };
+    }
+
+    private async Task<bool> AdvanceAttachedAsync(UserRecord user, ClosureJob attached, CancellationToken cancellationToken)
+    {
         var job = await platform.ClosureAsync("account", user.Id, cancellationToken).ConfigureAwait(false);
-        if (job is null || !job.Value.Same(intent))
+        if (job is null || !job.Value.Same(attached))
         {
             // A worker may finish immediately after the attachment transaction. Absence alone proves nothing.
-            return await this.CompletedAsync(user.Id, intent.Generation!, cancellationToken).ConfigureAwait(false)
+            return await this.CompletedAsync(user.Id, attached.Generation!, cancellationToken).ConfigureAwait(false)
                 ? true : throw PlatformDirectory.Conflict("deletion_refused", "No completion proof exists for this closure generation.");
         }
 
@@ -127,7 +136,7 @@ public sealed class AccountDeletion(
         await this.StatusAsync(receiptHash, organizationId, cancellationToken).ConfigureAwait(false) switch
         {
             true => await this.HistoryOfAsync(receiptHash, organizationId, cancellationToken).ConfigureAwait(false),
-            false => PlatformDirectory.NotFoundFailure(),
+            false => new NotFound("No such resource."),
             NotFound failure => failure,
             Conflict failure => failure,
         };
@@ -148,7 +157,7 @@ public sealed class AccountDeletion(
         return job is not null && job.Id == key && job.InstanceId == PlatformDirectory.Instance && job.Scope == scope && job.SubjectId == subject
             && (organizationId is not null || job.ClosureGeneration == found.Generation) && job.ErasureId is { } erasure && PlatformDirectory.IsId(erasure)
                 ? new AccountDeletionHistory(erasure, job.RequestedAt, job.AuthLogicalVerifiedAt, job.HistoryStatus, job.HistoryCompletedAt)
-                : PlatformDirectory.NotFoundFailure();
+                : new NotFound("No such resource.");
     }
 
     private static Conflict DeletionRefused() => new("No completion proof exists for this closure generation.", "deletion_refused");
@@ -159,7 +168,7 @@ public sealed class AccountDeletion(
             .SingleOrDefaultAsync(row => row.InstanceId == PlatformDirectory.Instance && row.TokenHash == receiptHash, token), cancellationToken).ConfigureAwait(false);
         return receipt is not null && receipt.InstanceId == PlatformDirectory.Instance && receipt.TokenHash == receiptHash && receipt.ExpiresAt > clock.GetUtcNow()
             && (organizationId is null || receipt.OrganizationIds.Contains(organizationId, StringComparer.Ordinal))
-                ? receipt : PlatformDirectory.NotFoundFailure();
+                ? receipt : new NotFound("No such resource.");
     }
 
     private async Task<bool> CompletedAsync(string userId, string generation, CancellationToken cancellationToken)

@@ -265,8 +265,11 @@ public abstract class ApiKeyEndpoint(ApiKeys keys, PlatformAuthentication authen
         }
 
         var cidrs = ApiKeys.NormalizeCidrs(body.AllowedCidrs) ?? throw InvalidCidrs();
-        var (key, secret) = await keys.CreateAsync(caller, this.RouteId("organization"), this.ProjectId(), name, scopes, body.Database, body.ExpiresAt, cidrs, cancellationToken);
-        return Results.Json(new ApiKeySecretBody(this.Map(key, null), secret), PlatformApiJson.Default.ApiKeySecretBody, statusCode: StatusCodes.Status201Created);
+        return await keys.CreateAsync(caller, this.RouteId("organization"), this.ProjectId(), name, scopes, body.Database, body.ExpiresAt, cidrs, cancellationToken) switch
+        {
+            ApiKeyIssued issued => Results.Json(new ApiKeySecretBody(this.Map(issued.Key, null), issued.Secret), PlatformApiJson.Default.ApiKeySecretBody, statusCode: StatusCodes.Status201Created),
+            Failure failure => ErrorResults.ToResult(failure),
+        };
     }
 
     /// <summary>Lists the keys, oldest first.</summary>
@@ -274,7 +277,15 @@ public abstract class ApiKeyEndpoint(ApiKeys keys, PlatformAuthentication authen
     {
         ArgumentNullException.ThrowIfNull(caller);
         var (limit, after) = this.Paging();
-        var page = await keys.ListAsync(caller.Id, this.RouteId("organization"), this.ProjectId(), limit, after, cancellationToken);
+        return await keys.ListAsync(caller.Id, this.RouteId("organization"), this.ProjectId(), limit, after, cancellationToken) switch
+        {
+            Page<ApiKeyRecord> page => await this.PageAsync(page, cancellationToken),
+            Failure failure => ErrorResults.ToResult(failure),
+        };
+    }
+
+    private async Task<IResult> PageAsync(Page<ApiKeyRecord> page, CancellationToken cancellationToken)
+    {
         var used = await keys.LastUsedAsync(page.Items, cancellationToken);
         return Results.Json(new ApiKeyPageBody([.. page.Items.Select(key => this.Map(key, used.TryGetValue(key.Id, out var at) ? at : null))], page.Next), PlatformApiJson.Default.ApiKeyPageBody);
     }
@@ -283,16 +294,22 @@ public abstract class ApiKeyEndpoint(ApiKeys keys, PlatformAuthentication authen
     protected async Task<IResult> GetAsync(UserRecord caller, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(caller);
-        var key = await keys.GetAsync(caller.Id, this.RouteId("organization"), this.ProjectId(), this.KeyId(), cancellationToken);
-        var used = await keys.LastUsedAsync([key], cancellationToken);
-        return Results.Json(this.Map(key, used.TryGetValue(key.Id, out var at) ? at : null), PlatformApiJson.Default.ApiKeyBody);
+        return await keys.GetAsync(caller.Id, this.RouteId("organization"), this.ProjectId(), this.KeyId(), cancellationToken) switch
+        {
+            ApiKeyRecord key => Results.Json(this.Map(key, (await keys.LastUsedAsync([key], cancellationToken)).TryGetValue(key.Id, out var at) ? at : null), PlatformApiJson.Default.ApiKeyBody),
+            Failure failure => ErrorResults.ToResult(failure),
+        };
     }
 
     /// <summary>Revokes one key.</summary>
     protected async Task<IResult> RevokeAsync(UserRecord caller, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(caller);
-        await keys.RevokeAsync(caller.Id, this.RouteId("organization"), this.ProjectId(), this.KeyId(), cancellationToken);
+        if (await keys.RevokeAsync(caller.Id, this.RouteId("organization"), this.ProjectId(), this.KeyId(), cancellationToken) is Failure failure)
+        {
+            return ErrorResults.ToResult(failure);
+        }
+
         return Results.NoContent();
     }
 
@@ -319,12 +336,12 @@ public abstract class ApiKeyEndpoint(ApiKeys keys, PlatformAuthentication authen
         };
     }
 
-    private async Task<IResult> RotateAsync(UserRecord caller, TimeSpan ttl, CancellationToken cancellationToken)
-    {
-        var (key, secret) = await keys.RotateAsync(caller, this.RouteId("organization"), this.ProjectId(), this.KeyId(), ttl, cancellationToken);
-        var used = await keys.LastUsedAsync([key], cancellationToken);
-        return Results.Json(new ApiKeySecretBody(this.Map(key, used.TryGetValue(key.Id, out var at) ? at : null), secret), PlatformApiJson.Default.ApiKeySecretBody);
-    }
+    private async Task<IResult> RotateAsync(UserRecord caller, TimeSpan ttl, CancellationToken cancellationToken) =>
+        await keys.RotateAsync(caller, this.RouteId("organization"), this.ProjectId(), this.KeyId(), ttl, cancellationToken) switch
+        {
+            ApiKeyIssued issued => Results.Json(new ApiKeySecretBody(this.Map(issued.Key, (await keys.LastUsedAsync([issued.Key], cancellationToken)).TryGetValue(issued.Key.Id, out var at) ? at : null), issued.Secret), PlatformApiJson.Default.ApiKeySecretBody),
+            Failure failure => ErrorResults.ToResult(failure),
+        };
 
     /// <summary>Replaces one key's IP allowlist.</summary>
     protected async Task<IResult> SetAllowedCidrsAsync(UserRecord caller, CancellationToken cancellationToken)
@@ -332,9 +349,11 @@ public abstract class ApiKeyEndpoint(ApiKeys keys, PlatformAuthentication authen
         ArgumentNullException.ThrowIfNull(caller);
         var body = await this.BodyAsync(PlatformApiJson.Default.AllowedCidrsRequest, cancellationToken);
         var cidrs = (body.AllowedCidrs is null ? null : ApiKeys.NormalizeCidrs(body.AllowedCidrs)) ?? throw InvalidCidrs();
-        var key = await keys.SetAllowedCidrsAsync(caller.Id, this.RouteId("organization"), this.ProjectId(), this.KeyId(), cidrs, cancellationToken);
-        var used = await keys.LastUsedAsync([key], cancellationToken);
-        return Results.Json(this.Map(key, used.TryGetValue(key.Id, out var at) ? at : null), PlatformApiJson.Default.ApiKeyBody);
+        return await keys.SetAllowedCidrsAsync(caller.Id, this.RouteId("organization"), this.ProjectId(), this.KeyId(), cidrs, cancellationToken) switch
+        {
+            ApiKeyRecord key => Results.Json(this.Map(key, (await keys.LastUsedAsync([key], cancellationToken)).TryGetValue(key.Id, out var at) ? at : null), PlatformApiJson.Default.ApiKeyBody),
+            Failure failure => ErrorResults.ToResult(failure),
+        };
     }
 
     /// <summary>The answer to an allowlist that is not up to 32 IPv4 or IPv6 CIDRs or addresses.</summary>

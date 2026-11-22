@@ -191,8 +191,8 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
         try
         {
             allowed = project is null
-                ? TerraBaseScopes.For(Roles.Implied((await directory.OrganizationAccessAsync(user.Id, organization, cancellationToken)).Role))
-                : TerraBaseScopes.For((await directory.ProjectAccessAsync(user.Id, organization, project, cancellationToken)).Role);
+                ? TerraBaseScopes.For(Roles.Implied((await directory.RequireOrganizationAsync(user.Id, organization, cancellationToken)).Role))
+                : TerraBaseScopes.For((await directory.RequireProjectAsync(user.Id, organization, project, cancellationToken)).Role);
         }
         catch (ApiException error) when (error.Status == StatusCodes.Status404NotFound)
         {
