@@ -1,17 +1,18 @@
 using System.Net;
 using System.Text.Json;
+using TerraScale.DotNet.Errors;
 
 namespace TerraScale.DotNet;
 
 /// <summary>
-/// Maps ts-auth error responses onto <see cref="TerraScaleAuthException"/>. The
+/// Maps ts-auth error responses onto <see cref="AuthRefused"/>. The
 /// management API uses the nested envelope <c>{"error":{code,message}}</c>;
 /// the OAuth endpoints use the flat RFC 6749 shape
 /// <c>{"error":"code","error_description":"message"}</c>.
 /// </summary>
 internal static class TerraScaleAuthErrors
 {
-    internal static async Task<TerraScaleAuthException> CreateAsync(
+    internal static async Task<AuthRefused> CreateAsync(
         HttpResponseMessage response,
         CancellationToken cancellationToken)
     {
@@ -25,12 +26,19 @@ internal static class TerraScaleAuthErrors
             cancellationToken.ThrowIfCancellationRequested();
             code = null;
         }
-        return new TerraScaleAuthException(
+        return new AuthRefused(
             response.StatusCode,
             $"ts-auth returned HTTP {(int)response.StatusCode}.",
             code,
-            ResolveRetryAfter(response), response);
+            ResolveRetryAfter(response), ResponseRequestId.Read(response));
     }
+
+    internal static AuthRefused InvalidResponse(
+        HttpResponseMessage response,
+        string message) =>
+        new(response.StatusCode, message, "invalid_response", ResolveRetryAfter(response), ResponseRequestId.Read(response));
+
+    internal static AuthRefused InvalidResponse(string message) => new(null, message, "invalid_response");
 
     /// <summary>Resolves Retry-After in both forms (delta seconds and HTTP
     /// date), clamped to zero, so date-only headers are not dropped.</summary>
@@ -55,18 +63,24 @@ internal static class TerraScaleAuthErrors
     private static async Task<string?> ReadErrorCodeAsync(HttpContent? content, CancellationToken cancellationToken)
     {
         if (content is null || content.Headers.ContentLength > MaximumErrorBytes) return null;
-        using var destination = new BoundedHttpBodyStream(MaximumErrorBytes, () => new ErrorBodyLimitException(), cancellationToken);
-        try
+        await using var source = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        var bytes = new byte[MaximumErrorBytes + 1];
+        var length = 0;
+        while (length < bytes.Length)
         {
-            await content.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
-            cancellationToken.ThrowIfCancellationRequested();
+            var count = await source.ReadAsync(bytes.AsMemory(length), cancellationToken).ConfigureAwait(false);
+            if (count == 0)
+            {
+                break;
+            }
+
+            length += count;
         }
-        catch (ErrorBodyLimitException) { return null; }
-        var buffer = destination.ToArray();
+        if (length > MaximumErrorBytes) return null;
 
         try
         {
-            using var document = JsonDocument.Parse(buffer);
+            using var document = JsonDocument.Parse(bytes.AsMemory(0, length));
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("error", out var error)) return null;
             var code = error.ValueKind == JsonValueKind.String ? error.GetString()
@@ -79,8 +93,6 @@ internal static class TerraScaleAuthErrors
             return null;
         }
     }
-
-    private sealed class ErrorBodyLimitException : Exception;
 
     // Fixed error identities from the source-pinned C# platform and legacy contracts and
     // the OAuth error vocabulary. No producer-supplied free text is retained.

@@ -1,6 +1,8 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
+using TerraScale.DotNet.Errors;
+
 namespace TerraScale.DotNet;
 
 /// <summary>
@@ -14,14 +16,14 @@ public sealed partial class TerraScaleAuthOidcClient(TerraScaleAuthClient client
     /// <summary>Fetches the OIDC discovery metadata for the instance. Project issuers advertise only
     /// authorization_code and refresh_token grants and openid, email, profile and offline_access scopes;
     /// platform-only grants and device authorization metadata belong to the terrascale issuer.</summary>
-    public Task<TerraScaleAuthOidcDiscovery> GetDiscoveryDocumentAsync(CancellationToken cancellationToken = default) =>
+    public Task<AuthResult<TerraScaleAuthOidcDiscovery>> GetDiscoveryDocumentAsync(CancellationToken cancellationToken = default) =>
         client.GetMetadataAsync(
             InstanceRoute("/.well-known/openid-configuration"),
             TerraScaleAuthJsonContext.Default.TerraScaleAuthOidcDiscovery,
             cancellationToken);
 
     /// <summary>Fetches the instance's ES256 signing keys (JWKS).</summary>
-    public Task<TerraScaleAuthJwkSet> GetJwksAsync(CancellationToken cancellationToken = default) =>
+    public Task<AuthResult<TerraScaleAuthJwkSet>> GetJwksAsync(CancellationToken cancellationToken = default) =>
         client.GetMetadataAsync(
             InstanceRoute("/.well-known/jwks.json"),
             TerraScaleAuthJsonContext.Default.TerraScaleAuthJwkSet,
@@ -32,7 +34,7 @@ public sealed partial class TerraScaleAuthOidcClient(TerraScaleAuthClient client
     /// <paramref name="redirectUri"/> must match the authorize request exactly;
     /// supply the same <paramref name="codeVerifier"/> used to derive the challenge.
     /// </summary>
-    public Task<TerraScaleAuthTokenResponse> ExchangeAuthorizationCodeAsync(
+    public Task<AuthResult<TerraScaleAuthTokenResponse>> ExchangeAuthorizationCodeAsync(
         string clientId,
         string clientSecret,
         string code,
@@ -68,7 +70,7 @@ public sealed partial class TerraScaleAuthOidcClient(TerraScaleAuthClient client
     /// (client credentials grant). API keys issue organization/project-scoped tokens;
     /// the audience is the producer's configured resource audience, never the regional host.
     /// </summary>
-    public Task<TerraScaleAuthTokenResponse> RequestClientCredentialsTokenAsync(
+    public Task<AuthResult<TerraScaleAuthTokenResponse>> RequestClientCredentialsTokenAsync(
         string clientId,
         string clientSecret,
         string? scope = null,
@@ -102,7 +104,7 @@ public sealed partial class TerraScaleAuthOidcClient(TerraScaleAuthClient client
     /// Exchanges a refresh token for new tokens. The service rotates refresh
     /// tokens; replaying a rotated token revokes the whole token family.
     /// </summary>
-    public Task<TerraScaleAuthTokenResponse> RefreshTokenAsync(
+    public Task<AuthResult<TerraScaleAuthTokenResponse>> RefreshTokenAsync(
         string clientId,
         string clientSecret,
         string refreshToken,
@@ -126,7 +128,7 @@ public sealed partial class TerraScaleAuthOidcClient(TerraScaleAuthClient client
     /// Revokes a token and its sign-in (RFC 7009), scoped to the calling platform or project client. Unknown or
     /// already-invalid tokens also succeed. Offline access tokens live until expiry.
     /// </summary>
-    public Task RevokeTokenAsync(string clientId, string clientSecret, string token, CancellationToken cancellationToken = default)
+    public Task<AuthOutcome> RevokeTokenAsync(string clientId, string clientSecret, string token, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(token);
         return client.SendOAuthFormForSuccessAsync(
@@ -141,7 +143,7 @@ public sealed partial class TerraScaleAuthOidcClient(TerraScaleAuthClient client
     }
 
     /// <summary>Reads the userinfo claims for one issued access token.</summary>
-    public Task<TerraScaleAuthUserInfo> GetUserInfoAsync(string accessToken, CancellationToken cancellationToken = default) =>
+    public Task<AuthResult<TerraScaleAuthUserInfo>> GetUserInfoAsync(string accessToken, CancellationToken cancellationToken = default) =>
         client.GetWithBearerAsync(
             InstanceRoute("/oauth/userinfo"),
             accessToken,
@@ -151,7 +153,7 @@ public sealed partial class TerraScaleAuthOidcClient(TerraScaleAuthClient client
     /// <summary>RFC 8693 exchange of this client's live sign-in token for organization/project authority.
     /// The producer rechecks the user's role. Scope is space-delimited; null requests the allowed scopes.
     /// Database restriction is unsupported by this producer's exchange grant.</summary>
-    public Task<TerraScaleAuthTokenResponse> ExchangeTokenAsync(
+    public Task<AuthResult<TerraScaleAuthTokenResponse>> ExchangeTokenAsync(
         string clientId, string clientSecret, string subjectToken, string organizationId,
         string? projectId = null, string? scope = null, CancellationToken cancellationToken = default)
     {

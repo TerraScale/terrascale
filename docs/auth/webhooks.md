@@ -172,8 +172,12 @@ using TerraScale.DotNet;
 
 using var reader = new StreamReader(request.Body);
 var rawBody = await reader.ReadToEndAsync();
-JsonElement evt = TerraScaleWebhooks.VerifyWebhook(
+JsonElement? evt = TerraScaleWebhooks.VerifyWebhook(
     secret,
     request.Headers.ToDictionary(header => header.Key, header => header.Value.ToString()),
-    rawBody);
+    rawBody) switch
+{
+    JsonElement parsed => parsed,
+    WebhookRefused refused => null,
+};
 ```
