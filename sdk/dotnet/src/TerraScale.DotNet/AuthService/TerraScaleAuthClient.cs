@@ -105,7 +105,7 @@ public sealed partial class TerraScaleAuthClient
             authorization is null ? RequestAuthentication.None : new RequestAuthentication(authorization),
             cancellationToken).ConfigureAwait(false);
         var status = await RequireStatusAsync(response, HttpStatusCode.OK, cancellationToken).ConfigureAwait(false);
-        return status is not null ? await ReadJsonAsync(response, responseTypeInfo, cancellationToken).ConfigureAwait(false) : status;
+        return status is null ? await ReadJsonAsync(response, responseTypeInfo, cancellationToken).ConfigureAwait(false) : status;
     }
 
     /// <summary>One OAuth form POST whose success body is empty (revocation,
@@ -156,7 +156,7 @@ public sealed partial class TerraScaleAuthClient
             body is null ? null : CreateJsonBodyFactory(body, requestType, maxRequestBytes),
             new RequestAuthentication(authorization), cancellationToken, stepUpProof: stepUpProof).ConfigureAwait(false);
         var status = await RequireStatusAsync(response, expectedStatus, cancellationToken).ConfigureAwait(false);
-        return status is not null ? await ReadJsonAsync(response, responseType, cancellationToken).ConfigureAwait(false) : status;
+        return status is null ? await ReadJsonAsync(response, responseType, cancellationToken).ConfigureAwait(false) : status;
     }
 
     private async Task<AuthOutcome> SendAuthenticatedForStatusCoreAsync<TRequest>(
