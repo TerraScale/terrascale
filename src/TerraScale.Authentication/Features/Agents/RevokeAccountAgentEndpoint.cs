@@ -1,6 +1,8 @@
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Platform;
 
+using TerraScale.Authentication.Errors;
+
 namespace TerraScale.Authentication.Features.Agents;
 
 public sealed class RevokeAccountAgentEndpoint(PlatformAuthentication authentication, AgentDirectory agents) : PlatformEndpoint(authentication)
@@ -15,7 +17,11 @@ public sealed class RevokeAccountAgentEndpoint(PlatformAuthentication authentica
 
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        await agents.RevokeAsync(caller.InstanceId, this.RouteId("agent"), caller.Id, caller.Id, cancellationToken);
-        return Results.NoContent();
+        return await agents.RevokeAsync(caller.InstanceId, this.RouteId("agent"), caller.Id, caller.Id, cancellationToken) switch
+        {
+            Done => Results.NoContent(),
+            NotFound error => ErrorResults.ToResult(error),
+            Conflict error => ErrorResults.ToResult(error),
+        };
     }
 }

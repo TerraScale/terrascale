@@ -1,6 +1,8 @@
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Platform;
 
+using TerraScale.Authentication.Errors;
+
 namespace TerraScale.Authentication.Features.UserApiKeys;
 
 public sealed class RevokeSelfUserApiKeyEndpoint(PlatformAuthentication authentication, UserApiKeys keys) : SelfUserApiKeyEndpoint(authentication)
@@ -13,7 +15,11 @@ public sealed class RevokeSelfUserApiKeyEndpoint(PlatformAuthentication authenti
 
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        await keys.RevokeAsync(this.RouteId("project"), caller.Id, this.RouteId("key"), caller.Id, cancellationToken);
-        return Results.NoContent();
+        return await keys.RevokeAsync(this.RouteId("project"), caller.Id, this.RouteId("key"), caller.Id, cancellationToken) switch
+        {
+            Done => Results.NoContent(),
+            NotFound error => ErrorResults.ToResult(error),
+            Conflict error => ErrorResults.ToResult(error),
+        };
     }
 }
