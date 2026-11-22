@@ -38,7 +38,7 @@ public sealed record IssuedPasscode(string Email, string Code, DateTimeOffset Ex
     public override string ToString() => nameof(IssuedPasscode);
 }
 
-public sealed class Passcodes(AuthData data, Credentials credentials, Users users, Sessions sessions, WebhookOutbox outbox, TimeProvider clock, AuthOptions options, SignUpRestrictions restrictions)
+public sealed class Passcodes(AuthData data, Credentials credentials, Users users, WebhookOutbox outbox, TimeProvider clock, AuthOptions options, SignUpRestrictions restrictions)
 {
     public const int MaxAttempts = 5;
 
@@ -146,16 +146,6 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
             && previous.Purpose == StoredPurpose(PasscodePurpose.SignUp)
             ? await this.IssueAsync(instanceId, SignUpKey + normalized, previous.UserId, normalized, 0, null, PasscodePurpose.SignUp, hash, tokenHash, cancellationToken: cancellationToken, username: previous.Username).ConfigureAwait(false)
             : null;
-    }
-
-    public async Task<IssuedSession?> VerifyAsync(string instanceId, string email, string code, CancellationToken cancellationToken = default)
-    {
-        if (await this.RedeemAsync(instanceId, email, code, PasscodePurpose.SignIn, cancellationToken: cancellationToken).ConfigureAwait(false) is not { } user)
-        {
-            return null;
-        }
-
-        return await sessions.CreateAsync(user, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<UserRecord?> RedeemAsync(string instanceId, string email, string code, PasscodePurpose purpose, string? issueId = null, CancellationToken cancellationToken = default)

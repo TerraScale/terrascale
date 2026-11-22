@@ -56,7 +56,12 @@ public sealed class RequiredTotpConfirmEndpoint(Sessions sessions, TotpCredentia
             var issued = viaSso
                 ? await mfa.ActivateAsync(challenged.User, code, authorization, cancellationToken)
                 : await mfa.ConfirmAsync(challenged.User, code, authorization, cancellationToken);
-            if (issued is null)
+            if (issued is QuotaExceeded quota)
+            {
+                return ErrorResults.ToResult(quota);
+            }
+
+            if (issued is not IssuedRecoveryCodes activated)
             {
                 return ErrorResults.ToResult(new Forbidden("The authenticator code is wrong or expired.", "invalid_code"));
             }
@@ -65,11 +70,11 @@ public sealed class RequiredTotpConfirmEndpoint(Sessions sessions, TotpCredentia
             {
                 if (viaSso)
                 {
-                    await FactorEnrollmentNotice.SendAsync(this.HttpContext.RequestServices.GetRequiredService<IEmailSender>(), issued.User, cancellationToken);
-                    sso.AdvanceEnrollment(this.HttpContext, challenged.User, issued.User);
+                    await FactorEnrollmentNotice.SendAsync(this.HttpContext.RequestServices.GetRequiredService<IEmailSender>(), activated.User, cancellationToken);
+                    sso.AdvanceEnrollment(this.HttpContext, challenged.User, activated.User);
                 }
 
-                if (await sessions.CreateAsync(issued.User with { MultiFactor = true, MfaMethod = "totp" }, cancellationToken) is not { } session)
+                if (await sessions.CreateAsync(activated.User with { MultiFactor = true, MfaMethod = "totp" }, cancellationToken) is not { } session)
                 {
                     if (!viaSso)
                     {
@@ -95,7 +100,7 @@ public sealed class RequiredTotpConfirmEndpoint(Sessions sessions, TotpCredentia
             return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.RecoveryCodes, challenged.User.InstanceId,
                 Next: completed ? SignInFlow.SafeNext(this.HttpContext, form.Next) : null,
                 Error: completed ? null : SignInFlow.Copy(this.HttpContext).NoticeCredentialChanged)
-            { Account = challenged.User.Email, RecoveryCodes = issued.Codes }, completed ? StatusCodes.Status200OK : StatusCodes.Status403Forbidden);
+            { Account = challenged.User.Email, RecoveryCodes = activated.Codes }, completed ? StatusCodes.Status200OK : StatusCodes.Status403Forbidden);
         }
     }
 }

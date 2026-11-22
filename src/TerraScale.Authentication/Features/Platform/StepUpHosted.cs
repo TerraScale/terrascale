@@ -1,5 +1,6 @@
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
@@ -72,8 +73,13 @@ internal static class StepUpHosted
                 UserRecord? primary = null;
                 if (record.PrimaryVerified)
                 {
-                    primary = await mfa.VerifyAsync(user with { AuthenticationBindings = record.Bindings ?? [] }, form["code"].ToString().Trim(), cancellationToken)
-                        ? user with { AuthenticationBindings = record.Bindings ?? [] } : null;
+                    var proof = await mfa.VerifyAsync(user with { AuthenticationBindings = record.Bindings ?? [] }, form["code"].ToString().Trim(), cancellationToken);
+                    if (proof is QuotaExceeded quota)
+                    {
+                        return ErrorResults.ToResult(quota);
+                    }
+
+                    primary = proof is true ? user with { AuthenticationBindings = record.Bindings ?? [] } : null;
                 }
                 else if (user.PasswordHash is not null)
                 {

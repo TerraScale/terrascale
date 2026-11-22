@@ -57,7 +57,13 @@ public sealed class PasskeyHostedDeleteEndpoint(Sessions sessions, PasskeyCreden
         }
 
         var code = (form.Code ?? string.Empty).Replace(" ", string.Empty, StringComparison.Ordinal).Trim();
-        if (!await mfa.VerifyAsync(live.User, code, cancellationToken).ConfigureAwait(false))
+        var proof = await mfa.VerifyAsync(live.User, code, cancellationToken).ConfigureAwait(false);
+        if (proof is QuotaExceeded quota)
+        {
+            return ErrorResults.ToResult(quota);
+        }
+
+        if (proof is not true)
         {
             return await SecurityFlow.RefusedAsync(this.HttpContext, sessions, mfa, live.User, ("That code is wrong or already used", "Enter the current code from your authenticator app, or an unused recovery code."), StatusCodes.Status401Unauthorized, cancellationToken);
         }
