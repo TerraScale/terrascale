@@ -23,8 +23,8 @@ internal static class ErrorResults
         OutcomeUnknown e => Result(StatusCodes.Status503ServiceUnavailable, e.Message, e.Code),
     };
 
-    private static EnvelopeResult Result(int status, string message, string Code, IReadOnlyDictionary<string, string>? details = null, TimeSpan? retryAfter = null) =>
-        new(status, Code, message, retryAfter ?? RetryAfter(details));
+    private static EnvelopeResult Result(int status, string message, string code, IReadOnlyDictionary<string, string>? details = null, TimeSpan? retryAfter = null) =>
+        new(status, code, message, retryAfter ?? RetryAfter(details));
 
     internal static TimeSpan? RetryAfter(IReadOnlyDictionary<string, string>? details)
     {

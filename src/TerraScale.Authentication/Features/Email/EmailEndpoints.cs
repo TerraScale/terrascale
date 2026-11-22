@@ -427,7 +427,7 @@ public sealed class GetEmailTemplateEndpoint(EmailSettings settings, AuthOptions
         {
             AuthEmailKind kind => EmailApi.Locale(this.HttpContext.GetRouteValue("locale") as string, route: true) switch
             {
-                string locale => TypedResults.Json(EmailApi.Template(settings.GetAsync(OidcIssuer.InstanceId, cancellationToken).GetAwaiter().GetResult(), kind, locale)),
+                string locale => TypedResults.Json(EmailApi.Template(await settings.GetAsync(OidcIssuer.InstanceId, cancellationToken), kind, locale)),
                 NotFound failure => ErrorResults.ToResult(failure),
                 Unprocessable failure => ErrorResults.ToResult(failure),
             },

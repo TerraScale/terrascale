@@ -139,7 +139,7 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
 
         return await directory.CommitAsync(async () =>
         {
-            var authorized = await this.AuthorizeAsync(caller.Id, organizationId, projectId, cancellationToken).ConfigureAwait(false);
+            var authorized = await this.AuthorizeAsync(caller, organizationId, projectId, cancellationToken).ConfigureAwait(false);
             if (authorized is not KeyAuthority authority)
             {
                 return PlatformDirectory.Refused<ApiKeyIssued>(PlatformDirectory.RefusalOf(authorized));
@@ -296,10 +296,10 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
         {
             if (caller.StepUpBindings.Count == 0)
             {
-                return PlatformDirectory.Refused<ApiKeyIssued>(StepUpProofs.RequiredFailure());
+                return PlatformDirectory.Refused<ApiKeyIssued>(StepUpProofs.StepUpRequired());
             }
 
-            var authorized = await this.AuthorizeAsync(caller.Id, organizationId, projectId, cancellationToken).ConfigureAwait(false);
+            var authorized = await this.AuthorizeAsync(caller, organizationId, projectId, cancellationToken).ConfigureAwait(false);
             if (authorized is not KeyAuthority authority)
             {
                 return PlatformDirectory.Refused<ApiKeyIssued>(PlatformDirectory.RefusalOf(authorized));

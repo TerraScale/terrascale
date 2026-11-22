@@ -1267,9 +1267,15 @@ public sealed class PlatformDirectory(AuthData data, Users users, TotpCredential
         Conflict e => new(StatusCodes.Status409Conflict, e.Code, e.Message),
         Validation e => new(StatusCodes.Status400BadRequest, e.Code, e.Message),
         Unprocessable e => new(StatusCodes.Status422UnprocessableEntity, e.Code, e.Message),
+        PreconditionFailed e => new(StatusCodes.Status412PreconditionFailed, e.Code, e.Message),
+        Unauthorized e => new(StatusCodes.Status401Unauthorized, e.Code, e.Message ?? "Unauthorized."),
         QuotaExceeded e => e.RetryAfter is { } wait ? ApiException.RateLimited(e.Message, wait) : new ApiException(StatusCodes.Status429TooManyRequests, e.Code, e.Message),
         Unavailable e => new(StatusCodes.Status503ServiceUnavailable, e.Code, e.Message),
-        _ => throw new UnreachableException(),
+        PayloadTooLarge e => new(StatusCodes.Status413PayloadTooLarge, e.Code, e.Message),
+        UnsupportedMediaType e => new(StatusCodes.Status415UnsupportedMediaType, e.Code, e.Message),
+        RequestTimeout e => new(StatusCodes.Status408RequestTimeout, e.Code, e.Message),
+        Gone e => new(StatusCodes.Status410Gone, e.Code, e.Message),
+        OutcomeUnknown e => new(StatusCodes.Status503ServiceUnavailable, e.Code, e.Message),
     };
 
     internal static ApiException PlatformProjectProtected() =>

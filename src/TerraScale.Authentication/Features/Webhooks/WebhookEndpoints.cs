@@ -108,7 +108,7 @@ public sealed class WebhookEndpoints(AuthData data, ProjectAuthSettings settings
         if (!await data.SaveAsync([.. consumption, Change.Update(row, rotated)], cancellationToken).ConfigureAwait(false))
         {
             return (await this.ReadAsync(projectId, id, cancellationToken).ConfigureAwait(false))?.Version == row.Version
-                ? StepUpProofs.RequiredFailure()
+                ? StepUpProofs.StepUpRequired()
                 : new Conflict("The webhook endpoint changed; read it again and retry.", "version_conflict");
         }
 
