@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>TerraBase.Storage</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../TerraScale.Contracts/TerraScale.Contracts.csproj" />
+    <PackageReference Include="System.IO.Hashing" />
+    <PackageReference Include="Ulid" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="TerraScale.Results" />
+    <Using Include="TerraScale.Contracts.Consistency" />
+    <Using Include="TerraScale.Contracts.Storage" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="../../native/runtimes/linux-x64/native/libsqlite3mc.so" Condition="Exists('../../native/runtimes/linux-x64/native/libsqlite3mc.so')" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="runtimes/linux-x64/native/libsqlite3mc.so" />
+    <Content Include="../../native/runtimes/linux-arm64/native/libsqlite3mc.so" Condition="Exists('../../native/runtimes/linux-arm64/native/libsqlite3mc.so')" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="runtimes/linux-arm64/native/libsqlite3mc.so" />
+  </ItemGroup>
+</Project>

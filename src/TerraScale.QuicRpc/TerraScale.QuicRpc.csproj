@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>TerraScale.QuicRpc</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../TerraScale.Contracts/TerraScale.Contracts.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="TerraScale.Results" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="../../native/runtimes/linux-x64/native/libmsquic.so.2" Condition="Exists('../../native/runtimes/linux-x64/native/libmsquic.so.2') and ('$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'linux-x64')" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="runtimes/linux-x64/native/libmsquic.so.2" Visible="false" />
+    <Content Include="../../native/runtimes/linux-arm64/native/libmsquic.so.2" Condition="Exists('../../native/runtimes/linux-arm64/native/libmsquic.so.2') and ('$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'linux-arm64')" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Link="runtimes/linux-arm64/native/libmsquic.so.2" Visible="false" />
+  </ItemGroup>
+</Project>

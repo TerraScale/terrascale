@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>TerraBase.Postgres</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="../TerraScale.Contracts/TerraScale.Contracts.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="TerraScale.Results" />
+    <Using Include="TerraScale.Contracts.Storage" />
+  </ItemGroup>
+</Project>

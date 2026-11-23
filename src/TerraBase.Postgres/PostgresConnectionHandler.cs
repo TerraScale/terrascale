@@ -1,0 +1,221 @@
+using System.Net;
+using Microsoft.AspNetCore.Connections;
+using TerraBase.Postgres.Hosting;
+using TerraBase.Postgres.Protocol;
+using TerraBase.Postgres.Sessions;
+
+namespace TerraBase.Postgres;
+
+public sealed class PostgresConnectionHandler(
+    IPostgresSessionFactory sessions,
+    PostgresServerOptions options,
+    PostgresBackendRegistry backends,
+    TimeProvider timeProvider) : ConnectionHandler
+{
+    private const int CleartextPassword = 3;
+    private const int AuthenticationOk = 0;
+
+    public override async Task OnConnectedAsync(ConnectionContext connection)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        var closed = connection.ConnectionClosed;
+        await using var wire = new PgWire(connection.Transport, timeProvider);
+        try
+        {
+            await ServeAsync(wire, (connection.RemoteEndPoint as IPEndPoint)?.Address, closed).ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is IOException or ConnectionResetException or ConnectionAbortedException
+            || (error is OperationCanceledException && closed.IsCancellationRequested))
+        {
+        }
+    }
+
+    private async Task ServeAsync(PgWire wire, IPAddress? client, CancellationToken closed)
+    {
+        var startup = await NegotiateAsync(wire, closed).ConfigureAwait(false);
+        if (startup is null)
+        {
+            return;
+        }
+
+        if (!backends.TryAdmit())
+        {
+            await RefuseAsync<object>(wire, new PgError("53300", "sorry, too many clients already", Fatal: true), closed).ConfigureAwait(false);
+            return;
+        }
+
+        try
+        {
+            await AuthenticateAsync(wire, startup, client, closed).ConfigureAwait(false);
+        }
+        finally
+        {
+            backends.Release();
+        }
+    }
+
+    private async ValueTask<PgStartupMessage?> NegotiateAsync(PgWire wire, CancellationToken closed)
+    {
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            var (proceed, startup) = await NegotiateStepAsync(wire, closed).ConfigureAwait(false);
+            if (!proceed || startup is not null)
+            {
+                return startup;
+            }
+        }
+
+        await RefuseAsync<object>(wire, PgError.ProtocolViolation("too many encryption negotiation attempts"), closed).ConfigureAwait(false);
+        return null;
+    }
+
+    private async ValueTask<(bool Proceed, PgStartupMessage? Startup)> NegotiateStepAsync(PgWire wire, CancellationToken closed)
+    {
+        var read = await wire.Reader.ReadStartupAsync(PostgresLimits.HandshakeTimeout).ConfigureAwait(false);
+        (PgStartupPacket? Packet, PgError? Error) received = read switch
+        {
+            PgStartupPacket value => (value, null),
+            PgPeerClosed or PgIdleExpired => (null, null),
+            PgError error => (null, error),
+        };
+        if (received.Error is { } refusal)
+        {
+            await RefuseAsync<object>(wire, refusal, closed).ConfigureAwait(false);
+            return (false, null);
+        }
+
+        return received.Packet switch
+        {
+            null => (false, null),
+            PgSslRequest => (await NegotiateTlsAsync(wire, closed).ConfigureAwait(false), null),
+            PgGssEncryptionRequest => (await DeclineAsync(wire, closed).ConfigureAwait(false), null),
+            PgCancelRequest cancel => (Cancel(cancel), null),
+            PgStartupMessage message => await AcceptAsync(wire, message, closed).ConfigureAwait(false) ? (true, message) : (false, null),
+        };
+    }
+
+    private async ValueTask<bool> NegotiateTlsAsync(PgWire wire, CancellationToken closed)
+    {
+        if (options.Tls is not { } tls)
+        {
+            return await DeclineAsync(wire, closed).ConfigureAwait(false);
+        }
+
+        wire.Writer.Raw((byte)'S');
+        return await wire.Writer.FlushAsync(closed).ConfigureAwait(false) && await wire.UpgradeAsync(tls, closed).ConfigureAwait(false);
+    }
+
+    private static async ValueTask<bool> DeclineAsync(PgWire wire, CancellationToken closed)
+    {
+        wire.Writer.Raw((byte)'N');
+        return await wire.Writer.FlushAsync(closed).ConfigureAwait(false);
+    }
+
+    private bool Cancel(PgCancelRequest cancel)
+    {
+        backends.Cancel(cancel.ProcessId, cancel.SecretKey);
+        return false;
+    }
+
+    private static async ValueTask<bool> AcceptAsync(PgWire wire, PgStartupMessage message, CancellationToken closed)
+    {
+        if (message.ProtocolVersion != PgFrameReader.ProtocolVersion3)
+        {
+            wire.Writer.NegotiateProtocolVersion(PgFrameReader.ProtocolVersion3,
+                [.. message.Parameters.Keys.Where(static key => key.StartsWith("_pq_.", StringComparison.Ordinal))]);
+        }
+
+        if (!message.Parameters.TryGetValue("user", out var user) || user.Length == 0)
+        {
+            await RefuseAsync<object>(wire, new PgError("28000", "no PostgreSQL user name specified in startup packet", Fatal: true), closed).ConfigureAwait(false);
+            return false;
+        }
+
+        return true;
+    }
+
+    private async Task AuthenticateAsync(PgWire wire, PgStartupMessage message, IPAddress? client, CancellationToken closed)
+    {
+        var user = message.Parameters["user"];
+        var database = message.Parameters.TryGetValue("database", out var requested) && requested.Length > 0 ? requested : user;
+        var slash = database.IndexOf('/', StringComparison.Ordinal);
+        if (slash <= 0 || slash == database.Length - 1)
+        {
+            await RefuseAsync<object>(wire, new PgError("3D000", $"database \"{database}\" does not exist", Fatal: true, Hint: "connect to <project>/<database>"), closed).ConfigureAwait(false);
+            return;
+        }
+
+        wire.Writer.Authentication(CleartextPassword);
+        if (!await wire.Writer.FlushAsync(closed).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        var read = await wire.Reader.ReadMessageAsync(PostgresLimits.HandshakeTimeout, closed).ConfigureAwait(false);
+        var password = read switch
+        {
+            PgFrontendMessage frontend => frontend switch
+            {
+                PgPasswordMessage passwordMessage => passwordMessage.Password,
+                PgQueryMessage or PgParseMessage or PgBindMessage or PgDescribeMessage or PgExecuteMessage or PgCloseMessage or PgSyncMessage or PgFlushMessage
+                    or PgTerminateMessage or PgCopyDataMessage or PgCopyDoneMessage or PgCopyFailMessage or PgFunctionCallMessage or PgUnknownMessage => null,
+            },
+            PgPeerClosed or PgIdleExpired or PgReadInterrupted or PgError => null,
+        };
+        if (password is null)
+        {
+            await RefuseAsync<object>(wire, PgError.ProtocolViolation("expected a password response"), closed).ConfigureAwait(false);
+            return;
+        }
+
+        var applicationName = message.Parameters.TryGetValue("application_name", out var application) ? application : string.Empty;
+        var startup = new PostgresStartup(user, database[..slash], database[(slash + 1)..], password, applicationName, client, message.Parameters);
+        var authenticated = await sessions.AuthenticateAsync(startup, closed).ConfigureAwait(false);
+        var grant = authenticated switch
+        {
+            PostgresGrant value => value,
+            Unauthorized => await RefuseAsync<PostgresGrant>(wire, new PgError("28P01", $"password authentication failed for user \"{user}\"", Fatal: true), closed).ConfigureAwait(false),
+            Forbidden forbidden => await RefuseAsync<PostgresGrant>(wire, new PgError("28000", forbidden.Message, Fatal: true), closed).ConfigureAwait(false),
+            QuotaExceeded quota => await RefuseAsync<PostgresGrant>(wire, new PgError("53300", quota.Message, Fatal: true), closed).ConfigureAwait(false),
+            Unavailable unavailable => await RefuseAsync<PostgresGrant>(wire, new PgError("57P03", unavailable.Message, Fatal: true), closed).ConfigureAwait(false),
+        };
+        if (grant is null)
+        {
+            return;
+        }
+
+        await using (grant.Lease.ConfigureAwait(false))
+        {
+            var session = new PostgresSession(grant, startup, timeProvider);
+            session.ProcessId = backends.Allocate(session);
+            try
+            {
+                wire.Writer.Authentication(AuthenticationOk);
+                foreach (var (name, value) in session.Settings.Reported)
+                {
+                    wire.Writer.ParameterStatus(name, value);
+                }
+
+                wire.Writer.BackendKeyData(session.ProcessId, session.SecretKey);
+                wire.Writer.ReadyForQuery(session.Status);
+                if (await wire.Writer.FlushAsync(closed).ConfigureAwait(false))
+                {
+                    await new PostgresConnection(session, wire, closed).RunAsync().ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                backends.Remove(session.ProcessId);
+                await PostgresConnection.ReleaseAsync(session).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static async ValueTask<T?> RefuseAsync<T>(PgWire wire, PgError error, CancellationToken closed)
+        where T : class
+    {
+        wire.Writer.Error(error with { Fatal = true });
+        await wire.Writer.FlushAsync(closed).ConfigureAwait(false);
+        return null;
+    }
+}

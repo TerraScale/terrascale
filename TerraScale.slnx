@@ -13,8 +13,11 @@
   </Folder>
   <Folder Name="/terrabase/">
     <Project Path="src/TerraBase/TerraBase.csproj" />
-    <Project Path="src/TerraScale.TerraBase.Contracts/TerraScale.TerraBase.Contracts.csproj" />
+    <Project Path="src/TerraBase.Postgres/TerraBase.Postgres.csproj" />
+    <Project Path="src/TerraBase.Storage/TerraBase.Storage.csproj" />
     <Project Path="src/TerraScale.Contracts/TerraScale.Contracts.csproj" />
+    <Project Path="src/TerraScale.QuicRpc/TerraScale.QuicRpc.csproj" />
+    <Project Path="src/TerraScale.TerraBase.Contracts/TerraScale.TerraBase.Contracts.csproj" />
     <Project Path="src/TerraScale.TerraBase.Rpc/TerraScale.TerraBase.Rpc.csproj" />
   </Folder>
   <Folder Name="/vendor/">
