@@ -30,7 +30,7 @@ public abstract class SelfUserApiKeyEndpoint(PlatformAuthentication authenticati
         var sessions = this.HttpContext.RequestServices.GetRequiredService<Sessions>();
         if (await sessions.ResolveVersionedAsync(project, request.Cookies[Tenancy.SessionCookie(project)], cancellationToken) is not { } live)
         {
-            return Results.Unauthorized();
+            return TypedResults.Unauthorized();
         }
 
         if (this.RequiresRecentSignIn)

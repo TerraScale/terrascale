@@ -55,8 +55,8 @@ public sealed partial class SocialSignIn
 
         request.Content = new FormUrlEncodedContent(form);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode || await ReadAsync(response, cancellationToken).ConfigureAwait(false) is not { } body
+        using var response = await client.SendAsync(request, cancellationToken);
+        if (!response.IsSuccessStatusCode || await ReadAsync(response, cancellationToken) is not { } body
             || Text(body, "access_token") is not { Length: > 0 } accessToken)
         {
             return null;
@@ -64,8 +64,8 @@ public sealed partial class SocialSignIn
 
         using var profile = new HttpRequestMessage(HttpMethod.Get, configuration.UserinfoUrl);
         profile.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-        using var userinfo = await client.SendAsync(profile, cancellationToken).ConfigureAwait(false);
-        if (!userinfo.IsSuccessStatusCode || await ReadAsync(userinfo, cancellationToken).ConfigureAwait(false) is not { } user
+        using var userinfo = await client.SendAsync(profile, cancellationToken);
+        if (!userinfo.IsSuccessStatusCode || await ReadAsync(userinfo, cancellationToken) is not { } user
             || Text(user, configuration.IdClaim) is not { Length: > 0 and <= 256 } subject)
         {
             return null;

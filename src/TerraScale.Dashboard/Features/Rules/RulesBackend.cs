@@ -4,15 +4,13 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.Dashboard.Platform.Rpc;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Management;
+using TerraScale.Dashboard.Platform.Clients;
 
 namespace TerraScale.Dashboard.Features.Rules
 {
     public sealed record RulesRequest(string Operation, string Table, string Auth, string Row, string New);
 
-    public sealed class RulesBackend(DatabaseService databases, IProjectAccessTokens tokens, TerraBaseRpcClient rpc, TimeProvider time)
+    public sealed class RulesBackend(DatabaseService databases, IProjectAccessTokens tokens, TerraBaseHttpClient terraBase)
     {
         public const int MaxVersions = 100;
 
@@ -89,7 +87,7 @@ namespace TerraScale.Dashboard.Features.Rules
             return await TestAsync(target.Client, target.ProjectId, target.Database, body);
         }
 
-        internal static async Task<TerraBaseRules?> CurrentAsync(IManagementService client, string projectId, string database)
+        internal static async Task<TerraBaseRules?> CurrentAsync(ManagementClient client, string projectId, string database)
         {
             try
             {
@@ -101,7 +99,7 @@ namespace TerraScale.Dashboard.Features.Rules
             }
         }
 
-        internal static async Task<IReadOnlyList<TerraBaseRulesVersion>> VersionsAsync(IManagementService client, string projectId, string database)
+        internal static async Task<IReadOnlyList<TerraBaseRulesVersion>> VersionsAsync(ManagementClient client, string projectId, string database)
         {
             var page = await client.ListRulesVersionsAsync(projectId, database, null, MaxVersions);
             return page.Items is { Count: <= MaxVersions } items && items.All(item => item is not null && TerraScaleIds.IsValid(item.Version) && item.UpdatedBy is not null)
@@ -109,7 +107,7 @@ namespace TerraScale.Dashboard.Features.Rules
                 : throw new JsonException("Rules returned invalid versions.");
         }
 
-        internal static async Task<TerraBaseRulesDeploy> DeployAsync(IManagementService client, string projectId, string database, string? version, JsonElement rules)
+        internal static async Task<TerraBaseRulesDeploy> DeployAsync(ManagementClient client, string projectId, string database, string? version, JsonElement rules)
         {
             if (version is not null && !TerraScaleIds.IsValid(version) || rules.ValueKind != JsonValueKind.Object)
             {
@@ -119,7 +117,7 @@ namespace TerraScale.Dashboard.Features.Rules
             return Valid(await client.DeployRulesAsync(projectId, database, version, rules));
         }
 
-        internal static async Task<TerraBaseRulesDeploy> RestoreAsync(IManagementService client, string projectId, string database, string version, string current)
+        internal static async Task<TerraBaseRulesDeploy> RestoreAsync(ManagementClient client, string projectId, string database, string version, string current)
         {
             if (!TerraScaleIds.IsValid(version) || !TerraScaleIds.IsValid(current))
             {
@@ -129,7 +127,7 @@ namespace TerraScale.Dashboard.Features.Rules
             return Valid(await client.RestoreRulesVersionAsync(projectId, database, version, current));
         }
 
-        internal static async Task<TerraBaseRulesTestResult> TestAsync(IManagementService client, string projectId, string database, JsonElement body)
+        internal static async Task<TerraBaseRulesTestResult> TestAsync(ManagementClient client, string projectId, string database, JsonElement body)
         {
             var result = await client.TestRulesAsync(projectId, database, body);
             return result is { DecidedBy: not null, Results: not null, Columns: not null, Problems: not null }
@@ -260,7 +258,7 @@ namespace TerraScale.Dashboard.Features.Rules
                 _ => throw new JsonException("Rules returned an invalid deploy."),
             };
 
-        internal async Task<(IManagementService Client, string ProjectId, string Database)> ClientAsync(AccountContext context, DatabaseRecord database, bool write, CancellationToken cancellationToken)
+        internal async Task<(ManagementClient Client, string ProjectId, string Database)> ClientAsync(AccountContext context, DatabaseRecord database, bool write, CancellationToken cancellationToken)
         {
             context = await databases.CurrentAsync(context, cancellationToken);
             database = DatabaseService.Database(context, database.Id);
@@ -277,7 +275,7 @@ namespace TerraScale.Dashboard.Features.Rules
 
             var home = await databases.HomeAsync(context, database, cancellationToken);
             var access = await tokens.GetAsync(context.Session, scope.OrganizationId, scope.ProjectId, write ? WriteScopes : ReadScopes, cancellationToken);
-            return (rpc.User<IManagementService>(access, home.Id).WithCancellationToken(cancellationToken).WithDeadline(time.GetUtcNow().UtcDateTime.AddSeconds(30)), scope.ProjectId, database.Name);
+            return (new ManagementClient(terraBase, ServiceCaller.User(access), cancellationToken), scope.ProjectId, database.Name);
         }
     }
 }

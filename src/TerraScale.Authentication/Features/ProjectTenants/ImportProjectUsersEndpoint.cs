@@ -56,6 +56,6 @@ public sealed class ImportProjectUsersEndpoint(TenantDirectory tenants, Platform
             }
         }
 
-        return Results.Json(new ImportProjectUsersBody(items, errors), UserProfileJson.Default.ImportProjectUsersBody);
+        return TypedResults.Json(new ImportProjectUsersBody(items, errors), UserProfileJson.Default.ImportProjectUsersBody);
     }
 }

@@ -10,11 +10,13 @@ import { retrySqlConnect } from "./sql-connect-retry.js";
 import { V1SqlSocket, sqlSocketProtocol } from "./sql-socket.js";
 import { apiService, authService, serviceOrigin } from "../origin.js";
 import { ShapeHints, shapeHintProtocol } from "./shape-hints.js";
+import { mergeBookmarks } from "./bookmark.js";
 /**
  * @import { FetchLike } from "../config.js"
  * @import { TerraBaseV1Error } from "./errors.js"
  * @import { JsonValue } from "./json.js"
  * @import { V1Operation } from "./routes.js"
+ * @import { V1BookmarkTracker, V1Consistency } from "./bookmark.js"
  */
 
 /** Server request body limit (api-v1.md). */
@@ -137,6 +139,8 @@ export class V1Transport {
   #webSocket;
   #regionPin = "";
   #authOrigin = "";
+  /** @type {Map<string, V1BookmarkTracker>} */
+  #bookmarks = new Map();
 
   /** @param {TerraBaseV1ClientConfig | (import("./system.js").TerraBaseSystemClientConfig & { project?: undefined; endpointResolver?: undefined })} config */
   constructor(config) {
@@ -176,25 +180,45 @@ export class V1Transport {
   }
 
   /**
+   * The newest TerraScale-Bookmark this client holds for one database, shared by every handle and SQL session on it.
+   * @param {string} database
+   * @returns {V1BookmarkTracker}
+   */
+  bookmarks(database) {
+    let tracker = this.#bookmarks.get(database);
+    if (tracker === undefined) {
+      let latest = "";
+      tracker = Object.freeze({
+        current: () => latest,
+        observe: (/** @type {string | null | undefined} */ bookmark) => { if (typeof bookmark === "string" && bookmark !== "") latest = mergeBookmarks(latest, bookmark); },
+      });
+      this.#bookmarks.set(database, tracker);
+    }
+    return tracker;
+  }
+
+  /**
    * Opens the SQL WebSocket. The credential goes in the upgrade's Authorization header where the runtime allows it
    * (Node, Bun, Deno), and otherwise in the first frame (browsers); never in the URL.
    * @param {Readonly<Record<string, string>>} params
    * @param {AbortSignal | undefined} signal
+   * @param {V1Consistency | undefined} [consistency]
    * @returns {Promise<import("./sql-socket.js").V1SqlSocket>}
    */
-  async openSqlSocket(params, signal) {
+  async openSqlSocket(params, signal, consistency) {
     const WebSocketClass = this.#webSocket;
     if (WebSocketClass === undefined) throw new TypeError("This runtime has no WebSocket; pass one as the WebSocket client option.");
     const url = new URL(await this.url("connectSql", params, signal));
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     const token = await this.#accessToken(signal);
+    const session = { bookmarks: this.bookmarks(requireDatabaseSelector(params.database)), consistency };
     return retrySqlConnect(async signal => {
       if (sendsUpgradeHeaders()) {
         const headers = { authorization: `Bearer ${token}` };
         if (this.#regionPin !== "") Object.assign(headers, { "X-TerraScale-Region-Pin": this.#regionPin });
-        return V1SqlSocket.open(new WebSocketClass(url.href, { protocols: [sqlSocketProtocol], headers }), signal);
+        return V1SqlSocket.open(new WebSocketClass(url.href, { protocols: [sqlSocketProtocol], headers }), session, signal);
       }
-      return V1SqlSocket.open(new WebSocketClass(url.href, [sqlSocketProtocol]), signal, token);
+      return V1SqlSocket.open(new WebSocketClass(url.href, [sqlSocketProtocol]), session, signal, token);
     }, readDeadlineMs, signal);
   }
 
@@ -492,7 +516,7 @@ export class V1Transport {
   }
 
   /**
-   * Calls a named producer route. Rows follow one validated wrong_region refusal; uncertain writes are never replayed.
+   * Calls a named producer route. Every region accepts writes; uncertain writes are never replayed.
    * A replay-safe read has one 60-second deadline over resolution, credentials, retries and its body.
    * @param {V1Operation} operation
    * @param {Readonly<Record<string, string>>} params
@@ -608,9 +632,8 @@ export class V1Transport {
     const bytes = typeof options.body === "string" ? new TextEncoder().encode(options.body) : options.body;
     if (bytes !== undefined && bytes.byteLength > maximumRequestBytes)
       throw new TypeError(`TerraBase request bodies are limited to ${maximumRequestBytes} bytes.`);
-    let url = await this.url(operation, params, signal);
-    if (options.query !== undefined && options.query.size > 0) url += `?${options.query}`;
-    let routed = false;
+    const path = await this.url(operation, params, signal);
+    const url = options.query !== undefined && options.query.size > 0 ? `${path}?${options.query}` : path;
     // Shape reads publish stale state and resume through their own recovery; they are not resent here.
     const replaySafe = isReplaySafe(operation) && !selfRecovering.has(operation);
     for (let attempt = 0; ; attempt++) {
@@ -646,10 +669,6 @@ export class V1Transport {
       if (response.type === "opaqueredirect") throw new OpaqueRedirectError();
       if (!route.successStatuses.includes(response.status)) {
         const error = await this.error(response, signal);
-        if (!routed && this.#regionPin === "" && rowOperations.has(operation) && error.status === 421 && error.code === "wrong_region") {
-          const next = rowHomeUrl(error, url);
-          if (next !== undefined) { url = next; routed = true; continue; }
-        }
         if (response.status === 401 && this.#apiKeyBasic !== undefined) {
           if (["key_revoked", "key_expired", "invalid_key"].includes(error.code)) this.#keyRefusal = error;
           if (headers.get("authorization") === `Bearer ${this.#cachedKeyToken?.token}`) this.#cachedKeyToken = undefined;
@@ -665,19 +684,6 @@ export class V1Transport {
       return response;
     }
   }
-}
-
-const rowOperations = new Set(["getRow", "createRow", "updateRow", "deleteRow", "batchRows"]);
-/** @param {TerraBaseV1Error} error @param {string} previous */
-function rowHomeUrl(error, previous) {
-  const raw = error.details?.url;
-  if (typeof raw !== "string" || !URL.canParse(raw)) return undefined;
-  const next = new URL(raw);
-  const original = new URL(previous);
-  if (next.protocol !== "https:" || !/^[a-z][a-z0-9-]*\.api\.terrascale\.tech$/u.test(next.hostname) ||
-      next.port || next.username || next.password || next.hash || next.pathname !== original.pathname || next.search !== original.search || next.href === original.href)
-    return undefined;
-  return next.href;
 }
 
 /** One fixed bound for a replay-safe read, retries included; a caller's signal can only shorten it. */

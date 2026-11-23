@@ -1,9 +1,9 @@
+using Dapper;
 using System.Buffers.Text;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Errors;
@@ -26,7 +26,10 @@ public static class AgentEnrollmentStatus
 
 public sealed record AgentEnrollmentRecord(string ProjectId, string Id, string UserCodeHash, string Name, IReadOnlyList<string> RequestedScopes, bool AllowSelfSubject,
     string PublicJwk, string Thumbprint, string Status, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, string? UserId = null, string? AgentId = null, string? Kid = null,
-    DateTimeOffset? LastPollAt = null, long? LastProofIssuedAt = null);
+    DateTimeOffset? LastPollAt = null, long? LastProofIssuedAt = null)
+{
+    public string? Version { get; init; }
+}
 
 public sealed record StartAgentEnrollmentRequest(string? Name, IReadOnlyList<string>? RequestedScopes, JsonElement? PublicJwk, bool AllowSelfSubject = false);
 public sealed record AgentEnrollmentBody(string EnrollmentId, string UserCode, string VerificationUri, string VerificationUriComplete, int ExpiresIn, int Interval);
@@ -91,14 +94,14 @@ public sealed class AgentEnrollments(AuthData data, PlatformDirectory platform, 
         }
 
         var key = AgentJwk.Parse(request.PublicJwk);
-        var tenant = Tenancy.IsProject(project) ? await platform.ProjectAsync(project, cancellationToken).ConfigureAwait(false) : null;
+        var tenant = Tenancy.IsProject(project) ? await platform.ProjectAsync(project, cancellationToken) : null;
         if (Tenancy.IsProject(project) && tenant is null)
         {
             return new NotFound("No such resource.");
         }
 
-        if ((await limiter.AcquireDurableAsync(project, "agent-enrollment-ip", limiter.Fold(ip), StartsPerIp, LookupWindow, cancellationToken).ConfigureAwait(false)
-            ?? await limiter.AcquireDurableAsync(project, "agent-enrollment", project, StartsPerProject, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false)) is { } wait)
+        if ((await limiter.AcquireDurableAsync(project, "agent-enrollment-ip", limiter.Fold(ip), StartsPerIp, LookupWindow, cancellationToken)
+            ?? await limiter.AcquireDurableAsync(project, "agent-enrollment", project, StartsPerProject, TimeSpan.FromHours(1), cancellationToken)) is { } wait)
         {
             throw ApiException.RateLimited("Too many agent enrollments started.", wait);
         }
@@ -107,7 +110,7 @@ public sealed class AgentEnrollments(AuthData data, PlatformDirectory platform, 
         var now = clock.GetUtcNow();
         var enrollment = new AgentEnrollmentRecord(project, AuthIds.New(), Tokens.Sha256Hex(code), name, scopes, request.AllowSelfSubject, key.Jwk, key.Thumbprint,
             AgentEnrollmentStatus.Pending, now, now + Lifetime);
-        if (!await data.SaveAsync([Change.Insert(enrollment), .. tenant is null ? [] : new[] { Change.Assert(tenant) }], cancellationToken).ConfigureAwait(false))
+        if (!await data.SaveAsync([Change.Insert(enrollment), .. tenant is null ? [] : new[] { Change.Assert(tenant) }], cancellationToken))
         {
             return new Conflict("The enrollment could not be stored; start it again.", "version_conflict");
         }
@@ -119,14 +122,14 @@ public sealed class AgentEnrollments(AuthData data, PlatformDirectory platform, 
     public async Task<AgentEnrollmentView?> FindAsync(string project, string code, CancellationToken cancellationToken)
     {
         var hash = Tokens.Sha256Hex(code);
-        var enrollment = await data.ReadAsync((db, token) => db.AgentEnrollments.Where(row => row.ProjectId == project && row.UserCodeHash == hash).WithVersion()
-            .SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
+        var enrollment = Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<AgentEnrollmentRecord>(
+            "SELECT * FROM agent_enrollments WHERE project_id = @project AND user_code_hash = @hash", new { project, hash }), cancellationToken));
         if (enrollment is not { Value: { Status: AgentEnrollmentStatus.Pending } pending } || pending.ExpiresAt <= clock.GetUtcNow())
         {
             return null;
         }
 
-        var policy = await agents.PolicyAsync(project, cancellationToken).ConfigureAwait(false);
+        var policy = await agents.PolicyAsync(project, cancellationToken);
         return new(enrollment, Display(code), [.. pending.RequestedScopes.Intersect(policy.AllowedScopes, StringComparer.Ordinal)]);
     }
 
@@ -154,10 +157,10 @@ public sealed class AgentEnrollments(AuthData data, PlatformDirectory platform, 
             return new AgentDecisionRefused("The request changed. Check it again before you approve.");
         }
 
-        if (await proofs.PrepareAsync(approver.User, stepUpProof, StepUpProofs.ApproveAgent, "ts-auth", null, cancellationToken, enrollment.Id).ConfigureAwait(false) is not { } stepUp)
+        if (await proofs.PrepareAsync(approver.User, stepUpProof, StepUpProofs.ApproveAgent, "ts-auth", null, cancellationToken, enrollment.Id) is not { } stepUp)
         {
             return new AgentStepUpRequired(await proofs.RequestAgentApprovalAsync(approver.User, enrollment.Id, PagePath(enrollment.ProjectId) + "?user_code=" + view.UserCode,
-                cancellationToken).ConfigureAwait(false));
+                cancellationToken));
         }
 
         var deadline = new[] { enrollment.ExpiresAt, stepUp.Record.ExpiresAt, approver.Session.ExpiresAt }.Min();
@@ -175,7 +178,7 @@ public sealed class AgentEnrollments(AuthData data, PlatformDirectory platform, 
                     {
                         Status = AgentEnrollmentStatus.Approved, UserId = approver.User.Id, AgentId = key.AgentId, Kid = key.Kid, ExpiresAt = clock.GetUtcNow() + Lifetime,
                     }),
-                    .. stepUp.Operations, Sessions.Live(approver.Session, approver.SessionVersion, clock.GetUtcNow())], deadline, cancellationToken).ConfigureAwait(false);
+                    .. stepUp.Operations, Sessions.Live(approver.Session, approver.SessionVersion, clock.GetUtcNow())], deadline, cancellationToken);
         }
         catch (ApiException refused) when (refused.Status is 400 or 401 or 404 or 409 or 429)
         {
@@ -203,19 +206,19 @@ public sealed class AgentEnrollments(AuthData data, PlatformDirectory platform, 
         }
 
         return await data.SaveAsync([Change.Update(view.Enrollment, enrollment with { Status = AgentEnrollmentStatus.Denied, UserId = approver.User.Id }),
-                Change.Assert(approver.User), Change.Assert(approver.Session, approver.SessionVersion)], cancellationToken).ConfigureAwait(false)
+                Change.Assert(approver.User), Change.Assert(approver.Session, approver.SessionVersion)], cancellationToken)
             ? new AgentDenied()
             : new AgentDecisionRefused(Changed);
     }
 
     public async Task<RedeemAgentEnrollmentResult> RedeemAsync(string project, string enrollmentId, string? proof, CancellationToken cancellationToken)
     {
-        var current = await data.ReadAsync((db, token) => db.AgentEnrollments.Where(row => row.ProjectId == project && row.Id == enrollmentId).WithVersion()
-            .SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
+        var current = Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<AgentEnrollmentRecord>(
+            "SELECT * FROM agent_enrollments WHERE project_id = @project AND id = @enrollmentId", new { project, enrollmentId }), cancellationToken));
         var now = clock.GetUtcNow();
         var audience = new Uri(options.PublicOrigin, $"/v1/{project}/agent-enrollments/{enrollmentId}/token").AbsoluteUri;
         if (current is not { Value: var enrollment }
-            || await AgentProof.IssuedAtAsync(proof, enrollment.PublicJwk, audience, now).ConfigureAwait(false) is not { } issuedAt
+            || await AgentProof.IssuedAtAsync(proof, enrollment.PublicJwk, audience, now) is not { } issuedAt
             || issuedAt <= enrollment.LastProofIssuedAt)
         {
             return new Unauthorized("Sign a fresh ES256 JWT with the enrolled key: aud this URL, a jti, iat, and exp at most 300 seconds ahead.", "invalid_proof");
@@ -238,7 +241,7 @@ public sealed class AgentEnrollments(AuthData data, PlatformDirectory platform, 
 
         var approved = enrollment.Status == AgentEnrollmentStatus.Approved;
         var polled = enrollment with { Status = approved ? AgentEnrollmentStatus.Collected : enrollment.Status, LastPollAt = now, LastProofIssuedAt = issuedAt };
-        if (!await data.SaveAsync([Change.Update(current, polled)], cancellationToken).ConfigureAwait(false))
+        if (!await data.SaveAsync([Change.Update(current, polled)], cancellationToken))
         {
             return Answer("slow_down", $"Poll at most every {Interval.TotalSeconds:0} seconds.");
         }
@@ -251,8 +254,11 @@ public sealed class AgentEnrollments(AuthData data, PlatformDirectory platform, 
     public async Task<int> PruneAsync(int batchSize, CancellationToken cancellationToken = default)
     {
         var cutoff = clock.GetUtcNow() - Lifetime;
-        return await data.InBatchesAsync(batchSize, (db, token) => db.AgentEnrollments.Where(row => row.ExpiresAt <= cutoff).OrderBy(row => row.ExpiresAt).Take(batchSize)
-            .ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false);
+        return await data.InBatchesAsync(batchSize, connection => connection.ExecuteAsync(
+            """
+            DELETE FROM agent_enrollments WHERE (project_id, id) IN (
+                SELECT project_id, id FROM agent_enrollments WHERE expires_at <= @cutoff ORDER BY expires_at LIMIT @batchSize)
+            """, new { cutoff, batchSize }), cancellationToken);
     }
 
     private static Validation Answer(string code, string message) => new(message, code);

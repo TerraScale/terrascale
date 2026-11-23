@@ -1,5 +1,5 @@
 using System.Diagnostics.Metrics;
-using Microsoft.EntityFrameworkCore;
+using Dapper;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Storage;
@@ -14,12 +14,10 @@ public sealed class DeletionCleanup(
     private const int RecordBudget = 100;
     private static readonly TimeSpan Interval = TimeSpan.FromMinutes(1);
 
-    // A failing job backs off from one minute, doubling, to this; progress (another batch remains) retries at once.
     private static readonly TimeSpan MaxRetry = TimeSpan.FromMinutes(30);
 
     private static readonly Meter Meter = new(AuthMetrics.MeterName);
 
-    // Logical cleanup outcomes per job attempt: verified, a failure code, or invalid.
     private static readonly Counter<long> Outcomes = Meter.CreateCounter<long>("ts_auth.deletion_cleanup", description: "Account and scope deletion cleanup attempts by outcome.");
 
     internal static void Publish()
@@ -37,8 +35,9 @@ public sealed class DeletionCleanup(
     public async Task RunOnceAsync(CancellationToken cancellationToken = default)
     {
         var now = clock.GetUtcNow();
-        var jobs = await data.ReadAsync((db, token) => db.DeletionJobs.Where(job => job.NextAttemptAt <= now && job.AuthLogicalVerifiedAt == null)
-            .OrderBy(job => job.NextAttemptAt).Take(BatchSize).WithVersion().ToListAsync(token), cancellationToken).ConfigureAwait(false);
+        var jobs = Versioned.All(await data.ReadAsync(connection => connection.QueryAsync<DeletionJob>(
+            "SELECT * FROM deletion_jobs WHERE next_attempt_at <= @now AND auth_logical_verified_at IS NULL ORDER BY next_attempt_at LIMIT @BatchSize",
+            new { now, BatchSize }), cancellationToken));
         foreach (var rowData in jobs)
         {
             var job = rowData.Value;
@@ -52,11 +51,10 @@ public sealed class DeletionCleanup(
             string? failure;
             try
             {
-                failure = await this.CleanAsync(job, cancellationToken).ConfigureAwait(false);
+                failure = await this.CleanAsync(job, cancellationToken);
             }
             catch (Exception error) when (!cancellationToken.IsCancellationRequested)
             {
-                // Persist only an allowlisted code: exceptions may contain PII or credentials.
                 failure = error is HttpRequestException or TimeoutException ? "storage_unavailable" : "cleanup_failed";
                 try
                 {
@@ -64,7 +62,6 @@ public sealed class DeletionCleanup(
                 }
                 catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
                 {
-                    // A failed provider must not prevent the durable retry update.
                     _ = logFailure;
                 }
             }
@@ -75,7 +72,6 @@ public sealed class DeletionCleanup(
             Outcomes.Add(1, new KeyValuePair<string, object?>("outcome", failure ?? "verified"));
             if (failure is not null and not ("batch_remaining" or "records_remaining"))
             {
-                // A blocked deletion (handoff required, scope mismatch, storage) is visible every attempt, with its deadline.
                 logger.ZLogWarning($"Auth deletion job {job.Id:@JobId} not finished: {failure:@FailureCode} after {attempts + 1:@Attempts} attempts; retrying in {(long)wait.TotalSeconds:@RetrySeconds} s, due {job.DueAt:@DueAt}");
             }
 
@@ -86,7 +82,7 @@ public sealed class DeletionCleanup(
                 FailureCode = failure,
                 AuthLogicalVerifiedAt = failure is null ? finished : null,
             };
-            await data.SaveAsync(Change.Update(rowData, updated), cancellationToken).ConfigureAwait(false);
+            await data.SaveAsync(Change.Update(rowData, updated), cancellationToken);
         }
     }
 
@@ -95,9 +91,13 @@ public sealed class DeletionCleanup(
     public async Task RunHistoryOnceAsync(CancellationToken cancellationToken = default)
     {
         var now = clock.GetUtcNow();
-        var jobs = await data.ReadAsync((db, token) => db.DeletionJobs.Where(job => job.NextAttemptAt <= now && job.AuthLogicalVerifiedAt != null
-                && (job.HistoryCompletedAt == null || job.DashboardVerifiedAt != null || job.InstanceId != PlatformDirectory.Instance))
-            .OrderBy(job => job.NextAttemptAt).Take(BatchSize).WithVersion().ToListAsync(token), cancellationToken).ConfigureAwait(false);
+        var platform = PlatformDirectory.Instance;
+        var jobs = Versioned.All(await data.ReadAsync(connection => connection.QueryAsync<DeletionJob>(
+            """
+            SELECT * FROM deletion_jobs WHERE next_attempt_at <= @now AND auth_logical_verified_at IS NOT NULL
+                AND (history_completed_at IS NULL OR dashboard_verified_at IS NOT NULL OR instance_id <> @platform)
+            ORDER BY next_attempt_at LIMIT @BatchSize
+            """, new { now, platform, BatchSize }), cancellationToken));
         foreach (var rowData in jobs)
         {
             var job = rowData.Value;
@@ -112,7 +112,7 @@ public sealed class DeletionCleanup(
                     && (job.Scope != "organization" || clock.GetUtcNow() >= job.HistoryCompletedAt + OrganizationMarkerLifetime)
                     && (job.InstanceId != PlatformDirectory.Instance || job.DashboardVerifiedAt is not null))
                 {
-                    _ = await data.SaveAsync(Change.Delete(rowData), cancellationToken).ConfigureAwait(false);
+                    _ = await data.SaveAsync(Change.Delete(rowData), cancellationToken);
                 }
 
                 continue;
@@ -126,7 +126,7 @@ public sealed class DeletionCleanup(
                 HistoryStatus = "complete",
                 HistoryCompletedAt = finished,
             };
-            await data.SaveAsync(Change.Update(rowData, updated), cancellationToken).ConfigureAwait(false);
+            await data.SaveAsync(Change.Update(rowData, updated), cancellationToken);
         }
     }
 
@@ -134,11 +134,11 @@ public sealed class DeletionCleanup(
         job is not null && job.Id == DeletionJob.Key(job.InstanceId, job.Scope, job.SubjectId) && job.DueAt == job.RequestedAt.AddDays(30);
 
     private static bool HistoryValid([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] DeletionJob? job) =>
-        LogicallyValid(job) && job.FenceExpiresAt == job.RequestedAt + DeletionJob.CredentialBound && job.ErasureId is { Length: 26 } erasure && NUlid.Ulid.TryParse(erasure, out _);
+        LogicallyValid(job) && job.FenceExpiresAt == job.RequestedAt + DeletionJob.CredentialBound && job.ErasureId is { Length: 26 } erasure && Ulid.TryParse(erasure, out _);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await schema.Ready.WaitAsync(stoppingToken).ConfigureAwait(false);
+        await schema.Ready.WaitAsync(stoppingToken);
         using var timer = new PeriodicTimer(Interval, clock);
         try
         {
@@ -146,45 +146,43 @@ public sealed class DeletionCleanup(
             {
                 try
                 {
-                    await this.RunOnceAsync(stoppingToken).ConfigureAwait(false);
-                    await this.RunHistoryOnceAsync(stoppingToken).ConfigureAwait(false);
+                    await this.RunOnceAsync(stoppingToken);
+                    await this.RunHistoryOnceAsync(stoppingToken);
                 }
                 catch (Exception error) when (!stoppingToken.IsCancellationRequested)
                 {
                     try
                     {
-                        // Safe logging keeps only the exception's types and frames, never its message.
                         logger.ZLogWarning(error, $"Auth deletion retry pass failed; retrying at the next interval");
                     }
                     catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
                     {
-                        // Logging must not stop the worker while storage remains unavailable.
                         _ = logFailure;
                     }
                 }
                 catch (Exception error) when (stoppingToken.IsCancellationRequested && error is not OutOfMemoryException)
                 {
-                    // Shutdown already asked this worker to stop: a storage fault racing it must not fault the worker.
                     logger.ZLogDebug(error, $"Auth deletion cleanup interrupted by shutdown");
                 }
             }
-            while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
+            while (await timer.WaitForNextTickAsync(stoppingToken));
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
-            // Stopping this worker is normal even while the host remains available.
         }
     }
 
     private Task<string?> CleanAsync(DeletionJob job, CancellationToken cancellationToken) =>
-        data.ReadAsync(async (db, token) =>
+        data.ReadAsync(async connection =>
         {
             var (instance, subject) = (job.InstanceId, job.SubjectId);
             var root = job.Scope switch
             {
-                "organization" when instance == PlatformDirectory.Instance => (bool?)await db.Organizations.AnyAsync(row => row.Id == subject, token).ConfigureAwait(false),
-                "project" when instance == PlatformDirectory.Instance => await db.Projects.AnyAsync(row => row.Id == subject, token).ConfigureAwait(false),
-                "account" => await db.Users.AnyAsync(row => row.Id == subject, token).ConfigureAwait(false),
+                "organization" when instance == PlatformDirectory.Instance => (bool?)await connection.ExecuteScalarAsync<bool>(
+                    "SELECT EXISTS (SELECT 1 FROM organizations WHERE id = @subject)", new { subject }),
+                "project" when instance == PlatformDirectory.Instance => await connection.ExecuteScalarAsync<bool>(
+                    "SELECT EXISTS (SELECT 1 FROM projects WHERE id = @subject)", new { subject }),
+                "account" => await connection.ExecuteScalarAsync<bool>("SELECT EXISTS (SELECT 1 FROM users WHERE id = @subject)", new { subject }),
                 _ => null,
             };
             if (root is not false)
@@ -192,17 +190,24 @@ public sealed class DeletionCleanup(
                 return "scope_not_deleted";
             }
 
-            switch (job.Scope)
+            if (job.Scope == "organization")
             {
-                case "organization":
-                    return await db.Projects.AnyAsync(row => row.OrganizationId == subject, token).ConfigureAwait(false) ? "project_handoff_required" : null;
-                case "project":
-                    return null;
+                return await connection.ExecuteScalarAsync<bool>("SELECT EXISTS (SELECT 1 FROM projects WHERE organization_id = @subject)", new { subject })
+                    ? "project_handoff_required" : null;
             }
 
-            await db.Passcodes.Where(row => row.InstanceId == instance && row.UserId == subject).ExecuteDeleteAsync(token).ConfigureAwait(false);
-            await db.Set<OidcToken>().Where(row => row.InstanceId == instance && row.Subject == subject).ExecuteDeleteAsync(token).ConfigureAwait(false);
-            await db.Set<OidcAuthorization>().Where(row => row.InstanceId == instance && row.Subject == subject).ExecuteDeleteAsync(token).ConfigureAwait(false);
-            return await db.Memberships.AnyAsync(row => row.UserId == subject, token).ConfigureAwait(false) ? "organization_handoff_required" : null;
+            if (job.Scope == "project")
+            {
+                return null;
+            }
+
+            await connection.ExecuteAsync(
+                """
+                DELETE FROM passcodes WHERE instance_id = @instance AND user_id = @subject;
+                DELETE FROM oidc_tokens WHERE instance_id = @instance AND subject = @subject;
+                DELETE FROM oidc_authorizations WHERE instance_id = @instance AND subject = @subject
+                """, new { instance, subject });
+            return await connection.ExecuteScalarAsync<bool>("SELECT EXISTS (SELECT 1 FROM memberships WHERE user_id = @subject)", new { subject })
+                ? "organization_handoff_required" : null;
         }, cancellationToken);
 }

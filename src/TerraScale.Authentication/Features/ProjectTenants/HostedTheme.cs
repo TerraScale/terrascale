@@ -1,7 +1,8 @@
+using Dapper;
+using TerraScale.Authentication.Contracts;
 using System.Text.Json;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Storage;
 
 namespace TerraScale.Authentication.Features.ProjectTenants;
@@ -29,7 +30,8 @@ public static class HostedThemes
         {
             var services = context.RequestServices;
             var settings = await services.GetRequiredService<ProjectAuthSettings>().GetAsync(tenant, context.RequestAborted);
-            var project = await services.GetRequiredService<AuthData>().ReadAsync((db, token) => db.Projects.SingleOrDefaultAsync(row => row.Id == tenant, token), context.RequestAborted);
+            var project = await services.GetRequiredService<AuthData>().ReadAsync(connection => connection.QuerySingleOrDefaultAsync<ProjectRecord>(
+                "SELECT * FROM projects WHERE id = @tenant", new { tenant }), context.RequestAborted);
             context.Items[HostedTheme.ItemKey] = new HostedTheme(settings.Name ?? project?.Name, settings.LogoUrl, settings.ThemeColor, settings.Passcode, settings.Password, settings.SignUpMode,
                 settings.TitleSize, settings.DefaultTheme, settings.FooterLinks, settings.BackgroundColor, settings.TextColor, settings.MagicLink, settings.Username)
             {

@@ -5,16 +5,12 @@ using System.Text;
 
 namespace TerraScale.Authentication.Features.Identity;
 
-/// <summary>Why <see cref="PasswordPolicy.Check"/> refused a new password.</summary>
 public enum PasswordProblem
 {
-    /// <summary>The password meets the policy.</summary>
     None,
 
-    /// <summary>Missing, malformed UTF-16, or outside <see cref="PasswordPolicy.MinCharacters"/> to <see cref="PasswordPolicy.MaxCharacters"/>.</summary>
     Length,
 
-    /// <summary>On the common-password list, one short run repeated, or the account's own email address.</summary>
     Common,
 
     Breached,
@@ -22,20 +18,16 @@ public enum PasswordProblem
 
 public static class PasswordPolicy
 {
-    /// <summary>Fewest Unicode characters in a new password.</summary>
     public const int MinCharacters = 10;
 
-    /// <summary>Most Unicode characters in any password (at most 1024 UTF-8 bytes for Argon2id).</summary>
     public const int MaxCharacters = 256;
 
     private const string CommonResource = "assets/passwords/common.txt.gz";
 
     private static readonly Lazy<FrozenSet<string>> CommonPasswords = new(LoadCommon);
 
-    /// <summary>Whether <paramref name="password"/> can be checked against a stored hash: well-formed, 1 to <see cref="MaxCharacters"/> characters.</summary>
     public static bool Verifiable(string? password) => Characters(password) is >= 1 and <= MaxCharacters;
 
-    /// <summary>What, if anything, keeps <paramref name="password"/> from being set for the account at <paramref name="email"/>.</summary>
     public static PasswordProblem Check(string? password, string? email)
     {
         if (Characters(password) is < MinCharacters or > MaxCharacters)
@@ -52,7 +44,6 @@ public static class PasswordPolicy
             : PasswordProblem.None;
     }
 
-    /// <summary>The page message for <paramref name="problem"/>.</summary>
     public static string Message(PasswordProblem problem) => problem switch
     {
         PasswordProblem.Breached => "That password was found in a data breach. Choose a different password.",
@@ -60,7 +51,6 @@ public static class PasswordPolicy
         _ => "That password is too common or easy to guess. Choose a longer or less predictable one.",
     };
 
-    // Code points, or -1 for null or unpaired surrogates.
     private static int Characters(string? password)
     {
         if (password is null)
@@ -84,7 +74,6 @@ public static class PasswordPolicy
 
     private static string Normalize(string value) => value.Normalize(NormalizationForm.FormKC).ToLowerInvariant();
 
-    // One run repeated end to end, such as "aaaaaaaaaaaaaaa" or "abcabcabcabcabc".
     private static bool Repetitive(string value)
     {
         for (var period = 1; period <= value.Length / 2; period++)

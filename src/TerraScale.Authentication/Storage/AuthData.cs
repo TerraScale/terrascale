@@ -1,10 +1,11 @@
-using Microsoft.EntityFrameworkCore;
+using System.Data.Common;
+using System.Net.WebSockets;
 using TerraScale.Authentication.Contracts;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Storage;
 
-public sealed class AuthData(IDbContextFactory<AuthDbContext> contexts)
+public sealed class AuthData(AuthConnectionFactory connections)
 {
     private readonly AsyncLocal<WriteAudit?> audit = new();
 
@@ -12,13 +13,13 @@ public sealed class AuthData(IDbContextFactory<AuthDbContext> contexts)
     {
         ArgumentNullException.ThrowIfNull(success);
         ArgumentNullException.ThrowIfNull(write);
-        var previous = this.audit.Value;
+        var previous = audit.Value;
         var current = new WriteAudit(success);
-        this.audit.Value = current;
+        audit.Value = current;
         try
         {
-            var result = await write(cancellationToken).ConfigureAwait(false);
-            if (!current.Committed && !await this.SaveAsync([], cancellationToken).ConfigureAwait(false))
+            var result = await write(cancellationToken);
+            if (!current.Committed && !await SaveAsync([], cancellationToken))
             {
                 throw ApiException.Unavailable();
             }
@@ -27,18 +28,18 @@ public sealed class AuthData(IDbContextFactory<AuthDbContext> contexts)
         }
         finally
         {
-            this.audit.Value = previous;
+            audit.Value = previous;
         }
     }
 
-    public async Task<T> ReadAsync<T>(Func<AuthDbContext, CancellationToken, Task<T>> read, CancellationToken cancellationToken)
+    public async Task<T> ReadAsync<T>(Func<DbConnection, Task<T>> read, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(read);
-        await using var db = await contexts.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        return await read(db, cancellationToken).ConfigureAwait(false);
+        await using var connection = await connections.OpenAsync(cancellationToken);
+        return await read(connection);
     }
 
-    public async Task<int> InBatchesAsync(int batchSize, Func<AuthDbContext, CancellationToken, Task<int>> statement, CancellationToken cancellationToken)
+    public async Task<int> InBatchesAsync(int batchSize, Func<DbConnection, Task<int>> statement, CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
         ArgumentNullException.ThrowIfNull(statement);
@@ -46,7 +47,7 @@ public sealed class AuthData(IDbContextFactory<AuthDbContext> contexts)
         int changed;
         do
         {
-            changed = await this.ReadAsync(statement, cancellationToken).ConfigureAwait(false);
+            changed = await ReadAsync(statement, cancellationToken);
             total += changed;
         }
         while (changed >= batchSize);
@@ -54,67 +55,166 @@ public sealed class AuthData(IDbContextFactory<AuthDbContext> contexts)
         return total;
     }
 
-    public Task<bool> SaveAsync(Change change, CancellationToken cancellationToken) => this.SaveAsync([change], cancellationToken);
+    public Task<bool> SaveAsync(Change change, CancellationToken cancellationToken) => SaveAsync([change], cancellationToken);
 
     public async Task<bool> SaveAsync(IReadOnlyList<Change> changes, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(changes);
-        var currentAudit = this.audit.Value;
+        var currentAudit = audit.Value;
         if (changes.Count == 0 && currentAudit is not { Committed: false })
         {
             return true;
         }
 
-        await using var db = await contexts.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        foreach (var change in changes.Where(change => !change.Assertion))
-        {
-            change.Apply(db);
-        }
-
-        foreach (var change in changes.Where(change => change.Assertion))
-        {
-            if (!change.Apply(db))
-            {
-                return false;
-            }
-        }
-
-        try
-        {
-            await this.SaveAsync(db, cancellationToken).ConfigureAwait(false);
-            currentAudit?.Committed = true;
-            return true;
-        }
-        catch (DbUpdateException failure) when (IsConflict(failure))
+        if (Plan(changes, currentAudit) is not { } batch)
         {
             return false;
         }
+
+        await using var connection = await connections.OpenAsync(cancellationToken);
+        var outcome = batch.Statements <= WriteBatch.MaxStatements
+            ? await ExecuteAsync(batch, connection, null, cancellationToken)
+            : await ExecuteInTransactionAsync(batch, connection, cancellationToken);
+        return outcome switch
+        {
+            Done => Committed(currentAudit, true),
+            Conflict => false,
+            Unavailable unavailable => throw ApiException.Unavailable(new InvalidOperationException(unavailable.Message)),
+        };
     }
 
-    public async Task<T> TransactAsync<T>(Func<AuthDbContext, CancellationToken, Task<T>> work, CancellationToken cancellationToken)
+    public async Task<Result<T, Conflict>> TransactAsync<T>(Func<AuthTransaction, Task<T>> work, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(work);
-        await using var db = await contexts.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        return await db.Database.CreateExecutionStrategy().ExecuteAsync(async token =>
+        await using var connection = await connections.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var scope = new AuthTransaction(connection, transaction);
+        var result = await work(scope);
+        var currentAudit = audit.Value;
+        if (Plan(scope.Staged, currentAudit) is not { } batch)
         {
-            db.ChangeTracker.Clear();
-            await using var transaction = await db.Database.BeginTransactionAsync(token).ConfigureAwait(false);
-            var result = await work(db, token).ConfigureAwait(false);
-            await this.SaveAsync(db, token).ConfigureAwait(false);
-            await transaction.CommitAsync(token).ConfigureAwait(false);
-            this.audit.Value?.Committed = true;
-            return result;
-        }, cancellationToken).ConfigureAwait(false);
-    }
-
-    private Task<int> SaveAsync(AuthDbContext db, CancellationToken cancellationToken)
-    {
-        if (this.audit.Value is { Committed: false } current)
-        {
-            current.Success.Apply(db);
+            return new Conflict("A conditional write lost to a concurrent change.");
         }
 
-        return db.SaveChangesAsync(cancellationToken);
+        Result<Done, Conflict, Unavailable> outcome = await ExecuteAsync(batch, connection, transaction, cancellationToken) switch
+        {
+            Done => await CommitAsync(transaction, cancellationToken),
+            Conflict conflict => conflict,
+            Unavailable unavailable => unavailable,
+        };
+        return outcome switch
+        {
+            Done => Committed(currentAudit, result),
+            Conflict conflict => conflict,
+            Unavailable unavailable => throw ApiException.Unavailable(new InvalidOperationException(unavailable.Message)),
+        };
+    }
+
+    public static bool IsConflict(Exception failure) => failure is TerraBaseException { ErrorCode: { } code } refused && IsConflict(code, refused.Message);
+
+    public static bool IsUnavailable(Exception failure) => failure switch
+    {
+        ApiException { Status: StatusCodes.Status503ServiceUnavailable } => true,
+        TerraBaseException { ErrorCode: TerraBaseSqlErrorCodes.SerializationConflict or TerraBaseSqlErrorCodes.TenantBusy or TerraBaseSqlErrorCodes.Unavailable } => true,
+        TerraBaseUnavailableException or TimeoutException or WebSocketException => true,
+        HttpRequestException { StatusCode: null } => true,
+        _ when failure.InnerException is { } inner => IsUnavailable(inner),
+        _ => false,
+    };
+
+    private static bool IsConflict(string code, string message) => code switch
+    {
+        TerraBaseSqlErrorCodes.UniqueViolation or TerraBaseSqlErrorCodes.PrimaryKeyViolation or TerraBaseSqlErrorCodes.ForeignKeyViolation or TerraBaseSqlErrorCodes.RowConflict => true,
+        TerraBaseSqlErrorCodes.NotNullViolation => message.Contains(WriteBatch.GuardColumn, StringComparison.Ordinal),
+        _ => false,
+    };
+
+    private static WriteBatch? Plan(IReadOnlyList<Change> changes, WriteAudit? currentAudit)
+    {
+        var all = currentAudit is { Committed: false } ? [.. changes, currentAudit.Success] : changes;
+        var batch = new WriteBatch();
+        var written = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (var change in all.Where(change => !change.Assertion))
+        {
+            change.Write(batch);
+            written[change.Identity] = change.Expected;
+        }
+
+        foreach (var assertion in all.Where(change => change.Assertion))
+        {
+            if (written.TryGetValue(assertion.Identity, out var expected))
+            {
+                if (expected != assertion.Expected)
+                {
+                    return null;
+                }
+
+                continue;
+            }
+
+            assertion.Write(batch);
+            written[assertion.Identity] = assertion.Expected;
+        }
+
+        return batch;
+    }
+
+    private static TResult Committed<TResult>(WriteAudit? currentAudit, TResult result)
+    {
+        currentAudit?.Committed = true;
+        return result;
+    }
+
+    private static async Task<Result<Done, Conflict, Unavailable>> ExecuteInTransactionAsync(WriteBatch batch, DbConnection connection, CancellationToken cancellationToken)
+    {
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        return await ExecuteAsync(batch, connection, transaction, cancellationToken) switch
+        {
+            Done => await CommitAsync(transaction, cancellationToken),
+            Conflict conflict => conflict,
+            Unavailable unavailable => unavailable,
+        };
+    }
+
+    private static async Task<Result<Done, Conflict, Unavailable>> ExecuteAsync(WriteBatch batch, DbConnection connection, DbTransaction? transaction, CancellationToken cancellationToken)
+    {
+        foreach (var command in batch.Commands(connection, transaction))
+        {
+            await using (command)
+            {
+                try
+                {
+                    await command.ExecuteNonQueryAsync(cancellationToken);
+                }
+                catch (TerraBaseException refused) when (refused.ErrorCode is { } code && IsConflict(code, refused.Message))
+                {
+                    return new Conflict("A conditional write lost to a concurrent change.");
+                }
+                catch (Exception failure) when (IsUnavailable(failure))
+                {
+                    return new Unavailable(failure.GetType().Name);
+                }
+            }
+        }
+
+        return new Done();
+    }
+
+    private static async Task<Result<Done, Conflict, Unavailable>> CommitAsync(DbTransaction transaction, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return new Done();
+        }
+        catch (TerraBaseException refused) when (refused.ErrorCode is { } code && IsConflict(code, refused.Message))
+        {
+            return new Conflict("A transaction lost to a concurrent change.");
+        }
+        catch (Exception failure) when (IsUnavailable(failure))
+        {
+            return new Unavailable(failure.GetType().Name);
+        }
     }
 
     private sealed class WriteAudit(Change success)
@@ -123,20 +223,21 @@ public sealed class AuthData(IDbContextFactory<AuthDbContext> contexts)
 
         public bool Committed { get; set; }
     }
+}
 
-    public static bool IsConflict(DbUpdateException failure) => failure switch
-    {
-        DbUpdateConcurrencyException => true,
-        { InnerException: TerraBaseSqlException { Code: TerraBaseSqlErrorCodes.UniqueViolation or TerraBaseSqlErrorCodes.PrimaryKeyViolation or TerraBaseSqlErrorCodes.ForeignKeyViolation } } => true,
-        _ => false,
-    };
+public sealed class AuthTransaction(DbConnection connection, DbTransaction transaction)
+{
+    private readonly List<Change> staged = [];
 
-    public static bool IsUnavailable(Exception failure) => failure switch
+    public DbConnection Connection => connection;
+
+    public DbTransaction Transaction => transaction;
+
+    internal IReadOnlyList<Change> Staged => staged;
+
+    public void Stage(Change change)
     {
-        ApiException { Status: StatusCodes.Status503ServiceUnavailable } => true,
-        TerraBaseSqlException { Code: TerraBaseSqlErrorCodes.SerializationConflict or TerraBaseSqlErrorCodes.TenantBusy or TerraBaseSqlErrorCodes.Unavailable } => true,
-        TerraBaseUnavailableException or TimeoutException => true,
-        _ when failure.InnerException is { } inner => IsUnavailable(inner),
-        _ => false,
-    };
+        ArgumentNullException.ThrowIfNull(change);
+        staged.Add(change);
+    }
 }

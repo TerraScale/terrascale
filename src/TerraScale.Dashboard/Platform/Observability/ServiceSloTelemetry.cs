@@ -1,11 +1,10 @@
+using System.Data;
 using System.Globalization;
 using System.Net;
 using Microsoft.AspNetCore.Http.Features;
-using Microsoft.EntityFrameworkCore;
 
 namespace TerraScale.Dashboard.Platform.Observability
 {
-    // Counters belong to one host; only the current operation flows into dependency calls.
     public sealed class ServiceSloTelemetry
     {
         private static readonly object OutcomeKey = new();
@@ -93,7 +92,7 @@ namespace TerraScale.Dashboard.Platform.Observability
                 return;
             }
 
-            var status = error is AccountAccessException access ? access.StatusCode : error is DbUpdateConcurrencyException ? StatusCodes.Status412PreconditionFailed :
+            var status = error is AccountAccessException access ? access.StatusCode : error is DBConcurrencyException ? StatusCodes.Status412PreconditionFailed :
                 error is HttpRequestException { StatusCode: { } code } ? (int)code : 503;
             if (status is >= 500 or 408)
             {
@@ -151,7 +150,6 @@ namespace TerraScale.Dashboard.Platform.Observability
             }
         }
 
-        // Capture this before forwarded-header middleware can rewrite the peer address.
         public static bool PrivateScrape(HttpContext http)
         {
             return http.Connection.RemoteIpAddress is { } peer && IPAddress.IsLoopback(peer) &&

@@ -22,6 +22,6 @@ public sealed class ListAgentsEndpoint(TenantDirectory tenants, PlatformAuthenti
             return ErrorResults.ToResult(new Validation("owner must be a user id."));
         }
 
-        return Results.Json(await agents.ListAsync(project, owner.Length == 0 ? null : owner, limit, after, cancellationToken), AgentJson.Default.AgentPageBody);
+        return TypedResults.Json(await agents.ListAsync(project, owner.Length == 0 ? null : owner, limit, after, cancellationToken), AgentJson.Default.AgentPageBody);
     }
 }

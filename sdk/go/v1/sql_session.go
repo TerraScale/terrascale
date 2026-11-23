@@ -12,22 +12,13 @@ import (
 	"sync/atomic"
 
 	"github.com/coder/websocket"
+	"terrascale.tech/sdk/internal/causal"
 )
 
-// SQLSubprotocol is the SQL WebSocket subprotocol.
-const SQLSubprotocol = "terrascale.sql.v1"
+const SQLSubprotocol = "terrascale.sql.v2"
 
-// ErrSQLSessionClosed is returned by every call after SQLSession.Close.
 var ErrSQLSessionClosed = errors.New("terrabase: SQL session is closed")
 
-// SQLSession is a SQL WebSocket session (terrascale.sql.v1). Outside a
-// transaction every call runs as its own transaction; Begin opens one that
-// lasts at most 5 seconds. It is safe for concurrent use: calls may overlap
-// and answers are matched by frame id. Nothing is resent.
-//
-// A lost committing answer returns ErrCommitUncertain and closes the session;
-// every later call returns the same error. Without a committing request, a lost
-// open transaction returns ErrTransactionRolledBack until Rollback clears it.
 type SQLSession struct {
 	d      *Database
 	nextID atomic.Int64
@@ -45,7 +36,7 @@ type sqlConn struct {
 	sending chan struct{}
 	mu      sync.Mutex
 	pending map[int64]sqlPending
-	err     error // set once the socket is gone
+	err     error
 }
 
 type sqlPending struct {
@@ -55,16 +46,19 @@ type sqlPending struct {
 }
 
 type sqlFrame struct {
-	ID         int64       `json:"id"`
-	Type       string      `json:"type"`
-	Statements []Statement `json:"statements,omitempty"`
+	ID          int64       `json:"id"`
+	Type        string      `json:"type"`
+	Statements  []Statement `json:"statements,omitempty"`
+	Consistency Consistency `json:"consistency,omitempty"`
+	Bookmark    string      `json:"bookmark,omitempty"`
 }
 
 type sqlAnswer struct {
-	ID      *int64   `json:"id"`
-	Type    string   `json:"type"`
-	Results []Result `json:"results"`
-	Error   *struct {
+	ID       int64    `json:"id"`
+	Type     string   `json:"type"`
+	Results  []Result `json:"results"`
+	Bookmark string   `json:"bookmark"`
+	Error    *struct {
 		Code      ErrorCode `json:"code"`
 		Message   string    `json:"message"`
 		Statement int       `json:"statement"`
@@ -74,7 +68,6 @@ type sqlAnswer struct {
 	err         error
 }
 
-// Connect opens a SQL WebSocket session on the database. The caller closes it.
 func (d *Database) Connect(ctx context.Context) (*SQLSession, error) {
 	s := &SQLSession{d: d}
 	conn, err := s.dial(ctx)
@@ -85,7 +78,6 @@ func (d *Database) Connect(ctx context.Context) (*SQLSession, error) {
 	return s, nil
 }
 
-// Execute runs one statement; sql.NamedArg values bind by name.
 func (s *SQLSession) Execute(ctx context.Context, query string, args ...any) (*Result, error) {
 	return s.ExecuteStatement(ctx, statementOf(query, args))
 }
@@ -98,7 +90,6 @@ func (s *SQLSession) ExecuteStatement(ctx context.Context, statement Statement) 
 	return &out[0], nil
 }
 
-// Query runs one statement and returns its rows.
 func (s *SQLSession) Query(ctx context.Context, query string, args ...any) ([]Row, error) {
 	res, err := s.Execute(ctx, query, args...)
 	if err != nil {
@@ -107,8 +98,6 @@ func (s *SQLSession) Query(ctx context.Context, query string, args ...any) ([]Ro
 	return res.Rows, nil
 }
 
-// Batch runs 1 to 256 statements: as one transaction outside a transaction,
-// or inside the open one.
 func (s *SQLSession) Batch(ctx context.Context, statements []Statement) ([]Result, error) {
 	wire, err := wireStatements(statements)
 	if err != nil {
@@ -124,28 +113,21 @@ func (s *SQLSession) Batch(ctx context.Context, statements []Statement) ([]Resul
 	return answer.Results, nil
 }
 
-// Begin opens a transaction of at most 5 seconds.
 func (s *SQLSession) Begin(ctx context.Context) error {
 	_, err := s.send(ctx, "begin", nil)
 	return err
 }
 
-// Commit commits the open transaction. After a failed statement it rolls back
-// and returns ErrTransactionRolledBack.
 func (s *SQLSession) Commit(ctx context.Context) error {
 	_, err := s.send(ctx, "commit", nil)
 	return err
 }
 
-// Rollback rolls back the open transaction. After a drop it only clears the
-// transaction the server already rolled back.
 func (s *SQLSession) Rollback(ctx context.Context) error {
 	_, err := s.send(ctx, "rollback", nil)
 	return err
 }
 
-// Transaction begins a transaction, runs fn and commits. When fn returns an
-// error it rolls back the transaction, if one is still open, and returns fn's error.
 func (s *SQLSession) Transaction(ctx context.Context, fn func(*SQLSession) error) error {
 	if err := s.Begin(ctx); err != nil {
 		return err
@@ -162,15 +144,12 @@ func (s *SQLSession) Transaction(ctx context.Context, fn func(*SQLSession) error
 	return s.Commit(ctx)
 }
 
-// InTransaction reports whether a transaction is open, as of the last answer.
 func (s *SQLSession) InTransaction() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.inTx
 }
 
-// Close closes the socket normally; the server rolls back an open transaction.
-// The session stays closed.
 func (s *SQLSession) Close() error {
 	s.mu.Lock()
 	conn := s.conn
@@ -184,8 +163,19 @@ func (s *SQLSession) Close() error {
 }
 
 func (s *SQLSession) send(ctx context.Context, typ string, statements []Statement) (sqlAnswer, error) {
+	bookmark, err := s.d.causal.Outgoing(ctx)
+	if err != nil {
+		return sqlAnswer{}, err
+	}
+	mode, err := causal.ConsistencyFrom(ctx)
+	if err != nil {
+		return sqlAnswer{}, err
+	}
+	if typ == "commit" || typ == "rollback" {
+		mode = ""
+	}
 	id := s.nextID.Add(1)
-	frame, err := json.Marshal(sqlFrame{ID: id, Type: typ, Statements: statements})
+	frame, err := json.Marshal(sqlFrame{ID: id, Type: typ, Statements: statements, Consistency: mode, Bookmark: bookmark})
 	if err != nil {
 		return sqlAnswer{}, fmt.Errorf("terrabase: encode SQL frame: %w", err)
 	}
@@ -206,8 +196,6 @@ func (s *SQLSession) send(ctx context.Context, typ string, statements []Statemen
 	return answer, nil
 }
 
-// connection returns the open socket, reconnecting after a drop. A nil conn
-// with a nil error means the call was answered locally (Rollback after a drop).
 func (s *SQLSession) connection(ctx context.Context, typ string) (*sqlConn, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -262,7 +250,11 @@ func (s *SQLSession) dial(ctx context.Context) (*sqlConn, error) {
 		if err != nil {
 			return nil, err
 		}
-		header := http.Header{"Authorization": {"Bearer " + token}}
+		header, err := causalHeader(ctx, s.d.causal)
+		if err != nil {
+			return nil, err
+		}
+		header.Set("Authorization", "Bearer "+token)
 		c.pin(header)
 		ws, resp, err := websocket.Dial(ctx, target, &websocket.DialOptions{
 			HTTPClient:   c.hc,
@@ -308,7 +300,10 @@ func (s *SQLSession) receive(conn *sqlConn) {
 		if err == nil && (decodeExact(data, &answer) != nil || (answer.Type != "result" && answer.Type != "error") || (answer.Type == "error") != (answer.Error != nil)) {
 			err = &SQLProtocolError{}
 		}
-		if err == nil && answer.ID == nil && answer.Error != nil {
+		if err == nil && s.d.causal.Observe(answer.Bookmark) != nil {
+			err = &SQLProtocolError{}
+		}
+		if err == nil && answer.ID == 0 && answer.Error != nil {
 			err = &SQLError{Code: answer.Error.Code, Message: answer.Error.Message, Statement: answer.Error.Statement, SQLState: answer.Error.SQLState}
 		}
 		if err != nil {
@@ -321,13 +316,13 @@ func (s *SQLSession) receive(conn *sqlConn) {
 		if s.conn == conn {
 			s.inTx = answer.Transaction
 		}
-		if answer.ID != nil {
-			if pending, ok := conn.pending[*answer.ID]; ok {
+		if answer.ID != 0 {
+			if pending, ok := conn.pending[answer.ID]; ok {
 				if e := answer.Error; e != nil && (e.Code == ErrWriteOutcomeUnknown || e.Code == ErrCommitUncertain) {
 					s.uncertain = &SQLError{Code: e.Code, Message: e.Message, Statement: e.Statement, SQLState: e.SQLState}
 				}
 				pending.answer <- answer
-				delete(conn.pending, *answer.ID)
+				delete(conn.pending, answer.ID)
 			}
 		}
 		uncertain := s.uncertain

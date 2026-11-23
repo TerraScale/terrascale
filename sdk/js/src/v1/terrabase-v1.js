@@ -16,11 +16,15 @@ import { V1Functions } from "./functions.js";
 import { V1DatabaseRules } from "./rules.js";
 import { V1ProjectUsageClient, V1DatabaseUsageClient, requestLogs } from "./usage.js";
 import { V1DatabaseRegionsClient } from "./regions.js";
+import { requireConsistency } from "./bookmark.js";
 /** @import { TerraBaseV1ClientConfig } from "./transport.js" */
+/** @import { V1Consistency, V1SqlRequestOptions } from "./bookmark.js" */
+/** @import { V1SqlFrameOptions, V1SqlSocket } from "./sql-socket.js" */
 
 /** @typedef {{ readonly ttlSeconds?: number | undefined; readonly signal?: AbortSignal | undefined }} V1AgentDatabaseOptions */
 /** @typedef {{ readonly regions?: readonly string[] | undefined; readonly allRegions?: boolean | undefined }} V1DatabasePlacement */
-/** @typedef {V1AgentDatabaseOptions & V1DatabasePlacement} V1CreateDatabaseOptions */
+/** @typedef {V1AgentDatabaseOptions & V1DatabasePlacement & { readonly defaultConsistency?: V1Consistency | undefined }} V1CreateDatabaseOptions */
+/** @typedef {{ readonly signal?: AbortSignal | undefined; readonly consistency?: V1Consistency | undefined }} V1SqlConnectOptions */
 /** @typedef {V1AgentDatabaseOptions & { readonly pointInTime?: string | undefined }} V1ForkDatabaseOptions */
 /** @typedef {{ readonly project?: string | undefined; readonly database: string; readonly access: "read" | "read_write"; readonly ttlSeconds?: number | undefined }} V1ScopedKeyRequest */
 /** @typedef {{ readonly key: string; readonly id: string; readonly projectId: string; readonly database: string; readonly access: "read" | "read_write"; readonly expiresAt: string }} V1ScopedKey */
@@ -60,9 +64,16 @@ export class V1Database {
   }
 
   /**
+   * The newest TerraScale-Bookmark this client holds for the database: every SQL request and session on any handle of
+   * this database sends it, so reads see earlier writes in whichever region answers. Empty before the first answer.
+   * @returns {string}
+   */
+  get bookmark() { return this.#transport.bookmarks(this.name).current(); }
+
+  /**
    * Runs one relational SQL statement as its own transaction. Reads need the read scope; writes and DDL also need the write scope.
    * @param {import("./sql-execute.js").V1SqlArguments} [args] Positional array, or named values keyed without their prefix.
-   * @param {V1RequestOptions} [options]
+   * @param {V1SqlRequestOptions} [options]
    * @returns {Promise<import("./sql-execute.js").V1SqlExecuteResult>}
    */
   async execute(/** @type {string | import("./sql-execute.js").V1SqlStatement} */ sql, args, options = {}) {
@@ -75,7 +86,7 @@ export class V1Database {
    * @template [T=Record<string, import("./sql-execute.js").V1SqlValue>]
    * @param {string} sql
    * @param {import("./sql-execute.js").V1SqlArguments} [args]
-   * @param {V1RequestOptions} [options]
+   * @param {V1SqlRequestOptions} [options]
    * @returns {Promise<T[]>}
    */
   async query(sql, args, options = {}) {
@@ -85,7 +96,7 @@ export class V1Database {
   /**
    * Runs 1 to 256 statements as one transaction: all commit or none do. A refused statement throws SqlError.
    * @param {readonly (string | import("./sql-execute.js").V1SqlStatement)[]} statements
-   * @param {V1RequestOptions} [options]
+   * @param {V1SqlRequestOptions} [options]
    */
   batch(statements, options = {}) {
     return executeSql(this.#transport, this.name, statements, options);
@@ -136,11 +147,32 @@ export class V1Database {
 
   /**
    * Opens a SQL WebSocket session: lower latency per statement and interactive transactions.
-   * @param {V1RequestOptions} [options]
-   * @returns {Promise<import("./sql-socket.js").V1SqlSocket>}
+   * `consistency` is the session's default for every frame that names none.
+   * @param {V1SqlConnectOptions} [options]
+   * @returns {Promise<V1SqlSocket>}
    */
   connect(options = {}) {
-    return this.#transport.openSqlSocket({ database: this.name }, options.signal);
+    members(options, ["signal", "consistency"]);
+    return this.#transport.openSqlSocket({ database: this.name }, options.signal, requireConsistency(options.consistency));
+  }
+
+  /**
+   * Runs `work` in one interactive transaction of at most 5 seconds on its own SQL session, then closes it.
+   * `consistency: "strong"` commits through a 2-of-3 quorum or fails with a retryable serialization_conflict.
+   * @template T
+   * @param {(session: V1SqlSocket) => Promise<T>} work
+   * @param {V1SqlFrameOptions & { readonly signal?: AbortSignal | undefined }} [options]
+   * @returns {Promise<T>}
+   */
+  async transaction(work, options = {}) {
+    members(options, ["signal", "bookmark", "consistency"]);
+    const { signal, ...frame } = options;
+    const session = await this.connect(signal === undefined ? {} : { signal });
+    try {
+      return await session.transaction(work, frame);
+    } finally {
+      session.close();
+    }
   }
 }
 
@@ -209,11 +241,12 @@ export class TerraBaseV1Client {
 
   /** @param {string} project @param {string} name @param {V1CreateDatabaseOptions} [options] @returns {Promise<import("./catalog.js").V1ManagedDatabase>} */
   createDatabase(project, name, options = {}) {
-    members(options, ["regions", "allRegions", "ttlSeconds", "signal"]);
+    members(options, ["regions", "allRegions", "ttlSeconds", "defaultConsistency", "signal"]);
     return new V1Databases(this.#projectTransport(project)).create({ name,
       ...(options.regions === undefined ? {} : { regions: options.regions }),
       ...(options.allRegions === undefined ? {} : { allRegions: options.allRegions }),
       ...(options.ttlSeconds === undefined ? {} : { ttlSeconds: options.ttlSeconds }),
+      ...(options.defaultConsistency === undefined ? {} : { defaultConsistency: options.defaultConsistency }),
     }, options.signal === undefined ? {} : { signal: options.signal });
   }
 

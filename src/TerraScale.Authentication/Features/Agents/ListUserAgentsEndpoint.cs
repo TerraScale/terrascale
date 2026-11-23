@@ -17,6 +17,6 @@ public sealed class ListUserAgentsEndpoint(TenantDirectory tenants, PlatformAuth
         var (limit, after) = this.Paging(50);
         var user = this.RouteId("user");
         _ = await this.Tenants.UserAsync(project, user, cancellationToken);
-        return Results.Json(await agents.ListAsync(project, user, limit, after, cancellationToken), AgentJson.Default.AgentPageBody);
+        return TypedResults.Json(await agents.ListAsync(project, user, limit, after, cancellationToken), AgentJson.Default.AgentPageBody);
     }
 }

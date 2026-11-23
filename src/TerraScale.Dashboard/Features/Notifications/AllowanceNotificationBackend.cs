@@ -1,27 +1,25 @@
 using System.Globalization;
 using TerraScale.Dashboard.Platform.Persistence;
 using System.Text.Json.Serialization;
-using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.Dashboard.Platform.Clients;
 using TerraScale.Dashboard.Platform.TsAuth;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Usage;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 
 namespace TerraScale.Dashboard.Features.Notifications
 {
-    public sealed class AllowanceNotificationBackend(IHttpClientFactory http, IDashboardIdentity identity, TerraBaseRpcClient rpc) : IAllowanceNotificationBackend
+    public sealed class AllowanceNotificationBackend(IHttpClientFactory http, IDashboardIdentity identity, TerraBaseHttpClient terraBase) : IAllowanceNotificationBackend
     {
-
         public async Task<AllowanceUsagePage> ReadAsync(string? after, DateTimeOffset? month, CancellationToken cancellationToken)
         {
-            try
+            return await terraBase.ListAllowancesAsync(cancellationToken) switch
             {
-                var answer = await rpc.Platform<IUsageService>().WithCancellationToken(cancellationToken).ListAllowancesAsync(after, month?.ToString("yyyy-MM", CultureInfo.InvariantCulture));
-                return answer.Deserialize(AllowanceBackendJson.Default.AllowanceUsagePage) ?? throw new IOException("Allowance producer response is empty.");
-            }
-            catch (TerraBaseException) { throw new IOException("Allowance producer is unavailable."); }
+                JsonElement answer when answer.ValueKind == JsonValueKind.Object && answer.TryGetProperty("items", out _) =>
+                    answer.Deserialize(AllowanceBackendJson.Default.AllowanceUsagePage) ?? throw new IOException("Allowance producer response is empty."),
+                JsonElement => throw new IOException("TerraBase publishes no per-organization allowance usage pages."),
+                TerraBaseRefusal => throw new IOException("Allowance producer is unavailable."),
+            };
         }
 
         public async Task<string> SendAsync(AllowanceAlert alert, CancellationToken cancellationToken)

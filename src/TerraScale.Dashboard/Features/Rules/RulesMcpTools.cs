@@ -5,8 +5,7 @@ using System.Text.Json.Serialization.Metadata;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using TerraScale.Dashboard.Platform.Mcp;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Management;
+using TerraScale.Dashboard.Platform.Clients;
 
 namespace TerraScale.Dashboard.Features.Rules
 {
@@ -62,7 +61,7 @@ namespace TerraScale.Dashboard.Features.Rules
             return await DeployAsync(() => RulesBackend.RestoreAsync(target.Client, target.ProjectId, target.Database, version, currentVersion));
         }
 
-        internal static async Task<CallToolResult> CallAsync(IManagementService client, string projectId, string databaseId, string tool, IDictionary<string, JsonElement>? arguments)
+        internal static async Task<CallToolResult> CallAsync(ManagementClient client, string projectId, string databaseId, string tool, IDictionary<string, JsonElement>? arguments)
         {
             JsonElement? Value(string name) => arguments?.TryGetValue(name, out var value) == true && value.ValueKind != JsonValueKind.Null ? value : null;
             string? Text(string name) => Value(name) is { ValueKind: JsonValueKind.String } value ? value.GetString() : null;
@@ -111,7 +110,7 @@ namespace TerraScale.Dashboard.Features.Rules
             Content = [new TextContentBlock { Text = JsonSerializer.Serialize(value, type) }],
         };
 
-        private async Task<(IManagementService Client, string ProjectId, string Database)> TargetAsync(string databaseId, string? organizationId, string? projectId, bool write)
+        private async Task<(ManagementClient Client, string ProjectId, string Database)> TargetAsync(string databaseId, string? organizationId, string? projectId, bool write)
         {
             var context = DashboardMcp.Scope(http.HttpContext, organizationId, projectId);
             return await rules.ClientAsync(context, DatabaseService.Database(context, databaseId), write, http.HttpContext?.RequestAborted ?? default);

@@ -86,6 +86,6 @@ public sealed class UpdateSelfProfileEndpoint(Sessions sessions, UserProfiles pr
         }
 
         var updated = await profiles.UpdateSelfAsync(live.User, patch, Sessions.Live(live.Session, live.Version, clock.GetUtcNow()), cancellationToken);
-        return Results.Json(SelfProfileBody.From(updated), UserProfileJson.Default.SelfProfileBody);
+        return TypedResults.Json(SelfProfileBody.From(updated), UserProfileJson.Default.SelfProfileBody);
     }
 }

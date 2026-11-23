@@ -15,6 +15,6 @@ public sealed class ListProjectOrganizationDomainsEndpoint(ProjectOrganizationDi
     protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var project = await this.AccessAsync(caller, Roles.Viewer, cancellationToken);
-        return Results.Json(await organizations.DomainsAsync(project, this.Org, cancellationToken), ProjectOrganizationsJson.Default.ProjectOrganizationDomainPage);
+        return TypedResults.Json(await organizations.DomainsAsync(project, this.Org, cancellationToken), ProjectOrganizationsJson.Default.ProjectOrganizationDomainPage);
     }
 }

@@ -4,7 +4,6 @@ using TerraScale.Authentication.Features.ProjectTenants;
 
 namespace TerraScale.Authentication.Features.Ui;
 
-/// <summary>Hosted step-up display state; never contains the backend's bearer proof.</summary>
 public sealed record StepUpPageModel(string Id, string Email, string Purpose, bool Mfa, bool Password, bool MailRequested, string? Notice, string Nonce, string? Locale = null)
 {
     public string? ReturnUri { get; init; }
@@ -17,7 +16,6 @@ public sealed record StepUpPageModel(string Id, string Email, string Purpose, bo
 
     public HostedPageCopy Copy => HostedCopies.For(this.ResolvedLocale);
 
-    /// <summary>The operation the account is approving.</summary>
     public string Operation => this.Purpose switch
     {
         "delete_account" => this.Copy.OpDeleteAccount,

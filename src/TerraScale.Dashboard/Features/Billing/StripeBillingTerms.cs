@@ -1,6 +1,7 @@
-using Microsoft.EntityFrameworkCore;
+using Dapper;
+using System.Data;
 using Stripe;
-using TerraScale.TerraBase.Contracts;
+using TerraScale.Dashboard.Platform.Clients;
 using TerraScale.Dashboard.Platform.Persistence;
 using AccountService = TerraScale.Dashboard.Common.Accounts.AccountService;
 
@@ -13,20 +14,26 @@ public sealed partial class StripeBilling
     private async Task RecordTermsAsync(StripeClient client, string orgId, Subscription subscription, CancellationToken cancellationToken)
     {
         try { await RecordTermsOnceAsync(client, orgId, subscription, cancellationToken); }
-        catch (Exception error) when (error is DbUpdateException or StripeException or HttpRequestException or IOException or TerraBaseException or TimeoutException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        catch (Exception error) when (error is DBConcurrencyException or StripeException or HttpRequestException or IOException or TerraBaseException or TimeoutException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {
             telemetry.ReportUnrecordedTerms();
             BillingLog.TermsNotRecorded(logger, error.GetType().Name);
         }
     }
 
+    private const string SubscriptionOf = DashboardSql.BillingSubscriptions.Select + " WHERE organization_id = @OrganizationId AND subscription_id = @SubscriptionId";
+    private const string LatestTerms = DashboardSql.BillingTerms.Select
+        + " WHERE organization_id = @OrganizationId AND subscription_id = @SubscriptionId ORDER BY effective_from DESC LIMIT 1";
+    private const string RecordedTerms = DashboardSql.BillingTerms.Select
+        + " WHERE organization_id = @OrganizationId AND subscription_id = @SubscriptionId AND effective_from >= @Earliest";
+
     private async Task RecordTermsOnceAsync(StripeClient client, string orgId, Subscription subscription, CancellationToken cancellationToken)
     {
         var now = time.GetUtcNow();
-        await using var db = await storage.CreateDbContextAsync(cancellationToken);
-        var row = await db.BillingSubscriptions.SingleOrDefaultAsync(item => item.OrganizationId == orgId && item.SubscriptionId == subscription.Id, cancellationToken);
-        var latest = await db.BillingTerms.AsNoTracking().Where(item => item.OrganizationId == orgId && item.SubscriptionId == subscription.Id)
-            .OrderByDescending(item => item.EffectiveFrom).FirstOrDefaultAsync(cancellationToken);
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        var key = new { OrganizationId = orgId, SubscriptionId = subscription.Id };
+        var row = await connection.QuerySingleOrDefaultAsync<BillingSubscription>(SubscriptionOf, key);
+        var latest = await connection.QueryFirstOrDefaultAsync<BillingTerms>(LatestTerms, key);
         var startedAt = Utc(subscription.StartDate);
         var from = row?.CheckedAt ?? startedAt;
         var horizon = now - EventRetention;
@@ -78,15 +85,15 @@ public sealed partial class StripeBilling
             added.Add(Retyped(polled, since, BillingTerms.Unestablished));
         }
         var earliest = added.Count > 0 ? added.Min(item => item.EffectiveFrom) : now;
-        var recorded = (await db.BillingTerms.AsNoTracking().Where(item => item.OrganizationId == orgId && item.SubscriptionId == subscription.Id && item.EffectiveFrom >= earliest)
-            .Select(item => new { item.EffectiveFrom, item.PricingVersion, item.Basis }).ToListAsync(cancellationToken)).Select(item => (item.EffectiveFrom, item.PricingVersion, item.Basis)).ToHashSet();
-        foreach (var terms in added.DistinctBy(item => (item.EffectiveFrom, item.PricingVersion, item.Basis)).Where(item => !recorded.Contains((item.EffectiveFrom, item.PricingVersion, item.Basis))))
-        {
-            db.BillingTerms.Add(terms);
-        }
+        var recorded = (await connection.QueryAsync<BillingTerms>(RecordedTerms, new { OrganizationId = orgId, SubscriptionId = subscription.Id, Earliest = earliest }))
+            .Select(item => (item.EffectiveFrom, item.PricingVersion, item.Basis)).ToHashSet();
+        var inserts = added.DistinctBy(item => (item.EffectiveFrom, item.PricingVersion, item.Basis))
+            .Where(item => !recorded.Contains((item.EffectiveFrom, item.PricingVersion, item.Basis))).ToArray();
+        BillingSubscription next;
+        var create = row is null;
         if (row is null)
         {
-            db.BillingSubscriptions.Add(new()
+            next = new()
             {
                 Version = AccountService.NewId(),
                 OrganizationId = orgId,
@@ -96,16 +103,30 @@ public sealed partial class StripeBilling
                 EndedAt = subscription.EndedAt is { } ended ? Utc(ended) : null,
                 Status = subscription.Status,
                 CheckedAt = now
-            });
+            };
         }
         else
         {
-            row.Status = subscription.Status;
-            row.EndedAt = subscription.EndedAt is { } ended ? Utc(ended) : null;
-            row.CheckedAt = now > row.CheckedAt ? now : row.CheckedAt;
-            row.Version = AccountService.NewId();
+            next = row with
+            {
+                Status = subscription.Status,
+                EndedAt = subscription.EndedAt is { } ended ? Utc(ended) : null,
+                CheckedAt = now > row.CheckedAt ? now : row.CheckedAt,
+                OriginalVersion = row.Version,
+                Version = AccountService.NewId(),
+            };
         }
-        await db.SaveChangesAsync(cancellationToken);
+
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        foreach (var terms in inserts)
+        {
+            await connection.ExecuteAsync(DashboardSql.BillingTerms.Insert, terms, transaction);
+        }
+
+        DashboardDb.Expect(create
+            ? await connection.ExecuteAsync(DashboardSql.BillingSubscriptions.Insert, next, transaction)
+            : await connection.ExecuteAsync(DashboardSql.BillingSubscriptions.Update, next, transaction));
+        await transaction.CommitAsync(cancellationToken);
     }
 
     private static async Task<BillingTerms> TermsAtAsync(StripeClient client, Dictionary<string, Price> prices, string orgId, Subscription snapshot, DateTimeOffset at, string basis, DateTimeOffset now, CancellationToken cancellationToken)

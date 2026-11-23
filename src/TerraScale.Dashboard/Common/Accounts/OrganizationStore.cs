@@ -1,52 +1,75 @@
+using System.Data;
+using System.Data.Common;
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
+using Dapper;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Features.Billing;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Common.Accounts;
 
 public sealed record StoredOrganization(OrganizationRecord Organization, string Version, bool Erased)
 {
-    internal OrganizationRows Rows { get; init; } = null!;
+    public required OrganizationRows Rows { get; init; }
 }
 
-internal sealed record OrganizationRows(OrganizationRow Root, IReadOnlyList<OrganizationProjectRow> Projects, IReadOnlyList<ProjectDatabaseRow> Databases,
-    IReadOnlyList<AuditEventRow> AuditEvents, IReadOnlyList<InvitationReservationRow> Reservations)
-{
-    public void Attach(DashboardDbContext db)
-    {
-        db.Attach(Root);
-        db.AttachRange(Projects);
-        db.AttachRange(Databases);
-        db.AttachRange(AuditEvents);
-        db.AttachRange(Reservations);
-    }
-}
+public sealed record OrganizationRows(OrganizationRow Root, IReadOnlyList<OrganizationProjectRow> Projects, IReadOnlyList<ProjectDatabaseRow> Databases,
+    IReadOnlyList<AuditEventRow> AuditEvents, IReadOnlyList<InvitationReservationRow> Reservations);
 
-public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> storage)
+public sealed class OrganizationStore(DashboardDb storage)
 {
+    private const string ById = DashboardSql.Organizations.Select + " WHERE id = @Id";
+    private const string ByIds = DashboardSql.Organizations.Select + " WHERE id IN (SELECT value FROM json_each(@Ids))";
+    private const string Live = DashboardSql.Organizations.Select + " WHERE erasure_id IS NULL";
+    private const string Erased = "SELECT count(*) FROM organizations WHERE id = @Id AND erasure_id IS NOT NULL";
+    private const string Scope = " WHERE @All OR organization_id IN (SELECT value FROM json_each(@Ids))";
+    private const string Projects = DashboardSql.OrganizationProjects.Select + Scope;
+    private const string Databases = DashboardSql.ProjectDatabases.Select + Scope;
+    private const string Audit = DashboardSql.AuditEvents.Select + Scope + " ORDER BY occurred_at, id";
+    private const string Reservations = DashboardSql.InvitationReservations.Select + Scope;
+    private const string FenceVersion = "UPDATE organizations SET version = version WHERE id = @Id AND version = @OriginalVersion";
+    private const string RemoveAudit = "DELETE FROM audit_events WHERE organization_id = @Id";
+    private const string RemoveDrainJobs = "DELETE FROM background_jobs WHERE id LIKE @Prefix || '%' AND id LIKE '%' || @Suffix";
+    private const string PendingCheckout = DashboardSql.PendingOrganizationCheckouts.Select + " WHERE draft_id = @DraftId";
+    private const string BindingOf = DashboardSql.Billing.Select + " WHERE organization_id = @OrganizationId";
+    private const string TouchRoot = """
+        UPDATE organizations SET kind = @Kind, plan_id = @PlanId, billing_status = @BillingStatus, status = @Status,
+            payment_method_validated = @PaymentMethodValidated, version = @Version
+        WHERE id = @Id AND version = @OriginalVersion
+        """;
+
     public async Task<StoredOrganization?> FindAsync(string id, CancellationToken cancellationToken)
     {
-        return (await LoadAsync(db => db.Organizations.Where(row => row.Id == id), null, cancellationToken)).GetValueOrDefault(id);
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        var roots = (await connection.QueryAsync<OrganizationRow>(ById, new { Id = id })).AsList();
+        return (await LoadAsync(connection, roots, null)).GetValueOrDefault(id);
     }
 
     public async Task<IReadOnlyDictionary<string, OrganizationRecord?>> ReadManyAsync(IReadOnlyCollection<string> ids, CancellationToken cancellationToken)
     {
         var keys = ids.Distinct(StringComparer.Ordinal).ToArray();
-        return keys.Length == 0 ? new Dictionary<string, OrganizationRecord?>() :
-            (await LoadAsync(db => db.Organizations.Where(row => keys.Contains(row.Id)), keys, cancellationToken))
+        if (keys.Length == 0)
+        {
+            return new Dictionary<string, OrganizationRecord?>();
+        }
+
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        var roots = (await connection.QueryAsync<OrganizationRow>(ByIds, new { Ids = Json(keys) })).AsList();
+        return (await LoadAsync(connection, roots, keys))
             .ToDictionary(pair => pair.Key, pair => pair.Value.Erased ? null : pair.Value.Organization, StringComparer.Ordinal);
     }
 
     public async Task<IReadOnlyList<OrganizationRecord>> ListAsync(CancellationToken cancellationToken)
     {
-        return [.. (await LoadAsync(db => db.Organizations.Where(row => row.ErasureId == null), [], cancellationToken)).Values.Select(stored => stored.Organization)];
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        var roots = (await connection.QueryAsync<OrganizationRow>(Live)).AsList();
+        return [.. (await LoadAsync(connection, roots, [])).Values.Select(stored => stored.Organization)];
     }
 
     public async Task<bool> IsErasedAsync(string id, CancellationToken cancellationToken)
     {
-        await using var db = await storage.CreateDbContextAsync(cancellationToken);
-        return await db.Organizations.AnyAsync(row => row.Id == id && row.ErasureId != null, cancellationToken);
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        return await connection.ExecuteScalarAsync<long>(Erased, new { Id = id }) > 0;
     }
 
     public async Task CreateAsync(OrganizationRecord organization, CancellationToken cancellationToken)
@@ -56,19 +79,39 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
             throw new IOException("Organization identity is invalid.");
         }
 
-        await using var db = await storage.CreateDbContextAsync(cancellationToken);
-        StageCreate(db, organization);
-        await RowSync.CreateAsync(db, cancellationToken);
+        var rows = Write(organization, AccountService.NewId(), null);
+        try
+        {
+            await storage.WriteAsync((connection, transaction) => InsertAsync(connection, transaction, rows), cancellationToken);
+        }
+        catch (Exception error) when (DashboardDb.IsDuplicate(error))
+        {
+            throw new DBConcurrencyException("Dashboard storage changed concurrently.", error);
+        }
     }
 
-    private static void StageCreate(DashboardDbContext db, OrganizationRecord organization)
+    private static async Task InsertAsync(TerraBaseDbConnection connection, DbTransaction transaction, OrganizationRows rows)
     {
-        var rows = Write(organization, AccountService.NewId(), null);
-        db.Add(rows.Root);
-        db.AddRange(rows.Projects);
-        db.AddRange(rows.Databases);
-        db.AddRange(rows.AuditEvents);
-        db.AddRange(rows.Reservations);
+        await connection.ExecuteAsync(DashboardSql.Organizations.Insert, rows.Root, transaction);
+        foreach (var row in rows.Projects)
+        {
+            await connection.ExecuteAsync(DashboardSql.OrganizationProjects.Insert, row, transaction);
+        }
+
+        foreach (var row in rows.Databases)
+        {
+            await connection.ExecuteAsync(DashboardSql.ProjectDatabases.Insert, row, transaction);
+        }
+
+        foreach (var row in rows.AuditEvents)
+        {
+            await connection.ExecuteAsync(DashboardSql.AuditEvents.Insert, row, transaction);
+        }
+
+        foreach (var row in rows.Reservations)
+        {
+            await connection.ExecuteAsync(DashboardSql.InvitationReservations.Insert, row, transaction);
+        }
     }
 
     internal async Task<OrganizationRecord> CompleteCheckoutAsync(OrganizationRecord organization, PendingOrganizationCheckout draft, CancellationToken cancellationToken)
@@ -81,9 +124,14 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
                 throw new AccountAccessException("Organization deletion is pending.", 409);
             }
 
-            await using var db = await storage.CreateDbContextAsync(cancellationToken);
-            var pending = await db.PendingOrganizationCheckouts.SingleOrDefaultAsync(row => row.DraftId == draft.DraftId, cancellationToken);
-            var binding = await db.Billing.AsNoTracking().SingleOrDefaultAsync(row => row.OrganizationId == organization.Id, cancellationToken);
+            PendingOrganizationCheckout? pending;
+            BillingBinding? binding;
+            await using (var connection = await storage.OpenAsync(cancellationToken))
+            {
+                pending = await connection.QuerySingleOrDefaultAsync<PendingOrganizationCheckout>(PendingCheckout, new { draft.DraftId });
+                binding = await connection.QuerySingleOrDefaultAsync<BillingBinding>(BindingOf, new { OrganizationId = organization.Id });
+            }
+
             if (binding is not null)
             {
                 if (stored is not { Erased: false } || binding.RequestId != draft.DraftId || binding.CheckoutId != draft.CheckoutId
@@ -98,17 +146,18 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
                             continue;
                         }
                     }
+
                     throw new OrganizationCheckoutRefusedException("This organization already has billing.");
                 }
 
-                if (pending is not null)
+                if (pending is not null && !await storage.RemoveAsync(pending, cancellationToken))
                 {
-                    db.Remove(pending);
-                    try { await db.SaveChangesAsync(cancellationToken); }
-                    catch (DbUpdateConcurrencyException) { continue; }
+                    continue;
                 }
+
                 return stored.Organization;
             }
+
             if (pending is null || pending.State != OrganizationCheckoutStates.Creating || pending.UserId != draft.UserId || pending.OrganizationId != organization.Id)
             {
                 throw new AccountAccessException("Organization is not ready to be created.", 409);
@@ -134,31 +183,14 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
                 ReturnPath = "/organization?newOrganization=project&organizationId=" + Uri.EscapeDataString(organization.Id),
                 OverageStartsAt = new(RowSync.At(pending.CreatedAt).Year, RowSync.At(pending.CreatedAt).Month, 1, 0, 0, 0, TimeSpan.Zero)
             };
-            if (stored is null)
-            {
-                StageCreate(db, organization);
-            }
-            else
-            {
-                var root = stored.Rows.Root;
-                db.Attach(root);
-                root.Kind = organization.Kind;
-                root.PlanId = organization.PlanId;
-                root.BillingStatus = organization.BillingStatus;
-                root.Status = organization.Status;
-                root.PaymentMethodValidated = organization.PaymentMethodValidated;
-                root.Version = AccountService.NewId();
-                organization = Read(stored.Rows);
-            }
-            db.Add(billing);
-            db.Add(new StripeCustomerRow
+            var customer = new StripeCustomerRow
             {
                 Id = AccountService.NewId(),
                 OrganizationId = organization.Id,
                 CustomerId = pending.CustomerId,
                 CreatedAt = pending.CreatedAt
-            });
-            db.Add(new StripeCheckoutRow
+            };
+            var checkout = new StripeCheckoutRow
             {
                 Id = AccountService.NewId(),
                 OrganizationId = organization.Id,
@@ -170,14 +202,51 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
                 Plan = pending.Plan,
                 Interval = pending.Interval,
                 CreatedAt = pending.CreatedAt
-            });
-            db.Remove(pending);
+            };
+            OrganizationRows? created = null;
+            OrganizationRow? touched = null;
+            if (stored is null)
+            {
+                created = Write(organization, AccountService.NewId(), null);
+            }
+            else
+            {
+                touched = stored.Rows.Root with
+                {
+                    Kind = organization.Kind,
+                    PlanId = organization.PlanId,
+                    BillingStatus = organization.BillingStatus,
+                    Status = organization.Status,
+                    PaymentMethodValidated = organization.PaymentMethodValidated,
+                    Version = AccountService.NewId(),
+                    OriginalVersion = stored.Rows.Root.Version,
+                };
+                organization = Read(stored.Rows with { Root = touched });
+            }
+
+            pending.OriginalVersion = pending.Version;
             try
             {
-                await RowSync.CreateAsync(db, cancellationToken);
+                await storage.WriteAsync(async (connection, transaction) =>
+                {
+                    if (created is not null)
+                    {
+                        await InsertAsync(connection, transaction, created);
+                    }
+
+                    if (touched is not null)
+                    {
+                        DashboardDb.Expect(await connection.ExecuteAsync(TouchRoot, touched, transaction));
+                    }
+
+                    await connection.ExecuteAsync(DashboardSql.Billing.Insert, billing, transaction);
+                    await connection.ExecuteAsync(DashboardSql.StripeCustomers.Insert, customer, transaction);
+                    await connection.ExecuteAsync(DashboardSql.StripeCheckouts.Insert, checkout, transaction);
+                    DashboardDb.Expect(await connection.ExecuteAsync(DashboardSql.PendingOrganizationCheckouts.Delete, pending, transaction));
+                }, cancellationToken);
                 return organization;
             }
-            catch (DbUpdateConcurrencyException)
+            catch (Exception error) when (error is DBConcurrencyException || DashboardDb.IsDuplicate(error))
             {
                 if (attempt == 2)
                 {
@@ -185,6 +254,7 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
                 }
             }
         }
+
         throw new IOException("Organization completion changed concurrently. Retry organization setup.");
     }
 
@@ -192,35 +262,45 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
     {
         if (stored.Erased || stored.Organization.Id != stored.Rows.Root.Id)
         {
-            throw new DbUpdateConcurrencyException("Dashboard storage changed concurrently.");
+            throw new DBConcurrencyException("Dashboard storage changed concurrently.");
         }
 
-        await using var db = await storage.CreateDbContextAsync(cancellationToken);
         var loaded = stored.Rows;
-        loaded.Attach(db);
         var next = Write(stored.Organization, loaded.Root.Version, null);
-        Apply(db, loaded, next);
-        if (!db.ChangeTracker.HasChanges())
+        var changes = Diff(loaded, next);
+        if (!changes.Any)
         {
             return;
         }
 
-        if (db.ChangeTracker.Entries().All(entry => entry.State == EntityState.Unchanged || entry is { State: EntityState.Added, Entity: AuditEventRow }))
+        var root = next.Root;
+        root.OriginalVersion = loaded.Root.Version;
+        var auditOnly = root == loaded.Root with { OriginalVersion = loaded.Root.Version } && changes.AuditOnly;
+        if (!auditOnly)
         {
-            db.Entry(loaded.Root).Property(row => row.Version).IsModified = true;
-        }
-        else
-        {
-            loaded.Root.Version = AccountService.NewId();
+            root.Version = AccountService.NewId();
         }
 
-        foreach (var removed in db.ChangeTracker.Entries<ProjectDatabaseRow>().Where(entry => entry.State == EntityState.Deleted).Select(entry => entry.Entity).ToArray())
+        try
         {
-            var prefix = "log-drain/" + removed.ProjectId + "/";
-            var suffix = "/" + removed.Id;
-            db.BackgroundJobs.RemoveRange(await db.BackgroundJobs.Where(row => row.Id.StartsWith(prefix) && row.Id.EndsWith(suffix)).ToListAsync(cancellationToken));
+            await storage.WriteAsync(async (connection, transaction) =>
+            {
+                DashboardDb.Expect(auditOnly
+                    ? await connection.ExecuteAsync(FenceVersion, root, transaction)
+                    : await connection.ExecuteAsync(DashboardSql.Organizations.Update, root, transaction));
+                await ApplyAsync(connection, transaction, changes);
+                foreach (var removed in changes.Databases.Removed)
+                {
+                    await connection.ExecuteAsync(RemoveDrainJobs, new { Prefix = "log-drain/" + removed.ProjectId + "/", Suffix = "/" + removed.Id }, transaction);
+                }
+            }, cancellationToken);
         }
-        await RowSync.ReplaceAsync(db, cancellationToken);
+        catch (Exception error) when (DashboardDb.IsDuplicate(error))
+        {
+            throw new AccountAccessException("The change conflicts with an existing record.", StatusCodes.Status409Conflict);
+        }
+
+        loaded.Root.Version = root.Version;
     }
 
     public async Task FenceAsync(string id, string erasureId, CancellationToken cancellationToken)
@@ -233,31 +313,35 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
         for (var attempt = 0; attempt < 3; attempt++)
         {
             var stored = await FindAsync(id, cancellationToken);
-            await using var db = await storage.CreateDbContextAsync(cancellationToken);
             if (stored is { Erased: true })
             {
-                await db.AuditEvents.Where(row => row.OrganizationId == id).ExecuteDeleteAsync(cancellationToken);
+                await using var connection = await storage.OpenAsync(cancellationToken);
+                await connection.ExecuteAsync(RemoveAudit, new { Id = id });
                 return;
             }
 
             var erased = new OrganizationRecord { Id = id, Kind = stored?.Organization.Kind ?? "business", DeletedProjectIds = stored?.Organization.DeletedProjectIds ?? [] };
             var next = Write(erased, AccountService.NewId(), erasureId);
-            if (stored is null)
-            {
-                db.Add(next.Root);
-            }
-            else
-            {
-                stored.Rows.Attach(db);
-                Apply(db, stored.Rows, next);
-            }
-
             try
             {
-                await (stored is null ? RowSync.CreateAsync(db, cancellationToken) : RowSync.ReplaceAsync(db, cancellationToken));
+                if (stored is null)
+                {
+                    await storage.WriteAsync((connection, transaction) => connection.ExecuteAsync(DashboardSql.Organizations.Insert, next.Root, transaction), cancellationToken);
+                }
+                else
+                {
+                    next.Root.OriginalVersion = stored.Rows.Root.Version;
+                    var changes = Diff(stored.Rows, next);
+                    await storage.WriteAsync(async (connection, transaction) =>
+                    {
+                        DashboardDb.Expect(await connection.ExecuteAsync(DashboardSql.Organizations.Update, next.Root, transaction));
+                        await ApplyAsync(connection, transaction, changes);
+                    }, cancellationToken);
+                }
+
                 return;
             }
-            catch (DbUpdateConcurrencyException)
+            catch (Exception error) when (error is DBConcurrencyException || DashboardDb.IsDuplicate(error))
             {
                 if (attempt == 2)
                 {
@@ -267,36 +351,98 @@ public sealed class OrganizationStore(IDbContextFactory<DashboardDbContext> stor
         }
     }
 
-    private static void Apply(DashboardDbContext db, OrganizationRows loaded, OrganizationRows next)
+    private sealed record OrganizationChanges(RowChanges<OrganizationProjectRow> Projects, RowChanges<ProjectDatabaseRow> Databases,
+        RowChanges<AuditEventRow> AuditEvents, RowChanges<InvitationReservationRow> Reservations, bool RootChanged)
     {
-        db.Entry(loaded.Root).CurrentValues.SetValues(next.Root);
-        RowSync.Sync(db, loaded.Projects, next.Projects, row => row.Id);
-        RowSync.Sync(db, loaded.Databases, next.Databases, row => row.Id);
-        RowSync.Sync(db, loaded.AuditEvents, next.AuditEvents, row => row.Id);
-        RowSync.Sync(db, loaded.Reservations, next.Reservations, row => row.Id);
+        public bool Any => RootChanged || Projects.Any || Databases.Any || AuditEvents.Any || Reservations.Any;
+
+        public bool AuditOnly => !RootChanged && !Projects.Any && !Databases.Any && !Reservations.Any
+            && AuditEvents.Changed.Count == 0 && AuditEvents.Removed.Count == 0;
     }
 
-    private async Task<Dictionary<string, StoredOrganization>> LoadAsync(Func<DashboardDbContext, IQueryable<OrganizationRow>> roots, string[]? snapshot,
-        CancellationToken cancellationToken)
+    private static OrganizationChanges Diff(OrganizationRows loaded, OrganizationRows next) =>
+        new(RowSync.Diff(loaded.Projects, next.Projects, static row => row.Id), RowSync.Diff(loaded.Databases, next.Databases, static row => row.Id),
+            RowSync.Diff(loaded.AuditEvents, next.AuditEvents, static row => row.Id), RowSync.Diff(loaded.Reservations, next.Reservations, static row => row.Id),
+            next.Root with { OriginalVersion = null, Version = loaded.Root.Version } != loaded.Root);
+
+    private static async Task ApplyAsync(TerraBaseDbConnection connection, DbTransaction transaction, OrganizationChanges changes)
     {
-        var rootRows = RowSync.QueryAsync(storage, roots, cancellationToken);
-        var scope = snapshot ?? [.. (await rootRows).Where(row => row.ErasureId is null).Select(row => row.Id)];
+        foreach (var row in changes.Reservations.Removed)
+        {
+            await connection.ExecuteAsync(DashboardSql.InvitationReservations.Delete, row, transaction);
+        }
+
+        foreach (var row in changes.AuditEvents.Removed)
+        {
+            await connection.ExecuteAsync(DashboardSql.AuditEvents.Delete, row, transaction);
+        }
+
+        foreach (var row in changes.Databases.Removed)
+        {
+            await connection.ExecuteAsync(DashboardSql.ProjectDatabases.Delete, row, transaction);
+        }
+
+        foreach (var row in changes.Projects.Removed)
+        {
+            await connection.ExecuteAsync(DashboardSql.OrganizationProjects.Delete, row, transaction);
+        }
+
+        foreach (var row in changes.Projects.Changed)
+        {
+            await connection.ExecuteAsync(DashboardSql.OrganizationProjects.Update, row, transaction);
+        }
+
+        foreach (var row in changes.Projects.Added)
+        {
+            await connection.ExecuteAsync(DashboardSql.OrganizationProjects.Insert, row, transaction);
+        }
+
+        foreach (var row in changes.Databases.Changed)
+        {
+            await connection.ExecuteAsync(DashboardSql.ProjectDatabases.Update, row, transaction);
+        }
+
+        foreach (var row in changes.Databases.Added)
+        {
+            await connection.ExecuteAsync(DashboardSql.ProjectDatabases.Insert, row, transaction);
+        }
+
+        foreach (var row in changes.AuditEvents.Changed)
+        {
+            await connection.ExecuteAsync(DashboardSql.AuditEvents.Update, row, transaction);
+        }
+
+        foreach (var row in changes.AuditEvents.Added)
+        {
+            await connection.ExecuteAsync(DashboardSql.AuditEvents.Insert, row, transaction);
+        }
+
+        foreach (var row in changes.Reservations.Changed)
+        {
+            await connection.ExecuteAsync(DashboardSql.InvitationReservations.Update, row, transaction);
+        }
+
+        foreach (var row in changes.Reservations.Added)
+        {
+            await connection.ExecuteAsync(DashboardSql.InvitationReservations.Insert, row, transaction);
+        }
+    }
+
+    private static async Task<Dictionary<string, StoredOrganization>> LoadAsync(TerraBaseDbConnection connection, IReadOnlyList<OrganizationRow> roots, string[]? snapshot)
+    {
+        var scope = snapshot ?? [.. roots.Where(row => row.ErasureId is null).Select(row => row.Id)];
         var all = snapshot is [];
         var empty = !all && scope.Length == 0;
-        var projects = empty ? Task.FromResult(new List<OrganizationProjectRow>()) :
-            RowSync.QueryAsync(storage, db => db.OrganizationProjects.Where(row => all || scope.Contains(row.OrganizationId)), cancellationToken);
-        var databases = empty ? Task.FromResult(new List<ProjectDatabaseRow>()) :
-            RowSync.QueryAsync(storage, db => db.ProjectDatabases.Where(row => all || scope.Contains(row.OrganizationId)), cancellationToken);
-        var audit = empty ? Task.FromResult(new List<AuditEventRow>()) :
-            RowSync.QueryAsync(storage, db => db.AuditEvents.Where(row => all || scope.Contains(row.OrganizationId)).OrderBy(row => row.OccurredAt).ThenBy(row => row.Id), cancellationToken);
-        var reservations = empty ? Task.FromResult(new List<InvitationReservationRow>()) :
-            RowSync.QueryAsync(storage, db => db.InvitationReservations.Where(row => all || scope.Contains(row.OrganizationId)), cancellationToken);
-        await Task.WhenAll(rootRows, projects, databases, audit, reservations);
-        var projectRows = (await projects).ToLookup(item => item.OrganizationId, StringComparer.Ordinal);
-        var databaseRows = (await databases).ToLookup(item => item.OrganizationId, StringComparer.Ordinal);
-        var auditRows = (await audit).ToLookup(item => item.OrganizationId, StringComparer.Ordinal);
-        var reservationRows = (await reservations).ToLookup(item => item.OrganizationId, StringComparer.Ordinal);
-        return (await rootRows).ToDictionary(row => row.Id, row =>
+        var filter = new { All = all, Ids = Json(scope) };
+        var projects = empty ? [] : (await connection.QueryAsync<OrganizationProjectRow>(Projects, filter)).AsList();
+        var databases = empty ? [] : (await connection.QueryAsync<ProjectDatabaseRow>(Databases, filter)).AsList();
+        var audit = empty ? [] : (await connection.QueryAsync<AuditEventRow>(Audit, filter)).AsList();
+        var reservations = empty ? [] : (await connection.QueryAsync<InvitationReservationRow>(Reservations, filter)).AsList();
+        var projectRows = projects.ToLookup(item => item.OrganizationId, StringComparer.Ordinal);
+        var databaseRows = databases.ToLookup(item => item.OrganizationId, StringComparer.Ordinal);
+        var auditRows = audit.ToLookup(item => item.OrganizationId, StringComparer.Ordinal);
+        var reservationRows = reservations.ToLookup(item => item.OrganizationId, StringComparer.Ordinal);
+        return roots.ToDictionary(row => row.Id, row =>
         {
             var rows = new OrganizationRows(row, [.. projectRows[row.Id]], [.. databaseRows[row.Id]], [.. auditRows[row.Id]], [.. reservationRows[row.Id]]);
             return row.ErasureId is null ? new StoredOrganization(Read(rows), row.Version, false) { Rows = rows } :

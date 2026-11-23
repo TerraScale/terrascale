@@ -1,10 +1,10 @@
+using Dapper;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Fido2NetLib;
 using Fido2NetLib.Objects;
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Contracts;
@@ -37,12 +37,12 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
     public async Task<(CredentialCreateOptions Options, string Challenge)?> OptionsAsync(UserRecord caller, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(caller);
-        if (await this.CurrentUserAsync(caller, cancellationToken).ConfigureAwait(false) is not { } user)
+        if (await this.CurrentUserAsync(caller, cancellationToken) is not { } user)
         {
             return null;
         }
 
-        var entries = await this.ReadAsync(user.InstanceId, user.Id, cancellationToken).ConfigureAwait(false);
+        var entries = await this.ReadAsync(user.InstanceId, user.Id, cancellationToken);
         var creation = fido2.RequestNewCredential(new RequestNewCredentialParams
         {
             User = new Fido2User { Id = Encoding.UTF8.GetBytes(user.Id), Name = user.Email, DisplayName = user.Email },
@@ -64,19 +64,19 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
     {
         ArgumentNullException.ThrowIfNull(caller);
         ArgumentException.ThrowIfNullOrWhiteSpace(credentialId);
-        if (await this.CurrentUserAsync(caller, cancellationToken).ConfigureAwait(false) is not { } user)
+        if (await this.CurrentUserAsync(caller, cancellationToken) is not { } user)
         {
             return new Forbidden("Sign in again before renaming a passkey.", "passkey_denied");
         }
 
-        var entry = (await this.ReadAsync(user.InstanceId, user.Id, cancellationToken).ConfigureAwait(false)).FirstOrDefault(item => item.Value.CredentialId == credentialId);
+        var entry = (await this.ReadAsync(user.InstanceId, user.Id, cancellationToken)).FirstOrDefault(item => item.Value.CredentialId == credentialId);
         if (entry is null)
         {
             return new NotFound("No passkey with this id is enrolled for the account.", "passkey_not_found");
         }
 
         var renamed = entry.Value with { Name = name };
-        return await this.WriteAsync([Change.Assert(user), Change.Update(entry, renamed)], cancellationToken).ConfigureAwait(false) switch
+        return await this.WriteAsync([Change.Assert(user), Change.Update(entry, renamed)], cancellationToken) switch
         {
             Done => renamed,
             Conflict conflict => conflict,
@@ -87,18 +87,18 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
     {
         ArgumentNullException.ThrowIfNull(caller);
         ArgumentException.ThrowIfNullOrWhiteSpace(credentialId);
-        if (await this.CurrentUserAsync(caller, cancellationToken).ConfigureAwait(false) is not { } user)
+        if (await this.CurrentUserAsync(caller, cancellationToken) is not { } user)
         {
             return new Forbidden("Sign in again before deleting a passkey.", "passkey_denied");
         }
 
-        var entry = (await this.ReadAsync(user.InstanceId, user.Id, cancellationToken).ConfigureAwait(false)).FirstOrDefault(item => item.Value.CredentialId == credentialId);
+        var entry = (await this.ReadAsync(user.InstanceId, user.Id, cancellationToken)).FirstOrDefault(item => item.Value.CredentialId == credentialId);
         if (entry is null)
         {
             return new NotFound("No passkey with this id is enrolled for the account.", "passkey_not_found");
         }
 
-        return await this.WriteAsync([Change.Assert(user), Change.Delete(entry)], cancellationToken).ConfigureAwait(false) switch
+        return await this.WriteAsync([Change.Assert(user), Change.Delete(entry)], cancellationToken) switch
         {
             Done => entry.Value,
             Conflict conflict => conflict,
@@ -106,37 +106,37 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
     }
 
     private async Task<WriteCheck> WriteAsync(IReadOnlyList<Change> changes, CancellationToken cancellationToken) =>
-        await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false)
+        await data.SaveAsync(changes, cancellationToken)
             ? new Done()
             : new Conflict("The passkey list changed; read it again and retry.", "version_conflict");
 
     public async Task<IReadOnlyList<PasskeyCredentialEntry>> ListAsync(UserRecord caller, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(caller);
-        return [.. (await this.ReadAsync(caller.InstanceId, caller.Id, cancellationToken).ConfigureAwait(false)).Select(entry => entry.Value)];
+        return [.. (await this.ReadAsync(caller.InstanceId, caller.Id, cancellationToken)).Select(entry => entry.Value)];
     }
 
     public async Task<PasskeyVerifyResult> VerifyAsync(UserRecord caller, string? sealedChallenge, AuthenticatorAttestationRawResponse response, string? name, ChallengedSignIn? signIn = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(caller);
         ArgumentNullException.ThrowIfNull(response);
-        if (await limiter.AcquireAsync(caller.InstanceId, "passkey-enroll", caller.Id, 10, AttemptWindow, cancellationToken).ConfigureAwait(false) is { } wait)
+        if (await limiter.AcquireAsync(caller.InstanceId, "passkey-enroll", caller.Id, 10, AttemptWindow, cancellationToken) is { } wait)
         {
             throw ApiException.RateLimited("Too many passkey enrollment attempts; retry after the Retry-After delay.", wait);
         }
 
         if (this.OpenChallenge(caller.InstanceId, sealedChallenge) is not { } challenge
-            || await this.CurrentUserAsync(caller, cancellationToken).ConfigureAwait(false) is not { } user
+            || await this.CurrentUserAsync(caller, cancellationToken) is not { } user
             || user.AuthEpoch != challenge.AuthEpoch || user.AuthStamp != challenge.AuthStamp
-            || await credentials.RequireAsync(caller.InstanceId, [.. caller.AuthenticationBindings.Where(binding => binding != signIn?.Completion)], cancellationToken).ConfigureAwait(false) is not { } lineage)
+            || await credentials.RequireAsync(caller.InstanceId, [.. caller.AuthenticationBindings.Where(binding => binding != signIn?.Completion)], cancellationToken) is not { } lineage)
         {
             return DeniedEnroll();
         }
 
         var completion = Credentials.New(ChallengeKind, challenge.Id);
-        if (await credentials.IsClaimedAsync(caller.InstanceId, completion, cancellationToken).ConfigureAwait(false)
+        if (await credentials.IsClaimedAsync(caller.InstanceId, completion, cancellationToken)
             || response.RawId is not { Length: > 0 and <= 1024 } rawId
-            || (await this.ReadAsync(user.InstanceId, user.Id, cancellationToken).ConfigureAwait(false)).Count >= MaxPasskeys)
+            || (await this.ReadAsync(user.InstanceId, user.Id, cancellationToken)).Count >= MaxPasskeys)
         {
             return DeniedEnroll();
         }
@@ -149,8 +149,8 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
                 AttestationResponse = response,
                 OriginalOptions = CredentialCreateOptions.FromJson(challenge.OptionsJson),
                 IsCredentialIdUniqueToUserCallback = async (parameters, token) =>
-                    !await this.ExistsAsync(caller.InstanceId, Base64UrlEncode(parameters.CredentialId), token).ConfigureAwait(false),
-            }, cancellationToken).ConfigureAwait(false);
+                    !await this.ExistsAsync(caller.InstanceId, Base64UrlEncode(parameters.CredentialId), token),
+            }, cancellationToken);
         }
         catch (Exception error) when (error is Fido2VerificationException or ArgumentException or InvalidOperationException or FormatException or JsonException)
         {
@@ -174,20 +174,20 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
             changes.Add(Credentials.Claim(user.InstanceId, signIn.Completion));
         }
 
-        if (!await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false))
+        if (!await data.SaveAsync(changes, cancellationToken))
         {
             return DeniedEnroll();
         }
 
-        await FactorEnrollmentNotice.SendAsync(email, user, cancellationToken).ConfigureAwait(false);
+        await FactorEnrollmentNotice.SendAsync(email, user, cancellationToken);
         return entry;
     }
 
     public async Task<(AssertionOptions Options, string Challenge)?> SignInOptionsAsync(string instanceId, string email, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(instanceId);
-        var user = await users.FindByEmailAsync(instanceId, email, cancellationToken).ConfigureAwait(false);
-        var entries = user is null ? [] : await this.ReadAsync(instanceId, user.Id, cancellationToken).ConfigureAwait(false);
+        var user = await users.FindByEmailAsync(instanceId, email, cancellationToken);
+        var entries = user is null ? [] : await this.ReadAsync(instanceId, user.Id, cancellationToken);
         var assertion = fido2.GetAssertionOptions(new GetAssertionOptionsParams
         {
             AllowedCredentials = [.. entries.Select(entry => new Fido2NetLib.Objects.PublicKeyCredentialDescriptor(Base64UrlDecode(entry.Value.CredentialId)))],
@@ -204,7 +204,7 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
         ArgumentException.ThrowIfNullOrEmpty(instanceId);
         ArgumentNullException.ThrowIfNull(response);
         var address = email.Trim();
-        if (await limiter.AcquireAsync(instanceId, "passkey-signin", Users.NormalizeEmail(address) ?? address, 10, AttemptWindow, cancellationToken).ConfigureAwait(false) is { } wait)
+        if (await limiter.AcquireAsync(instanceId, "passkey-signin", Users.NormalizeEmail(address) ?? address, 10, AttemptWindow, cancellationToken) is { } wait)
         {
             throw ApiException.RateLimited("Too many passkey sign-in attempts; retry after the Retry-After delay.", wait);
         }
@@ -218,10 +218,10 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
         var credentialId = Base64UrlEncode(response.RawId);
         var completion = Credentials.New(SignInChallengeKind, challenge.Id);
         if (challenge.UserId.Length == 0
-            || await credentials.IsClaimedAsync(instanceId, completion, cancellationToken).ConfigureAwait(false)
-            || await users.GetAsync(instanceId, challenge.UserId, cancellationToken).ConfigureAwait(false) is not { Disabled: false } user
+            || await credentials.IsClaimedAsync(instanceId, completion, cancellationToken)
+            || await users.GetAsync(instanceId, challenge.UserId, cancellationToken) is not { Disabled: false } user
             || user.AuthEpoch != challenge.AuthEpoch || user.AuthStamp != challenge.AuthStamp
-            || (await this.ReadAsync(instanceId, user.Id, cancellationToken).ConfigureAwait(false)).FirstOrDefault(item => item.Value.CredentialId == credentialId) is not { } entry)
+            || (await this.ReadAsync(instanceId, user.Id, cancellationToken)).FirstOrDefault(item => item.Value.CredentialId == credentialId) is not { } entry)
         {
             return null;
         }
@@ -238,7 +238,7 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
                 IsUserHandleOwnerOfCredentialIdCallback = (parameters, token) =>
                     Task.FromResult(Base64UrlEncode(parameters.CredentialId) == credentialId
                         && (parameters.UserHandle is not { Length: > 0 } handle || handle.SequenceEqual(Encoding.UTF8.GetBytes(user.Id)))),
-            }, cancellationToken).ConfigureAwait(false);
+            }, cancellationToken);
         }
         catch (Exception error) when (error is Fido2VerificationException or ArgumentException or InvalidOperationException or FormatException or JsonException)
         {
@@ -246,7 +246,7 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
         }
 
         var used = entry.Value with { SignCount = verified.SignCount, LastUsedAt = clock.GetUtcNow() };
-        return await data.SaveAsync([Change.Assert(user), Change.Update(entry, used), Credentials.Claim(user.InstanceId, completion)], cancellationToken).ConfigureAwait(false)
+        return await data.SaveAsync([Change.Assert(user), Change.Update(entry, used), Credentials.Claim(user.InstanceId, completion)], cancellationToken)
             ? user with { MultiFactor = true, MfaMethod = "passkey", AuthenticationBindings = [completion] }
             : null;
     }
@@ -254,7 +254,8 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
     internal static Forbidden DeniedEnroll() => new("The passkey registration failed verification; start again.", "passkey_denied");
 
     public async Task<bool> EnrolledAsync(string instanceId, string userId, CancellationToken cancellationToken = default) =>
-        await data.ReadAsync((db, token) => db.Passkeys.AnyAsync(entry => entry.InstanceId == instanceId && entry.UserId == userId, token), cancellationToken).ConfigureAwait(false);
+        await data.ReadAsync(connection => connection.ExecuteScalarAsync<bool>(
+            "SELECT EXISTS (SELECT 1 FROM passkeys WHERE instance_id = @instanceId AND user_id = @userId)", new { instanceId, userId }), cancellationToken);
 
     private PasskeySignInChallenge? OpenSignInChallenge(string instanceId, string? sealedChallenge)
     {
@@ -302,15 +303,16 @@ public sealed class PasskeyCredentials(AuthData data, Credentials credentials, U
 
 
     private async Task<UserRecord?> CurrentUserAsync(UserRecord caller, CancellationToken cancellationToken) =>
-        await users.GetAsync(caller.InstanceId, caller.Id, cancellationToken).ConfigureAwait(false) is { } current
+        await users.GetAsync(caller.InstanceId, caller.Id, cancellationToken) is { } current
             && current.AuthEpoch == caller.AuthEpoch && current.AuthStamp == caller.AuthStamp ? current : null;
 
     private async Task<IReadOnlyList<Versioned<PasskeyCredentialEntry>>> ReadAsync(string instanceId, string userId, CancellationToken cancellationToken) =>
-        await data.ReadAsync((db, token) => db.Passkeys.Where(entry => entry.InstanceId == instanceId && entry.UserId == userId)
-            .OrderBy(entry => entry.CreatedAt).ThenBy(entry => entry.CredentialId).WithVersion().ToListAsync(token), cancellationToken).ConfigureAwait(false);
+        Versioned.All(await data.ReadAsync(connection => connection.QueryAsync<PasskeyCredentialEntry>(
+            "SELECT * FROM passkeys WHERE instance_id = @instanceId AND user_id = @userId ORDER BY created_at, credential_id", new { instanceId, userId }), cancellationToken));
 
     private Task<bool> ExistsAsync(string instanceId, string credentialId, CancellationToken cancellationToken) =>
-        data.ReadAsync((db, token) => db.Passkeys.AnyAsync(entry => entry.InstanceId == instanceId && entry.CredentialId == credentialId, token), cancellationToken);
+        data.ReadAsync(connection => connection.ExecuteScalarAsync<bool>(
+            "SELECT EXISTS (SELECT 1 FROM passkeys WHERE instance_id = @instanceId AND credential_id = @credentialId)", new { instanceId, credentialId }), cancellationToken);
 
     public static string Base64UrlEncode(ReadOnlySpan<byte> bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 

@@ -134,7 +134,7 @@ pub struct SqlError {
     /// The zero-based index of the failing statement.
     pub statement: usize,
     /// The PostgreSQL SQLSTATE of `code`, such as `23505`.
-    #[serde(default)]
+    #[serde(default, alias = "sqlState")]
     pub sqlstate: Option<String>,
 }
 
@@ -142,13 +142,33 @@ impl SqlError {
     /// True when sending the same request again can succeed.
     #[must_use]
     pub fn is_transient(&self) -> bool {
-        matches!(
-            self.code.as_str(),
-            crate::v1::sql_error_codes::SERIALIZATION_CONFLICT
-                | crate::v1::sql_error_codes::TENANT_BUSY
-        )
+        self.is_serialization_conflict()
+            || self.is_schema_mismatch()
+            || self.code == crate::v1::sql_error_codes::TENANT_BUSY
+    }
+
+    /// True when the transaction lost a race with a concurrent one (or with a
+    /// schema change) and was rolled back; resending it can succeed.
+    #[must_use]
+    pub fn is_serialization_conflict(&self) -> bool {
+        self.code == crate::v1::sql_error_codes::SERIALIZATION_CONFLICT
+            || self.code == crate::v1::sql_error_codes::STRONG_REQUIRED
+            || self.sqlstate.as_deref() == Some(SERIALIZATION_FAILURE_SQLSTATE)
+            || self.is_schema_mismatch()
+    }
+
+    /// True when the schema changed while the statement ran, so it was
+    /// rolled back; resending it can succeed.
+    #[must_use]
+    pub fn is_schema_mismatch(&self) -> bool {
+        self.code == crate::v1::sql_error_codes::SCHEMA_MISMATCH
+            || (self.code == crate::v1::sql_error_codes::SERIALIZATION_CONFLICT
+                && self.message.contains("schema changed"))
     }
 }
+
+/// The SQLSTATE of a serialization failure.
+const SERIALIZATION_FAILURE_SQLSTATE: &str = "40001";
 
 impl std::fmt::Display for SqlError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -243,6 +263,26 @@ impl Error {
             Self::Sql { error, .. } => Some(error),
             _ => None,
         }
+    }
+
+    /// True for a SQL transaction rolled back by a concurrent conflicting
+    /// transaction or schema change (`409 serialization_conflict`, SQLSTATE
+    /// 40001). Nothing was applied; the same request may be resent.
+    #[must_use]
+    pub fn is_serialization_conflict(&self) -> bool {
+        self.sql().is_some_and(SqlError::is_serialization_conflict)
+            || self.code().is_some_and(|code| {
+                code == crate::v1::sql_error_codes::SERIALIZATION_CONFLICT
+                    || code == crate::v1::sql_error_codes::SCHEMA_MISMATCH
+            })
+    }
+
+    /// True for a SQL statement rolled back because the schema changed while
+    /// it ran (`schema_mismatch`). Nothing was applied; resend it.
+    #[must_use]
+    pub fn is_schema_mismatch(&self) -> bool {
+        self.sql().is_some_and(SqlError::is_schema_mismatch)
+            || self.code() == Some(crate::v1::sql_error_codes::SCHEMA_MISMATCH)
     }
 
     /// True for `404 not_found`.

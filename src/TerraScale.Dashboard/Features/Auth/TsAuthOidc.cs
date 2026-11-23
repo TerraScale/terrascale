@@ -9,7 +9,6 @@ namespace TerraScale.Dashboard.Features.Auth
 {
     public sealed partial class TsAuthGateway
     {
-        // ts-auth answers prompt=login with login_required, so no prompt is sent; sign-out ends its session instead.
         public async Task<string> AuthorizationUrlAsync(OidcFlow flow, CancellationToken cancellationToken)
         {
             var credentials = await identity.ReadAsync(cancellationToken);
@@ -60,7 +59,6 @@ namespace TerraScale.Dashboard.Features.Auth
             var client = Client();
             var metadataRead = MetadataAsync(client, cancellationToken);
             var keysRead = SigningKeysAsync(client, cancellationToken);
-            // Observe speculative failures even when refresh fails or returns no ID token.
             _ = ObservePublicReadsAsync(metadataRead, keysRead);
             TsAuthTokenResponse tokens;
             try
@@ -80,8 +78,6 @@ namespace TerraScale.Dashboard.Features.Auth
 
             var userRead = SessionUserInfoAsync(client, session with { AccessToken = tokens.AccessToken }, cancellationToken);
             _ = ObservePublicReadsAsync(userRead);
-            // OIDC allows refresh answers without an ID token. A new ID token must
-            // still prove the original subject, and userinfo remains mandatory.
             if (tokens.IdToken is { Length: > 0 })
             {
                 var metadata = await metadataRead;
@@ -116,7 +112,6 @@ namespace TerraScale.Dashboard.Features.Auth
             await Task.WhenAll(reads).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         }
 
-        // ts-auth ends its own session, shows its hosted "Signed out" page, then continues to the dashboard's /login.
         public async Task<string> EndSessionUrlAsync(string dashboardOrigin, string? idToken, CancellationToken cancellationToken)
         {
             if (!Uri.TryCreate(dashboardOrigin, UriKind.Absolute, out var dashboard) || dashboard.UserInfo.Length != 0 ||
@@ -163,8 +158,6 @@ namespace TerraScale.Dashboard.Features.Auth
             var claims = AuthIdToken.Validate(tokens.IdToken, metadata.Issuer, credentials.AuthClientId, nonce, keys, time.GetUtcNow());
             var session = new SessionRecord(claims.Subject, claims.Name, claims.Email, tokens.AccessToken, tokens.RefreshToken, AccessTokenExpiry(tokens.AccessToken, issuer, keys))
             { IdToken = tokens.IdToken, OrganizationPicker = claims.OrganizationPicker };
-            // The session's own userinfo read, so the activity check below reuses this answer instead of a second
-            // sequential ts-auth round trip on every sign-in.
             var user = await SessionUserInfoAsync(client, session, cancellationToken);
             if (user.Subject != claims.Subject || user.EmailVerified != true || user.Email?.Trim().ToLowerInvariant() != claims.Email)
             {
@@ -189,7 +182,7 @@ namespace TerraScale.Dashboard.Features.Auth
         private static string TrustedIssuer(string issuer)
         {
             var expected = new Uri(TsAuthOrigin.Value, "/" + Tenant);
-            if (!Uri.TryCreate(issuer, UriKind.Absolute, out var uri) || uri.Scheme != "https" || !uri.IsDefaultPort ||
+            if (!Uri.TryCreate(issuer, UriKind.Absolute, out var uri) || !SameOrigin(uri) ||
                 uri.UserInfo.Length != 0 || uri.Query.Length != 0 || uri.Fragment.Length != 0 ||
                 uri.AbsoluteUri != expected.AbsoluteUri)
             {
@@ -199,11 +192,14 @@ namespace TerraScale.Dashboard.Features.Auth
             return uri.AbsoluteUri;
         }
 
+        private static bool SameOrigin(Uri uri) =>
+            uri.Scheme == TsAuthOrigin.Value.Scheme && uri.Port == TsAuthOrigin.Value.Port
+            && string.Equals(uri.Host, TsAuthOrigin.Value.Host, StringComparison.OrdinalIgnoreCase);
+
         private static string TrustedEndpoint(string endpoint)
         {
-            if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) || uri.Scheme != "https" || !uri.IsDefaultPort ||
+            if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) || !SameOrigin(uri) ||
                 uri.UserInfo.Length != 0 || uri.Query.Length != 0 || uri.Fragment.Length != 0 ||
-                uri.Host != TsAuthOrigin.Value.Host ||
                 (uri.AbsolutePath != "/" + Tenant && !uri.AbsolutePath.StartsWith("/" + Tenant + "/", StringComparison.Ordinal)))
             {
                 throw new HttpRequestException("ts-auth published an invalid OIDC endpoint.");

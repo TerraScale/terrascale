@@ -42,6 +42,6 @@ public static class LiveDatabaseView
         }
 
         await live.StreamAsync(http, ReadAsync, hints ?? live.ChangesAsync(cancellationToken), cancellationToken);
-        return Results.Empty;
+        return TypedResults.Empty;
     }
 }

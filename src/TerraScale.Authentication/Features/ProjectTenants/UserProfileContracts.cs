@@ -43,6 +43,7 @@ public sealed record SelfProfilePatch
     public JsonElement LastName { get; init; }
     public JsonElement UnsafeMetadata { get; init; }
 }
+
 public sealed record SelfProfileBody(string Id, string Email, string? FirstName, string? LastName, string? ImageUrl,
     JsonElement PublicMetadata, JsonElement UnsafeMetadata)
 {

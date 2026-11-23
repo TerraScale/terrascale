@@ -25,7 +25,10 @@ SELECT id, name FROM people ORDER BY id;
 .run
 ```
 
+`ts shell <db> -consistency strong` runs every statement of the session in
+strong mode; `-bookmark <bookmark>` makes the first statement wait until the
+region you reach has applied an earlier write. With `-json`, each result record
+carries the session's newest `bookmark`. See [consistency and bookmarks](/cli#consistency-and-bookmarks).
+
 For one-shot statements, use [`ts sql <db> <statement>`](/cli); for the SQL
 model, transactions and limits, see the [SQL overview](/concepts/sql).
-
-A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

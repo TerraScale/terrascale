@@ -1,4 +1,3 @@
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Billing
@@ -7,7 +6,7 @@ namespace TerraScale.Dashboard.Features.Billing
     public sealed record SpendingProject(string Id, string Name, string Region, IReadOnlyList<SpendingDatabase> Databases);
     public sealed record SpendingSnapshot(string OrganizationId, long OrganizationCapCents, IReadOnlyList<SpendingProject> Projects);
 
-    public sealed class SpendingService(AccountService accounts, TimeProvider time, IDbContextFactory<DashboardDbContext> storage)
+    public sealed class SpendingService(AccountService accounts, TimeProvider time, DashboardDb storage)
     {
         public async Task<SpendingSnapshot> ReadAsync(AccountContext context, CancellationToken cancellationToken, bool requireProject = false)
         {

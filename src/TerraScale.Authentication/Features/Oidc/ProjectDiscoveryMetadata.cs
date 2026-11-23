@@ -7,10 +7,8 @@ using static OpenIddict.Server.OpenIddictServerEvents;
 
 namespace TerraScale.Authentication.Features.Oidc;
 
-/// <summary>Limits project discovery to the grants, scopes and endpoints served by project tenants.</summary>
 public sealed class ProjectDiscoveryMetadata : IOpenIddictServerHandler<HandleConfigurationRequestContext>
 {
-    /// <inheritdoc />
     public ValueTask HandleAsync(HandleConfigurationRequestContext context)
     {
         ArgumentNullException.ThrowIfNull(context);

@@ -13,13 +13,13 @@ namespace TerraScale.Dashboard.Features.Backups
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "backups"), Results.BadRequest("Invalid form token."));
+                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "backups"), TypedResults.BadRequest("Invalid form token."));
             }
 
             var databaseId = form["databaseId"].ToString();
@@ -34,7 +34,7 @@ namespace TerraScale.Dashboard.Features.Backups
                         return await PatchBackupsAsync(http, page);
                     }
 
-                    return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "backups")) : Results.NoContent();
+                    return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "backups")) : TypedResults.NoContent();
                 }
                 if (action == "policy")
                 {
@@ -58,7 +58,7 @@ namespace TerraScale.Dashboard.Features.Backups
                         return await PatchBackupsAsync(http, page);
                     }
 
-                    return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "backups")) : Results.Json(policy);
+                    return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "backups")) : TypedResults.Json(policy);
                 }
                 if (action is "destination" or "destination-remove")
                 {
@@ -75,7 +75,7 @@ namespace TerraScale.Dashboard.Features.Backups
                         return await PatchBackupsAsync(http, page);
                     }
 
-                    return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "backups")) : answer is null ? Results.NoContent() : Results.Json(answer);
+                    return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "backups")) : answer is null ? TypedResults.NoContent() : TypedResults.Json(answer);
                 }
                 if (form["replace"] == "1")
                 {
@@ -84,7 +84,7 @@ namespace TerraScale.Dashboard.Features.Backups
 
                 var started = await backups.StartRestoreAsync(context, databaseId, form["backupId"].ToString(), form["name"].ToString(), http.RequestAborted);
                 return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "backups") + "?restore=" + started.OperationId) :
-                    Results.Json(new { operationId = started.OperationId, status = started.Status }, statusCode: 202);
+                    TypedResults.Json(new { operationId = started.OperationId, status = started.Status }, statusCode: 202);
             }
             catch (Exception error) when (KnownFailure(error) &&
                 (error is not OperationCanceledException || !http.RequestAborted.IsCancellationRequested))
@@ -101,7 +101,7 @@ namespace TerraScale.Dashboard.Features.Backups
         private static async Task<IResult> PatchBackupsAsync(HttpContext http, BackupPage page)
         {
             await DatastarEvents.PatchElementsAsync(http, BackupSection.Create(page));
-            return Results.Empty;
+            return TypedResults.Empty;
         }
 
         internal static async Task<BackupPage> PageAsync(HttpContext http, AccountContext context, DatabaseRecord database, string error, bool export = false)
@@ -197,7 +197,7 @@ namespace TerraScale.Dashboard.Features.Backups
 
         internal static IResult FailureResult(Exception error)
         {
-            return Results.Problem(Message(error), statusCode: DatabaseResults.Status(error));
+            return TypedResults.Problem(Message(error), statusCode: DatabaseResults.Status(error));
         }
     }
 }

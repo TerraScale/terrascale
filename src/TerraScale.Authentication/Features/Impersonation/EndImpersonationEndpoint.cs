@@ -19,6 +19,6 @@ public sealed class EndImpersonationEndpoint(TenantDirectory tenants, PlatformAu
         _ = caller.RequirePerson();
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         await impersonations.EndAsync(project, this.RouteId("impersonation"), caller.Id, "manual", cancellationToken);
-        return Results.NoContent();
+        return TypedResults.NoContent();
     }
 }

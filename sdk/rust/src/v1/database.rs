@@ -6,18 +6,86 @@ use serde::{Deserialize, Serialize};
 
 use super::client::{Client, Req};
 use super::errors::{Error, Result};
-use super::ids::check_name;
+use super::ids::{check_database_selector, check_name};
+use crate::consistency::{is_valid_bookmark, BookmarkTracker, ConsistencyMode};
 
 /// A handle to one database by current name or immutable ULID. Performs no I/O.
+///
+/// Every region of the database is an equal active-active peer. Handles from
+/// one [`Client`] for the same selector share a causal bookmark: each SQL
+/// answer over HTTP or the WebSocket advances it and later SQL requests send
+/// it as `TerraScale-Bookmark`, so any region reads this client's writes.
 #[derive(Debug, Clone)]
 pub struct Database {
     client: Client,
     name: String,
+    bookmark: BookmarkTracker,
+    consistency: Option<ConsistencyMode>,
 }
 
 impl Database {
     pub(crate) fn new(client: Client, name: String) -> Self {
-        Self { client, name }
+        let bookmark = client.bookmark_tracker(&name);
+        let consistency = client.consistency();
+        Self {
+            client,
+            name,
+            bookmark,
+            consistency,
+        }
+    }
+
+    /// A copy of this handle whose SQL defaults to `mode`.
+    #[must_use]
+    pub fn with_consistency(mut self, mode: ConsistencyMode) -> Self {
+        self.consistency = Some(mode);
+        self
+    }
+
+    /// The consistency mode this handle requests, when one is set; otherwise
+    /// the database's configured default applies.
+    #[must_use]
+    pub fn consistency(&self) -> Option<ConsistencyMode> {
+        self.consistency
+    }
+
+    /// The newest causal bookmark observed on this database.
+    #[must_use]
+    pub fn bookmark(&self) -> Option<String> {
+        self.bookmark.get()
+    }
+
+    /// Merges a bookmark obtained elsewhere, for example from another client
+    /// or a function invocation, so later SQL reads observe those writes.
+    pub fn observe_bookmark(&self, bookmark: &str) -> Result<()> {
+        check_bookmark(bookmark)?;
+        self.bookmark.observe(bookmark);
+        Ok(())
+    }
+
+    /// Forgets this database's causal bookmark.
+    pub fn clear_bookmark(&self) {
+        self.bookmark.clear();
+    }
+
+    pub(crate) fn bookmark_tracker(&self) -> &BookmarkTracker {
+        &self.bookmark
+    }
+
+    /// Sets the database's default consistency for requests that send none
+    /// (`PATCH P/databases/{database}`). Requires `databases:write`.
+    pub async fn set_default_consistency(
+        &self,
+        mode: ConsistencyMode,
+    ) -> Result<ProjectDatabaseInfo> {
+        check_database_selector(&self.name)?;
+        self.client
+            .send_project(
+                Req::new(Method::PATCH, vec!["v1", "databases", &self.name])
+                    .json(&serde_json::json!({"defaultConsistency": mode}))?,
+            )
+            .await?
+            .decode_status(&[StatusCode::OK])
     }
 
     /// The selector used to construct this handle.
@@ -63,7 +131,20 @@ impl Database {
     }
 }
 
-/// Lifecycle metadata, including the answering region, complete region set and placement epoch.
+/// Validates a caller-supplied causal bookmark.
+pub(crate) fn check_bookmark(bookmark: &str) -> Result<()> {
+    if is_valid_bookmark(bookmark.trim()) {
+        Ok(())
+    } else {
+        Err(Error::InvalidInput(
+            "bookmark must be one TerraScale-Bookmark returned by TerraScale".into(),
+        ))
+    }
+}
+
+/// Lifecycle metadata: the answering region, the complete set of equal
+/// active-active peer regions, the placement epoch and the default
+/// consistency mode.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectDatabaseInfo {
@@ -92,4 +173,7 @@ pub struct ProjectDatabaseInfo {
     #[serde(default)]
     pub all_regions: bool,
     pub placement_version: i64,
+    /// The consistency mode SQL uses when a request names none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_consistency: Option<ConsistencyMode>,
 }

@@ -1,24 +1,22 @@
+using Dapper;
+using System.Data;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.Dashboard.Platform.Rpc;
-using TerraScale.TerraBase.Contracts;
+using TerraScale.Dashboard.Platform.Clients;
 using TerraScale.Dashboard.Platform.TsAuth;
 
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing;
 namespace TerraScale.Dashboard.Common.Accounts
 {
-    // ts-auth decides which organizations and projects exist and the caller's role
-    // in them. The dashboard stores only its own state for those IDs.
-    public sealed class AccountService(IDbContextFactory<DashboardDbContext> storage, AccountStore accountStore, OrganizationStore organizationStore, TimeProvider time, ITsAuthPlatform platform, IPlatformRoleGateway roles, TerraBaseRpcClient rpc, TerraBasePlanSync plans,
+    public sealed class AccountService(DashboardDb storage, AccountStore accountStore, OrganizationStore organizationStore, TimeProvider time, ITsAuthPlatform platform, IPlatformRoleGateway roles, ControlPlaneClient control, TerraBasePlanSync plans,
         IHttpContextAccessor requests, ILogger<AccountService> logger)
     {
         private const string PersonalName = "Personal";
-        private static readonly TerraScaleIdGenerator Ids = new();
+        private static readonly TerraScaleIdGenerator Ids = new(TimeProvider.System);
 
         public static string AccountStorageKey(string subject)
         {
@@ -42,7 +40,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                 {
                     var created = new AccountRecord { Id = NewId(), UserId = session.UserId, Name = session.Name, Email = session.Email, CreatedAt = now, PersonalClaimUntil = now.AddMinutes(1) };
                     try { await accountStore.CreateAsync(created, cancellationToken); }
-                    catch (DbUpdateConcurrencyException) { continue; }
+                    catch (DBConcurrencyException) { continue; }
                 }
                 else
                 {
@@ -54,7 +52,6 @@ namespace TerraScale.Dashboard.Common.Accounts
                     var account = stored.Account;
                     if (account.PersonalOrganizationId.Length != 0)
                     {
-                        // ts-auth owns the sign-in email; a changed address replaces the stored copy at the next sign-in.
                         if (session.Email.Length == 0 || account.Email == session.Email)
                         {
                             return account;
@@ -66,7 +63,6 @@ namespace TerraScale.Dashboard.Common.Accounts
                     }
                     if (account.PersonalClaimUntil > now)
                     {
-                        // Another replica is creating this account's Personal organization.
                         if (waited.Elapsed > TimeSpan.FromSeconds(20))
                         {
                             throw new TimeoutException("Workspace setup is still in progress.");
@@ -77,13 +73,12 @@ namespace TerraScale.Dashboard.Common.Accounts
                     }
                     account.PersonalClaimUntil = now.AddMinutes(1);
                     try { await accountStore.ReplaceAsync(stored, cancellationToken); }
-                    catch (DbUpdateConcurrencyException) { continue; }
+                    catch (DBConcurrencyException) { continue; }
                 }
                 OrganizationRecord personal;
                 try { personal = await CreatePersonalAsync(session, cancellationToken); }
                 catch
                 {
-                    // Release the claim so a retry resumes now; CreatePersonalAsync adopts whatever was created.
                     using var release = new CancellationTokenSource(TimeSpan.FromSeconds(5));
                     try { await UpdateAccountAsync(session, current => { if (current.PersonalOrganizationId.Length == 0) { current.PersonalClaimUntil = null; } }, release.Token); }
                     catch (Exception error) when (error is HttpRequestException or IOException or TimeoutException or OperationCanceledException) { }
@@ -119,8 +114,6 @@ namespace TerraScale.Dashboard.Common.Accounts
             }
         }
 
-        // Runs only under this account's claim. A lapsed claim means a replica
-        // stopped part-way: adopt what it created instead of creating a second one.
         private async Task<OrganizationRecord> CreatePersonalAsync(SessionRecord session, CancellationToken cancellationToken)
         {
             var live = (await platform.ListOrganizationsAsync(session, cancellationToken))
@@ -140,7 +133,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                 Projects = new() { [project.Id] = new() { Id = project.Id, OrganizationId = live.Id, Name = project.Name, Slug = Slug(project.Name), IsDefault = true, CreatedAt = project.CreatedAt } }
             };
             try { await organizationStore.CreateAsync(org, cancellationToken); }
-            catch (DbUpdateConcurrencyException)
+            catch (DBConcurrencyException)
             {
                 var stored = await organizationStore.FindAsync(org.Id, cancellationToken);
                 if (stored is not { Erased: false })
@@ -149,7 +142,6 @@ namespace TerraScale.Dashboard.Common.Accounts
                 }
 
                 org = stored.Organization;
-                // ts-auth's live list proved the caller owns it; the stored settings only confirm the Personal kind.
                 if (org.Id != live.Id || org.Kind != "personal")
                 {
                     throw new AccountAccessException("Personal organization identity does not match.");
@@ -193,17 +185,12 @@ namespace TerraScale.Dashboard.Common.Accounts
             string? organizationId = null, string? projectId = null)
         {
             var loadedAt = ServerTiming.Now();
-            // The account and ts-auth's organization list load together; a Personal organization this call just
-            // created is listed again below, so the parallel list never hides it.
             var listing = platform.ListOrganizationsAsync(session, cancellationToken);
             var listed = SnapshotAsync(listing);
             var account = await EnsureAsync(session, cancellationToken);
-            // The organization this view selects also needs its members and ownership transfer; they load with its projects.
             var accessFor = organizationId ?? (projectId is null ? account.ActiveOrganizationId : null);
-            // Prefetch projects only: the organization list must prove an organization role before access reads start.
             var early = accessFor is { Length: > 0 } && TerraScaleIds.IsValid(accessFor)
                 ? Deferred(() => platform.ListProjectsAsync(session, accessFor, cancellationToken)) : null;
-            // A refusal for an organization the list then leaves out is only ever a discarded task, never this call's failure.
             static async Task<T> Deferred<T>(Func<Task<T>> read)
             {
                 return await read();
@@ -223,12 +210,13 @@ namespace TerraScale.Dashboard.Common.Accounts
                 return (found, organizationStore.ReadManyAsync([.. found.Where(live => TerraScaleIds.IsValid(live.Id)).Select(live => live.Id)], cancellationToken));
             }
 
-            await using var db = await storage.CreateDbContextAsync(cancellationToken);
             PendingOrganizationCheckout? creating = null;
             if (lives.Any(live => live.CreatedBy == session.UserId && !records.ContainsKey(live.Id)))
             {
-                creating = await db.PendingOrganizationCheckouts.AsNoTracking().SingleOrDefaultAsync(
-                    row => row.UserId == session.UserId && row.State == OrganizationCheckoutStates.Creating, cancellationToken);
+                await using var connection = await storage.OpenAsync(cancellationToken);
+                creating = await connection.QuerySingleOrDefaultAsync<PendingOrganizationCheckout>(
+                    DashboardSql.PendingOrganizationCheckouts.Select + " WHERE user_id = @UserId AND state = @Creating",
+                    new { session.UserId, OrganizationCheckoutStates.Creating });
             }
             var prefetched = new System.Collections.Concurrent.ConcurrentDictionary<string, OrganizationAccess>(StringComparer.Ordinal);
             async Task HydrateSelectedAsync(OrganizationRecord org)
@@ -240,7 +228,6 @@ namespace TerraScale.Dashboard.Common.Accounts
             }
             var loaded = await Task.WhenAll(lives.Where(live => TerraScaleIds.IsValid(live.Id) && (live.Role is null or "owner" or "admin" or "member" or "viewer")).Select(async live =>
             {
-                // Only a platform admin, checked against the signed access token on every request, sees the platform organization.
                 var platformOrg = PlatformDatabases.IsPlatform(live.Id);
                 if (platformOrg && await roles.PlatformRoleAsync(session, cancellationToken) != "admin")
                 {
@@ -257,8 +244,6 @@ namespace TerraScale.Dashboard.Common.Accounts
                 Task<IReadOnlyList<TsAuthPlatformProject>>? projects = live.Id == accessFor
                     ? early is not null ? early : platform.ListProjectsAsync(session, live.Id, cancellationToken)
                     : projectId is not null || collaborator ? platform.ListProjectsAsync(session, live.Id, cancellationToken) : null;
-                // ts-auth refuses an organization that requires two-factor to a caller without it; the
-                // organization stays listed, keeps its stored projects and is blocked when selected.
                 IReadOnlyList<TsAuthPlatformProject>? listed = null;
                 try { listed = projects is null ? null : await projects; }
                 catch (AccountAccessException error) when (error.Code == TsAuthGateway.MfaRequiredCode) { org.MfaRequired = true; }
@@ -269,7 +254,6 @@ namespace TerraScale.Dashboard.Common.Accounts
                     {
                         return null;
                     }
-                    // Request-only container: no organization settings, identities, billing or audit authority escape.
                     return new OrganizationRecord
                     {
                         Id = org.Id,
@@ -286,8 +270,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                 await plans.PublishAsync(org, cancellationToken);
                 if (platformOrg)
                 {
-                    try { await PlatformDatabases.HydrateAsync(org, rpc, session, cancellationToken); }
-                    // Listed without databases while TerraBase does not answer; never cached.
+                    try { await PlatformDatabases.HydrateAsync(org, control, session, cancellationToken); }
                     catch (Exception error) when (error is HttpRequestException or AccountAccessException or JsonException or KeyNotFoundException or InvalidOperationException) { }
                 }
                 if (!org.ContainsMember(session.UserId))
@@ -298,7 +281,6 @@ namespace TerraScale.Dashboard.Common.Accounts
                 if (access is not null)
                 {
                     try { prefetched[org.Id] = await access; }
-                    // ts-auth refuses the blocked organization's members too; nothing of it is shown.
                     catch (AccountAccessException) when (org.MfaRequired) { }
                 }
                 return org;
@@ -380,14 +362,13 @@ namespace TerraScale.Dashboard.Common.Accounts
                 await organizationStore.CreateAsync(created, cancellationToken);
                 return created;
             }
-            catch (DbUpdateConcurrencyException)
+            catch (DBConcurrencyException)
             {
                 var stored = await organizationStore.FindAsync(live.Id, cancellationToken) ?? throw new IOException("Organization state did not persist.");
                 return stored.Erased ? throw new AccountAccessException("Organization is unavailable.", 404) : stored.Organization;
             }
         }
 
-        // ts-auth's name, the caller's role and the project list replace the stored projection in this view.
         private static void Hydrate(OrganizationRecord org, TsAuthPlatformOrganization live, IReadOnlyList<TsAuthPlatformProject>? projects, SessionRecord session)
         {
             org.Name = live.Name;
@@ -451,8 +432,6 @@ namespace TerraScale.Dashboard.Common.Accounts
             };
         }
 
-        // Members, the owner and a pending ownership transfer as ts-auth holds them now. Stored
-        // member entries contribute only display names; they never decide membership.
         public async Task HydrateAccessAsync(OrganizationRecord org, SessionRecord session, CancellationToken cancellationToken)
         {
             ApplyAccess(org, session, await FetchAccessAsync(session, org.Id, cancellationToken));
@@ -460,7 +439,6 @@ namespace TerraScale.Dashboard.Common.Accounts
 
         private sealed record OrganizationAccess(IReadOnlyList<TsAuthPlatformMember> Members, TsAuthPlatformOwnershipTransfer? Transfer);
 
-        // The two ts-auth reads are independent, so they run together.
         private async Task<OrganizationAccess> FetchAccessAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
         {
             var members = platform.ListMembersAsync(session, organizationId, cancellationToken);
@@ -487,7 +465,6 @@ namespace TerraScale.Dashboard.Common.Accounts
             org.PendingOwnerExpiresAt = access.Transfer?.ExpiresAt;
         }
 
-        // The caller's live ts-auth role decides; a demoted owner stops being this view's owner.
         private static void Member(OrganizationRecord org, SessionRecord session, string role)
         {
             var member = org.Members.GetValueOrDefault(session.UserId) ?? new MemberRecord { UserId = session.UserId, Name = session.Name, Email = session.Email };
@@ -534,7 +511,7 @@ namespace TerraScale.Dashboard.Common.Accounts
                     await accountStore.ReplaceAsync(stored, cancellationToken);
                     return account;
                 }
-                catch (DbUpdateConcurrencyException) when (attempt < 3) { }
+                catch (DBConcurrencyException) when (attempt < 3) { }
             }
         }
 
@@ -543,15 +520,11 @@ namespace TerraScale.Dashboard.Common.Accounts
             return UpdateOrganizationAsync(context, org => { update(org); return Task.CompletedTask; }, cancellationToken);
         }
 
-        // The update runs once per compare-and-set attempt, after the stored row and ts-auth's
-        // identity are read, so ts-auth state it reads itself is never older than the row it decides on.
         public async Task UpdateOrganizationAsync(AccountContext context, Func<OrganizationRecord, Task> update, CancellationToken cancellationToken)
         {
             var id = context.Organization?.Id ?? throw new AccountAccessException("Select an organization.");
             for (var attempt = 0; attempt < 4; attempt++)
             {
-                // Every attempt validates against ts-auth's current organization, projects and members; the stored
-                // row contributes only dashboard settings, and its identity copies are refreshed on write.
                 var live = (await platform.ListOrganizationsAsync(context.Session, cancellationToken)).FirstOrDefault(org => org.Id == id);
                 if (live?.Role is not { Length: > 0 })
                 {
@@ -599,20 +572,17 @@ namespace TerraScale.Dashboard.Common.Accounts
                     await organizationStore.ReplaceAsync(stored, cancellationToken);
                     return;
                 }
-                catch (DbUpdateConcurrencyException) when (attempt < 3) { }
+                catch (DBConcurrencyException) when (attempt < 3) { }
             }
         }
 
         public DateTimeOffset Now => time.GetUtcNow();
-        // The client address of this request, as the forwarded-headers middleware resolved it from the loopback edge.
         public string? ClientIp => requests.HttpContext?.Connection.RemoteIpAddress is { } ip ? (ip.IsIPv4MappedToIPv6 ? ip.MapToIPv4() : ip).ToString() : null;
 
-        // Records audit events of a change its provider already committed: a failed record is logged and never fails that change.
         public async Task RecordAsync(AccountContext context, Action<OrganizationRecord> record, CancellationToken cancellationToken)
         {
             try { await UpdateOrganizationAsync(context, record, cancellationToken); }
-            // A store timeout surfaces as cancellation; only the caller's own abort may skip the committed change's answer.
-            catch (Exception error) when (error is AccountAccessException or DbUpdateConcurrencyException or IOException or HttpRequestException or JsonException or TerraBaseException or TimeoutException ||
+            catch (Exception error) when (error is AccountAccessException or DBConcurrencyException or IOException or HttpRequestException or JsonException or TerraBaseException or TimeoutException ||
                 error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
             { logger.AuditEventWasNotRecorded(error.GetType().Name); }
         }
@@ -690,8 +660,9 @@ namespace TerraScale.Dashboard.Common.Accounts
             var live = await platform.CreateOrganizationAsync(session, draft.Name, draft.CheckoutId, cancellationToken);
             for (var attempt = 0; attempt < 3; attempt++)
             {
-                await using var db = await storage.CreateDbContextAsync(cancellationToken);
-                var current = await db.PendingOrganizationCheckouts.SingleOrDefaultAsync(row => row.DraftId == draft.DraftId, cancellationToken);
+                await using var connection = await storage.OpenAsync(cancellationToken);
+                var current = await connection.QuerySingleOrDefaultAsync<PendingOrganizationCheckout>(
+                    DashboardSql.PendingOrganizationCheckouts.Select + " WHERE draft_id = @DraftId", new { draft.DraftId });
                 if (current is null)
                 {
                     return live;
@@ -706,13 +677,13 @@ namespace TerraScale.Dashboard.Common.Accounts
                     return live;
                 }
                 current.OrganizationId = live.Id;
+                current.OriginalVersion = current.Version;
                 current.Version = NewId();
-                try
+                if (await connection.ExecuteAsync(DashboardSql.PendingOrganizationCheckouts.Update, current) == 1)
                 {
-                    await db.SaveChangesAsync(cancellationToken);
                     return live;
                 }
-                catch (DbUpdateConcurrencyException)
+
                 {
                     if (attempt == 2)
                     {

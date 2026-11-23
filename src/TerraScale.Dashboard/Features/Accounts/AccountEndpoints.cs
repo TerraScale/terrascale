@@ -16,18 +16,18 @@ namespace TerraScale.Dashboard.Features.Accounts
             var session = await sessions.ReadAsync(http);
             if (session is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, "/", Results.BadRequest("Invalid form token."));
+                return RequestError.FormExpired(http, "/", TypedResults.BadRequest("Invalid form token."));
             }
 
             AccountContext selected;
             try { selected = await select(session, form[field].ToString(), http.RequestAborted); }
-            catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
+            catch (AccountAccessException error) { return TypedResults.Problem(error.Message, statusCode: error.StatusCode); }
             return HttpRedirects.SeeOther(SwitchReturnPath(form["returnUrl"].ToString(), selected));
         }
 

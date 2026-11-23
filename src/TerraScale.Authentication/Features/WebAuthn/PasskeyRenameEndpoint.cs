@@ -30,9 +30,9 @@ public sealed class PasskeyRenameEndpoint(PasskeyCredentials passkeys, PlatformA
             return ErrorResults.ToResult(new NotFound("No passkey with this id is enrolled for the account.", "passkey_not_found"));
         }
 
-        return await passkeys.RenameAsync(caller, id, body.Name, cancellationToken).ConfigureAwait(false) switch
+        return await passkeys.RenameAsync(caller, id, body.Name, cancellationToken) switch
         {
-            PasskeyCredentialEntry entry => Results.Json(new PasskeyItemBody(entry.CredentialId, entry.Name, entry.Aaguid, entry.CreatedAt, entry.LastUsedAt),
+            PasskeyCredentialEntry entry => TypedResults.Json(new PasskeyItemBody(entry.CredentialId, entry.Name, entry.Aaguid, entry.CreatedAt, entry.LastUsedAt),
                 WebAuthnJson.Default.PasskeyItemBody),
             Forbidden error => ErrorResults.ToResult(error),
             NotFound error => ErrorResults.ToResult(error),

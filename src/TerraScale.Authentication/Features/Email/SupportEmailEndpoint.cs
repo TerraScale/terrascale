@@ -1,3 +1,4 @@
+using Dapper;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -12,7 +13,6 @@ using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Hosting;
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Storage;
 using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
@@ -20,34 +20,21 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.Email;
 
-/// <summary>A customer support request sent from the dashboard on behalf of a signed-in user.</summary>
-/// <param name="RequestId">Caller-generated id; a repeat with the same id never sends twice.</param>
-/// <param name="UserId">The signed-in user; ts-auth resolves the reply address itself.</param>
-/// <param name="OrganizationId">An organization the user belongs to.</param>
-/// <param name="ProjectId">Optional project in that organization the user can access.</param>
-/// <param name="DatabaseId">Optional database id, checked by the dashboard against the project.</param>
-/// <param name="Plan">free, starter, pro, team or enterprise; selects the stated response target.</param>
-/// <param name="Severity">low, normal, high or urgent.</param>
-/// <param name="Subject">One line, at most 150 characters.</param>
-/// <param name="Message">At most 8000 characters.</param>
 public sealed record EmailSupportRequest(string RequestId, string UserId, string OrganizationId, string? ProjectId, string? DatabaseId,
     string Plan, string Severity, string Subject, string Message);
 
-/// <summary>Delivery state of the support message; never an address.</summary>
-/// <param name="Status">accepted, retryable, unknown or rejected.</param>
-/// <param name="AcknowledgementStatus">Independent acknowledgement outcome, when reserved: accepted, retryable, unknown or rejected.</param>
 public sealed record EmailSupportResponse(string Status,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? AcknowledgementStatus = null);
 
-public sealed record SupportEmailDelivery(string InstanceId, string RequestId, string UserId, string Status, string? AcknowledgementStatus = null);
+public sealed record SupportEmailDelivery(string InstanceId, string RequestId, string UserId, string Status, string? AcknowledgementStatus = null)
+{
+    public string? Version { get; init; }
+}
 
-/// <summary>Sends a dashboard support request to the support mailbox and acknowledges it to the requester.</summary>
 public sealed class SupportEmailEndpoint(AuthData data, PlatformDirectory directory, Users users, IEmailSender sender, AttemptLimiter limiter, AuthOptions options, TimeProvider clock)
     : EndpointWithoutRequest<IResult>
 {
-    /// <summary>The monitored support mailbox.</summary>
     public const string SupportAddress = "support@terrascale.tech";
-    /// <summary>Requests one user may send per hour.</summary>
     public const int PerUserPerHour = 5;
 
     private static readonly Dictionary<string, string> Targets = new(StringComparer.Ordinal)
@@ -59,7 +46,6 @@ public sealed class SupportEmailEndpoint(AuthData data, PlatformDirectory direct
         ["enterprise"] = "Enterprise target: the first-response time in your contract.",
     };
 
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/v1/{slug}/email/support");
@@ -75,14 +61,13 @@ public sealed class SupportEmailEndpoint(AuthData data, PlatformDirectory direct
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (EmailApi.Refuse(this.HttpContext, options) is { } refused)
         {
             return refused;
         }
-        return (await EmailApi.ReadAsync<EmailSupportRequest>(this.HttpContext, cancellationToken).ConfigureAwait(false) switch
+        return (await EmailApi.ReadAsync<EmailSupportRequest>(this.HttpContext, cancellationToken) switch
         {
             EmailSupportRequest request => await SendAsync(request, cancellationToken),
             Validation error => ErrorResults.ToResult(error),
@@ -104,24 +89,24 @@ public sealed class SupportEmailEndpoint(AuthData data, PlatformDirectory direct
             throw new ApiException(StatusCodes.Status422UnprocessableEntity, "invalid_request", "A severity, a one-line subject of at most 150 characters and a message of at most 8000 characters are required.");
         }
 
-        var user = await users.GetAsync(OidcIssuer.InstanceId, request.UserId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+        var user = await users.GetAsync(OidcIssuer.InstanceId, request.UserId, cancellationToken) ?? throw PlatformDirectory.NotFound();
         var (organizationName, projectName) = request.ProjectId is null
-            ? ((await directory.OrganizationAccessAsync(user.Id, request.OrganizationId, cancellationToken).ConfigureAwait(false)).Organization.Value.Name, null)
-            : await ProjectNamesAsync(user.Id, request, cancellationToken).ConfigureAwait(false);
+            ? ((await directory.OrganizationAccessAsync(user.Id, request.OrganizationId, cancellationToken)).Organization.Value.Name, null)
+            : await ProjectNamesAsync(user.Id, request, cancellationToken);
 
-        if (await this.ReadAsync(request, cancellationToken).ConfigureAwait(false) is { } recorded)
+        if (await this.ReadAsync(request, cancellationToken) is { } recorded)
         {
             return Answer(recorded.Delivery);
         }
-        if (!await limiter.TryAcquireAsync(OidcIssuer.InstanceId, "support", user.Id, PerUserPerHour, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false))
+        if (!await limiter.TryAcquireAsync(OidcIssuer.InstanceId, "support", user.Id, PerUserPerHour, TimeSpan.FromHours(1), cancellationToken))
         {
             return ErrorResults.ToResult(new QuotaExceeded("Too many support requests; retry within the hour or email support@terrascale.tech.", "rate_limited"));
         }
         var delivery = new SupportEmailDelivery(OidcIssuer.InstanceId, request.RequestId, user.Id, "sending");
         var reserved = Change.Insert(delivery);
-        if (!await data.SaveAsync(reserved, cancellationToken).ConfigureAwait(false))
+        if (!await data.SaveAsync(reserved, cancellationToken))
         {
-            return Answer((await this.ReadAsync(request, cancellationToken).ConfigureAwait(false))?.Delivery ?? throw ApiException.Unavailable());
+            return Answer((await this.ReadAsync(request, cancellationToken))?.Delivery ?? throw ApiException.Unavailable());
         }
 
         var version = reserved.Version!;
@@ -134,36 +119,33 @@ public sealed class SupportEmailEndpoint(AuthData data, PlatformDirectory direct
             Tenant = request.OrganizationId!,
             ReplyTo = user.Email,
         };
-        var outcome = await sender.DeliverAsync(SupportAddress, details, cancellationToken).ConfigureAwait(false);
+        var outcome = await sender.DeliverAsync(SupportAddress, details, cancellationToken);
         delivery = delivery with { Status = Status(outcome), AcknowledgementStatus = outcome == EmailDeliveryOutcome.Accepted ? "sending" : null };
         if (outcome == EmailDeliveryOutcome.Retryable)
         {
-            // Only an explicit refusal known not to have sent releases the id for another support attempt.
-            if (!await data.SaveAsync(Change.Delete(delivery, version), cancellationToken).ConfigureAwait(false))
+            if (!await data.SaveAsync(Change.Delete(delivery, version), cancellationToken))
             {
                 throw ApiException.Unavailable();
             }
             return Answer(delivery);
         }
 
-        // Persist support acceptance and reserve its one acknowledgement before making another external call.
         var accepted = Change.Update(delivery, version);
-        version = await data.SaveAsync(accepted, cancellationToken).ConfigureAwait(false) ? accepted.Version! : throw ApiException.Unavailable();
+        version = await data.SaveAsync(accepted, cancellationToken) ? accepted.Version! : throw ApiException.Unavailable();
         if (outcome == EmailDeliveryOutcome.Accepted)
         {
             EmailDeliveryOutcome acknowledgement;
             try
             {
                 var acknowledgementMessage = Acknowledgement(request, reference, subject, message) with { Purpose = EmailPurpose.Support, Tenant = request.OrganizationId! };
-                acknowledgement = await sender.DeliverAsync(user.Email, acknowledgementMessage, cancellationToken).ConfigureAwait(false);
+                acknowledgement = await sender.DeliverAsync(user.Email, acknowledgementMessage, cancellationToken);
             }
             catch (Exception exception) when (exception is not OutOfMemoryException && !cancellationToken.IsCancellationRequested)
             {
-                // An interrupted provider call may have sent; keep support accepted and never retry the acknowledgement.
                 acknowledgement = EmailDeliveryOutcome.Unknown;
             }
             delivery = delivery with { AcknowledgementStatus = Status(acknowledgement) };
-            if (!await data.SaveAsync(Change.Update(delivery, version), cancellationToken).ConfigureAwait(false))
+            if (!await data.SaveAsync(Change.Update(delivery, version), cancellationToken))
             {
                 throw ApiException.Unavailable();
             }
@@ -173,7 +155,7 @@ public sealed class SupportEmailEndpoint(AuthData data, PlatformDirectory direct
 
     private async Task<(string Organization, string? Project)> ProjectNamesAsync(string userId, EmailSupportRequest request, CancellationToken cancellationToken)
     {
-        var access = await directory.ProjectAccessAsync(userId, request.OrganizationId, request.ProjectId!, cancellationToken).ConfigureAwait(false);
+        var access = await directory.ProjectAccessAsync(userId, request.OrganizationId, request.ProjectId!, cancellationToken);
         return (access.Organization.Value.Name, access.Project.Value.Name);
     }
 
@@ -208,9 +190,12 @@ public sealed class SupportEmailEndpoint(AuthData data, PlatformDirectory direct
         $"Thanks for contacting TerraScale support. We received your request and will reply to this address.\n\nReference: {request.RequestId}\nSeverity: {request.Severity}\nSubject: {subject}\n\n{Targets[request.Plan]} Business hours are Monday to Friday, 09:00 to 18:00 CET.\n\nReply to this email to add details. Never send passwords, API keys or customer data. Service status: https://status.terrascale.tech\n\nYour message:\n{message}\n")
     { FromName = "TerraScale support", ReplyTo = SupportAddress };
 
+    private async Task<Versioned<SupportEmailDelivery>?> ReadStoredAsync(string requestId, CancellationToken cancellationToken) =>
+        Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<SupportEmailDelivery>(
+            "SELECT * FROM support_deliveries WHERE request_id = @requestId", new { requestId }), cancellationToken));
+
     private async Task<(SupportEmailDelivery Delivery, string Version)?> ReadAsync(EmailSupportRequest request, CancellationToken cancellationToken) =>
-        await data.ReadAsync((db, token) => db.SupportDeliveries.Where(row => row.RequestId == request.RequestId).WithVersion().SingleOrDefaultAsync(token), cancellationToken)
-            .ConfigureAwait(false) is not { } stored ? null
+        await this.ReadStoredAsync(request.RequestId, cancellationToken) is not { } stored ? null
         : stored.Value.UserId == request.UserId ? (stored.Value, stored.Version)
         : throw PlatformDirectory.NotFound();
 }

@@ -20,8 +20,13 @@ use tokio::task::{AbortHandle, JoinHandle};
 use tokio_postgres::config::SslMode;
 use tokio_postgres::tls::{ChannelBinding, MakeTlsConnect, TlsConnect, TlsStream};
 use tokio_postgres::types::ToSql;
-use tokio_postgres::{Client, GenericClient, Transaction};
+use tokio_postgres::{Client, GenericClient, IsolationLevel, SimpleQueryMessage, Transaction};
 use tokio_rustls::TlsConnector;
+
+use crate::consistency::{
+    is_valid_bookmark, BookmarkTracker, ConsistencyMode, POSTGRES_BOOKMARK_SETTING,
+    POSTGRES_CONSISTENCY_SETTING,
+};
 
 const MAX_BYTES: usize = 16 * 1024;
 
@@ -77,6 +82,15 @@ impl fmt::Display for PostgresError {
     }
 }
 impl std::error::Error for PostgresError {}
+
+impl PostgresError {
+    /// True for SQLSTATE 40001: a concurrent conflicting transaction or a
+    /// schema change rolled the transaction back; it may be run again.
+    #[must_use]
+    pub fn is_serialization_conflict(&self) -> bool {
+        self.kind == PostgresErrorKind::Database && self.sql_state.as_deref() == Some("40001")
+    }
+}
 
 fn error(kind: PostgresErrorKind) -> PostgresError {
     PostgresError {
@@ -462,6 +476,7 @@ pub struct PostgresClient {
     task: Option<JoinHandle<Result<(), PostgresError>>>,
     state: Arc<ConnectionState>,
     timeout: Duration,
+    bookmark: BookmarkTracker,
 }
 
 impl PostgresClient {
@@ -492,7 +507,83 @@ impl PostgresClient {
             task: Some(task),
             state,
             timeout: config.connect_timeout,
+            bookmark: BookmarkTracker::new(),
         })
+    }
+
+    /// Sets the session's default consistency (`terrascale.consistency`)
+    /// and returns the client, for use right after [`Self::connect`].
+    pub async fn with_consistency(self, mode: ConsistencyMode) -> Result<Self, PostgresError> {
+        self.set_consistency(mode).await?;
+        Ok(self)
+    }
+
+    /// Sets the session's default consistency (`terrascale.consistency`):
+    /// `fast` commits in the receiving region, `strong` on a 2-of-3 quorum.
+    pub async fn set_consistency(&self, mode: ConsistencyMode) -> Result<(), PostgresError> {
+        self.simple(&format!(
+            "SET {POSTGRES_CONSISTENCY_SETTING} = '{}'",
+            mode.as_str()
+        ))
+        .await
+        .map(drop)
+    }
+
+    /// Makes later statements on this session wait for `bookmark`, a
+    /// `TerraScale-Bookmark` from REST, the SQL WebSocket or another session.
+    pub async fn with_bookmark(&self, bookmark: &str) -> Result<(), PostgresError> {
+        let bookmark = bookmark.trim();
+        if bookmark.is_empty() || !is_valid_bookmark(bookmark) {
+            return Err(error(PostgresErrorKind::Query));
+        }
+        self.simple(&format!("SET {POSTGRES_BOOKMARK_SETTING} = '{bookmark}'"))
+            .await?;
+        self.bookmark.observe(bookmark);
+        Ok(())
+    }
+
+    /// Reads the session's causal bookmark (`SHOW terrascale.bookmark`),
+    /// which covers every write this session committed or observed, and
+    /// records it as [`Self::last_bookmark`].
+    pub async fn bookmark(&self) -> Result<Option<String>, PostgresError> {
+        let messages = self
+            .simple(&format!("SHOW {POSTGRES_BOOKMARK_SETTING}"))
+            .await?;
+        let value = messages.iter().find_map(|message| match message {
+            SimpleQueryMessage::Row(row) => row.get(0).map(str::to_owned),
+            _ => None,
+        });
+        if let Some(value) = value.as_deref() {
+            self.bookmark.observe(value);
+        }
+        Ok(self.bookmark.get())
+    }
+
+    /// The newest bookmark read by [`Self::bookmark`] or set through
+    /// [`Self::with_bookmark`], without I/O.
+    #[must_use]
+    pub fn last_bookmark(&self) -> Option<String> {
+        self.bookmark.get()
+    }
+
+    /// The shared tracker behind [`Self::last_bookmark`], for handing the
+    /// bookmark to REST or WebSocket SQL.
+    #[must_use]
+    pub fn bookmark_tracker(&self) -> &BookmarkTracker {
+        &self.bookmark
+    }
+
+    async fn simple(&self, statement: &str) -> Result<Vec<SimpleQueryMessage>, PostgresError> {
+        let guard = OperationGuard::new(Arc::clone(&self.state))?;
+        let result = self
+            .client
+            .as_ref()
+            .ok_or_else(|| error(PostgresErrorKind::Connection))?
+            .simple_query(statement)
+            .await
+            .map_err(driver_error);
+        guard.finish(&result);
+        result
     }
 
     pub async fn query(&self, input: &PostgresQuery) -> Result<PostgresRows, PostgresError> {
@@ -526,15 +617,49 @@ impl PostgresClient {
     /// A borrowed transaction prevents interleaving through this client while
     /// active. Dropping it without completed commit/rollback discards the socket.
     pub async fn transaction(&mut self) -> Result<PostgresTransaction<'_>, PostgresError> {
+        self.begin(None).await
+    }
+
+    /// [`Self::transaction`] in `mode`: `START TRANSACTION ISOLATION LEVEL
+    /// SERIALIZABLE` for strong, `READ COMMITTED` for fast.
+    pub async fn transaction_with(
+        &mut self,
+        mode: ConsistencyMode,
+    ) -> Result<PostgresTransaction<'_>, PostgresError> {
+        self.begin(Some(mode)).await
+    }
+
+    /// Opens a strong 2-of-3 quorum transaction, like `BEGIN STRONG`. A
+    /// conflicting concurrent strong transaction fails its commit with
+    /// SQLSTATE 40001; see [`PostgresError::is_serialization_conflict`].
+    pub async fn begin_strong(&mut self) -> Result<PostgresTransaction<'_>, PostgresError> {
+        self.begin(Some(ConsistencyMode::Strong)).await
+    }
+
+    async fn begin(
+        &mut self,
+        mode: Option<ConsistencyMode>,
+    ) -> Result<PostgresTransaction<'_>, PostgresError> {
         let state = Arc::clone(&self.state);
         let guard = OperationGuard::new(Arc::clone(&state))?;
-        let transaction = self
+        let client = self
             .client
             .as_mut()
-            .ok_or_else(|| error(PostgresErrorKind::Connection))?
-            .transaction()
-            .await
-            .map_err(driver_error)?;
+            .ok_or_else(|| error(PostgresErrorKind::Connection))?;
+        let transaction = match mode {
+            None => client.transaction().await,
+            Some(mode) => {
+                client
+                    .build_transaction()
+                    .isolation_level(match mode {
+                        ConsistencyMode::Strong => IsolationLevel::Serializable,
+                        ConsistencyMode::Fast => IsolationLevel::ReadCommitted,
+                    })
+                    .start()
+                    .await
+            }
+        }
+        .map_err(driver_error)?;
         guard.succeeded();
         Ok(PostgresTransaction {
             transaction: Some(transaction),

@@ -7,8 +7,6 @@ namespace TerraScale.Dashboard.Common.UI
         private const string FormExpiredHeading = "This form expired";
         private const string FormExpiredDetail = "Nothing was changed. Open the form again to send it.";
 
-        // Native form navigations explicitly accept HTML, including forms posted under /api.
-        // API callers need a problem body even when they omit Accept or send */*.
         public static bool WantsJson(HttpContext http)
         {
             return http.Request.Headers.ContainsKey("Datastar-Request") ||
@@ -54,7 +52,7 @@ namespace TerraScale.Dashboard.Common.UI
             };
             if (WantsJson(http))
             {
-                return Results.Problem(detail, statusCode: status, title: heading,
+                return TypedResults.Problem(detail, statusCode: status, title: heading,
                 extensions: new Dictionary<string, object?> { ["requestId"] = http.TraceIdentifier });
             }
 

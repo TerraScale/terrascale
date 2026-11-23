@@ -11,7 +11,6 @@ using static OpenIddict.Server.OpenIddictServerEvents;
 
 namespace TerraScale.Authentication.Features.Oidc;
 
-/// <summary>Private reference-token proof ancestry; it is never published as an access or identity token claim.</summary>
 internal static class CredentialLineage
 {
     internal const string BindingsProperty = "ts-auth.credential-bindings";
@@ -24,7 +23,6 @@ internal static class CredentialLineage
 
     internal const string ReplayNotice = "This credential was already used, so its sign-in was ended for safety. Sign in again.";
 
-    /// <summary>The ancestry <see cref="RedeemExactlyOnce"/> resolved for the token request being served, if any.</summary>
     internal static IReadOnlyList<CredentialBinding> Issued(HttpContext? http) =>
         http?.Features.Get<OpenIddictServerAspNetCoreFeature>()?.Transaction?.GetProperty<IReadOnlyList<CredentialBinding>>(BindingsProperty) ?? [];
 
@@ -54,20 +52,19 @@ internal static class CredentialLineage
         var redeemed = token.Status == Statuses.Redeemed
             || (token.Type == TokenTypeIdentifiers.RefreshToken
                 && token.Status == Statuses.Revoked && tokens is OidcTokenStore persisted
-                && await persisted.IsPersistedRefreshRedeemedAsync(token.Id!, authorizationId, clientId, cancellationToken).ConfigureAwait(false));
+                && await persisted.IsPersistedRefreshRedeemedAsync(token.Id!, authorizationId, clientId, cancellationToken));
         if (!redeemed)
         {
             return false;
         }
 
-        await tokens.RevokeByAuthorizationIdAsync(authorizationId, cancellationToken).ConfigureAwait(false);
+        await tokens.RevokeByAuthorizationIdAsync(authorizationId, cancellationToken);
         return true;
     }
 }
 
 public sealed class ValidateCredentialLineage(IOpenIddictTokenStore<OidcToken> tokens) : IOpenIddictServerHandler<ValidateTokenContext>
 {
-    /// <inheritdoc />
     public async ValueTask HandleAsync(ValidateTokenContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -76,17 +73,13 @@ public sealed class ValidateCredentialLineage(IOpenIddictTokenStore<OidcToken> t
             return;
         }
 
-        // An id_token_hint only names the user (RP-Initiated Logout 1.0 section 2): OpenIddict has checked its signature and
-        // issuer and found its entry, and lifetime is not checked. ts-dashboard revokes its sign-in before redirecting here,
-        // so a status check would turn every dashboard sign-out into a "Sign out?" page that leaves the session live (QA4 auth:11).
-        // Clearing the authorization id skips OpenIddict's authorization-entry check for the same reason.
         if (context.EndpointType is OpenIddictServerEndpointType.EndSession && context.Principal?.HasTokenType(TokenTypeIdentifiers.IdentityToken) == true)
         {
             context.AuthorizationId = null;
             return;
         }
 
-        var token = await tokens.FindByIdAsync(id, context.CancellationToken).ConfigureAwait(false);
+        var token = await tokens.FindByIdAsync(id, context.CancellationToken);
         if (context.EndpointType is OpenIddictServerEndpointType.Token && context.Request?.IsAuthorizationCodeGrantType() == true
             && token is { Type: TokenTypeIdentifiers.Private.AuthorizationCode, Status: Statuses.Redeemed })
         {
@@ -96,7 +89,7 @@ public sealed class ValidateCredentialLineage(IOpenIddictTokenStore<OidcToken> t
 
         if (context.EndpointType is OpenIddictServerEndpointType.Token && context.Request is { } request && request.IsRefreshTokenGrantType()
             && await CredentialLineage.RevokeReplayAsync(tokens, token, context.Principal, request.ClientId,
-                context.CancellationToken).ConfigureAwait(false))
+                context.CancellationToken))
         {
             context.Reject(OidcErrors.InvalidToken, CredentialLineage.ReplayNotice);
             return;

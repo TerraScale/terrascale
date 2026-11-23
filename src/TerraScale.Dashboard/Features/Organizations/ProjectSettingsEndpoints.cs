@@ -29,7 +29,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, requireProject: true);
@@ -47,7 +47,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 {
                     context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, reload: true);
                     await DatastarEvents.PatchElementsAsync(http, Projects.ProjectSettingsPatch.Create(new(ShellModel.For(http, context, "Project settings"), name)));
-                    return Results.Empty;
+                    return TypedResults.Empty;
                 }
                 return HttpRedirects.SeeOther(WorkspaceUrl.For(context, "/project?renamed=1", replace: true));
             }
@@ -56,7 +56,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 if (http.Request.IsDatastarRequest)
                 {
                     await DatastarEvents.PatchElementsAsync(http, Projects.ProjectSettingsPatch.Create(new(ShellModel.For(http, context, "Project settings"), name, error.Message)));
-                    return Results.Empty;
+                    return TypedResults.Empty;
                 }
                 return Page(http, context, name, error.Message, error.StatusCode);
             }
@@ -65,7 +65,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 if (http.Request.IsDatastarRequest)
                 {
                     await DatastarEvents.PatchElementsAsync(http, Projects.ProjectSettingsPatch.Create(new(ShellModel.For(http, context, "Project settings"), name, "The rename could not be confirmed. Reload project settings to check its current name, then retry if needed.")));
-                    return Results.Empty;
+                    return TypedResults.Empty;
                 }
                 return Page(http, context, name, "The rename could not be confirmed. Reload project settings to check its current name, then retry if needed.", 503);
             }

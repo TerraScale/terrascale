@@ -37,6 +37,6 @@ public sealed class SendUnlinkCodeEndpoint(PlatformAuthentication authentication
         cancellationToken.ThrowIfCancellationRequested();
         await reservation.EnqueueCodeAsync(caller.InstanceId, caller.Email, PasscodePurpose.SignIn, AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage));
 
-        return Results.Accepted();
+        return TypedResults.Accepted(default(string));
     }
 }

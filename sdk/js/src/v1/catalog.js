@@ -2,10 +2,12 @@ import { requireId } from "../ids.js";
 import { array, boolean, malformed, object, string } from "./decode.js";
 import { requireDatabaseSelector, requireName } from "./ids.js";
 import { ExactDecimal, stringifyExactJson } from "./json.js";
+import { requireConsistency } from "./bookmark.js";
 /**
  * @import { JsonValue } from "./json.js"
  * @import { V1Transport } from "./transport.js"
  * @import { V1RequestOptions } from "./terrabase-v1.js"
+ * @import { V1Consistency } from "./bookmark.js"
  */
 
 /**
@@ -18,12 +20,15 @@ import { ExactDecimal, stringifyExactJson } from "./json.js";
  * @property {string | null} branchedFrom Source database ULID, or null.
  * @property {string} createdAt ISO date-time returned by the producer.
  * @property {string} region The region that answered.
- * @property {readonly string[]} regions Every region that holds the database, sorted by region id. The order has no meaning.
+ * @property {readonly string[]} regions Every region that holds the database, sorted by region id. Every one accepts reads and writes; the order has no meaning.
  * @property {number | bigint} placementVersion Placement epoch; unchanged by an identical region set.
  * @property {boolean} allRegions Whether every serving region holds the database.
  * @property {string | null | undefined} [expiresAt] RFC 3339 expiry, or null without a TTL.
+ * @property {V1Consistency} defaultConsistency Mode of SQL requests that name none.
+ * @property {boolean} strict
+ * @property {string} state
  */
-/** @typedef {{ readonly name: string; readonly regions?: readonly string[] | undefined; readonly allRegions?: boolean | undefined; readonly ttlSeconds?: number | undefined }} V1DatabaseCreateRequest */
+/** @typedef {{ readonly name: string; readonly regions?: readonly string[] | undefined; readonly allRegions?: boolean | undefined; readonly ttlSeconds?: number | undefined; readonly defaultConsistency?: V1Consistency | undefined }} V1DatabaseCreateRequest */
 /** @typedef {{ readonly name: string }} V1DatabaseBranchRequest */
 /** @typedef {{ readonly after?: string | undefined; readonly limit?: number | undefined }} V1DatabaseListRequest */
 /** @typedef {{ readonly items: readonly V1ManagedDatabase[]; readonly next: string | null }} V1DatabasePage */
@@ -70,6 +75,7 @@ export function decodeManagedDatabase(value) {
   if (!/^\d{4}-\d{2}-\d{2}T/u.test(createdAt) || !Number.isFinite(Date.parse(createdAt))) malformed("database createdAt");
   if (raw.expiresAt !== undefined && raw.expiresAt !== null &&
       (typeof raw.expiresAt !== "string" || !Number.isFinite(Date.parse(raw.expiresAt)))) malformed("database expiresAt");
+  const defaultConsistency = raw.defaultConsistency === "fast" || raw.defaultConsistency === "strong" ? raw.defaultConsistency : malformed("database defaultConsistency");
   const version = raw.placementVersion;
   const placementVersion = typeof version === "number" && Number.isSafeInteger(version) ? version
     : version instanceof ExactDecimal ? version.toBigInt() : malformed("database placementVersion");
@@ -82,6 +88,7 @@ export function decodeManagedDatabase(value) {
     regions: Object.freeze((raw.regions === undefined ? [] : array(raw.regions, "database regions").map(region)).toSorted()),
     placementVersion,
     allRegions: raw.allRegions === undefined ? false : boolean(raw.allRegions, "database allRegions"),
+    defaultConsistency, strict: boolean(raw.strict, "database strict"), state: string(raw.state, "database state"),
     ...(raw.previousName === undefined ? {} : { previousName: raw.previousName === null ? null : requireName("database", raw.previousName) }),
     ...(raw.conflictOf === undefined ? {} : { conflictOf: raw.conflictOf === null ? null : requireId(raw.conflictOf, "Conflict database ID") }),
   });
@@ -95,19 +102,21 @@ export class V1Databases {
   constructor(transport) { this.#transport = transport; Object.freeze(this); }
 
   /**
-   * Creates a database in the named regions, or the called region when omitted.
+   * Creates a database in the named peer regions, or the called region when omitted.
    * @param {V1DatabaseCreateRequest} request @param {V1RequestOptions} [options] @returns {Promise<V1ManagedDatabase>}
    */
   async create(request, options = {}) {
-    members(request, ["name", "regions", "allRegions", "ttlSeconds"]);
+    members(request, ["name", "regions", "allRegions", "ttlSeconds", "defaultConsistency"]);
     const placement = requirePlacement(request);
     if (request.ttlSeconds !== undefined) requireTtlSeconds(request.ttlSeconds);
+    const defaultConsistency = requireConsistency(request.defaultConsistency);
     mutationOptions(options);
     const name = requireName("database", request.name);
     const response = await this.#transport.call("createDatabase", { database: name }, {
       body: stringifyExactJson({ name,
         ...placement,
         ...(request.ttlSeconds === undefined ? {} : { ttlSeconds: request.ttlSeconds }),
+        ...(defaultConsistency === undefined ? {} : { defaultConsistency }),
       }, "database create"), signal: options.signal,
     });
     return decodeManagedDatabase(response.value);
@@ -158,7 +167,7 @@ export class V1Databases {
   }
 
   /**
-   * Deletes the database in the region that orders the database's writes; branches remain independent.
+   * Deletes the database in every region; branches remain independent.
    * @param {string} name @param {V1RequestOptions} [options] @returns {Promise<void>}
    */
   async delete(name, options = {}) {

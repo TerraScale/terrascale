@@ -1,19 +1,28 @@
-using Microsoft.EntityFrameworkCore;
+using Dapper;
 using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Billing;
 
-public sealed class BillingSchemaGate(IDbContextFactory<DashboardDbContext> storage, ILogger<BillingSchemaGate> logger)
+public sealed class BillingSchemaGate(DashboardDb storage, ILogger<BillingSchemaGate> logger)
 {
-    private int logged;
+    private const string Applied = "SELECT script_name FROM schema_versions";
+    private int _logged;
 
     public async Task<bool> AllowsAsync(CancellationToken cancellationToken)
     {
-        await using var db = await storage.CreateDbContextAsync(cancellationToken);
-        var known = db.Database.GetMigrations().ToHashSet(StringComparer.Ordinal);
-        var unknown = (await db.Database.GetAppliedMigrationsAsync(cancellationToken)).Where(id => !known.Contains(id)).Order(StringComparer.Ordinal).ToList();
-        if (unknown.Count == 0) { return true; }
-        if (Interlocked.Exchange(ref logged, 1) == 0) { BillingLog.BillingJobsIdle(logger, unknown[^1]); }
+        var known = DashboardDbUpRunner.Scripts().Select(static script => script.Name).ToHashSet(StringComparer.Ordinal);
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        var unknown = (await connection.QueryAsync<string>(Applied)).Where(name => !known.Contains(name)).Order(StringComparer.Ordinal).ToList();
+        if (unknown.Count == 0)
+        {
+            return true;
+        }
+
+        if (Interlocked.Exchange(ref _logged, 1) == 0)
+        {
+            BillingLog.BillingJobsIdle(logger, unknown[^1]);
+        }
+
         return false;
     }
 }

@@ -1,4 +1,5 @@
-using Microsoft.EntityFrameworkCore;
+using Dapper;
+using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.Platform;
@@ -12,36 +13,43 @@ public sealed class WebhookNotifications(AuthData data, IEmailSender sender, Tim
 
     public async Task<IReadOnlyList<Change>> ReserveAsync(string projectId, string endpointId, CancellationToken cancellationToken)
     {
-        var organizationId = await data.ReadAsync((db, token) => db.Projects.Where(row => row.Id == projectId)
-            .Select(row => row.OrganizationId).SingleAsync(token), cancellationToken).ConfigureAwait(false);
-        var recipients = await data.ReadAsync((db, token) => db.Memberships
-            .Where(row => row.OrganizationId == organizationId && (row.Role == Roles.Owner || row.Role == Roles.Admin))
-            .Select(row => row.UserId).Union(db.ProjectMembers.Where(row => row.ProjectId == projectId && row.Role == Roles.Admin)
-                .Select(row => row.UserId)).ToListAsync(token), cancellationToken).ConfigureAwait(false);
+        var (owner, admin) = (Roles.Owner, Roles.Admin);
+        var recipients = await data.ReadAsync(connection => connection.QueryAsync<string>(
+            """
+            SELECT m.user_id FROM memberships m WHERE m.organization_id = (SELECT organization_id FROM projects WHERE id = @projectId) AND m.role IN (@owner, @admin)
+            UNION SELECT g.user_id FROM project_members g WHERE g.project_id = @projectId AND g.role = @admin
+            """, new { projectId, owner, admin }), cancellationToken);
         return [.. recipients.Select(userId => Change.Insert(new EmailDeliveryRecord(Kind, endpointId, userId, "pending")))];
     }
 
     public async Task SendAsync(CancellationToken cancellationToken)
     {
         var now = clock.GetUtcNow();
-        var pending = await data.ReadAsync((db, token) => db.EmailDeliveries.Where(row => row.Kind == Kind && (row.Status == "pending" || row.Status == "sending" && (row.LeaseUntil == null || row.LeaseUntil <= now)))
-            .OrderBy(row => row.Key).Take(50).WithVersion().ToListAsync(token), cancellationToken).ConfigureAwait(false);
+        var pending = Versioned.All(await data.ReadAsync(connection => connection.QueryAsync<EmailDeliveryRecord>(
+            """
+            SELECT * FROM email_deliveries WHERE kind = @Kind AND (status = 'pending' OR status = 'sending' AND (lease_until IS NULL OR lease_until <= @now))
+            ORDER BY "key" LIMIT 50
+            """, new { Kind, now }), cancellationToken));
         foreach (var row in pending)
         {
-            var endpoint = await data.ReadAsync((db, token) => db.WebhookEndpoints.SingleOrDefaultAsync(item => item.Id == row.Value.Key, token), cancellationToken).ConfigureAwait(false);
-            var recipient = await data.ReadAsync((db, token) => db.Users.SingleOrDefaultAsync(user => user.Id == row.Value.Recipient && user.InstanceId == OidcIssuer.InstanceId, token), cancellationToken).ConfigureAwait(false);
+            var (endpointId, recipientId, platform) = (row.Value.Key, row.Value.Recipient, OidcIssuer.InstanceId);
+            var endpoint = await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<WebhookEndpointRecord>(
+                "SELECT * FROM webhook_endpoints WHERE id = @endpointId", new { endpointId }), cancellationToken);
+            var recipient = await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
+                "SELECT * FROM users WHERE id = @recipientId AND instance_id = @platform", new { recipientId, platform }), cancellationToken);
             var claim = Change.Update(row, row.Value with { Status = "sending", LeaseUntil = clock.GetUtcNow().AddMinutes(2) });
-            if (!await data.SaveAsync(claim, cancellationToken).ConfigureAwait(false))
+            if (!await data.SaveAsync(claim, cancellationToken))
             {
                 continue;
             }
 
-            var organizationId = endpoint is null ? null : await data.ReadAsync((db, token) => db.Projects.Where(project => project.Id == endpoint.ProjectId)
-                .Select(project => project.OrganizationId).SingleAsync(token), cancellationToken).ConfigureAwait(false);
+            var projectId = endpoint?.ProjectId;
+            var organizationId = endpoint is null ? null : await data.ReadAsync(connection => connection.QuerySingleAsync<string>(
+                "SELECT organization_id FROM projects WHERE id = @projectId", new { projectId }), cancellationToken);
             var outcome = endpoint is not null && recipient is not null && organizationId is not null
                 ? await sender.DeliverAsync(recipient.Email, new EmailMessage("Webhook endpoint disabled",
                     $"Your webhook endpoint {MaskedUrl(endpoint.Url)} in project {endpoint.ProjectId} was disabled after five days of consecutive failed delivery attempts. Register a working replacement.")
-                { Tenant = organizationId }, cancellationToken).ConfigureAwait(false)
+                { Tenant = organizationId }, cancellationToken)
                 : EmailDeliveryOutcome.Rejected;
             var status = outcome switch
             {
@@ -51,7 +59,7 @@ public sealed class WebhookNotifications(AuthData data, IEmailSender sender, Tim
                 EmailDeliveryOutcome.Unknown => "unknown",
                 _ => throw new InvalidOperationException("Unknown email delivery outcome."),
             };
-            if (!await data.SaveAsync(Change.Update(row.Value with { Status = status, LeaseUntil = null }, claim.Version), CancellationToken.None).ConfigureAwait(false))
+            if (!await data.SaveAsync(Change.Update(row.Value with { Status = status, LeaseUntil = null }, claim.Version), CancellationToken.None))
             {
                 throw new InvalidOperationException("The webhook notification claim changed during delivery.");
             }

@@ -33,10 +33,6 @@ The answer is the database record: `id`, `projectId`, `name`, `createdAt`, `regi
 
 A name starts with a lowercase letter and continues with up to 62 lowercase letters, digits, `_` or `-`. The request must reach a region of the database's set; a request sent elsewhere answers `421` and names a region of the set.
 
-### Earlier fields
-
-Responses can still carry `homeRegion`, `replicaRegions` and `allRegions` while the server sends them. They still work. New calls read `regions`.
-
 ## CLI and SDKs
 
 ```sh
@@ -48,5 +44,3 @@ The CLI accepts the database's name or its immutable id. The SDKs expose the sam
 ## Concurrent renames
 
 Two regions can accept different renames at once. The database keeps its id, data and backups under one of the names, and the response reports what happened: the losing name comes back as `previousName`, with `conflictOf` naming the database that kept it. Rename again to choose a final name.
-
-A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

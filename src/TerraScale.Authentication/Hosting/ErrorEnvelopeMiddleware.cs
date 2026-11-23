@@ -3,21 +3,14 @@ using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.SigningKeys;
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Storage;
 using TerraScale.DotNet.TerraBase;
 using ZLogger;
 
 namespace TerraScale.Authentication.Hosting;
 
-/// <summary>
-/// Turns <see cref="ApiException"/> into its JSON envelope, storage that TerraBase reports unavailable or that does not
-/// answer in time into the retryable 503 envelope, and any other unhandled exception into the generic 500 envelope, so
-/// internal details never reach the client.
-/// </summary>
 public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema schema, ILogger<ErrorEnvelopeMiddleware> logger)
 {
-    /// <summary>Runs the rest of the pipeline.</summary>
     public async Task InvokeAsync(HttpContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -27,7 +20,6 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema sch
         }
         catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
         {
-            // The client went away; there is nobody to answer.
         }
         catch (ApiException error) when (!context.Response.HasStarted && error.Status < 500)
         {
@@ -39,7 +31,7 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema sch
             Diagnose(context, error, () => logger.ZLog(level, error, $"Request failed with {error.Code:@Code}"));
             await WriteAsync(context, error.Status, error.Code, error.Message, error.RetryAfter);
         }
-        catch (DbUpdateException conflict) when (!context.Response.HasStarted && AuthData.IsConflict(conflict))
+        catch (TerraBaseException conflict) when (!context.Response.HasStarted && AuthData.IsConflict(conflict))
         {
             var error = new ApiException(409, "conflict", "A concurrent change won; retry the request.", conflict);
             Diagnose(context, error, () => logger.ZLogWarning(error, $"Request failed with {error.Code:@Code}"));
@@ -47,7 +39,6 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema sch
         }
         catch (OpenIddictExceptions.ConcurrencyException conflict) when (!context.Response.HasStarted)
         {
-            // A store's conditional write lost inside an OpenIddict flow: the same race as above, never a 500.
             var error = new ApiException(409, "conflict", "A concurrent change won; retry the request.", conflict);
             Diagnose(context, error, () => logger.ZLogWarning(error, $"Request failed with {error.Code:@Code}"));
             await WriteAsync(context, error.Status, error.Code, error.Message, error.RetryAfter);
@@ -60,14 +51,12 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema sch
         }
         catch (TerraBaseUnavailableException unavailable) when (!context.Response.HasStarted)
         {
-            // A storage outage is temporary: answer the retryable 503 every handler specifies, never a 500.
             var error = ApiException.Unavailable(unavailable);
             Diagnose(context, error, () => logger.ZLogError(error, $"Request failed with {error.Code:@Code}"));
             await WriteAsync(context, error.Status, error.Code, error.Message, error.RetryAfter);
         }
         catch (TimeoutException timeout) when (!context.Response.HasStarted)
         {
-            // ts-dotnet gave up waiting for TerraBase: the storage is slow, not the request wrong.
             Diagnose(context, timeout, () => logger.ZLogError(timeout, $"Storage did not answer in time"));
             await WriteAsync(context, ApiException.Unavailable(timeout));
         }
@@ -78,9 +67,6 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema sch
         }
         catch (Exception exception)
         {
-            // The response is already committed, so no envelope can be written. Report it
-            // here (rather than letting Kestrel log it) and cut the connection so the client
-            // never mistakes a truncated body for a complete one.
             try
             {
                 Diagnose(context, exception, () => logger.ZLogError(exception, $"Request failed after the response started; connection aborted"));
@@ -92,11 +78,6 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema sch
         }
     }
 
-    // GlitchTip gets the original exception for its stack frames; Telemetry.Scrub reduces the
-    // event to types and frames before sending. Log providers only ever see a ScrubbedException
-    // (SafeLoggerFactory). The hub is this application's own and exists only when a DSN is set.
-    // Diagnostics are best effort: a failing reporter or log provider must never stop the
-    // error response (or the abort) from happening.
     private static void Diagnose(HttpContext context, Exception exception, Action log)
     {
         try
@@ -133,7 +114,6 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema sch
                 context.Response.Headers.RetryAfter = Math.Max(1, (long)Math.Ceiling(wait.TotalSeconds)).ToString(CultureInfo.InvariantCulture);
             }
 
-            // A browser on a hosted page keeps its step, address and forms instead of a JSON envelope it cannot act on.
             if (status >= 500 && SignInFlow.HostedPage(context))
             {
                 return SignInFlow.Transient(context).ExecuteAsync(context);
@@ -143,8 +123,6 @@ public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, AuthSchema sch
         }
         catch (Exception writeFailure) when (writeFailure is not OutOfMemoryException)
         {
-            // The client went away or the transport failed mid-envelope; nothing more can
-            // be said on this connection.
             _ = writeFailure;
             context.Abort();
             return Task.CompletedTask;

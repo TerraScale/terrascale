@@ -21,7 +21,7 @@ public sealed class JoinProjectWaitlistEndpoint(AuthOptions options, SignUpRestr
     {
         if (SignInFlow.WrongSlug(this.HttpContext))
         {
-            return Results.NotFound();
+            return TypedResults.NotFound();
         }
 
         if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)

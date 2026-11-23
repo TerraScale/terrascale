@@ -1,6 +1,7 @@
 //! SQL over the WebSocket
 //! `GET /v1/projects/{project}/databases/{database}/sql/ws`, subprotocol
-//! `terrascale.sql.v1`: interactive transactions on one session.
+//! `terrascale.sql.v2`: interactive fast or strong transactions on one
+//! session, with causal bookmarks on every answer.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -24,9 +25,13 @@ use super::sql_exec::{
     results_match, sql_error_codes, validate_batch, with_named, SqlRecord, SqlStatement,
     SqlStatementResult, SqlValue,
 };
+use crate::consistency::{ConsistencyMode, BOOKMARK_HEADER, CONSISTENCY_HEADER};
 
-/// The SQL WebSocket subprotocol.
-pub const SQL_SUBPROTOCOL: &str = "terrascale.sql.v1";
+/// The SQL WebSocket subprotocol: frames carry causal bookmarks and
+/// `fast` / `strong` consistency.
+pub const SQL_SUBPROTOCOL: &str = "terrascale.sql.v2";
+/// The earlier SQL WebSocket subprotocol, without bookmarks in answers.
+pub const SQL_SUBPROTOCOL_V1: &str = "terrascale.sql.v1";
 /// Maximum bytes of one client frame.
 pub const MAX_SQL_FRAME_BYTES: usize = 1 << 20;
 
@@ -37,6 +42,10 @@ struct Frame<'a> {
     kind: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     statements: Option<&'a [SqlStatement]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    consistency: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bookmark: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -46,6 +55,8 @@ struct Answer {
     results: Vec<SqlStatementResult>,
     error: Option<SqlError>,
     transaction: bool,
+    #[serde(default)]
+    bookmark: Option<String>,
 }
 
 struct Waiter {
@@ -132,9 +143,15 @@ enum Ready {
 /// session.close().await;
 /// # Ok(()) }
 /// ```
+///
+/// Every frame sends the database's causal bookmark and every answer's
+/// bookmark advances it, shared with REST SQL on the same [`Database`].
+/// [`Self::begin_strong`] opens a strong 2-of-3 quorum transaction.
 #[derive(Clone)]
 pub struct SqlSession {
     shared: Arc<Shared>,
+    consistency: Option<ConsistencyMode>,
+    bookmark: Option<String>,
 }
 
 impl fmt::Debug for SqlSession {
@@ -142,6 +159,7 @@ impl fmt::Debug for SqlSession {
         f.debug_struct("SqlSession")
             .field("database", &self.shared.db.name())
             .field("in_transaction", &self.in_transaction())
+            .field("consistency", &self.consistency)
             .finish_non_exhaustive()
     }
 }
@@ -158,6 +176,8 @@ impl Database {
                 state: Mutex::default(),
                 opening: tokio::sync::Mutex::new(()),
             }),
+            consistency: self.consistency(),
+            bookmark: None,
         };
         session.link(false).await?;
         Ok(session)
@@ -165,6 +185,39 @@ impl Database {
 }
 
 impl SqlSession {
+    /// A handle on the same session whose autocommit calls and
+    /// [`Self::begin`] request `mode`.
+    #[must_use]
+    pub fn with_consistency(&self, mode: ConsistencyMode) -> Self {
+        Self {
+            consistency: Some(mode),
+            ..self.clone()
+        }
+    }
+
+    /// A handle on the same session whose frames also carry `bookmark`,
+    /// merged with the database's tracked one, so the server waits for it.
+    /// An invalid bookmark fails each call locally.
+    #[must_use]
+    pub fn with_bookmark(&self, bookmark: impl Into<String>) -> Self {
+        Self {
+            bookmark: Some(bookmark.into()),
+            ..self.clone()
+        }
+    }
+
+    /// The consistency mode this handle requests, when one is set.
+    #[must_use]
+    pub fn consistency(&self) -> Option<ConsistencyMode> {
+        self.consistency
+    }
+
+    /// The newest causal bookmark observed on this database.
+    #[must_use]
+    pub fn bookmark(&self) -> Option<String> {
+        self.shared.db.bookmark()
+    }
+
     /// Runs one statement with positional arguments.
     pub async fn execute(&self, sql: &str, args: &[SqlValue]) -> Result<SqlStatementResult> {
         self.execute_statement(SqlStatement::new(sql).args(args.iter().cloned()))
@@ -236,9 +289,33 @@ impl SqlSession {
         Ok(answer.results)
     }
 
-    /// Opens a transaction of at most 5 seconds.
+    /// Opens a transaction of at most 5 seconds, in this handle's
+    /// consistency mode or the session's default.
     pub async fn begin(&self) -> Result<()> {
         self.send("begin", None).await.map(drop)
+    }
+
+    /// Opens a transaction of at most 5 seconds in `mode`.
+    pub async fn begin_with(&self, mode: ConsistencyMode) -> Result<()> {
+        self.with_consistency(mode).begin().await
+    }
+
+    /// Opens a strong 2-of-3 quorum transaction of at most 5 seconds, the
+    /// WebSocket form of `BEGIN STRONG`. A concurrent conflicting strong
+    /// transaction makes [`Self::commit`] fail with `serialization_conflict`.
+    pub async fn begin_strong(&self) -> Result<()> {
+        self.begin_with(ConsistencyMode::Strong).await
+    }
+
+    /// [`Self::transaction`] as a strong 2-of-3 quorum transaction.
+    pub async fn transaction_strong<T, F, Fut>(&self, work: F) -> Result<T>
+    where
+        F: FnOnce(SqlSession) -> Fut,
+        Fut: Future<Output = Result<T>>,
+    {
+        self.with_consistency(ConsistencyMode::Strong)
+            .transaction(work)
+            .await
     }
 
     /// Commits the open transaction; after a failed statement it rolls back
@@ -303,11 +380,25 @@ impl SqlSession {
     }
 
     async fn send(&self, kind: &str, statements: Option<&[SqlStatement]>) -> Result<Answer> {
+        if let Some(bookmark) = &self.bookmark {
+            super::database::check_bookmark(bookmark)?;
+        }
         let id = self.shared.next_id.fetch_add(1, Ordering::Relaxed) + 1;
+        let consistency = self
+            .consistency
+            .filter(|_| matches!(kind, "execute" | "begin"))
+            .map(ConsistencyMode::as_str);
+        let bookmark = self
+            .shared
+            .db
+            .bookmark_tracker()
+            .with(self.bookmark.as_deref());
         let frame = serde_json::to_string(&Frame {
             id,
             kind,
             statements,
+            consistency,
+            bookmark,
         })
         .map_err(|e| Error::InvalidInput(format!("encode SQL frame: {e}")))?;
         if frame.len() > MAX_SQL_FRAME_BYTES {
@@ -322,6 +413,7 @@ impl SqlSession {
                     results: Vec::new(),
                     error: None,
                     transaction: false,
+                    bookmark: None,
                 });
             };
             let mut sink = link.sink.lock().await;
@@ -420,10 +512,19 @@ impl SqlSession {
             Ready::Connect => {}
         }
         let db = &self.shared.db;
+        let mut headers = Vec::new();
+        if let Some(bookmark) = db.bookmark_tracker().with(self.bookmark.as_deref()) {
+            headers.push((BOOKMARK_HEADER, bookmark));
+        }
+        if let Some(mode) = db.consistency() {
+            headers.push((CONSISTENCY_HEADER, mode.as_str().to_owned()));
+        }
         let socket = db
             .client()
-            .open_socket(
+            .open_socket_with(
                 vec!["v1", "databases", db.name(), "sql", "ws"],
+                &[],
+                &headers,
                 SQL_SUBPROTOCOL,
                 db.client().max_response(),
             )
@@ -465,6 +566,9 @@ async fn read(mut stream: SplitStream<WebSocket>, wire: Arc<Wire>, shared: Weak<
                         )
                     });
                     let waiter = if let Some(shared) = shared.upgrade() {
+                        if let Some(bookmark) = answer.bookmark.as_deref() {
+                            shared.db.bookmark_tracker().observe(bookmark);
+                        }
                         let mut state = lock(&shared.state);
                         state.uncertain |= uncertain;
                         wire.transaction

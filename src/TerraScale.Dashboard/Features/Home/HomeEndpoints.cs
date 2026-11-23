@@ -35,17 +35,17 @@ namespace TerraScale.Dashboard.Features.Home
             context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, requireProject: context.Role.Length == 0);
             if (!context.Account.OnboardingCompleted)
             {
-                return Results.Redirect("/onboarding");
+                return TypedResults.Redirect("/onboarding");
             }
 
             if (context.Organization is null)
             {
-                return Results.Problem("Selected organization is unavailable.", statusCode: 403);
+                return TypedResults.Problem("Selected organization is unavailable.", statusCode: 403);
             }
 
             if (context.Project is null)
             {
-                return Results.Redirect(context.Organization.Kind == "business" && !context.Organization.CanProvision(context.UserId) ? "/organization" : "/organization?tab=projects");
+                return TypedResults.Redirect(context.Organization.Kind == "business" && !context.Organization.CanProvision(context.UserId) ? "/organization" : "/organization?tab=projects");
             }
 
             var range = HomePage.NormalizeRange(http.Request.Query["range"]);
@@ -59,23 +59,23 @@ namespace TerraScale.Dashboard.Features.Home
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, requireProject: context.Role.Length == 0);
             if (!http.Request.Query.ContainsKey("organizationId") || !http.Request.Query.ContainsKey("projectId"))
             {
-                return Results.BadRequest("Workspace identity is required.");
+                return TypedResults.BadRequest("Workspace identity is required.");
             }
 
             if (!context.Account.OnboardingCompleted || context.Organization is null || context.Project is null)
             {
-                return Results.Problem("Selected workspace is unavailable.", statusCode: 403);
+                return TypedResults.Problem("Selected workspace is unavailable.", statusCode: 403);
             }
 
             var data = await measurements.ReadRegionsAsync(context, http.RequestAborted);
             await DatastarEvents.PatchElementsAsync(http, HomeRegionsView.Create(new(ShellModel.For(http, context, "Overview"), "overview", "24h", data)));
-            return Results.Empty;
+            return TypedResults.Empty;
         }
     }
 }

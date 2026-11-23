@@ -7,8 +7,6 @@ description: Run Dapper and ADO.NET against your TerraScale database through the
 
 The .NET SDK ships an ADO.NET provider: `TerraBaseDbConnection` wraps a `TerraBaseSqlDatabase` in a `DbConnection`, so every .NET tool built on ADO.NET works against your TerraScale database. Dapper accepts that connection directly. The SQL dialect is SQLite; everything the SQL API refuses (see [SQL](/concepts/sql)) is refused through the provider too.
 
-A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
-
 ## Install
 
 The .NET SDK is not on NuGet yet; follow the [C# quickstart](/getting-started/csharp) to pack it into a local package folder, then add Dapper to your project:
@@ -98,6 +96,24 @@ The provider is async-only, like the rest of the SDK: the sync `ExecuteNonQuery`
 
 ## What isn't supported
 
-- **EF Core** is not supported yet: it needs schema and savepoint facilities the SQL API does not expose. Dapper, hand-written ADO.NET and the SDK's own `TerraBaseSqlClient` cover queries, writes and transactions today.
+- **EF Core** does not run on this ADO.NET provider. Use EF Core over the Postgres wire instead (below).
 - `BEGIN`/`COMMIT`/`ROLLBACK` statements are refused; use the transaction API above.
 - Server-side cursors and prepared-statement handles do not exist; commands send their SQL text each time.
+
+## EF Core over the Postgres wire
+
+EF Core works with `Npgsql.EntityFrameworkCore.PostgreSQL` against the [Postgres wire](/guides/postgres-clients), including `dotnet ef migrations` and `dotnet ef database update`:
+
+```cs
+builder.Services.AddDbContext<AppDbContext>(options => options.UseNpgsql(new NpgsqlConnectionStringBuilder
+{
+    Host = "pg.terrascale.tech",
+    Port = 5432,
+    Database = $"{projectId}/{database}",
+    Username = "any",
+    Password = apiKey,
+    SslMode = SslMode.VerifyFull,
+}.ConnectionString));
+```
+
+`await context.Database.BeginTransactionAsync(IsolationLevel.Serializable)` runs the transaction in [strong mode](/concepts/replication#strong-mode); a lost race throws a `PostgresException` with SQLSTATE `40001`, which EF Core's `EnableRetryOnFailure` retries.

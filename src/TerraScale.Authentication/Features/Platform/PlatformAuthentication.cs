@@ -12,19 +12,10 @@ using static OpenIddict.Abstractions.OpenIddictConstants;
 
 namespace TerraScale.Authentication.Features.Platform;
 
-/// <summary>
-/// Authenticates management API calls with the caller's own sign-in access token of the platform tenant: an ES256
-/// <c>at+jwt</c> of the issuer, unexpired, whose <c>aud</c> includes the issuer. Only sign-in tokens carry that
-/// audience, so organization, project, API key and service tokens are refused. The user, and the sign-in and token
-/// entries the token names, are read from TerraBase on every request (the stores, never a cache), so a revoked sign-in
-/// is refused at once on every replica; so is a token from before the user signed out everywhere or reset its password,
-/// whose authentication epoch no longer matches the user's.
-/// </summary>
 public sealed class PlatformAuthentication(KeyRing ring, TotpCredentials mfa, IOpenIddictAuthorizationStore<OidcAuthorization> authorizations, IOpenIddictTokenStore<OidcToken> tokens, AuthOptions options, LiveAgents agents)
 {
     private const int MaxTokenLength = 8 * 1024;
 
-    /// <summary>The signed-in user, or null when the request carries no valid sign-in token.</summary>
     public async Task<UserRecord?> AuthenticateAsync(HttpRequest request, CancellationToken cancellationToken, string instanceId = OidcIssuer.InstanceId, string? audience = null)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -37,10 +28,10 @@ public sealed class PlatformAuthentication(KeyRing ring, TotpCredentials mfa, IO
 
         var issuer = OidcIssuer.Issuer(options, instanceId).AbsoluteUri;
         IDictionary<string, object>? claims;
-        var keys = await ring.GetPublicAsync(instanceId, Jwt.KeyId(token), cancellationToken).ConfigureAwait(false);
+        var keys = await ring.GetPublicAsync(instanceId, Jwt.KeyId(token), cancellationToken);
         try
         {
-            claims = await Jwt.ValidateAsync(token, keys, "at+jwt", issuer, audience ?? issuer).ConfigureAwait(false);
+            claims = await Jwt.ValidateAsync(token, keys, "at+jwt", issuer, audience ?? issuer);
         }
         finally
         {
@@ -55,15 +46,13 @@ public sealed class PlatformAuthentication(KeyRing ring, TotpCredentials mfa, IO
             return null;
         }
 
-        // The sign-in and token entry reads run alongside the factor read and the user read that follows it: two storage
-        // round trips instead of five.
         var userRead = mfa.PrimaryUserAsync(instanceId, userId, Claim(claims, OidcIssuer.EpochClaim), Claim(claims, OidcIssuer.StateClaim),
             Claim(claims, OidcIssuer.MfaClaim), cancellationToken);
         var liveRead = this.LiveAsync(claims, userId, cancellationToken);
         var agentRead = Claim(claims, LiveAgents.Claim) is { } agentId ? agents.ActiveAsync(agentId, userId, cancellationToken) : null;
-        await Task.WhenAll(userRead, liveRead, agentRead ?? Task.CompletedTask).ConfigureAwait(false);
-        return await liveRead.ConfigureAwait(false) is { } entry && await userRead.ConfigureAwait(false) is { } user
-            && (agentRead is null || await agentRead.ConfigureAwait(false) is not null)
+        await Task.WhenAll(userRead, liveRead, agentRead ?? Task.CompletedTask);
+        return await liveRead is { } entry && await userRead is { } user
+            && (agentRead is null || await agentRead is not null)
             ? user with { AuthenticationBindings = entry.Bindings, SessionId = Claim(claims, "ts_auth_session"), ActingAgentId = Claim(claims, LiveAgents.Claim) }
             : null;
     }
@@ -71,9 +60,6 @@ public sealed class PlatformAuthentication(KeyRing ring, TotpCredentials mfa, IO
     private static string? Claim(IDictionary<string, object> claims, string name) =>
         claims.TryGetValue(name, out var value) && Convert.ToString(value, CultureInfo.InvariantCulture) is { Length: > 0 } text ? text : null;
 
-    // The token entry every sign-in access token names (oi_tkn_id; its jti is a separate value) and the sign-in
-    // (authorization) it names must still be valid and the user's: revocation (RFC 7009) and refresh-token reuse revoke
-    // them. A token naming no entry cannot be checked, so it is refused.
     private async Task<OidcToken?> LiveAsync(IDictionary<string, object> claims, string userId, CancellationToken cancellationToken)
     {
         if (Claim(claims, "oi_tkn_id") is not { } tokenId)
@@ -81,14 +67,13 @@ public sealed class PlatformAuthentication(KeyRing ring, TotpCredentials mfa, IO
             return null;
         }
 
-        // Both entries are named by the token, so they are read together.
         var authorizationId = Claim(claims, "oi_au_id");
         var authorizationRead = authorizationId is null ? Task.FromResult<OidcAuthorization?>(null) : authorizations.FindByIdAsync(authorizationId, cancellationToken).AsTask();
         var entryRead = tokens.FindByIdAsync(tokenId, cancellationToken).AsTask();
-        await Task.WhenAll(authorizationRead, entryRead).ConfigureAwait(false);
+        await Task.WhenAll(authorizationRead, entryRead);
         return (authorizationId is null
-                || await authorizationRead.ConfigureAwait(false) is { } authorization && authorization.Status == Statuses.Valid && authorization.Subject == userId)
-            && await entryRead.ConfigureAwait(false) is { } entry && entry.Status == Statuses.Valid && entry.Subject == userId
+                || await authorizationRead is { } authorization && authorization.Status == Statuses.Valid && authorization.Subject == userId)
+            && await entryRead is { } entry && entry.Status == Statuses.Valid && entry.Subject == userId
                 ? entry
                 : null;
     }

@@ -1,4 +1,4 @@
-using TerraScale.TerraBase.Contracts;
+using TerraScale.Dashboard.Platform.Clients;
 using TerraScale.Dashboard.Platform.Observability;
 using TerraScale.Dashboard.Features.Analytics;
 

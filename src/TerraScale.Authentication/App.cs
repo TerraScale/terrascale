@@ -5,8 +5,6 @@ using System.Net;
 using TerraScale.Authentication.Features.AttackProtection;
 using Fido2NetLib;
 using Microsoft.AspNetCore.HttpOverrides;
-using Microsoft.EntityFrameworkCore.Diagnostics;
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Features.Http;
@@ -27,21 +25,18 @@ using TerraScale.Authentication.Features.WebAuthn;
 using TerraScale.Authentication.Features.Webhooks;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Storage;
+using TerraScale.Authentication.Storage.Schema;
 using TerraScale.DotNet.TerraBase;
 using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication;
 
-/// <summary>Composes services, middleware and endpoints.</summary>
 public static class App
 {
-    /// <summary>OpenAPI document title; clients key on it.</summary>
     public const string ApiTitle = "TerraScale Auth API";
 
-    /// <summary>Service key for peer-only management calls to the regional TerraBase endpoint.</summary>
     public const string StorageAuthority = "terrabase-authority";
 
-    /// <summary>Single-use proofs and shared mail budgets require GRU's one TerraBase writer in production.</summary>
     public static void ValidateAuthenticationAuthority(AuthOptions options, string? region)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -51,10 +46,6 @@ public static class App
         }
     }
 
-    /// <summary>
-    /// The passkey relying party: the public origin's registrable host, so ceremonies from every allowed origin
-    /// (auth and the dashboard) bind to one account-scoped credential. Hosts of two labels are already registrable.
-    /// </summary>
     public static string PasskeyRpId(string host)
     {
         ArgumentException.ThrowIfNullOrEmpty(host);
@@ -62,7 +53,6 @@ public static class App
         return labels.Length >= 3 ? string.Join(".", labels, 1, labels.Length - 1) : host;
     }
 
-    /// <summary>Whether an allowed origin's host is the relying party itself or one of its subdomains.</summary>
     public static bool PasskeyOriginMatches(string origin, string rpId)
     {
         ArgumentException.ThrowIfNullOrEmpty(origin);
@@ -71,28 +61,14 @@ public static class App
             && (uri.Host.Equals(rpId, StringComparison.OrdinalIgnoreCase) || uri.Host.EndsWith("." + rpId, StringComparison.OrdinalIgnoreCase));
     }
 
-    /// <summary>
-    /// The trusted regional storage endpoint, required outside Development. Reads and writes use this copy without
-    /// remote fallback; replicated winner claims reconcile concurrent conditional credentials.
-    /// Development alone may use the loopback default.
-    /// </summary>
     public static Uri TerraBaseOrigin(AuthOptions options) => options.TerraBaseUrl
         ?? (options.Development ? new("http://127.0.0.1:8081")
             : throw new AuthConfigurationException("TS_AUTH_TERRABASE_URL is required outside Development"));
 
-    /// <summary>
-    /// The TerraBase project holding the platform's own databases. TerraBase seeds it with this fixed id on every start
-    /// (<c>PlatformDatabases</c> in src/TerraBase); the two must stay equal.
-    /// </summary>
     public const string StorageProject = "00000000000000000000000002";
 
-    /// <summary>ts-auth's database in <see cref="StorageProject"/>; ts-auth creates its tables there itself.</summary>
     public const string StorageDatabase = "ts-auth";
 
-    /// <summary>
-    /// Builds the application for validated options. <paramref name="configure"/> lets
-    /// integration tests replace infrastructure before the container is built.
-    /// </summary>
     public static WebApplication Build(AuthOptions options, Action<WebApplicationBuilder>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -107,7 +83,6 @@ public static class App
 
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton(TimeProvider.System);
-        // All storage traffic uses the configured regional endpoint without remote fallback.
         builder.Services.AddSingleton(services => new HttpClient(StorageTiming.Wrap(RequestIdentity.Wrap(TerraBaseTransport.CreateHandler(
             [],
             services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(TerraBaseTransport)), services.GetService<TerraBaseTransport.HostResolver>(),
@@ -119,12 +94,9 @@ public static class App
         {
             BaseAddress = TerraBaseOrigin(options),
         }).Database(StorageProject, StorageDatabase));
-        builder.Services.AddPooledDbContextFactory<AuthDbContext>((services, database) => database
-            .UseTerraBase(services.GetRequiredService<TerraBaseSqlDatabase>())
-            .UseLoggerFactory(new ConflictLogging(services.GetRequiredService<ILoggerFactory>()))
-            .ConfigureWarnings(warnings => warnings.Log((RelationalEventId.CommandError, LogLevel.Debug)))
-            .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking));
+        builder.Services.AddSingleton<AuthConnectionFactory>();
         builder.Services.AddSingleton<AuthData>();
+        builder.Services.AddSingleton<TerraBaseDbUpRunner>();
         builder.Services.AddSingleton<AuthSchema>();
         builder.Services.AddSingleton<Credentials>();
         builder.Services.AddSingleton<Challenges>();
@@ -165,7 +137,6 @@ public static class App
         }));
         builder.Services.AddSingleton<PlatformDirectory>();
         builder.Services.AddSingleton<AccountDeletion>();
-        // Project closure reaches TerraBase through the regional peer transport, acting as no user.
         builder.Services.AddKeyedSingleton(StorageAuthority, (services, _) => new TerraBaseManagementClient(services.GetRequiredService<HttpClient>(),
             new TerraBaseManagementClientOptions { BaseAddress = TerraBaseOrigin(options) }));
         builder.Services.AddSingleton<Closures>();
@@ -190,9 +161,6 @@ public static class App
         builder.Services.AddSingleton<AgentEnrollments>();
         builder.Services.AddSingleton<PlatformGrants>();
         builder.Services.AddSingleton<CustomTokens>();
-        // Singletons keep factory clients (discovery and key caches), so a rotating handler could never be collected:
-        // its expiry timer would root the whole container long after the host stops. Handlers live as long as the
-        // container instead, and pooled connections still re-resolve DNS.
         builder.Services.ConfigureHttpClientDefaults(http => http
             .SetHandlerLifetime(Timeout.InfiniteTimeSpan)
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { PooledConnectionLifetime = PublicAddresses.ConnectionLifetime }));
@@ -227,7 +195,6 @@ public static class App
         builder.Services.AddHostedService<WebhookExpansionWorker>();
         builder.Services.AddHostedService<WebhookDeliveryWorker>();
         builder.Services.AddHostedService<SessionPruner>();
-        // Ready means this regional copy takes writes.
         builder.Services.AddSingleton<TerraBaseStorageHealth>();
         builder.Services.AddSingleton<IStorageHealth, SigningKeyReadiness>();
         builder.Services.AddSingleton<ReadinessProbe>();
@@ -296,8 +263,6 @@ public static class App
 
         ValidateAuthenticationAuthority(options, builder.Configuration["TS_REGION"]);
 
-        // ts-orch (which sets TS_NODE) serves every node through its edge on loopback, which replaces X-Forwarded-For
-        // with the client's address. Without trusting it, every end user shares the edge's IP budgets.
         if (builder.Configuration["TS_NODE"] is { Length: > 0 })
         {
             options = options with { TrustedProxies = [.. options.TrustedProxies.Union([IPAddress.Loopback, IPAddress.IPv6Loopback])] };
@@ -319,7 +284,6 @@ public static class App
             });
         }
 
-        // A named TerraBase requires a valid peer credential before the first storage request.
         if (options.TerraBaseUrl is not null
             && string.IsNullOrEmpty(builder.Configuration[TerraBaseTransport.PeerSecretVariable]))
         {
@@ -331,7 +295,6 @@ public static class App
             _ = TerraBaseTransport.Validated(peerSecret);
         }
 
-        // This pipeline owns forwarding order and trust, even when ASP.NET's automatic forwarding setting is enabled.
         builder.Configuration["ForwardedHeaders_Enabled"] = "false";
 
         _ = TerraBaseOrigin(options);
@@ -342,9 +305,7 @@ public static class App
 
         var app = builder.Build();
         app.UseTerraScaleRequestIdentity(AuthIds.New, builder.Configuration[TerraBaseTransport.PeerSecretVariable]);
-        // Resolved now, so a ts-auth without storage refuses to start (see TerraBaseOrigin); tests may register their own.
         app.Services.GetRequiredService<TerraBaseSqlDatabase>();
-        // Hashes its timing equalizer now, so the first password check of an unknown account costs no more than any other.
         app.Services.GetRequiredService<PasswordHasher>();
         app.Use((HttpContext context, RequestDelegate next) =>
         {
@@ -354,7 +315,6 @@ public static class App
                 if (context.GetEndpoint()?.Metadata.GetMetadata<IEndpointNameMetadata>()?.EndpointName is UserInfoEndpoint.RouteName or UserInfoEndpoint.PostRouteName
                     or AgentIdUserInfoEndpoint.RouteName or AgentIdUserInfoEndpoint.PostRouteName)
                 {
-                    // Registered before authentication; survives protocol failures and the error envelope's Clear().
                     context.Response.Headers.CacheControl = "no-store";
                     context.Response.Headers.Pragma = "no-cache";
                 }
@@ -366,16 +326,13 @@ public static class App
         app.UseAuthMetrics();
         StorageTiming.Use(app);
         app.UseMiddleware<ErrorEnvelopeMiddleware>();
-        // Inside the envelope, so a failing page still answers 500; only empty, unstarted responses reach the handler.
         app.UseStatusCodePages(NotFoundPage.HandleAsync);
-        // Ahead of the rate-limit guards: their storage writes stall with every other write.
         app.UseMiddleware<TokenEndpointDeadline>();
         TokenRateLimitMiddleware.UsePeerGuard(app);
         if (options.TrustedProxies.Count > 0)
         {
             app.Use((HttpContext context, RequestDelegate next) =>
             {
-                // Joining header values and native splitting drop empty entries. Inspect the last raw wire value.
                 var values = context.Request.Headers["X-Forwarded-For"];
                 var last = values.Count == 0 ? string.Empty : values[^1] ?? string.Empty;
                 if (last.AsSpan(last.LastIndexOf(',') + 1).Trim().Trim('"').Trim().IsEmpty)
@@ -393,7 +350,6 @@ public static class App
         app.UseHostedTheme();
         app.UseBotChallenge();
         app.UseImpersonation();
-        // OpenIddict answers discovery, JWKS and protocol errors here and validates passthrough requests first.
         app.UseAuthentication();
         app.MapTerraScaleEndpoints();
         app.MapTerraScaleOpenApi();

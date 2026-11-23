@@ -2,16 +2,14 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.Dashboard.Platform.Rpc;
-using TerraScale.TerraBase.Contracts.Functions;
-using TerraScale.TerraBase.Contracts;
+using TerraScale.Dashboard.Platform.Clients;
 
 namespace TerraScale.Dashboard.Features.Functions
 {
     public sealed record FunctionRecord(string Name, string? Source, string? Cron, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
     public sealed record FunctionInvocation(string Id, DateTimeOffset At, string Trigger, string Status, double DurationMs, IReadOnlyList<string> Lines, string? Error, int SqlCalls, long SqlMs, long RowsRead, long RowsWritten, long ResponseBytes, int? HttpStatus);
 
-    public sealed partial class FunctionBackend(DatabaseService databases, IProjectAccessTokens tokens, TerraBaseRpcClient rpc, ILogger<FunctionBackend> logger, TimeProvider time)
+    public sealed partial class FunctionBackend(DatabaseService databases, IProjectAccessTokens tokens, PlatformHttpClient platform, ILogger<FunctionBackend> logger)
     {
         public const string NameInputPattern = "[a-z][a-z0-9_-]{0,62}";
 
@@ -206,7 +204,7 @@ namespace TerraScale.Dashboard.Features.Functions
             }
         }
 
-        private async Task<(IFunctionsService Client, string ProjectId, string Database, AccountContext Context)> ClientAsync(AccountContext context, DatabaseRecord database, bool write, IReadOnlyList<string> scopes, CancellationToken ct)
+        private async Task<(FunctionsClient Client, string ProjectId, string Database, AccountContext Context)> ClientAsync(AccountContext context, DatabaseRecord database, bool write, IReadOnlyList<string> scopes, CancellationToken ct)
         {
             context = await databases.CurrentAsync(context, ct);
             database = DatabaseService.Database(context, database.Id);
@@ -221,9 +219,9 @@ namespace TerraScale.Dashboard.Features.Functions
                 throw PlatformDatabases.ReadOnly();
             }
 
-            var home = await databases.HomeAsync(context, database, ct);
+            await databases.HomeAsync(context, database, ct);
             var access = await tokens.GetAsync(context.Session, scope.OrganizationId, scope.ProjectId, scopes, ct);
-            return (rpc.User<IFunctionsService>(access, home.Id).WithCancellationToken(ct).WithDeadline(time.GetUtcNow().UtcDateTime.AddSeconds(30)), scope.ProjectId, database.Name, context);
+            return (new FunctionsClient(platform, ServiceCaller.User(access), ct), scope.ProjectId, database.Name, context);
         }
 
         internal static FunctionInvocation Invocation(TerraBaseFunctionInvocation item) =>

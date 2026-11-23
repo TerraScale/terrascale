@@ -1,5 +1,5 @@
+using Dapper;
 using System.Text;
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet.TerraBase;
@@ -11,8 +11,11 @@ namespace TerraScale.Dashboard.Features.Data
     public readonly union SavedQueryResult(SavedQuery, Validation, Conflict, Forbidden);
     public readonly union SavedQueryDeleted(Done, NotFound, Forbidden);
 
-    public sealed class SavedQueryService(IDbContextFactory<DashboardDbContext> storage, TimeProvider time, AccountService accounts)
+    public sealed class SavedQueryService(DashboardDb storage, TimeProvider time, AccountService accounts)
     {
+        private const string Saved = DashboardSql.SavedQueries.Select + " WHERE organization_id = @OrganizationId AND project_id = @ProjectId";
+        private const string Remove = "DELETE FROM saved_queries WHERE id = @Id AND organization_id = @OrganizationId AND project_id = @ProjectId";
+
         public async Task<IReadOnlyList<SavedQuery>> ListAsync(AccountContext context, string databaseId, CancellationToken cancellationToken)
         {
             context = await AccountScope.RefreshAsync(accounts, context, cancellationToken, requireProject: true);
@@ -34,10 +37,8 @@ namespace TerraScale.Dashboard.Features.Data
         private async Task<IReadOnlyList<SavedQuery>> ReadAsync(AccountContext context, CancellationToken cancellationToken)
         {
             var scope = DatabaseService.Scope(context);
-            await using var db = await storage.CreateDbContextAsync(cancellationToken);
-            var rows = await db.SavedQueries.AsNoTracking()
-                .Where(row => row.OrganizationId == scope.OrganizationId && row.ProjectId == scope.ProjectId)
-                .ToListAsync(cancellationToken);
+            await using var connection = await storage.OpenAsync(cancellationToken);
+            var rows = await connection.QueryAsync<SavedQueryRow>(Saved, new { scope.OrganizationId, scope.ProjectId });
             return [.. rows.Select(row => new SavedQuery(row.Id, row.Name, row.Sql, row.DatabaseId, new DateTimeOffset(row.CreatedAt))).OrderBy(query => query.Name, StringComparer.Ordinal)];
         }
 
@@ -73,8 +74,7 @@ namespace TerraScale.Dashboard.Features.Data
 
             var query = new SavedQuery(AccountService.NewId(), name, sql, databaseId, time.GetUtcNow());
             var scope = DatabaseService.Scope(context);
-            await using var db = await storage.CreateDbContextAsync(cancellationToken);
-            db.SavedQueries.Add(new SavedQueryRow
+            var row = new SavedQueryRow
             {
                 Id = query.Id,
                 OrganizationId = scope.OrganizationId,
@@ -83,12 +83,13 @@ namespace TerraScale.Dashboard.Features.Data
                 Name = name,
                 Sql = sql,
                 CreatedAt = query.CreatedAt.UtcDateTime,
-            });
+            };
             try
             {
-                await db.SaveChangesAsync(cancellationToken);
+                await using var connection = await storage.OpenAsync(cancellationToken);
+                await connection.ExecuteAsync(DashboardSql.SavedQueries.Insert, row);
             }
-            catch (DbUpdateException error) when (error.InnerException is TerraBaseSqlException { Code: TerraBaseSqlErrorCodes.UniqueViolation })
+            catch (Exception error) when (DashboardDb.IsDuplicate(error))
             {
                 return new Conflict("A saved query with this name already exists. Choose another name or delete the existing query.");
             }
@@ -110,8 +111,8 @@ namespace TerraScale.Dashboard.Features.Data
             }
 
             var scope = DatabaseService.Scope(context);
-            await using var db = await storage.CreateDbContextAsync(cancellationToken);
-            return await db.SavedQueries.Where(row => row.Id == id && row.OrganizationId == scope.OrganizationId && row.ProjectId == scope.ProjectId).ExecuteDeleteAsync(cancellationToken) == 0
+            await using var connection = await storage.OpenAsync(cancellationToken);
+            return await connection.ExecuteAsync(Remove, new { Id = id, scope.OrganizationId, scope.ProjectId }) == 0
                 ? new NotFound("Saved query is unavailable.")
                 : new Done();
         }

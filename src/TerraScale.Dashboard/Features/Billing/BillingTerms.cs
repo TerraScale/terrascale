@@ -1,14 +1,13 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Metadata;
-using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace TerraScale.Dashboard.Features.Billing;
 
-public sealed class BillingSubscription : IBillingRow
+public sealed record BillingSubscription : IBillingRow
 {
+    public string? OriginalVersion { get; set; }
+
     public string Version { get; set; } = "";
     public required string OrganizationId { get; init; }
     public required string SubscriptionId { get; init; }
@@ -21,23 +20,9 @@ public sealed class BillingSubscription : IBillingRow
     public bool Ended => Status is "canceled" or "incomplete_expired";
 
     public bool KnownThrough(DateTimeOffset end) => CheckedAt >= end || EndedAt is { } ended && ended <= CheckedAt;
-
-    public sealed class Configuration : IEntityTypeConfiguration<BillingSubscription>
-    {
-        public void Configure(EntityTypeBuilder<BillingSubscription> builder)
-        {
-            builder.ToTable("billing_subscriptions", table => table.HasCheckConstraint("ck_billing_subscriptions", "length(subscription_id) > 0 AND length(customer_id) > 0"));
-            builder.HasKey(row => new { row.OrganizationId, row.SubscriptionId });
-            builder.Property(row => row.Version).IsConcurrencyToken();
-            builder.HasOne<BillingBinding>().WithMany().HasForeignKey(row => row.OrganizationId).OnDelete(DeleteBehavior.Cascade);
-            builder.Property(row => row.StartedAt).HasConversion(BillingColumns.Utc);
-            builder.Property(row => row.EndedAt).HasConversion(BillingColumns.OptionalUtc);
-            builder.Property(row => row.CheckedAt).HasConversion(BillingColumns.Utc);
-        }
-    }
 }
 
-public sealed class BillingTerms
+public sealed record BillingTerms
 {
     public const string StartDate = "start_date";
     public const string ProviderEvent = "event";
@@ -81,22 +66,5 @@ public sealed class BillingTerms
             Currency = "usd",
             PricingVersion = plan is null ? "" : Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text)))
         };
-    }
-
-    public sealed class Configuration : IEntityTypeConfiguration<BillingTerms>
-    {
-        public void Configure(EntityTypeBuilder<BillingTerms> builder)
-        {
-            builder.ToTable("billing_terms", table => table.HasCheckConstraint("ck_billing_terms", "length(subscription_id) > 0 AND basis IN ('start_date', 'event', 'first_check', 'unestablished')"));
-            builder.Property(row => row.Basis).IsRequired();
-            builder.HasKey(row => new { row.OrganizationId, row.SubscriptionId, row.EffectiveFrom, row.PricingVersion, row.Basis });
-            builder.HasOne<BillingBinding>().WithMany().HasForeignKey(row => row.OrganizationId).OnDelete(DeleteBehavior.Cascade);
-            builder.Property(row => row.EffectiveFrom).HasConversion(BillingColumns.Utc);
-            builder.Property(row => row.LearnedAt).HasConversion(BillingColumns.Utc);
-            foreach (var property in builder.Metadata.GetProperties())
-            {
-                property.SetAfterSaveBehavior(PropertySaveBehavior.Throw);
-            }
-        }
     }
 }

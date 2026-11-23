@@ -5,10 +5,8 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.Platform;
 
-/// <summary>Same-origin hosted verification, charged against the existing credential budgets.</summary>
 public sealed class VerifyStepUpEndpoint : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post(StepUpHosted.Route);
@@ -28,6 +26,5 @@ public sealed class VerifyStepUpEndpoint : EndpointWithoutRequest<IResult>
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) => await StepUpHosted.HandleAsync(this.HttpContext, true, cancellationToken);
 }

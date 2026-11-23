@@ -21,7 +21,7 @@ public sealed class GetSqlSchemaEndpoint(DashboardSessions sessions, AccountServ
         var context = await AccountRequest.RequireAsync(HttpContext, sessions, accounts);
         if (context is null)
         {
-            return Results.Unauthorized();
+            return TypedResults.Unauthorized();
         }
 
         try
@@ -29,7 +29,7 @@ public sealed class GetSqlSchemaEndpoint(DashboardSessions sessions, AccountServ
             var id = HttpContext.Request.Query["databaseId"].ToString();
             var (current, _) = await databases.LookupAsync(context, id, cancellationToken);
             var catalog = await data.CatalogAsync(current, id, cancellationToken);
-            return Results.Json(catalog, SqlSchemaJson.Default.SqlCatalog);
+            return TypedResults.Json(catalog, SqlSchemaJson.Default.SqlCatalog);
         }
         catch (Exception error) when (DatabaseResults.KnownFailure(error) || error is HttpRequestException or JsonException)
         {

@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http.HttpResults;
 using System.Text;
 using Microsoft.AspNetCore.Http.Features;
 using TerraScale.Dashboard.Errors;
@@ -29,7 +30,7 @@ namespace TerraScale.Dashboard.Features.Billing.Webhooks
 
             if (http.Request.ContentLength > bodyLimit)
             {
-                return Results.StatusCode(413);
+                return TypedResults.StatusCode(413);
             }
 
             using var payload = new MemoryStream();
@@ -53,23 +54,23 @@ namespace TerraScale.Dashboard.Features.Billing.Webhooks
             catch (BadHttpRequestException error) when (error.StatusCode == 413) { return RejectUndrainedBody(http); }
             if (oversized)
             {
-                return Results.StatusCode(413);
+                return TypedResults.StatusCode(413);
             }
 
             var body = Encoding.UTF8.GetString(payload.GetBuffer(), 0, (int)payload.Length);
             return await billing.HandleWebhookAsync(body, http.Request.Headers["Stripe-Signature"].ToString(), http.RequestAborted) switch
             {
-                Done => Results.Ok(),
-                Rejected => Results.BadRequest(),
+                Done => TypedResults.Ok(),
+                Rejected => TypedResults.BadRequest(),
                 Deferred deferred => DeferredReceipt(http, deferred)
             };
         }
 
-        private static IResult DeferredReceipt(HttpContext http, Deferred deferred)
+        private static StatusCodeHttpResult DeferredReceipt(HttpContext http, Deferred deferred)
         {
             http.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("StripeWebhook")
                 .StripeEventWasNotAppliedAnswering(deferred.EventId, deferred.EventType, deferred.Cause.GetType().Name, deferred.Cause.Message);
-            return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+            return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
         }
 
         private static async Task<IResult> RejectAfterLingeringDiscardAsync(HttpContext http, long length)
@@ -87,17 +88,17 @@ namespace TerraScale.Dashboard.Features.Billing.Webhooks
             var buffer = new byte[8192];
             try { while (await http.Request.Body.ReadAsync(buffer, linger.Token) != 0) { } }
             catch (Exception error) when (error is OperationCanceledException or IOException or BadHttpRequestException) { }
-            return Results.Empty;
+            return TypedResults.Empty;
         }
 
-        private static IResult RejectUndrainedBody(HttpContext http)
+        private static StatusCodeHttpResult RejectUndrainedBody(HttpContext http)
         {
             if (http.Request.Protocol is "HTTP/1.0" or "HTTP/1.1")
             {
                 http.Response.Headers.Connection = "close";
             }
 
-            return Results.StatusCode(413);
+            return TypedResults.StatusCode(413);
         }
     }
 }

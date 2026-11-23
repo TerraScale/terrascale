@@ -11,10 +11,8 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.Email;
 
-/// <summary>Reserves one infrastructure notification attempt, never authentication capacity.</summary>
 public sealed class EmailAdmissionEndpoint(AuthOptions options, EmailAdmission admission, TimeProvider clock) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/v1/terrascale/email/admission");
@@ -32,7 +30,6 @@ public sealed class EmailAdmissionEndpoint(AuthOptions options, EmailAdmission a
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var authorization = this.HttpContext.Request.Headers.Authorization.ToString();
@@ -46,7 +43,7 @@ public sealed class EmailAdmissionEndpoint(AuthOptions options, EmailAdmission a
         {
             return TypedResults.Unauthorized();
         }
-        return (await EmailApi.ReadAsync<EmailAdmissionRequest>(this.HttpContext, cancellationToken).ConfigureAwait(false) switch
+        return (await EmailApi.ReadAsync<EmailAdmissionRequest>(this.HttpContext, cancellationToken) switch
         {
             EmailAdmissionRequest request => await AdmitAsync(request, cancellationToken),
             Validation error => ErrorResults.ToResult(error),
@@ -58,11 +55,11 @@ public sealed class EmailAdmissionEndpoint(AuthOptions options, EmailAdmission a
     private async Task<IResult> AdmitAsync(EmailAdmissionRequest request, CancellationToken cancellationToken)
     {
         var now = clock.GetUtcNow();
-        if (!NUlid.Ulid.TryParse(request.AttemptId, out var id) || id.Time < now - TimeSpan.FromMinutes(5) || id.Time > now + TimeSpan.FromMinutes(1))
+        if (!Ulid.TryParse(request.AttemptId, out var id) || id.Time < now - TimeSpan.FromMinutes(5) || id.Time > now + TimeSpan.FromMinutes(1))
         {
             return EmailApi.Error(StatusCodes.Status400BadRequest, "invalid_request", "A fresh attempt ULID is required.");
         }
-        if (!await admission.AcquireAsync(new("", "") { Purpose = EmailPurpose.Alert, Tenant = "ts-alerts" }, cancellationToken, id.ToString()).ConfigureAwait(false))
+        if (!await admission.AcquireAsync(new("", "") { Purpose = EmailPurpose.Alert, Tenant = "ts-alerts" }, cancellationToken, id.ToString()))
         {
             this.HttpContext.Response.Headers.RetryAfter = "60";
             return EmailApi.Error(StatusCodes.Status429TooManyRequests, "rate_limited", "Notification capacity is unavailable.");

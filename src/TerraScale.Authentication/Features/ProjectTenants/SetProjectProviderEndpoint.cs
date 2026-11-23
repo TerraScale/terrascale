@@ -30,6 +30,6 @@ public sealed class SetProjectProviderEndpoint(TenantDirectory tenants, ProjectA
             return current with { Providers = [.. (current.Providers ?? []).Where(other => other.Provider != provider), record] };
         }, cancellationToken);
         logger.ZLogInformation($"Audit: user {caller.Id:@UserId} configured the {provider:@Provider} sign-in provider of project {projectId:@ProjectId}");
-        return Results.Json(await this.SettingsAsync(projectId, updated, cancellationToken), ProjectTenantJson.Default.SettingsBody);
+        return TypedResults.Json(await this.SettingsAsync(projectId, updated, cancellationToken), ProjectTenantJson.Default.SettingsBody);
     }
 }

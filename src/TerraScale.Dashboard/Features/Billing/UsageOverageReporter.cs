@@ -1,11 +1,12 @@
+using Dapper;
+using System.Data;
 using System.Globalization;
 using System.Numerics;
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
 using StripeException = Stripe.StripeException;
 using TerraScale.Dashboard.Features.Notifications;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.TerraBase.Contracts;
+using TerraScale.Dashboard.Platform.Clients;
 using AccountService = TerraScale.Dashboard.Common.Accounts.AccountService;
 
 namespace TerraScale.Dashboard.Features.Billing
@@ -17,8 +18,23 @@ namespace TerraScale.Dashboard.Features.Billing
         Settled
     }
 
-    public sealed class UsageOverageReporter(IDbContextFactory<DashboardDbContext> storage, IAllowanceNotificationBackend usage, StripeBilling billing, BillingSchemaGate gate, TimeProvider clock, ILogger<UsageOverageReporter> logger, BackgroundJobs jobs)
+    public sealed class UsageOverageReporter(DashboardDb storage, IAllowanceNotificationBackend usage, StripeBilling billing, BillingSchemaGate gate, TimeProvider clock, ILogger<UsageOverageReporter> logger, BackgroundJobs jobs)
     {
+        private const string PendingCharges = "SELECT id FROM billing_overage_charges WHERE state = @Pending AND (@After IS NULL OR id > @After) ORDER BY id LIMIT @Limit";
+        private const string OpenMonths = """
+            SELECT DISTINCT overage_starts_at FROM billing
+            WHERE kind = 'stripe' AND state <> 'deleting' AND erasure_id IS NULL AND overage_starts_at <> @Default AND overage_starts_at < @Current
+            ORDER BY overage_starts_at LIMIT @Limit
+            """;
+        private const string MonthBindings = DashboardSql.Billing.Select + """
+             WHERE kind = 'stripe' AND overage_starts_at = @Month AND (@After IS NULL OR organization_id > @After) AND (@Upper IS NULL OR organization_id <= @Upper)
+            ORDER BY organization_id LIMIT @Limit
+            """;
+        private const string Subscriptions = DashboardSql.BillingSubscriptions.Select + " WHERE organization_id = @OrganizationId";
+        private const string TermsBefore = DashboardSql.BillingTerms.Select + " WHERE organization_id = @OrganizationId AND effective_from < @End";
+        private const string Winner = DashboardSql.BillingOverageCharges.Select + " WHERE organization_id = @OrganizationId AND month = @Month AND meter = @Meter";
+        private const string Advance = "UPDATE billing SET overage_starts_at = @Next, version = @Version WHERE organization_id = @OrganizationId AND overage_starts_at = @Month";
+
         private const int MonthsPerPass = 3;
         private const int UsagePagesPerPass = 200;
         private const int DispatchesPerPass = 500;
@@ -65,10 +81,9 @@ namespace TerraScale.Dashboard.Features.Billing
             while (dispatched < DispatchesPerPass)
             {
                 List<string> page;
-                await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+                await using (var connection = await storage.OpenAsync(cancellationToken))
                 {
-                    page = await db.OverageCharges.AsNoTracking().Where(row => row.State == OverageCharge.Pending && (after == null || string.Compare(row.Id, after) > 0))
-                        .OrderBy(row => row.Id).Select(row => row.Id).Take(PageSize).ToListAsync(cancellationToken);
+                    page = (await connection.QueryAsync<string>(PendingCharges, new { OverageCharge.Pending, After = after, Limit = PageSize })).AsList();
                 }
                 foreach (var id in page.Take(DispatchesPerPass - dispatched))
                 {
@@ -88,10 +103,10 @@ namespace TerraScale.Dashboard.Features.Billing
         {
             var current = MonthOf(clock.GetUtcNow());
             List<DateTimeOffset> months;
-            await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+            await using (var connection = await storage.OpenAsync(cancellationToken))
             {
-                months = await db.Billing.AsNoTracking().Where(row => row.Kind == "stripe" && row.State != "deleting" && row.ErasureId == null && row.OverageStartsAt != default && row.OverageStartsAt < current)
-                    .Select(row => row.OverageStartsAt).Distinct().OrderBy(month => month).Take(MonthsPerPass).ToListAsync(cancellationToken);
+                months = [.. (await connection.QueryAsync<DateTime>(OpenMonths, new { Current = current, Default = default(DateTimeOffset), Limit = MonthsPerPass }))
+                    .Select(static month => new DateTimeOffset(DateTime.SpecifyKind(month, DateTimeKind.Utc)))];
             }
             var pages = 0;
             long waiting = 0;
@@ -120,12 +135,10 @@ namespace TerraScale.Dashboard.Features.Billing
                     while (true)
                     {
                         List<BillingBinding> bindings;
-                        await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+                        await using (var connection = await storage.OpenAsync(cancellationToken))
                         {
-                            var upper = page.Next;
-                            bindings = await db.Billing.AsNoTracking().Where(row => row.Kind == "stripe" && row.OverageStartsAt == month &&
-                                    (organizationAfter == null || string.Compare(row.OrganizationId, organizationAfter) > 0) && (upper == null || string.Compare(row.OrganizationId, upper) <= 0))
-                                .OrderBy(row => row.OrganizationId).Take(PageSize).ToListAsync(cancellationToken);
+                            bindings = (await connection.QueryAsync<BillingBinding>(MonthBindings,
+                                new { Month = month, After = organizationAfter, Upper = page.Next, Limit = PageSize })).AsList();
                         }
                         foreach (var binding in bindings)
                         {
@@ -158,7 +171,7 @@ namespace TerraScale.Dashboard.Features.Billing
         }
 
         private static bool IsReportingFailure(Exception error, CancellationToken cancellationToken) =>
-            error is DbUpdateException or TimeoutException or TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or StripeException ||
+            error is DBConcurrencyException or TimeoutException or TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or StripeException ||
             error is OperationCanceledException && !cancellationToken.IsCancellationRequested;
 
         private static DateTimeOffset MonthOf(DateTimeOffset value) => new(value.Year, value.Month, 1, 0, 0, 0, TimeSpan.Zero);
@@ -179,10 +192,10 @@ namespace TerraScale.Dashboard.Features.Billing
             }
             List<BillingSubscription> subscriptions;
             List<BillingTerms> history;
-            await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+            await using (var connection = await storage.OpenAsync(cancellationToken))
             {
-                subscriptions = await db.BillingSubscriptions.AsNoTracking().Where(row => row.OrganizationId == binding.OrganizationId).ToListAsync(cancellationToken);
-                history = await db.BillingTerms.AsNoTracking().Where(row => row.OrganizationId == binding.OrganizationId && row.EffectiveFrom < end).ToListAsync(cancellationToken);
+                subscriptions = (await connection.QueryAsync<BillingSubscription>(Subscriptions, new { binding.OrganizationId })).AsList();
+                history = (await connection.QueryAsync<BillingTerms>(TermsBefore, new { binding.OrganizationId, End = end })).AsList();
             }
             var overlapping = subscriptions.Where(row => row.StartedAt < end && (row.EndedAt is null || row.EndedAt > month)).ToList();
             if (binding.SubscriptionId.Length > 0 && subscriptions.All(row => row.SubscriptionId != binding.SubscriptionId) || overlapping.Any(row => !row.KnownThrough(end)))
@@ -280,8 +293,8 @@ namespace TerraScale.Dashboard.Features.Billing
                 if (charge.SkipReason is { } skipped) { billing.RecordSkippedOverageMeter(month, skipped); }
                 return charge;
             }
-            await using var db = await storage.CreateDbContextAsync(cancellationToken);
-            var winner = await db.OverageCharges.AsNoTracking().SingleAsync(row => row.OrganizationId == binding.OrganizationId && row.Month == month && row.Meter == meter, cancellationToken);
+            await using var connection = await storage.OpenAsync(cancellationToken);
+            var winner = await connection.QuerySingleAsync<OverageCharge>(Winner, new { binding.OrganizationId, Month = month, Meter = meter });
             if (used.Value > winner.Usage) { billing.RecordLateOverage(); }
             return winner;
         }
@@ -289,9 +302,8 @@ namespace TerraScale.Dashboard.Features.Billing
         private async Task AdvanceAsync(string organizationId, DateTimeOffset month, DateTimeOffset next, CancellationToken cancellationToken)
         {
             var version = AccountService.NewId();
-            await using var db = await storage.CreateDbContextAsync(cancellationToken);
-            await db.Billing.Where(row => row.OrganizationId == organizationId && row.OverageStartsAt == month)
-                .ExecuteUpdateAsync(row => row.SetProperty(binding => binding.OverageStartsAt, next).SetProperty(binding => binding.Version, version), cancellationToken);
+            await using var connection = await storage.OpenAsync(cancellationToken);
+            await connection.ExecuteAsync(Advance, new { OrganizationId = organizationId, Month = month, Next = next, Version = version });
         }
     }
 
@@ -316,7 +328,7 @@ namespace TerraScale.Dashboard.Features.Billing
                     }
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
-                catch (Exception error) when (error is DbUpdateException or TimeoutException or TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or StripeException or OperationCanceledException)
+                catch (Exception error) when (error is DBConcurrencyException or TimeoutException or TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or StripeException or OperationCanceledException)
                 {
                     logger.UsageOverageReportingIsUnavailableRetrying(error.GetType().Name);
                 }

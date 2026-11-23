@@ -28,19 +28,10 @@ using static OpenIddict.Abstractions.OpenIddictConstants;
 
 namespace TerraScale.Authentication.Features.Oidc;
 
-/// <summary>An OAuth 2.0 error response (RFC 6749 §5.2).</summary>
-/// <param name="Error">Error code, for example <c>invalid_grant</c>.</param>
-/// <param name="ErrorDescription">Human-readable detail.</param>
 public sealed record OAuthErrorBody(
     [property: JsonPropertyName("error")] string Error,
     [property: JsonPropertyName("error_description")] string? ErrorDescription);
 
-/// <summary>A token response (RFC 6749 §5.1, OpenID Connect Core §3.1.3.3).</summary>
-/// <param name="AccessToken">ES256 JWT access token.</param>
-/// <param name="TokenType">Always <c>Bearer</c>.</param>
-/// <param name="ExpiresIn">Access token lifetime in seconds.</param>
-/// <param name="Scope">Granted scopes.</param>
-/// <param name="IdToken">ES256 identity token, when <c>openid</c> was granted.</param>
 public sealed record TokenBody(
     [property: JsonPropertyName("access_token")] string AccessToken,
     [property: JsonPropertyName("token_type")] string TokenType,
@@ -77,10 +68,8 @@ public sealed record UserInfoBody(
     [property: JsonPropertyName("act"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ImpersonationActor? Actor = null,
     [property: JsonPropertyName("is_anonymous"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? IsAnonymous = null);
 
-/// <summary><c>GET /{slug}/.well-known/openid-configuration</c>: OpenID Provider metadata, served by OpenIddict.</summary>
 public sealed class DiscoveryEndpoint : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/{slug}/.well-known/openid-configuration");
@@ -93,14 +82,11 @@ public sealed class DiscoveryEndpoint : EndpointWithoutRequest<IResult>
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
-    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) => ValueTask.FromResult(Results.NotFound());
+    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) => ValueTask.FromResult<IResult>(TypedResults.NotFound());
 }
 
-/// <summary><c>GET /{slug}/.well-known/jwks.json</c>: the public keys of the issuer's key ring, served by OpenIddict.</summary>
 public sealed class JwksEndpoint : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/{slug}/.well-known/jwks.json");
@@ -113,17 +99,12 @@ public sealed class JwksEndpoint : EndpointWithoutRequest<IResult>
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
-    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) => ValueTask.FromResult(Results.NotFound());
+    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) => ValueTask.FromResult<IResult>(TypedResults.NotFound());
 }
 
-/// <summary>
-/// <c>GET /{slug}/oauth/authorize</c>: the authorization endpoint with its parameters in the query string.
-/// </summary>
 public sealed class AuthorizeGetEndpoint(Impersonations impersonations, Sessions sessions, ProjectAuthSettings settings, TimeProvider clock, AuthOptions options)
     : AuthorizeEndpoint(impersonations, sessions, settings, clock, options)
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(Path);
@@ -132,14 +113,9 @@ public sealed class AuthorizeGetEndpoint(Impersonations impersonations, Sessions
     }
 }
 
-/// <summary>
-/// <c>POST /{slug}/oauth/authorize</c>: the authorization endpoint with its parameters form-encoded (OpenID Connect Core
-/// 3.1.2.1).
-/// </summary>
 public sealed class AuthorizePostEndpoint(Impersonations impersonations, Sessions sessions, ProjectAuthSettings settings, TimeProvider clock, AuthOptions options)
     : AuthorizeEndpoint(impersonations, sessions, settings, clock, options)
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post(Path);
@@ -149,25 +125,15 @@ public sealed class AuthorizePostEndpoint(Impersonations impersonations, Session
     }
 }
 
-/// <summary>
-/// The authorization endpoint (code flow with S256 PKCE), by GET or form POST. OpenIddict validates the client,
-/// redirect URI, scopes and PKCE first; this signs in the user of the hosted session cookie, or sends the browser to the
-/// hosted sign-in page and back.
-/// </summary>
 public abstract class AuthorizeEndpoint(Impersonations impersonations, Sessions sessions, ProjectAuthSettings settings, TimeProvider clock, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
-    /// <summary>The endpoint's route.</summary>
     protected const string Path = "/{slug}/oauth/authorize";
 
-    /// <summary>The resumed request's parameter: only a session created after these Unix milliseconds satisfies it.</summary>
     public const string LoginAfter = "ts_login_after";
 
-    /// <summary>Databases the OpenID Connect form binding of a POST variant.</summary>
     protected void AcceptsForm() =>
-        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
 
-    /// <summary>The documentation both bindings share.</summary>
     protected void Describe()
     {
         Summary("Authorization endpoint");
@@ -181,18 +147,16 @@ public abstract class AuthorizeEndpoint(Impersonations impersonations, Sessions 
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (this.HttpContext.GetOpenIddictServerRequest() is not { } request)
         {
-            return Results.NotFound();
+            return TypedResults.NotFound();
         }
 
         var tenant = Tenancy.Current(this.HttpContext);
         if (!await OidcResults.AllowsRedirectAsync(settings, tenant, request.RedirectUri, cancellationToken))
         {
-            // Do not send even an OAuth error to a redirect the project no longer permits.
             return OidcResults.DisallowedRedirect();
         }
 
@@ -252,13 +216,11 @@ public abstract class AuthorizeEndpoint(Impersonations impersonations, Sessions 
         }
         catch (TerraBaseUnavailableException)
         {
-            // Storage was down (QA round 4, auth:11 answered 500): the client gets OAuth's retryable error instead.
             return OidcResults.Forbid(OidcErrors.TemporarilyUnavailable, ApiException.Unavailable().Message);
         }
 
         var now = clock.GetUtcNow();
         var authenticatedAt = live?.Session.VerifiedAt ?? live?.Session.CreatedAt;
-        // A resumed request's marker replaces max_age: the sign-in it asked for is recent enough, even for max_age=0.
         var stale = authenticatedAt is { } created && (loginAfter is { } after
             ? created.ToUnixTimeMilliseconds() <= after
             : request.MaxAge is { } maxAge && created.AddSeconds(maxAge) < now);
@@ -270,8 +232,6 @@ public abstract class AuthorizeEndpoint(Impersonations impersonations, Sessions 
                 return OidcResults.Forbid(OidcErrors.LoginRequired, live is null ? CredentialLineage.ConflictNotice : "The session is older than max_age allows.");
             }
 
-            // Sign-in resumes the request as a GET without prompt=login; ts_login_after keeps the demand for a sign-in made
-            // after this request, and the sign-in page never skips its form for such a request.
             var prompt = string.Join(' ', request.GetPromptValues().Remove(PromptValues.Login));
             var resume = parameters.Where(parameter => parameter.Key is not (Parameters.Prompt or LoginAfter)).ToList();
             if (prompt.Length > 0)
@@ -287,7 +247,7 @@ public abstract class AuthorizeEndpoint(Impersonations impersonations, Sessions 
             var next = $"/{tenant}/oauth/authorize{QueryString.Create(resume)}";
             var notice = live is null && this.HttpContext.Request.Cookies.ContainsKey(cookie) ? "&notice=credential_changed" : string.Empty;
             var locales = request.UiLocales is { Length: > 0 } requested ? "&ui_locales=" + Uri.EscapeDataString(requested) : string.Empty;
-            return Results.Redirect($"/ui/{tenant}/sign-in?next={Uri.EscapeDataString(next)}{notice}{locales}");
+            return TypedResults.Redirect($"/ui/{tenant}/sign-in?next={Uri.EscapeDataString(next)}{notice}{locales}");
         }
 
         OrganizationClaims? organization = null;
@@ -338,7 +298,6 @@ public abstract class AuthorizeEndpoint(Impersonations impersonations, Sessions 
 public sealed class TokenEndpoint(Impersonations impersonations, TotpCredentials mfa, PlatformGrants platform, AuthOptions options, IOpenIddictApplicationStore<OidcApplication> applications,
     Sessions sessions, ProjectAuthSettings settings, TimeProvider clock, IOpenIddictTokenManager tokens, AgentTokens agents, AgentExchange exchange) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/{slug}/oauth/token");
@@ -360,7 +319,6 @@ public sealed class TokenEndpoint(Impersonations impersonations, TotpCredentials
         Metadata(new RequiresSecurity(SecuritySchemes.ClientBasic, PublicClientAlternative: true));
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         this.HttpContext.Response.Headers.CacheControl = "no-store";
@@ -372,7 +330,7 @@ public sealed class TokenEndpoint(Impersonations impersonations, TotpCredentials
         catch (Exception error) when (AuthData.IsUnavailable(error) && !this.HttpContext.RequestAborted.IsCancellationRequested)
         {
             var unavailable = error as ApiException ?? ApiException.Unavailable(error);
-            return Results.Json(new OAuthErrorBody(OidcErrors.TemporarilyUnavailable, unavailable.Message), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status503ServiceUnavailable);
+            return TypedResults.Json(new OAuthErrorBody(OidcErrors.TemporarilyUnavailable, unavailable.Message), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status503ServiceUnavailable);
         }
     }
 
@@ -380,7 +338,7 @@ public sealed class TokenEndpoint(Impersonations impersonations, TotpCredentials
     {
         if (this.HttpContext.GetOpenIddictServerRequest() is not { } request)
         {
-            return Results.NotFound();
+            return TypedResults.NotFound();
         }
 
         var tenant = Tenancy.Current(this.HttpContext);
@@ -419,28 +377,24 @@ public sealed class TokenEndpoint(Impersonations impersonations, TotpCredentials
 
             if (application.ClientSecret?.StartsWith(ApiKeyApplicationManager.DigestPrefix, StringComparison.Ordinal) == true)
             {
-                // An API key (TS-598) OpenIddict has authenticated: an organization or project token.
                 return await platform.ApiKeyAsync(this.HttpContext, request, cancellationToken);
             }
 
-            // OpenIddict authenticated this resolved service client and checked its client-credentials permission.
             var service = new ClaimsIdentity(TokenValidationParameters.DefaultAuthenticationType, Claims.Name, Claims.Role)
                 .SetClaim(Claims.Subject, request.ClientId)
                 .SetResources(options.AccessTokenAudiences);
             service.SetDestinations(_ => [Destinations.AccessToken]);
-            return Results.SignIn(new ClaimsPrincipal(service), null, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
+            return TypedResults.SignIn(new ClaimsPrincipal(service), null, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
         }
 
         if (request.GrantType == GitHubActionsGrant.GrantType)
         {
-            // OpenIddict has authenticated the public client and checked its permission for this grant.
             var binding = await applications.FindByClientIdAsync(request.ClientId!, cancellationToken);
             return await platform.GitHubActionsAsync(request, binding, cancellationToken);
         }
 
         if (request.IsTokenExchangeGrantType())
         {
-            // OpenIddict has validated the subject token and the client's token-exchange permission.
             return await platform.ExchangeAsync(this.HttpContext, request, cancellationToken);
         }
 
@@ -497,10 +451,8 @@ public sealed class TokenEndpoint(Impersonations impersonations, TotpCredentials
     }
 }
 
-/// <summary><c>GET /{slug}/oauth/userinfo</c>: the UserInfo endpoint by GET.</summary>
 public sealed class UserInfoGetEndpoint(Impersonations impersonations, TotpCredentials mfa) : UserInfoEndpoint(impersonations, mfa)
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(Path);
@@ -509,10 +461,8 @@ public sealed class UserInfoGetEndpoint(Impersonations impersonations, TotpCrede
     }
 }
 
-/// <summary><c>POST /{slug}/oauth/userinfo</c>: the UserInfo endpoint by form POST (OpenID Connect Core 5.3.1).</summary>
 public sealed class UserInfoPostEndpoint(Impersonations impersonations, TotpCredentials mfa) : UserInfoEndpoint(impersonations, mfa)
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post(Path);
@@ -522,22 +472,17 @@ public sealed class UserInfoPostEndpoint(Impersonations impersonations, TotpCred
     }
 }
 
-/// <summary>The UserInfo endpoint: claims about the user of a valid access token.</summary>
 public abstract class UserInfoEndpoint(Impersonations impersonations, TotpCredentials mfa) : EndpointWithoutRequest<IResult>
 {
     internal const string RouteName = "oauth_userinfo";
 
     internal const string PostRouteName = "oauth_userinfo_post";
 
-    /// <summary>The endpoint's route.</summary>
     protected const string Path = "/{slug}/oauth/userinfo";
 
-    /// <summary>Databases the OpenID Connect form binding of a POST variant.</summary>
     protected void AcceptsForm() =>
-        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
 
-    /// <summary>The documentation both bindings share.</summary>
     protected void Describe()
     {
         Summary("UserInfo endpoint");
@@ -548,7 +493,6 @@ public abstract class UserInfoEndpoint(Impersonations impersonations, TotpCreden
         Produces<OAuthErrorBody>(StatusCodes.Status503ServiceUnavailable);
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         try
@@ -557,7 +501,7 @@ public abstract class UserInfoEndpoint(Impersonations impersonations, TotpCreden
         }
         catch (ApiException error) when (error.Status == StatusCodes.Status503ServiceUnavailable)
         {
-            return Results.Json(new OAuthErrorBody(OidcErrors.TemporarilyUnavailable, error.Message), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status503ServiceUnavailable);
+            return TypedResults.Json(new OAuthErrorBody(OidcErrors.TemporarilyUnavailable, error.Message), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status503ServiceUnavailable);
         }
     }
 
@@ -565,7 +509,7 @@ public abstract class UserInfoEndpoint(Impersonations impersonations, TotpCreden
     {
         if (this.HttpContext.GetOpenIddictServerRequest() is null)
         {
-            return Results.NotFound();
+            return TypedResults.NotFound();
         }
 
         var principal = (await this.HttpContext.AuthenticateAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme)).Principal;
@@ -579,23 +523,21 @@ public abstract class UserInfoEndpoint(Impersonations impersonations, TotpCreden
                     principal.GetClaim(OidcIssuer.MfaClaim), cancellationToken);
         if (user is null || principal is null)
         {
-            return Results.Challenge(OidcResults.Error(OidcErrors.InvalidToken, "The access token no longer identifies a user."), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
+            return TypedResults.Challenge(OidcResults.Error(OidcErrors.InvalidToken, "The access token no longer identifies a user."), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
         }
 
         var email = principal.HasScope(Scopes.Email);
         var profile = principal.HasScope(Scopes.Profile);
         var mailbox = email && !user.IsAnonymous;
-        return Results.Ok(new UserInfoBody(user.Id, mailbox ? user.Email : null, mailbox ? user.EmailVerified : null,
+        return TypedResults.Ok(new UserInfoBody(user.Id, mailbox ? user.Email : null, mailbox ? user.EmailVerified : null,
             profile ? user.FirstName : null, profile ? user.LastName : null, profile ? user.ImageUrl : null,
             profile ? JsonElement.Parse(user.PublicMetadata) : null, acting is null ? null : new ImpersonationActor(acting.Record.ActorId),
             user.IsAnonymous ? true : null));
     }
 }
 
-/// <summary><c>POST /{slug}/oauth/revoke</c>: token revocation (RFC 7009), served by OpenIddict.</summary>
 public sealed class RevocationEndpoint : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/{slug}/oauth/revoke");
@@ -603,7 +545,6 @@ public sealed class RevocationEndpoint : EndpointWithoutRequest<IResult>
         Summary("Revocation endpoint");
         Description("RFC 7009, application/x-www-form-urlencoded token (and optionally token_type_hint); the client authenticates as at the token endpoint and may revoke only its own tokens: confidential clients with client_secret_basic or client_secret_post, a public client (no secret registered) by sending only client_id in the form (RFC 7009 section 2.1). Revoking a refresh or access token ends its whole sign-in: every refresh token of it is refused and ts-auth stops accepting its access tokens, while access tokens validated offline (TerraBase) stay valid until they expire, at most 5 minutes. An unknown, expired or already revoked token also answers 200.");
         Tags("OAuth");
-        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<Dictionary<string, object>>();
         Produces<OAuthErrorBody>(StatusCodes.Status400BadRequest);
@@ -611,14 +552,11 @@ public sealed class RevocationEndpoint : EndpointWithoutRequest<IResult>
         Metadata(new RequiresSecurity(SecuritySchemes.ClientBasic, PublicClientAlternative: true));
     }
 
-    /// <inheritdoc />
-    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) => ValueTask.FromResult(Results.NotFound());
+    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) => ValueTask.FromResult<IResult>(TypedResults.NotFound());
 }
 
-/// <summary><c>GET /{slug}/oauth/logout</c>: RP-initiated logout with its parameters in the query string.</summary>
 public sealed class LogoutGetEndpoint(Impersonations impersonations, Sessions sessions, ProjectAuthSettings settings, AuthOptions options) : LogoutEndpoint(impersonations, sessions, settings, options)
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(Path);
@@ -627,10 +565,8 @@ public sealed class LogoutGetEndpoint(Impersonations impersonations, Sessions se
     }
 }
 
-/// <summary><c>POST /{slug}/oauth/logout</c>: RP-initiated logout with its parameters form-encoded (RP-Initiated Logout 1.0 section 2).</summary>
 public sealed class LogoutPostEndpoint(Impersonations impersonations, Sessions sessions, ProjectAuthSettings settings, AuthOptions options) : LogoutEndpoint(impersonations, sessions, settings, options)
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post(Path);
@@ -640,29 +576,17 @@ public sealed class LogoutPostEndpoint(Impersonations impersonations, Sessions s
     }
 }
 
-/// <summary>
-/// RP-initiated logout, by GET or form POST. Revokes the hosted session and clears its cookie, then shows the signed-out
-/// page, which continues to the client's registered <c>post_logout_redirect_uri</c> when there is one. A live session
-/// is ended only for an <c>id_token_hint</c> issued to its user or once the user confirms on the hosted page
-/// (RP-Initiated Logout 1.0 section 2): anything else shows the confirmation and changes nothing.
-/// </summary>
 public abstract class LogoutEndpoint(Impersonations impersonations, Sessions sessions, ProjectAuthSettings settings, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
-    /// <summary>The endpoint's route.</summary>
     protected const string Path = "/{slug}/oauth/logout";
 
-    /// <summary>The form field the hosted confirmation posts back; honored only from a same-origin POST.</summary>
     public const string ConfirmField = "confirm";
 
-    /// <summary>The request parameters the confirmation carries back, so the confirmed request is validated as the first.</summary>
     private static readonly string[] Carried = [Parameters.IdTokenHint, Parameters.ClientId, Parameters.PostLogoutRedirectUri, Parameters.State, Parameters.UiLocales, "logout_hint"];
 
-    /// <summary>Databases the OpenID Connect form binding of a POST variant.</summary>
     protected void AcceptsForm() =>
-        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
 
-    /// <summary>The documentation both bindings share.</summary>
     protected void Describe()
     {
         Summary("End-session endpoint");
@@ -673,12 +597,11 @@ public abstract class LogoutEndpoint(Impersonations impersonations, Sessions ses
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (this.HttpContext.GetOpenIddictServerRequest() is not { } request)
         {
-            return Results.NotFound();
+            return TypedResults.NotFound();
         }
 
         var tenant = Tenancy.Current(this.HttpContext);
@@ -693,7 +616,6 @@ public abstract class LogoutEndpoint(Impersonations impersonations, Sessions ses
         var subject = actingCookie is not null ? acting?.User.Id : (await sessions.ResolveAsync(tenant, cookie, cancellationToken))?.User.Id;
         if (subject is not null && !await this.ConfirmedAsync(request, subject))
         {
-            // Names no account, so a page opened by another site learns nothing it could not already.
             var fields = Carried.Select(name => (Name: name, Value: (string?)request[name]))
                 .Where(field => !string.IsNullOrEmpty(field.Value))
                 .Select(field => KeyValuePair.Create(field.Name, field.Value!))
@@ -721,11 +643,6 @@ public abstract class LogoutEndpoint(Impersonations impersonations, Sessions ses
         return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignedOut, tenant) { ReturnTo = returnTo });
     }
 
-    /// <summary>
-    /// Whether the request may end the session of <paramref name="userId"/>: its <c>id_token_hint</c>, which OpenIddict
-    /// has validated for this issuer and client, names that user, or it is the hosted confirmation posted from the public
-    /// origin. A cross-site page can make the browser post, but not with this origin.
-    /// </summary>
     private async Task<bool> ConfirmedAsync(OpenIddictRequest request, string userId)
     {
         var context = this.HttpContext;
@@ -740,17 +657,15 @@ public abstract class LogoutEndpoint(Impersonations impersonations, Sessions ses
     }
 }
 
-/// <summary>Sign-in and error results for the OpenIddict passthrough endpoints.</summary>
 internal static class OidcResults
 {
     public static async Task<bool> OrganizationPickerAsync(ProjectAuthSettings settings, string tenant, string? clientId, CancellationToken cancellationToken) =>
         tenant == OidcIssuer.InstanceId && clientId == OidcIssuer.DashboardClientId
             && (await settings.GetAsync(PlatformBootstrap.AuthProjectId, cancellationToken)).OrganizationPicker;
 
-    public static IResult DisallowedRedirect() => Results.Json(new OAuthErrorBody(OidcErrors.InvalidRequest,
+    public static IResult DisallowedRedirect() => TypedResults.Json(new OAuthErrorBody(OidcErrors.InvalidRequest,
         "The project does not permit this redirect URI."), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status400BadRequest);
 
-    /// <summary>The project allowlist narrows, and never replaces, OpenIddict's client URI validation.</summary>
     public static async Task<bool> AllowsRedirectAsync(ProjectAuthSettings settings, string tenant, string? uri, CancellationToken cancellationToken)
     {
         if (!Tenancy.IsProject(tenant) || uri is null)
@@ -758,7 +673,7 @@ internal static class OidcResults
             return true;
         }
 
-        var allowed = (await settings.GetAsync(tenant, cancellationToken).ConfigureAwait(false)).Configuration?.RedirectUrls;
+        var allowed = (await settings.GetAsync(tenant, cancellationToken)).Configuration?.RedirectUrls;
         return allowed is not { Count: > 0 } || allowed.Contains(uri, StringComparer.Ordinal);
     }
 
@@ -768,38 +683,24 @@ internal static class OidcResults
         [OpenIddictServerAspNetCoreConstants.Properties.ErrorDescription] = description,
     });
 
-    /// <summary>The only scopes a sign-in grants.</summary>
     public static readonly IReadOnlyList<string> SignInScopes = [Scopes.OpenId, Scopes.Email, Scopes.Profile, Scopes.OfflineAccess];
 
     public static IResult Forbid(string error, string description) =>
-        Results.Forbid(Error(error, description), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
+        TypedResults.Forbid(Error(error, description), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
 
     public static IReadOnlyList<string> Audiences(string tenant, AuthOptions options, string? clientId) =>
         !Tenancy.IsProject(tenant) ? OidcIssuer.SignInAudiences(options)
         : clientId is { Length: > 0 } ? [clientId]
         : throw new InvalidOperationException("A project sign-in has no client.");
 
-    /// <summary>The access-token claim naming a platform role.</summary>
     public const string PlatformRoleClaim = "platform_role";
 
-    /// <summary>The platform role of a platform admin.</summary>
     public const string PlatformRoleAdmin = "admin";
 
-    /// <summary>
-    /// Signs <paramref name="user"/> in with fresh claims. The access token always carries the email claims (TerraBase
-    /// decision 0007 reads them) and every configured audience; the identity token carries them only with the
-    /// <c>email</c> scope. The authentication epoch rides in codes and refresh tokens, so later grants can check it, and
-    /// in the access token, so the platform management API (TS-598) refuses it once the user signed out everywhere.
-    /// The server-issued authentication time also rides in user access tokens; refresh never renews it. A platform admin's
-    /// access token also carries <see cref="PlatformRoleClaim"/>, read from the stored user at every sign-in and refresh; the
-    /// platform owner (<see cref="PlatformBootstrap.OwnerEmail"/>) always carries it.
-    /// </summary>
     public static IResult SignIn(AuthOptions options, UserRecord user, DateTimeOffset authenticatedAt, IEnumerable<string> scopes, IReadOnlyList<string> audiences,
         DateTimeOffset? refreshExpiresAt = null, ImpersonationRecord? impersonation = null, OrganizationClaims? organization = null, bool organizationPicker = false,
         string? agentId = null, TimeSpan? lifetime = null)
     {
-        // TerraBase and platform scopes come only from the role-checked token exchange (TS-598), never with a sign-in,
-        // although ts-dashboard holds their permissions for the exchange.
         if (scopes.Except(SignInScopes).Any())
         {
             return Forbid(OidcErrors.InvalidScope, "A sign-in grants only openid, email, profile and offline_access.");
@@ -825,14 +726,16 @@ internal static class OidcResults
             .SetClaim(OidcIssuer.OrganizationPickerClaim, organizationPicker ? "true" : null)
             .SetScopes(scopes)
             .SetResources(dataAccess ? [.. audiences, .. options.ProjectDataAudiences(user.InstanceId)] : audiences);
+        if (dataAccess)
+        {
+            identity.SetClaim(EndUserTokens.KindClaim, EndUserTokens.Kind).SetClaim(EndUserTokens.ProjectClaim, user.InstanceId);
+        }
+
         if (dataAccess && user.CustomClaims is { } trusted)
         {
             identity.SetClaim(TrustedClaims.Claim, JsonElement.Parse(trusted));
         }
 
-        // Only the platform's own tenant has platform admins; TerraBase's explore API reads the claim (platform-databases.md).
-        // The platform owner is always one, in code, so a wiped and re-bootstrapped store needs no operator write; every
-        // sign-in proves control of the mailbox first.
         if (agentId is null && user.InstanceId == OidcIssuer.InstanceId && (user.PlatformRole == PlatformRoleAdmin || user.Email == PlatformBootstrap.OwnerEmail))
         {
             identity.SetClaim(PlatformRoleClaim, PlatformRoleAdmin);
@@ -863,7 +766,8 @@ internal static class OidcResults
             Claims.GivenName or Claims.FamilyName or Claims.Picture or "public_metadata" => profile ? [Destinations.IdentityToken] : [],
             Claims.Email or Claims.EmailVerified => email ? [Destinations.AccessToken, Destinations.IdentityToken] : [Destinations.AccessToken],
             Claims.AuthenticationTime or "org_id" or "org_slug" or "org_role" or GuestSignIn.Claim => [Destinations.AccessToken, Destinations.IdentityToken],
-            "ts_auth_session" or "token_use" or LiveAgents.Claim or TrustedClaims.Claim or OidcIssuer.EpochClaim or OidcIssuer.StateClaim or OidcIssuer.MfaClaim or PlatformRoleClaim => [Destinations.AccessToken],
+            "ts_auth_session" or "token_use" or LiveAgents.Claim or TrustedClaims.Claim or OidcIssuer.EpochClaim or OidcIssuer.StateClaim or OidcIssuer.MfaClaim or PlatformRoleClaim
+                or EndUserTokens.KindClaim or EndUserTokens.ProjectClaim => [Destinations.AccessToken],
             OidcIssuer.OrganizationPickerClaim => [Destinations.IdentityToken],
             _ => [],
         });
@@ -874,6 +778,6 @@ internal static class OidcResults
         }
 
         CredentialLineage.Attach(principal, user.AuthenticationBindings);
-        return Results.SignIn(principal, null, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
+        return TypedResults.SignIn(principal, null, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
     }
 }

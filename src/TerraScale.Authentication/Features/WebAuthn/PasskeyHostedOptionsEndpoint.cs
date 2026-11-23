@@ -28,7 +28,7 @@ public sealed class PasskeyHostedOptionsEndpoint(Sessions sessions, PasskeyCrede
     {
         if (SignInFlow.WrongSlug(this.HttpContext))
         {
-            return Results.NotFound();
+            return TypedResults.NotFound();
         }
 
         var denied = new Forbidden("Sign in again before enrolling a passkey.", "passkey_denied");
@@ -48,9 +48,9 @@ public sealed class PasskeyHostedOptionsEndpoint(Sessions sessions, PasskeyCrede
         var live = pending is null ? await SecurityFlow.LiveAsync(this.HttpContext, sessions, cancellationToken) : null;
         return !PasskeyHostedVerifyEndpoint.SameOrigin(this.HttpContext, options)
             || pending is null && (live is null || !SecurityFlow.Recent(this.HttpContext, live.Value.Session, SecurityFlow.FactorEnrollmentWindow))
-            || await passkeys.OptionsAsync(pending?.User ?? live!.Value.User, cancellationToken).ConfigureAwait(false) is not { } created
+            || await passkeys.OptionsAsync(pending?.User ?? live!.Value.User, cancellationToken) is not { } created
             ? ErrorResults.ToResult(denied)
-            : Results.Json(new PasskeyOptionsBody(created.Challenge, JsonDocument.Parse(created.Options.ToJson()).RootElement),
+            : TypedResults.Json(new PasskeyOptionsBody(created.Challenge, JsonDocument.Parse(created.Options.ToJson()).RootElement),
                 WebAuthnJson.Default.PasskeyOptionsBody);
     }
 }

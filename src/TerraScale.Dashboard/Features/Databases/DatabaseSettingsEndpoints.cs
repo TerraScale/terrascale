@@ -23,13 +23,13 @@ namespace TerraScale.Dashboard.Features.Databases
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "settings"), Results.BadRequest("Invalid form token."));
+                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "settings"), TypedResults.BadRequest("Invalid form token."));
             }
 
             var id = form["databaseId"].ToString();
@@ -42,7 +42,7 @@ namespace TerraScale.Dashboard.Features.Databases
                     {
                         return await PageAsync(http, await databases.CurrentAsync(context, http.RequestAborted), id, renamed: true);
                     }
-                    return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "settings") + "?renamed=1") : Results.Json(database);
+                    return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "settings") + "?renamed=1") : TypedResults.Json(database);
                 }
 
                 var failure = DatabaseMutations.RefusedMutation(renamed);
@@ -74,7 +74,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 if (http.Request.IsDatastarRequest)
                 {
                     await DatastarEvents.PatchElementsAsync(http, DatabaseSettingsSection.Create(model));
-                    return Results.Empty;
+                    return TypedResults.Empty;
                 }
                 var result = DatabaseSettingsView.Create(model);
                 result.StatusCode = status;

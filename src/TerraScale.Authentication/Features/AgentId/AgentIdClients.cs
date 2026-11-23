@@ -1,6 +1,6 @@
 using System.Globalization;
+using Dapper;
 using System.Text.Json.Serialization;
-using Microsoft.EntityFrameworkCore;
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Errors;
@@ -16,6 +16,8 @@ namespace TerraScale.Authentication.Features.AgentId;
 public sealed record AgentIdClientRecord(string Id, string OwnerUserId, string Name, IReadOnlyList<string> RedirectUris, string SecretDigest, DateTimeOffset CreatedAt,
     string? PreviousSecretDigest = null, DateTimeOffset? PreviousSecretExpiresAt = null)
 {
+    public string? Version { get; init; }
+
     public const int DigestLength = 64;
 
     public const int MaxRedirectUriLength = 2048;
@@ -65,15 +67,15 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
     {
         ArgumentNullException.ThrowIfNull(proof);
         var owner = proof.Caller;
-        using var home = HomeReads.Begin();
-        var user = await data.ReadAsync((db, token) => db.Users.Where(row => row.InstanceId == owner.InstanceId && row.Id == owner.Id).WithVersion().SingleOrDefaultAsync(token),
-            cancellationToken).ConfigureAwait(false);
+        var user = await this.UserAsync(owner.InstanceId, owner.Id, cancellationToken);
         if (user is null)
         {
             return new NotFound("No such resource.");
         }
 
-        var count = await data.ReadAsync((db, token) => db.AgentIdClients.CountAsync(row => row.OwnerUserId == owner.Id, token), cancellationToken).ConfigureAwait(false);
+        var ownerId = owner.Id;
+        var count = await data.ReadAsync(connection => connection.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) FROM agentid_clients WHERE owner_user_id = @ownerId", new { ownerId }), cancellationToken);
         if (count >= MaxPerAccount)
         {
             return new Conflict($"An account can have at most {MaxPerAccount} Sign in as agent clients; delete one first.", "client_limit");
@@ -81,7 +83,7 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
 
         var secret = Tokens.RandomToken(48);
         var client = new AgentIdClientRecord(AuthIds.New(), owner.Id, name, redirectUris, Tokens.Sha256Hex(secret), clock.GetUtcNow());
-        return (await this.TrySaveAsync(proof, [Change.Insert(client), Change.Update(user, user.Value)], cancellationToken).ConfigureAwait(false)) switch
+        return (await this.TrySaveAsync(proof, [Change.Insert(client), Change.Update(user, user.Value)], cancellationToken)) switch
         {
             Done => this.Created(client, secret, owner.Id),
             Conflict conflict => conflict,
@@ -97,15 +99,14 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
 
     public async Task<AgentIdClientPageBody> ListAsync(string ownerId, CancellationToken cancellationToken)
     {
-        using var home = HomeReads.Begin();
-        return new([.. (await data.ReadAsync((db, token) => db.AgentIdClients.Where(row => row.OwnerUserId == ownerId).OrderBy(row => row.Id).ToListAsync(token), cancellationToken)
-            .ConfigureAwait(false)).Select(Body)]);
+        return new([.. (await data.ReadAsync(connection => connection.QueryAsync<AgentIdClientRecord>(
+            "SELECT * FROM agentid_clients WHERE owner_user_id = @ownerId ORDER BY id", new { ownerId }), cancellationToken)).Select(Body)]);
     }
 
     internal async Task<RotateAgentIdClientResult> RotateAsync(PreparedStepUp proof, string clientId, TimeSpan grace, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(proof);
-        var owned = await this.OwnedAsync(proof.Caller.Id, clientId, cancellationToken).ConfigureAwait(false);
+        var owned = await this.OwnedAsync(proof.Caller.Id, clientId, cancellationToken);
         if (owned is null)
         {
             return new NotFound("No such resource.");
@@ -120,7 +121,7 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
             PreviousSecretDigest = expires is null ? null : client.Value.SecretDigest,
             PreviousSecretExpiresAt = expires,
         };
-        return (await this.TrySaveAsync(proof, [Change.Update(client, rotated)], cancellationToken).ConfigureAwait(false)) switch
+        return (await this.TrySaveAsync(proof, [Change.Update(client, rotated)], cancellationToken)) switch
         {
             Done => Rotated(clientId, secret, expires, proof.Caller.Id),
             Conflict conflict => conflict,
@@ -137,13 +138,13 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
     internal async Task<DeleteAgentIdClientResult> DeleteAsync(PreparedStepUp proof, string clientId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(proof);
-        var owned = await this.OwnedAsync(proof.Caller.Id, clientId, cancellationToken).ConfigureAwait(false);
+        var owned = await this.OwnedAsync(proof.Caller.Id, clientId, cancellationToken);
         if (owned is null)
         {
             return new NotFound("No such resource.");
         }
 
-        return (await this.TrySaveAsync(proof, [Change.Delete(owned)], cancellationToken).ConfigureAwait(false)) switch
+        return (await this.TrySaveAsync(proof, [Change.Delete(owned)], cancellationToken)) switch
         {
             Done => Deleted(clientId, proof.Caller.Id),
             Conflict conflict => conflict,
@@ -159,26 +160,22 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
 
     public async Task<AgentIdRegistration?> FindAsync(string clientId, CancellationToken cancellationToken)
     {
-        using var home = HomeReads.Begin();
-        var (client, owner) = await data.ReadAsync(async (db, token) =>
-        {
-            var found = await db.AgentIdClients.Where(row => row.Id == clientId).WithVersion().SingleOrDefaultAsync(token).ConfigureAwait(false);
-            return (found, found is null ? null : await db.Users.Where(row => row.InstanceId == PlatformTenant.Id && row.Id == found.Value.OwnerUserId).WithVersion()
-                .SingleOrDefaultAsync(token).ConfigureAwait(false));
-        }, cancellationToken).ConfigureAwait(false);
+        var client = Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<AgentIdClientRecord>(
+            "SELECT * FROM agentid_clients WHERE id = @clientId", new { clientId }), cancellationToken));
+        var owner = client is null ? null : await this.UserAsync(PlatformTenant.Id, client.Value.OwnerUserId, cancellationToken);
         return client is not null && owner is { Value.Disabled: false } ? new(client, owner, Describe(client.Value, clock.GetUtcNow())) : null;
     }
 
     public async Task<AgentIdOwnerEmail?> OwnerEmailAsync(string clientId, string agentId, string ownerId, CancellationToken cancellationToken)
     {
         const string tenant = PlatformTenant.Id;
-        using var home = HomeReads.Begin();
-        return await data.ReadAsync((db, token) => (
-            from client in db.AgentIdClients
-            where client.Id == clientId && db.Users.Any(user => user.InstanceId == tenant && user.Id == client.OwnerUserId && !user.Disabled)
-            from agent in db.Agents.Where(agent => agent.ProjectId == tenant && agent.Id == agentId && agent.OwnerUserId == ownerId)
-            from owner in db.Users.Where(owner => owner.InstanceId == tenant && owner.Id == ownerId)
-            select new AgentIdOwnerEmail(agent.ShareOwnerEmail, owner.Email, owner.EmailVerified)).SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
+        return await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<AgentIdOwnerEmail>(
+            """
+            SELECT a.share_owner_email AS shared, o.email, o.email_verified FROM agentid_clients c
+            JOIN agents a ON a.project_id = @tenant AND a.id = @agentId AND a.owner_user_id = @ownerId
+            JOIN users o ON o.instance_id = @tenant AND o.id = @ownerId
+            WHERE c.id = @clientId AND EXISTS (SELECT 1 FROM users u WHERE u.instance_id = @tenant AND u.id = c.owner_user_id AND u.disabled = 0)
+            """, new { tenant, agentId, ownerId, clientId }), cancellationToken);
     }
 
     public static OwnerCheck Owner(UserRecord caller)
@@ -218,10 +215,13 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
 
     private async Task<Versioned<AgentIdClientRecord>?> OwnedAsync(string ownerId, string clientId, CancellationToken cancellationToken)
     {
-        using var home = HomeReads.Begin();
-        return await data.ReadAsync((db, token) => db.AgentIdClients.Where(row => row.Id == clientId && row.OwnerUserId == ownerId).WithVersion().SingleOrDefaultAsync(token),
-            cancellationToken).ConfigureAwait(false);
+        return Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<AgentIdClientRecord>(
+            "SELECT * FROM agentid_clients WHERE id = @clientId AND owner_user_id = @ownerId", new { clientId, ownerId }), cancellationToken));
     }
+
+    private async Task<Versioned<UserRecord>?> UserAsync(string instance, string userId, CancellationToken cancellationToken) =>
+        Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
+            "SELECT * FROM users WHERE instance_id = @instance AND id = @userId", new { instance, userId }), cancellationToken));
 
     private async Task<StepUpSave> TrySaveAsync(PreparedStepUp proof, IReadOnlyList<Change> changes, CancellationToken cancellationToken)
     {
@@ -230,7 +230,7 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
             return new Forbidden("A fresh, approved, purpose-bound single-use proof is required.", "step_up_required");
         }
 
-        return await data.SaveAsync([.. proof.Operations, .. changes], cancellationToken).ConfigureAwait(false)
+        return await data.SaveAsync([.. proof.Operations, .. changes], cancellationToken)
             ? new Done()
             : new Conflict("The client, the account or its step-up proof changed; try again.", "version_conflict");
     }

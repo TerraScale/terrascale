@@ -14,10 +14,8 @@ using ZLogger;
 
 namespace TerraScale.Authentication.Features.SignIn;
 
-/// <summary><c>GET /ui/{slug}/social/{provider}/callback</c>: the provider's redirect back (Google, GitHub, OIDC).</summary>
 public sealed class SocialCallbackEndpoint(SocialFlow flow) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/ui/{slug}/social/{provider}/callback");
@@ -31,7 +29,6 @@ public sealed class SocialCallbackEndpoint(SocialFlow flow) : EndpointWithoutReq
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var query = this.HttpContext.Request.Query;
@@ -39,18 +36,16 @@ public sealed class SocialCallbackEndpoint(SocialFlow flow) : EndpointWithoutReq
     }
 }
 
-/// <summary>The callback logic both callback endpoints share.</summary>
 public sealed class SocialFlow(SocialSignIn social, Users users, Sessions sessions, TotpCredentials mfa, HostedAuth hosted, ILogger<SocialFlow> logger)
 {
     internal const string CallbackDescription = "The redirect URI registered at the provider; Apple posts it (form_post). Needs the start's state cookie and matching state, then redeems the code with the project's stored secret. The validated external subject selects its bound account. An unknown subject creates an account immediately only with an unused verified email when the project allows sign-up; matching email never links accounts. An account with an active authenticator app gets the hosted second-factor step before any session. Success sets the project's session cookie and continues to next; any failure answers 401 without a session. Unverified email uses a sealed ten-minute pending link and a single-use emailed code for new and existing accounts. Proof atomically creates an allowed account and connects the subject. Shares the hosted IP and sign-up budgets.";
 
-    /// <summary>Redeems the provider's answer and signs the browser in.</summary>
     public async Task<IResult> CompleteAsync(HttpContext context, string? code, string? state, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
         if (await ProviderAsync(context, cancellationToken) is not { } provider)
         {
-            return Results.NotFound();
+            return TypedResults.NotFound();
         }
 
         var tenant = SignInFlow.Tenant(context);
@@ -59,7 +54,6 @@ public sealed class SocialFlow(SocialSignIn social, Users users, Sessions sessio
             return SignInFlow.Limited(context, SignInStep.Email, wait, string.Empty, null);
         }
 
-        // Clear browser state on every attempt; the provider independently enforces single-use code redemption.
         var resumed = social.Resume(tenant, provider.Provider, context.Request.Cookies[SocialSignIn.Cookie(tenant)], state);
         context.Response.Cookies.Delete(SocialSignIn.Cookie(tenant), CookieOptions(tenant));
         if (resumed is null || string.IsNullOrEmpty(code) || code.Length > 4096)
@@ -120,7 +114,6 @@ public sealed class SocialFlow(SocialSignIn social, Users users, Sessions sessio
             { CodeRequest = "sign-in", LinkProvider = SocialProviders.Label(provider.Provider) });
         }
 
-        // An active local factor gets the hosted second step; the provider's own amr/acr never count as one.
         if (user is not null && await SignInFlow.SecondFactorAsync(context, mfa, user, resumed.Next, cancellationToken) is { } factor)
         {
             return factor;
@@ -148,7 +141,7 @@ public sealed class SocialFlow(SocialSignIn social, Users users, Sessions sessio
         if (linked is true)
         {
             AuthMetrics.SignIn("hosted_social", "succeeded");
-            return Results.Redirect(SignInFlow.SecurityPath(SignInFlow.Tenant(context)));
+            return TypedResults.Redirect(SignInFlow.SecurityPath(SignInFlow.Tenant(context)));
         }
 
         var label = SocialProviders.Label(provider.Provider);
@@ -165,13 +158,11 @@ public sealed class SocialFlow(SocialSignIn social, Users users, Sessions sessio
             linked is false ? StatusCodes.Status409Conflict : StatusCodes.Status401Unauthorized, cancellationToken);
     }
 
-    /// <summary>The page's configured provider, or null for a wrong slug, the platform or an unconfigured provider.</summary>
     internal static async Task<SocialProviderRecord?> ProviderAsync(HttpContext context, CancellationToken cancellationToken) =>
         !SignInFlow.WrongSlug(context) && Tenancy.IsProject(SignInFlow.Tenant(context)) && context.GetRouteValue("provider") is string name
             ? (await context.RequestServices.GetRequiredService<ProjectAuthSettings>().GetAsync(SignInFlow.Tenant(context), cancellationToken)).Provider(name)
             : null;
 
-    /// <summary>The state cookie: sent back on Apple's cross-site form post, so SameSite=None, and only to the social pages.</summary>
     internal static CookieOptions CookieOptions(string tenant) => new()
     {
         Path = $"/ui/{tenant}/social",

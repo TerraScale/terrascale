@@ -2,8 +2,7 @@ using System.Text.Json;
 using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Platform.Datastar;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Management;
+using TerraScale.Dashboard.Platform.Clients;
 
 namespace TerraScale.Dashboard.Features.Rules
 {
@@ -150,13 +149,13 @@ namespace TerraScale.Dashboard.Features.Rules
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return (null, null, FormCollection.Empty, Results.Unauthorized());
+                return (null, null, FormCollection.Empty, TypedResults.Unauthorized());
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return (context, null, form, RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "rules"), Results.BadRequest("Invalid form token.")));
+                return (context, null, form, RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "rules"), TypedResults.BadRequest("Invalid form token.")));
             }
 
             try { return (context, DatabaseService.Database(context, form["databaseId"].ToString()), form, null); }
@@ -214,7 +213,7 @@ namespace TerraScale.Dashboard.Features.Rules
             if (http.Request.IsDatastarRequest)
             {
                 await DatastarEvents.PatchElementsAsync(http, RulesPatchView.Create(page));
-                return Results.Empty;
+                return TypedResults.Empty;
             }
 
             var view = RulesView.Create(page);

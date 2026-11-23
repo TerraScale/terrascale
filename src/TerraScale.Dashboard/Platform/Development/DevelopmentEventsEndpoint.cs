@@ -26,7 +26,7 @@ namespace TerraScale.Dashboard.Platform.Development
                 } while (await timer.WaitForNextTickAsync(context.RequestAborted));
             }
             catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested) { }
-            return Results.Empty;
+            return TypedResults.Empty;
         }
     }
 }

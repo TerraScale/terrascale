@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+using Dapper;
 
 namespace TerraScale.Authentication.Storage;
 
@@ -9,36 +9,37 @@ public interface IStorageHealth
     Task<StorageHealthResult> CheckAsync(CancellationToken cancellationToken);
 }
 
-public sealed record StorageProbe(string Id, DateTimeOffset CheckedAt);
+public sealed record StorageProbe(string Id, DateTimeOffset CheckedAt)
+{
+    public string? Version { get; init; }
+}
 
-public sealed class TerraBaseStorageHealth(IDbContextFactory<AuthDbContext> contexts, AuthData data, TimeProvider clock)
+public sealed class TerraBaseStorageHealth(AuthSchema schema, AuthData data, TimeProvider clock)
 {
     private readonly string probeId = AuthIds.New();
 
     public async Task<StorageHealthResult> CheckAsync(CancellationToken cancellationToken)
     {
-        await using (var db = await contexts.CreateDbContextAsync(cancellationToken).ConfigureAwait(false))
+        if (!await schema.CurrentAsync(cancellationToken))
         {
-            if ((await db.Database.GetPendingMigrationsAsync(cancellationToken).ConfigureAwait(false)).Any())
-            {
-                return new(false, null);
-            }
+            return new(false, null);
         }
 
-        if (await this.ReadAsync(cancellationToken).ConfigureAwait(false) is { } previous)
+        if (await ReadAsync(cancellationToken) is { } previous)
         {
-            _ = await data.SaveAsync(Change.Delete(previous), cancellationToken).ConfigureAwait(false);
+            await data.SaveAsync(Change.Delete(previous), cancellationToken);
         }
 
-        var probe = new StorageProbe(this.probeId, clock.GetUtcNow());
+        var probe = new StorageProbe(probeId, clock.GetUtcNow());
         var created = Change.Insert(probe);
-        return await data.SaveAsync(created, cancellationToken).ConfigureAwait(false)
-            && await this.ReadAsync(cancellationToken).ConfigureAwait(false) is { } read && read.Version == created.Version
-            && await data.SaveAsync(Change.Delete(read), cancellationToken).ConfigureAwait(false)
+        return await data.SaveAsync(created, cancellationToken)
+            && await ReadAsync(cancellationToken) is { } read && read.Version == created.Version
+            && await data.SaveAsync(Change.Delete(read), cancellationToken)
                 ? new(true, null)
                 : new(false, null);
     }
 
     private Task<Versioned<StorageProbe>?> ReadAsync(CancellationToken cancellationToken) =>
-        data.ReadAsync((db, token) => db.StorageProbes.Where(probe => probe.Id == this.probeId).WithVersion().SingleOrDefaultAsync(token), cancellationToken);
+        data.ReadAsync(async connection => Versioned.Of(
+            await connection.QuerySingleOrDefaultAsync<StorageProbe>("SELECT * FROM storage_probes WHERE id = @probeId", new { probeId })), cancellationToken);
 }

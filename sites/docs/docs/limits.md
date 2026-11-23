@@ -20,7 +20,7 @@ A query that stays inside result limits but scans or works past the plan's scan 
 
 | Surface | Transaction limit |
 | --- | --- |
-| HTTP | One request is one atomic batch, all or nothing. `BEGIN`, `COMMIT` and `ROLLBACK` are refused. |
+| HTTP | One request is one atomic batch, all or nothing. `BEGIN STRONG` … `COMMIT` may wrap the whole batch; other `BEGIN`, `COMMIT` and `ROLLBACK` are refused. |
 | WebSocket | `begin`/`commit`/`rollback` frames. At most 5 seconds, then it rolls back. |
 | Postgres wire | `BEGIN`/`COMMIT`/`ROLLBACK` and savepoints. At most 5 seconds, then it rolls back. |
 
@@ -34,7 +34,7 @@ A transaction left open past the limit rolls back and answers `transaction_rolle
 | Message size | 1 MiB per protocol message | connection closed (`08P01`) |
 | Prepared statements | 256 per session | `54000` |
 | Portals | 256 per session | `54000` |
-| Catalog queries and `LISTEN`/`NOTIFY`, extensions | not supported | `0A000` |
+| Extensions, `NOTIFY`, `CREATE SEQUENCE`, two-phase commit | not supported | `0A000` |
 
 ## Requests per organization
 
@@ -63,5 +63,3 @@ Beyond the request, burst or concurrency limit, HTTP answers `429 tenant_busy` (
 | Enterprise | 10,000,000 | No limit | No limit |
 
 One unit is each started 4 KiB. At the cap (the allowance on Free) new writes, and at fair use new SQL reads, answer `429 quota_exceeded` (SQLSTATE `53100`) until the next UTC month or an upgrade. Shape reads stay available. See [pricing](/pricing) for billing and overage.
-
-A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

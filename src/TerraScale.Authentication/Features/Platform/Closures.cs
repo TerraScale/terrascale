@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+using Dapper;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Storage;
@@ -7,131 +7,98 @@ using ZLogger;
 
 namespace TerraScale.Authentication.Features.Platform;
 
-/// <summary>
-/// Project closure (docs/terrabase/project-closure.md): an authorized intent first, then TerraBase's permanent fence over
-/// the existing peer transport, and the project root only after TerraBase accepted it in every catalog holder. A refusal
-/// leaves the project as it was; anything else (pending holders, an outage, a lost response, a 404 from a wrong listener)
-/// keeps the intent for the background pass, which retries with the same closure id.
-/// </summary>
 public sealed class Closures(
     AuthData data, PlatformDirectory directory, Users users, [FromKeyedServices(App.StorageAuthority)] TerraBaseManagementClient terraBase, TimeProvider clock, ILogger<Closures> logger)
 {
-    // Each deferral is a remote-durable write; a fixed short retry rewrote every pending intent every pass, forever.
     private static readonly TimeSpan Retry = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan MaxRetry = TimeSpan.FromMinutes(1);
 
-    // After about an hour at the one-minute cap an intent waits on something its retries cannot change (a TerraBase
-    // region that never fences, an account closure that never finishes). It keeps its authority and is never dropped,
-    // but it is parked: retried every 15 minutes, with one warning when it parks.
     private static readonly TimeSpan ParkedRetry = TimeSpan.FromMinutes(15);
 
-    /// <summary>The attempt count after which a pending intent is parked at <see cref="ParkedRetry"/>.</summary>
     internal const int ParkAfter = 65;
 
-    /// <summary>
-    /// Closes a project for <paramref name="userId"/>, who needs its admin role: true once it is removed, false while
-    /// TerraBase has not accepted the closure (it finishes in the background). 409 <c>not_empty</c> while TerraBase holds its
-    /// databases, API keys or backup destination, changing nothing.
-    /// </summary>
     public async Task<bool> DeleteProjectAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken) =>
-        await this.AdvanceAsync(await directory.RequestProjectClosureAsync(userId, organizationId, projectId, null, cancellationToken).ConfigureAwait(false), cancellationToken)
-            .ConfigureAwait(false);
+        await this.AdvanceAsync(await directory.RequestProjectClosureAsync(userId, organizationId, projectId, null, cancellationToken), cancellationToken)
+            ;
 
-    /// <summary>
-    /// One step of a project closure: true when the root is removed, false while pending. A refusal cancels it and throws 409
-    /// only while no TerraBase answer ever showed its fence; afterwards it stays pending.
-    /// </summary>
     internal async Task<bool> AdvanceAsync(Versioned<ClosureJob> job, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(job);
-        using var home = HomeReads.Begin();
         TerraBaseProjectClosure? answer;
         try
         {
             answer = job.Value.ProjectClosureVersion == 2
-                ? await this.EraseOrCloseAsync(job.Value, cancellationToken).ConfigureAwait(false)
-                : await terraBase.CloseProjectAsync(job.Value.SubjectId, job.Value.OrganizationId!, job.Value.Id, cancellationToken).ConfigureAwait(false);
+                ? await this.EraseOrCloseAsync(job.Value, cancellationToken)
+                : await terraBase.CloseProjectAsync(job.Value.SubjectId, job.Value.OrganizationId!, job.Value.Id, cancellationToken);
         }
         catch (TerraBaseConflictException error) when (error.ErrorCode is "not_empty" or "closure_conflict" or "binding_conflict" or "platform_project_protected")
         {
-            // TerraBase wrote nothing for this request. Once an earlier answer showed the fence, a machine that has not received
-            // it yet can refuse, so the refusal no longer proves the fence was never written: stay pending.
             var refused = error.ErrorCode switch
             {
                 "not_empty" => PlatformDirectory.Conflict("not_empty", "Delete the project's databases, TerraBase API keys and backup destination first."),
                 "platform_project_protected" => PlatformDirectory.PlatformProjectProtected(),
                 _ => PlatformDirectory.Conflict(error.ErrorCode, "TerraBase holds this project id under another closure or organization."),
             };
-            return await this.CancelAsync(job, cancellationToken).ConfigureAwait(false) switch
+            return await this.CancelAsync(job, cancellationToken) switch
             {
                 Cancellation.Cancelled => throw refused,
-                // This intent is gone: done if its root went (another pass completed it), otherwise refused (another pass cancelled it).
-                Cancellation.Gone => await directory.ProjectAsync(job.Value.SubjectId, cancellationToken).ConfigureAwait(false) is null ? true : throw refused,
+                Cancellation.Gone => await directory.ProjectAsync(job.Value.SubjectId, cancellationToken) is null ? true : throw refused,
                 _ => false,
             };
         }
         catch (Exception error) when (error is TerraBaseException or HttpRequestException or TimeoutException or ApiException { Status: StatusCodes.Status503ServiceUnavailable }
             && !cancellationToken.IsCancellationRequested)
         {
-            // No answer is evidence of absence or acceptance; a 404 can be a wrong listener or mapping.
             await this.DeferAsync(job, error is TerraBaseException { ErrorCode: { } code } && code.Length <= 64 && code.All(character => char.IsAsciiLetterLower(character) || character == '_') ? code : "terrabase_unavailable",
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken);
             return false;
         }
 
         if (answer is null)
         {
-            // The older contract refused contents or could not read a newer fence. Neither disproves an existing fence.
-            await this.DeferAsync(job, "terrabase_erasure_unsupported", cancellationToken).ConfigureAwait(false);
+            await this.DeferAsync(job, "terrabase_erasure_unsupported", cancellationToken);
             return false;
         }
 
-        // TerraBase showed the fence: record it before anything else, so no later refusal can cancel this intent.
-        if (await this.MarkFenceSeenAsync(job, cancellationToken).ConfigureAwait(false) is not { } seen)
+        if (await this.MarkFenceSeenAsync(job, cancellationToken) is not { } seen)
         {
-            return await this.WithoutIntentAsync(job, cancellationToken).ConfigureAwait(false);
+            return await this.WithoutIntentAsync(job, cancellationToken);
         }
 
         if (!answer.Accepted || answer.EvidenceVersion != 2)
         {
-            // Older engines can accept catalog emptiness while active purges remain. Retain the driver until upgraded.
-            await this.DeferAsync(seen, answer.Accepted ? "terrabase_evidence_pending" : "terrabase_pending", cancellationToken).ConfigureAwait(false);
+            await this.DeferAsync(seen, answer.Accepted ? "terrabase_evidence_pending" : "terrabase_pending", cancellationToken);
             return false;
         }
 
-        return await directory.RemoveClosedProjectAsync(seen, cancellationToken).ConfigureAwait(false)
-            || await this.WithoutIntentAsync(job, cancellationToken).ConfigureAwait(false);
+        return await directory.RemoveClosedProjectAsync(seen, cancellationToken)
+            || await this.WithoutIntentAsync(job, cancellationToken);
     }
 
     private async Task<TerraBaseProjectClosure?> EraseOrCloseAsync(ClosureJob job, CancellationToken cancellationToken)
     {
         try
         {
-            return await terraBase.EraseProjectAsync(job.SubjectId, job.OrganizationId!, job.Id, cancellationToken).ConfigureAwait(false);
+            return await terraBase.EraseProjectAsync(job.SubjectId, job.OrganizationId!, job.Id, cancellationToken);
         }
         catch (TerraBaseException error) when (error.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.MethodNotAllowed or System.Net.HttpStatusCode.NotImplemented
             || error is TerraBaseValidationException && error.ErrorCode is "invalid_request" or "unsupported" or "unsupported_version")
         {
             try
             {
-                // Same authority and closure id, using today's empty-only path. It never authorizes destructive completion.
-                var legacy = await terraBase.CloseProjectAsync(job.SubjectId, job.OrganizationId!, job.Id, cancellationToken).ConfigureAwait(false);
+                var legacy = await terraBase.CloseProjectAsync(job.SubjectId, job.OrganizationId!, job.Id, cancellationToken);
                 return legacy with { EvidenceVersion = 0 };
             }
             catch (TerraBaseConflictException refused) when (refused.ErrorCode is "not_empty" or "closure_conflict")
             {
-                // An earlier v2 fence may exist even when its response was lost before auth recorded FenceSeen.
                 return null;
             }
         }
     }
 
-    // This intent vanished (a concurrent refusal cancelled it) after TerraBase showed the fence: done when the root is gone,
-    // pending while a re-created intent carries it on, and otherwise nothing is in progress: 503, so the caller retries
-    // and the next intent presents the project's stored closure id, which TerraBase recognizes.
     private async Task<bool> WithoutIntentAsync(Versioned<ClosureJob> job, CancellationToken cancellationToken) =>
-        await directory.ProjectAsync(job.Value.SubjectId, cancellationToken).ConfigureAwait(false) is null
-        || (await directory.ClosureAsync(job.Value.Scope, job.Value.SubjectId, cancellationToken).ConfigureAwait(false) is not null
+        await directory.ProjectAsync(job.Value.SubjectId, cancellationToken) is null
+        || (await directory.ClosureAsync(job.Value.Scope, job.Value.SubjectId, cancellationToken) is not null
             ? false
             : throw ApiException.Unavailable());
 
@@ -142,7 +109,6 @@ public sealed class Closures(
         Gone,
     }
 
-    // Records fenceSeen at the version read, read again after a lost race. Null when this intent is gone.
     private async Task<Versioned<ClosureJob>?> MarkFenceSeenAsync(Versioned<ClosureJob> job, CancellationToken cancellationToken)
     {
         var current = job;
@@ -155,12 +121,12 @@ public sealed class Closures(
 
             var seen = current.Value with { FenceSeen = true };
             var marked = Change.Update(current, seen);
-            if (await data.SaveAsync(marked, cancellationToken).ConfigureAwait(false))
+            if (await data.SaveAsync(marked, cancellationToken))
             {
                 return new(seen, marked.Version!);
             }
 
-            if (await this.RereadAsync(job, cancellationToken).ConfigureAwait(false) is not { } reread)
+            if (await this.RereadAsync(job, cancellationToken) is not { } reread)
             {
                 return null;
             }
@@ -171,8 +137,6 @@ public sealed class Closures(
         throw ApiException.Unavailable();
     }
 
-    // Cancels a refused intent at the version read, read again after a lost race (a pass deferred it). Kept when it showed
-    // its fence meanwhile; Gone when this intent no longer exists (completed, or cancelled by another pass).
     private async Task<Cancellation> CancelAsync(Versioned<ClosureJob> job, CancellationToken cancellationToken)
     {
         var current = job;
@@ -180,16 +144,16 @@ public sealed class Closures(
         {
             if (current.Value.FenceSeen)
             {
-                await this.DeferAsync(current, "terrabase_refused_after_fence", cancellationToken).ConfigureAwait(false);
+                await this.DeferAsync(current, "terrabase_refused_after_fence", cancellationToken);
                 return Cancellation.Kept;
             }
 
-            if (await directory.CancelClosureAsync(current, cancellationToken).ConfigureAwait(false))
+            if (await directory.CancelClosureAsync(current, cancellationToken))
             {
                 return Cancellation.Cancelled;
             }
 
-            if (await this.RereadAsync(job, cancellationToken).ConfigureAwait(false) is not { } reread)
+            if (await this.RereadAsync(job, cancellationToken) is not { } reread)
             {
                 return Cancellation.Gone;
             }
@@ -200,15 +164,9 @@ public sealed class Closures(
         throw ApiException.Unavailable();
     }
 
-    // The same intent (same creation) as stored now, or null.
     private async Task<Versioned<ClosureJob>?> RereadAsync(Versioned<ClosureJob> job, CancellationToken cancellationToken) =>
-        await directory.ClosureAsync(job.Value.Scope, job.Value.SubjectId, cancellationToken).ConfigureAwait(false) is { } reread && reread.Value.Same(job.Value) ? reread : null;
+        await directory.ClosureAsync(job.Value.Scope, job.Value.SubjectId, cancellationToken) is { } reread && reread.Value.Same(job.Value) ? reread : null;
 
-    /// <summary>
-    /// Turns an account's project intent into a standalone one (at the version read, re-read after a lost race), due now, so
-    /// the background pass finishes it with its original authority. Null when it is gone, no longer the account's, or the
-    /// account has a closure intent again (that account closure drives it).
-    /// </summary>
     internal async Task<Versioned<ClosureJob>?> DetachAsync(Versioned<ClosureJob> job, CancellationToken cancellationToken)
     {
         var account = job.Value.AccountId ?? throw new ArgumentException("Only an account's intent detaches.", nameof(job));
@@ -216,24 +174,23 @@ public sealed class Closures(
         for (var attempt = 0; attempt < 4; attempt++)
         {
             var detached = current.Value with { AccountId = null, NextAttemptAt = clock.GetUtcNow() };
-            // Only while the account has no closure intent: a newer account closure drives its own intents.
-            if (await directory.ClosureAsync("account", account, cancellationToken).ConfigureAwait(false) is not null)
+            if (await directory.ClosureAsync("account", account, cancellationToken) is not null)
             {
                 return null;
             }
 
             List<Change> changes = [Change.Update(current, detached)];
-            if (await users.GetAsync(PlatformDirectory.Instance, account, cancellationToken).ConfigureAwait(false) is { } owner)
+            if (await users.GetAsync(PlatformDirectory.Instance, account, cancellationToken) is { } owner)
             {
                 changes.Add(Change.Assert(owner));
             }
 
-            if (await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false))
+            if (await data.SaveAsync(changes, cancellationToken))
             {
-                return await this.RereadAsync(job, cancellationToken).ConfigureAwait(false);
+                return await this.RereadAsync(job, cancellationToken);
             }
 
-            if (await this.RereadAsync(job, cancellationToken).ConfigureAwait(false) is not { } reread || reread.Value.AccountId != account)
+            if (await this.RereadAsync(job, cancellationToken) is not { } reread || reread.Value.AccountId != account)
             {
                 return null;
             }
@@ -244,18 +201,16 @@ public sealed class Closures(
         throw ApiException.Unavailable();
     }
 
-    /// <summary>Due closure intents of every scope, oldest first; account-owned ones too, so none can be stranded.</summary>
     internal async Task<IReadOnlyList<ClosureJob>> DueAsync(int limit, CancellationToken cancellationToken)
     {
         var now = clock.GetUtcNow();
-        return await data.ReadAsync((db, token) => db.ClosureJobs.Where(job => job.NextAttemptAt <= now).OrderBy(job => job.NextAttemptAt).Take(limit).ToListAsync(token),
-            cancellationToken).ConfigureAwait(false);
+        return (await data.ReadAsync(connection => connection.QueryAsync<ClosureJob>(
+            "SELECT * FROM closure_jobs WHERE next_attempt_at <= @now ORDER BY next_attempt_at LIMIT @limit", new { now, limit }), cancellationToken)).AsList();
     }
 
     internal static TimeSpan Backoff(int attempts) => attempts + 1 >= ParkAfter ? ParkedRetry
         : attempts >= 5 ? MaxRetry : TimeSpan.FromTicks(Math.Min(Retry.Ticks << attempts, MaxRetry.Ticks));
 
-    // Moves a pending intent behind the others; a lost race means another pass already did.
     internal async Task DeferAsync(Versioned<ClosureJob> job, string failure, CancellationToken cancellationToken, bool fenceSeen = false)
     {
         var attempts = Math.Clamp(job.Value.Attempts, 0, 999_999);
@@ -266,7 +221,7 @@ public sealed class Closures(
             FailureCode = failure,
             FenceSeen = job.Value.FenceSeen || fenceSeen,
         };
-        if (!await data.SaveAsync(Change.Update(job, next), cancellationToken).ConfigureAwait(false))
+        if (!await data.SaveAsync(Change.Update(job, next), cancellationToken))
         {
             logger.ZLogInformation($"A closure intent changed while it was deferred; the next pass reads it again");
         }
@@ -277,44 +232,38 @@ public sealed class Closures(
     }
 }
 
-/// <summary>Resumes pending closures at startup and every two seconds, so a crash or restart never strands an intent.</summary>
 public sealed class ClosureWorker(AuthSchema schema, Closures closures, PlatformDirectory directory, AccountDeletion accounts, TimeProvider clock, ILogger<ClosureWorker> logger) : BackgroundService
 {
     private const int BatchSize = 20;
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(2);
 
-    /// <summary>Advances one batch of due closures; each failure is logged without detail and retried later.</summary>
     public async Task RunOnceAsync(CancellationToken cancellationToken = default)
     {
-        foreach (var due in await closures.DueAsync(BatchSize, cancellationToken).ConfigureAwait(false))
+        foreach (var due in await closures.DueAsync(BatchSize, cancellationToken))
         {
             try
             {
-                if (await directory.ClosureAsync(due.Scope, due.SubjectId, cancellationToken).ConfigureAwait(false) is not { } job || !job.Value.Same(due)
+                if (await directory.ClosureAsync(due.Scope, due.SubjectId, cancellationToken) is not { } job || !job.Value.Same(due)
                     || job.Value.NextAttemptAt > clock.GetUtcNow())
                 {
-                    // Another pass, including an earlier account in this batch, may have rescheduled this snapshot entry.
                     continue;
                 }
 
                 if (job.Value.AccountId is { } account)
                 {
-                    // An account's own intents are its driver's while its account intent exists; once that is gone (it was
-                    // cancelled while a concurrent step still created them), a project closure goes on alone and an
-                    // organization fence goes.
-                    if (await directory.ClosureAsync("account", account, cancellationToken).ConfigureAwait(false) is not null)
+                    if (await directory.ClosureAsync("account", account, cancellationToken) is not null)
                     {
-                        await closures.DeferAsync(job, "account_driven", cancellationToken).ConfigureAwait(false);
+                        await closures.DeferAsync(job, "account_driven", cancellationToken);
                         continue;
                     }
 
                     if (job.Value.Scope != "project")
                     {
-                        _ = await directory.CancelClosureAsync(job, cancellationToken, unlessAccount: account).ConfigureAwait(false);
+                        _ = await directory.CancelClosureAsync(job, cancellationToken, unlessAccount: account);
                         continue;
                     }
 
-                    if (await closures.DetachAsync(job, cancellationToken).ConfigureAwait(false) is not { } detached)
+                    if (await closures.DetachAsync(job, cancellationToken) is not { } detached)
                     {
                         continue;
                     }
@@ -323,29 +272,26 @@ public sealed class ClosureWorker(AuthSchema schema, Closures closures, Platform
                 }
 
                 _ = job.Value.Scope == "account"
-                    ? await accounts.AdvanceAsync(job, cancellationToken).ConfigureAwait(false)
-                    : await closures.AdvanceAsync(job, cancellationToken).ConfigureAwait(false);
+                    ? await accounts.AdvanceAsync(job, cancellationToken)
+                    : await closures.AdvanceAsync(job, cancellationToken);
             }
             catch (Exception error) when (!cancellationToken.IsCancellationRequested)
             {
-                // Safe logging keeps only the exception's types and frames, never its message, so a stalled closure shows its cause.
                 try
                 {
                     logger.ZLogWarning(error, $"Resuming a {due.Scope:@Scope} closure failed; it stays pending");
                 }
                 catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
                 {
-                    // A failed log provider must not stop this batch or its durable retries.
                     _ = logFailure;
                 }
             }
         }
     }
 
-    /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await schema.Ready.WaitAsync(stoppingToken).ConfigureAwait(false);
+        await schema.Ready.WaitAsync(stoppingToken);
         using var timer = new PeriodicTimer(Interval, clock);
         try
         {
@@ -353,12 +299,10 @@ public sealed class ClosureWorker(AuthSchema schema, Closures closures, Platform
             {
                 try
                 {
-                    await this.RunOnceAsync(stoppingToken).ConfigureAwait(false);
+                    await this.RunOnceAsync(stoppingToken);
                 }
                 catch (Exception error) when (error is not OutOfMemoryException)
                 {
-                    // Storage may report an ordinary failure after the host has cancelled this pass.
-                    // Its durable intent remains for the next process to resume.
                     if (stoppingToken.IsCancellationRequested)
                     {
                         break;
@@ -370,16 +314,14 @@ public sealed class ClosureWorker(AuthSchema schema, Closures closures, Platform
                     }
                     catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
                     {
-                        // Logging must not stop the worker while storage remains unavailable.
                         _ = logFailure;
                     }
                 }
             }
-            while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
+            while (await timer.WaitForNextTickAsync(stoppingToken));
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
-            // Stopping this worker is normal even while the host remains available.
         }
     }
 }

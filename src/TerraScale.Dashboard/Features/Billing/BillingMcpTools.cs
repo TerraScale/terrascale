@@ -1,4 +1,4 @@
-using TerraScale.TerraBase.Contracts;
+using TerraScale.Dashboard.Platform.Clients;
 using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
@@ -29,7 +29,6 @@ namespace TerraScale.Dashboard.Features.Billing
 
         private const string IntervalDescription = "Billing interval: monthly (or list_plans' month) or annual (or year). Omit for monthly, and for free.";
 
-        // list_plans publishes Stripe's month/year; checkout and plan changes take monthly/annual. Accept both and name the valid one.
         private static string Interval(string plan, string interval)
         {
             interval = interval.Trim() switch { "year" => "annual", "month" => "monthly", var value => value };

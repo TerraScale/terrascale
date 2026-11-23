@@ -14,6 +14,6 @@ public sealed class RevokeSelfUserApiKeyEndpoint(PlatformAuthentication authenti
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
         await keys.RevokeAsync(this.RouteId("project"), caller.Id, this.RouteId("key"), caller.Id, cancellationToken);
-        return Results.NoContent();
+        return TypedResults.NoContent();
     }
 }

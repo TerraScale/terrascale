@@ -3,10 +3,8 @@ using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Features.ProjectTenants;
 
-/// <summary><c>DELETE /v1/{project}/sessions/{session}</c>.</summary>
 public sealed class RevokeProjectSessionEndpoint(TenantDirectory tenants, PlatformAuthentication authentication) : ProjectTenantEndpoint(tenants, authentication)
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Delete(Root + "/sessions/{session}");
@@ -16,6 +14,6 @@ public sealed class RevokeProjectSessionEndpoint(TenantDirectory tenants, Platfo
     protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
-        return await this.Tenants.RevokeSessionAsync(projectId, this.RouteId("session"), cancellationToken) ? Results.NoContent() : throw PlatformDirectory.NotFound();
+        return await this.Tenants.RevokeSessionAsync(projectId, this.RouteId("session"), cancellationToken) ? TypedResults.NoContent() : throw PlatformDirectory.NotFound();
     }
 }

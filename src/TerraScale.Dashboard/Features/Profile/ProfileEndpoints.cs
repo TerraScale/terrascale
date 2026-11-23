@@ -54,20 +54,18 @@ namespace TerraScale.Dashboard.Features.Profile
 
     public static class ProfileEndpoints
     {
-        // ts-auth ends every sign-in of the account, its hosted cookie included. Remove every local
-        // session of the user without trying to revoke the now-invalid bearer again.
         internal static async Task<IResult> SignOutEverywhereAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, ITsAuthPlatform platform)
         {
             var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, "/profile?tab=sessions", Results.BadRequest("Invalid form token."));
+                return RequestError.FormExpired(http, "/profile?tab=sessions", TypedResults.BadRequest("Invalid form token."));
             }
 
             try { await platform.SignOutEverywhereAsync(context.Session, http.RequestAborted); }
@@ -85,13 +83,13 @@ namespace TerraScale.Dashboard.Features.Profile
             var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, "/profile", Results.BadRequest("Invalid form token."));
+                return RequestError.FormExpired(http, "/profile", TypedResults.BadRequest("Invalid form token."));
             }
 
             ProfileSaveResult saved;
@@ -123,7 +121,7 @@ namespace TerraScale.Dashboard.Features.Profile
                 {
                     context = await accounts.GetContextAsync(context.Session, http.RequestAborted);
                     await DatastarEvents.PatchElementsAsync(http, ProfilePatch.Create(new(ShellModel.For(http, context, "Profile"), "profile", Status: language ? "Language preference saved." : "Profile saved.", Sessions: await sessions.ListAsync(http, context.Session))));
-                    return Results.Empty;
+                    return TypedResults.Empty;
                 }
                 return HttpRedirects.SeeOther("/profile?tab=profile&status=" + (language ? "language-saved" : "profile-saved"));
             }
@@ -155,7 +153,7 @@ namespace TerraScale.Dashboard.Features.Profile
                     DraftName = language ? null : form["name"].ToString(),
                     DraftPhone = language ? null : form["phoneNumber"].ToString()
                 }));
-                return Results.Empty;
+                return TypedResults.Empty;
             }
             var slice = ProfileView.Create(new(ShellModel.For(http, context, "Profile"), Error: message, Sessions: await sessions.ListAsync(http, context.Session))
             {

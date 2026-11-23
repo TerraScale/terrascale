@@ -23,8 +23,6 @@ type sqlLineReader interface {
 	SaveHistory(string) error
 }
 
-// runSQLShell uses explicit submission instead of guessing SQL boundaries.
-// In particular it never splits strings, comments or trigger bodies at ';'.
 func runSQLShell(ctx context.Context, db *v1.Database, lines sqlLineReader, out, diagnostics io.Writer) error {
 	beginJSONStream(out)
 	if _, err := io.WriteString(diagnostics, sqlShellHelp); err != nil {
@@ -93,9 +91,9 @@ func runSQLShell(ctx context.Context, db *v1.Database, lines sqlLineReader, out,
 				continue
 			}
 			if jsonMode(out) {
-				err = emitJSONRecord(out, result)
+				err = emitJSONRecord(out, sqlOutput{result, db.Bookmark()})
 			} else {
-				err = writeSQLResult(out, result)
+				err = writeSQLResult(out, result, db.Bookmark())
 			}
 			if err != nil {
 				return err

@@ -10,13 +10,13 @@ Use the [quickstart](/getting-started/) to establish one working application con
 - [Authentication capabilities](/guides/authentication-capabilities): current sign-in methods, protocol scope and unavailable flows.
 - [Authentication](/guides/authentication): API keys, access tokens, IP allowlists, revocation and two-factor sign-in.
 - [Agent identities](/guides/agent-identities): owner-approved agents for your users, TerraScale MCP and OpenID Connect sign-in.
-- [Connect with psql and Postgres drivers](/guides/postgres-clients): host, credentials, dialect and transactions for psql, node-postgres, psycopg, pgx and Npgsql.
+- [Connect with psql and Postgres drivers](/guides/postgres-clients): host, credentials, Postgres syntax, strong transactions, `COPY`, `LISTEN` and catalog support for psql, node-postgres, psycopg, pgx, sqlx and Npgsql.
 - [SQL over HTTP](/guides/sql-http): run SQL statements with any HTTP client.
-- [Use Drizzle ORM](/guides/orm-drizzle): run Drizzle's SQLite dialect over the JavaScript SDK.
-- [Use Prisma ORM](/guides/orm-prisma): run Prisma's SQLite dialect over the JavaScript SDK's driver adapter.
+- [Use Drizzle ORM](/guides/orm-drizzle): run Drizzle over the JavaScript SDK or the Postgres wire.
+- [Use Prisma ORM](/guides/orm-prisma): run Prisma over the JavaScript SDK's driver adapter or the Postgres wire.
 - [Use SQLAlchemy and Alembic](/guides/orm-sqlalchemy): run SQLAlchemy's SQLite dialect, the ORM and Alembic migrations over the Python SDK.
 - [Use GORM, sqlc and bun with Go](/guides/orm-go): run GORM, sqlc and bun over the Go SDK's database/sql driver.
-- [Use Dapper and ADO.NET with .NET](/guides/orm-dotnet): run Dapper and ADO.NET over the .NET SDK's DbConnection provider.
+- [Use Dapper and ADO.NET with .NET](/guides/orm-dotnet): run Dapper and ADO.NET over the .NET SDK's DbConnection provider, and EF Core over the Postgres wire.
 - [Typed SQL with the Rust SDK](/guides/rust-sql): queries, typed `query_as` selects, transactions over the session and batches in Rust.
 - [Errors and safe retries](/guides/errors): typed failures and uncertain write outcomes.
 - [Indexes](/guides/indexes): secondary, unique, partial and expression indexes with `CREATE INDEX`, `DROP INDEX` and `EXPLAIN QUERY PLAN`.
@@ -27,12 +27,10 @@ Use the [quickstart](/getting-started/) to establish one working application con
 - [File storage](/guides/file-storage): project files in buckets with owner, role and public read and write rules.
 - [Schema migrations](/guides/migrations): versioned SQL table migrations with `ts migrate`.
 - [Branches](/guides/branches)
-- [Multi-region writes and conflicts](/guides/multi-region-writes-and-conflicts): column winners, transaction states and the conflict log.
+- [Multi-region writes and conflicts](/guides/multi-region-writes-and-conflicts): how concurrent fast writes converge, when to use strong mode, and the conflict log.
 - [Dashboard usage](/guides/dashboard): customer account and database workflow.
 - [Connect an AI assistant with MCP](/guides/mcp): sign in or use a personal access token to connect an assistant.
 - [Single sign-on](/guides/single-sign-on): connect your identity provider over OIDC for a verified email domain (Team and Enterprise).
 - [Import data](/guides/import): load rows into a database with batched SQL statements.
-
-A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 
 The [zero-configuration contract](/guides/zero-configuration) explains the platform's intended operating behavior without disclosing deployment internals.

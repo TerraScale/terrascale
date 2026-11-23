@@ -11,124 +11,71 @@ using TerraScale.Authentication.Features.Oidc;
 
 namespace TerraScale.Authentication.Features.Email;
 
-/// <summary>The transactional emails ts-auth sends.</summary>
 public enum AuthEmailKind
 {
-    /// <summary>A one-time code that signs the user in.</summary>
     SignInCode,
 
-    /// <summary>A one-time link that signs the user in.</summary>
     MagicLink,
 
-    /// <summary>A one-time code that confirms the user owns the address.</summary>
     VerifyEmail,
 
-    /// <summary>A one-time code that lets the user choose a new password.</summary>
     PasswordReset,
 
-    /// <summary>A link that accepts an organization invitation.</summary>
     Invitation,
 
-    /// <summary>A one-time code for the second sign-in factor.</summary>
     MfaCode,
 
     StepUpCode,
 
-    /// <summary>An alert about a sign-in from a device not seen before.</summary>
     NewDevice,
 
-    /// <summary>An alert about a temporary pause of an authentication method after excessive attempts.</summary>
     Lockout,
 
-    /// <summary>A one-time code, sent to the new address, that confirms a sign-in email change.</summary>
     EmailChangeCode,
 
-    /// <summary>An alert, sent to the current address, about a pending sign-in email change with a link that cancels it.</summary>
     EmailChangeNotice,
 
     SocialLinkCode,
 }
 
-/// <summary>
-/// The values one email shows. Each kind's copy uses only some of them: a code for the code kinds, a link for
-/// <see cref="AuthEmailKind.MagicLink"/> and <see cref="AuthEmailKind.Invitation"/>, the device details for
-/// <see cref="AuthEmailKind.NewDevice"/>, the pause deadline for <see cref="AuthEmailKind.Lockout"/>.
-/// </summary>
-/// <param name="Email">The recipient's address.</param>
 public sealed record AuthEmailValues(string Email)
 {
-    /// <summary>Server-resolved organization identity for mail accounting.</summary>
     public string Tenant { get; init; } = "platform";
 
-    /// <summary>The one-time code, shown large.</summary>
     public string? Code { get; init; }
 
-    /// <summary>The action link behind the button.</summary>
     public Uri? Link { get; init; }
 
-    /// <summary>How long the code, link or invitation keeps working.</summary>
     public TimeSpan? ExpiresIn { get; init; }
 
-    /// <summary>The organization an invitation joins.</summary>
     public string? Organization { get; init; }
 
-    /// <summary>Who sent an invitation.</summary>
     public string? Inviter { get; init; }
 
-    /// <summary>The new device, e.g. a browser and operating system.</summary>
     public string? Device { get; init; }
 
-    /// <summary>Where the new device signed in from.</summary>
     public string? Location { get; init; }
 
-    /// <summary>When the new device signed in.</summary>
     public DateTimeOffset? Time { get; init; }
 
-    /// <summary>When the authentication method's temporary pause ends, rendered in UTC.</summary>
     public DateTimeOffset? LockoutUntil { get; init; }
 
-    /// <summary>The requested sign-in address of an email change notice.</summary>
     public string? NewEmail { get; init; }
 
     public string? Provider { get; init; }
 
-    /// <summary>Omits every value, so formatting or logging the record never discloses a code or a link.</summary>
     public override string ToString() => nameof(AuthEmailValues);
 }
 
-/// <summary>How dark mode applies to one rendering.</summary>
 public enum EmailDarkMode
 {
-    /// <summary>Never: the email stays light.</summary>
     None,
 
-    /// <summary>When the reader's client is in dark mode.</summary>
     Media,
 
-    /// <summary>Always.</summary>
     Always,
 }
 
-/// <summary>
-/// Who an email comes from and how it looks: branding merged over the defaults, with the colours the layout derives from
-/// it. Every colour is <c>#rrggbb</c>, so it is safe in CSS.
-/// </summary>
-/// <param name="Name">The product name, shown as <c>{{ app_name }}</c> and as the logo's alt text.</param>
-/// <param name="LogoUrl">The logo for light backgrounds, or <see langword="null"/> to show the name.</param>
-/// <param name="LogoDarkUrl">The logo for dark backgrounds.</param>
-/// <param name="LogoWidth">Logo width in CSS pixels; Outlook needs it.</param>
-/// <param name="LogoHeight">Logo height in CSS pixels.</param>
-/// <param name="IconUrl">A square icon shown with the name when there is no logo.</param>
-/// <param name="PrimaryColor">Button colour.</param>
-/// <param name="AccentColor">Link and code-box colour.</param>
-/// <param name="Theme"><c>auto</c>, <c>light</c> or <c>dark</c>.</param>
-/// <param name="ButtonStyle"><c>rounded</c>, <c>pill</c> or <c>square</c>.</param>
-/// <param name="FooterText">Footer lines, e.g. a postal address.</param>
-/// <param name="SupportEmail">Support address.</param>
-/// <param name="SupportUrl">Help page.</param>
-/// <param name="WebsiteUrl">Website linked in the footer.</param>
-/// <param name="SenderName">Display name of the From address.</param>
-/// <param name="ReplyTo">Reply-To address.</param>
 public sealed record EmailBrand(
     string Name,
     Uri? LogoUrl,
@@ -150,29 +97,18 @@ public sealed record EmailBrand(
     private const string Card = "#ffffff";
     private const string DarkCard = "#11141c";
 
-    /// <summary>Button text: black or white, whichever contrasts more with the button; one of them always reaches 4.5:1.</summary>
     public string ButtonTextColor => Contrast(this.PrimaryColor, "#ffffff") >= Contrast(this.PrimaryColor, "#000000") ? "#ffffff" : "#000000";
 
-    /// <summary>Button corner radius.</summary>
     public string ButtonRadius => this.ButtonStyle switch { "pill" => "999px", "square" => "0", _ => "8px" };
 
-    /// <summary>Links on the light card: the accent, darkened until it reaches 4.5:1.</summary>
     public string LinkColor => Readable(this.AccentColor, Card, "#000000");
 
-    /// <summary>Links on the dark card: the accent, lightened until it reaches 4.5:1.</summary>
     public string LinkDarkColor => Readable(this.AccentColor, DarkCard, "#ffffff");
 
-    /// <summary>Code box fill and border, tinted with the accent.</summary>
     public (string Fill, string Border) CodeBox => (Mix(this.AccentColor, Card, 0.08), Mix(this.AccentColor, Card, 0.25));
 
-    /// <summary>The same in dark mode.</summary>
     public (string Fill, string Border) CodeBoxDark => (Mix(this.AccentColor, DarkCard, 0.12), Mix(this.AccentColor, DarkCard, 0.35));
 
-    /// <summary>
-    /// Merges <paramref name="branding"/> over <paramref name="defaults"/>. A custom logo replaces both default logos; a
-    /// custom brand name or icon without a logo drops them, and a custom brand name drops the default website (another
-    /// brand's logo or site would be wrong) and replaces the default sender name.
-    /// </summary>
     public static EmailBrand Merge(EmailBrand defaults, EmailBranding branding)
     {
         ArgumentNullException.ThrowIfNull(defaults);
@@ -199,7 +135,6 @@ public sealed record EmailBrand(
             branding.ReplyTo ?? defaults.ReplyTo);
     }
 
-    /// <summary>The branding fields these values correspond to, for showing the defaults.</summary>
     public EmailBranding ToBranding() => new()
     {
         BrandName = this.Name,
@@ -247,7 +182,6 @@ public sealed record EmailBrand(
         return (Math.Max(a, b) + 0.05) / (Math.Min(a, b) + 0.05);
     }
 
-    // WCAG 2 relative luminance.
     private static double Luminance(string color)
     {
         static double Channel(int value) => value / 255.0 <= 0.03928 ? value / 255.0 / 12.92 : Math.Pow((value / 255.0 + 0.055) / 1.055, 2.4);
@@ -259,24 +193,14 @@ public sealed record EmailBrand(
         (Convert.ToInt32(color[1..3], 16), Convert.ToInt32(color[3..5], 16), Convert.ToInt32(color[5..7], 16));
 }
 
-/// <summary>
-/// Renders every ts-auth email as a responsive HTML message with a plain-text alternative, in English or Brazilian
-/// Portuguese, with an instance's branding and copy overrides. The HTML follows the reader's light or dark mode, and
-/// works without images or styles. The copy takes <c>{{ name }}</c> placeholders and nothing else: there is no logic to
-/// run, and every value is HTML-encoded by the layout.
-/// </summary>
 public sealed partial class AuthEmails(AuthOptions options)
 {
-    /// <summary>English, the fallback locale.</summary>
     public const string English = "en";
 
-    /// <summary>Brazilian Portuguese.</summary>
     public const string Portuguese = "pt-BR";
 
-    /// <summary>Every supported locale.</summary>
     public static readonly IReadOnlyList<string> Locales = [English, Portuguese];
 
-    /// <summary>The API name of each kind.</summary>
     public static readonly IReadOnlyDictionary<string, AuthEmailKind> Kinds = new Dictionary<string, AuthEmailKind>(StringComparer.Ordinal)
     {
         ["sign_in_code"] = AuthEmailKind.SignInCode,
@@ -293,10 +217,8 @@ public sealed partial class AuthEmails(AuthOptions options)
         ["email_change_notice"] = AuthEmailKind.EmailChangeNotice,
     };
 
-    // Keeps accented letters readable in the HTML part; markup characters are still encoded.
     private static readonly HtmlEncoder Encoder = HtmlEncoder.Create(UnicodeRanges.All);
 
-    /// <summary>TerraScale's own brand, served from this deployment's public origin.</summary>
     public EmailBrand Brand { get; } = new(
         "TerraScale",
         new Uri(options.PublicOrigin, "/admin/email-logo.png"),
@@ -315,10 +237,8 @@ public sealed partial class AuthEmails(AuthOptions options)
         SenderName: "TerraScale",
         ReplyTo: null);
 
-    /// <summary>The API name of <paramref name="kind"/>.</summary>
     public static string Name(AuthEmailKind kind) => Kinds.First(entry => entry.Value == kind).Key;
 
-    /// <summary>The placeholders <paramref name="kind"/>'s copy may use.</summary>
     public static IReadOnlyList<string> Variables(AuthEmailKind kind) =>
     [
         "app_name", "user.email", "support_email",
@@ -335,7 +255,6 @@ public sealed partial class AuthEmails(AuthOptions options)
         },
     ];
 
-    /// <summary>The default copy of <paramref name="kind"/> in <paramref name="locale"/>.</summary>
     public static EmailTemplateFields Defaults(AuthEmailKind kind, string locale) => Copies[(kind, locale)];
 
     public static string? UiLocales(HttpRequest request)
@@ -372,10 +291,6 @@ public sealed partial class AuthEmails(AuthOptions options)
         ? locales.Split(' ')[0]
         : Locale(request.Headers.AcceptLanguage);
 
-    /// <summary>
-    /// The locale for a request's <c>Accept-Language</c>: <see cref="Portuguese"/> when Portuguese is preferred over
-    /// English, otherwise <see cref="English"/>.
-    /// </summary>
     public static string Locale(StringValues acceptLanguage)
     {
         if (!StringWithQualityHeaderValue.TryParseList(acceptLanguage, out var ranges))
@@ -383,7 +298,6 @@ public sealed partial class AuthEmails(AuthOptions options)
             return English;
         }
 
-        // Stable: equal weights keep the browser's order.
         foreach (var range in ranges.OrderByDescending(range => range.Quality ?? 1))
         {
             var tag = range.Value.Value ?? string.Empty;
@@ -406,11 +320,6 @@ public sealed partial class AuthEmails(AuthOptions options)
         return English;
     }
 
-    /// <summary>
-    /// Renders <paramref name="kind"/> for <paramref name="values"/> with <paramref name="config"/>'s branding and copy
-    /// (the defaults when <see langword="null"/>); an unknown locale gets English. <paramref name="colorScheme"/>
-    /// <c>light</c> or <c>dark</c> pins an <c>auto</c> theme for previews.
-    /// </summary>
     public async Task<EmailMessage> RenderAsync(AuthEmailKind kind, string locale, AuthEmailValues values, EmailConfig? config = null, string? colorScheme = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(values);
@@ -475,7 +384,7 @@ public sealed partial class AuthEmails(AuthOptions options)
             });
 
         await using var html = new StringWriter(CultureInfo.InvariantCulture);
-        await AuthEmailLayout.Create(view).RenderAsync(html, Encoder, cancellationToken).ConfigureAwait(false);
+        await AuthEmailLayout.Create(view).RenderAsync(html, Encoder, cancellationToken);
         return new EmailMessage(view.Subject, Text(view), html.ToString())
         {
             FromName = kind == AuthEmailKind.Invitation && values.Tenant != OidcIssuer.InstanceId && values.Organization is { } organization
@@ -487,7 +396,6 @@ public sealed partial class AuthEmails(AuthOptions options)
         };
     }
 
-    /// <summary>The plain-text alternative: the same content in reading order.</summary>
     private static string Text(AuthEmailView view)
     {
         var text = new StringBuilder();
@@ -535,7 +443,6 @@ public sealed partial class AuthEmails(AuthOptions options)
     [GeneratedRegex(@"\{\{\s*(?<name>[a-z_]+(?:\.[a-z_]+)?)\s*\}\}")]
     private static partial Regex Placeholder();
 
-    /// <summary>The layout's own lines in one locale.</summary>
     private sealed record Chrome(string CodeExpiry, string LinkExpiry, string InvitationExpiry, string LinkFallback, string SentTo, string Support, Func<TimeSpan, string> Duration);
 
     private static readonly Dictionary<string, Chrome> Chromes = new(StringComparer.Ordinal)
@@ -739,23 +646,6 @@ public sealed partial class AuthEmails(AuthOptions options)
     };
 }
 
-/// <summary>Model for <c>AuthEmailLayout.cshtml</c>: rendered text only, which Razor encodes.</summary>
-/// <param name="Lang">The BCP 47 language of the copy.</param>
-/// <param name="Subject">The subject, also the record title.</param>
-/// <param name="Preheader">The inbox preview line.</param>
-/// <param name="Heading">The heading.</param>
-/// <param name="Paragraphs">Body paragraphs, each a list of lines.</param>
-/// <param name="Code">The one-time code, shown large.</param>
-/// <param name="Expiry">When the code or link stops working.</param>
-/// <param name="Button">The button label; shown only with <paramref name="Link"/>.</param>
-/// <param name="Link">The action link.</param>
-/// <param name="LinkFallback">The line above the link written out in full.</param>
-/// <param name="Footnote">The security note at the end of the card.</param>
-/// <param name="SentTo">Who the email was sent to.</param>
-/// <param name="FooterLines">The brand's footer text, line by line.</param>
-/// <param name="Support">The label before the support address or page, when the brand has one.</param>
-/// <param name="Brand">The sender's brand.</param>
-/// <param name="Dark">When the dark styles apply.</param>
 public sealed record AuthEmailView(
     string Lang,
     string Subject,

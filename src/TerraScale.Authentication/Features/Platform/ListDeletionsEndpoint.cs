@@ -6,10 +6,8 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.Platform;
 
-/// <summary>Private dashboard handoff of verified platform logical deletions.</summary>
 public sealed class ListDeletionsEndpoint(AuthData data, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/v1/{slug}/deletions");
@@ -23,7 +21,6 @@ public sealed class ListDeletionsEndpoint(AuthData data, AuthOptions options) : 
         Metadata(new RequiresSecurity(SecuritySchemes.ClientBasic));
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         DashboardClientAuthentication.Refuse(this.HttpContext, options)
         ?? TypedResults.Json(await DashboardDeletionProofs.ListAsync(data, cancellationToken), DashboardDeletionJson.Default.DashboardDeletionList);

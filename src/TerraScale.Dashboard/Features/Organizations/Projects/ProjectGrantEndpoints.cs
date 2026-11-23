@@ -54,7 +54,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, requireProject: true);
@@ -77,7 +77,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
                     };
                     await DatastarEvents.PatchElementsAsync(http, ProjectGrantPageView.Create(new(errorShell, items, null, message, false, userId, role, "",
                         form["dialog"] == "edit" ? "edit-grant-" + userId : form["dialog"] == "remove" ? "remove-grant-" + userId : "")));
-                    return Results.Empty;
+                    return TypedResults.Empty;
                 }
                 return Page(http, context, [], error: message, status: status, draftUserId: userId, draftRole: role, dialog: form["dialog"] == "edit" ? "edit-grant-" + userId : form["dialog"] == "remove" ? "remove-grant-" + userId : "");
             }
@@ -167,7 +167,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
             http.Response.Headers.CacheControl = "no-store";
             var shell = ShellModel.For(http, context, "Project grants") with { ReturnUrl = WorkspaceUrl.For(context, "/project/members", replace: true) };
             await DatastarEvents.PatchElementsAsync(http, ProjectGrantPageView.Create(new(shell, items, null, "", false, "", "viewer", notice, "")));
-            return Results.Empty;
+            return TypedResults.Empty;
         }
     }
 }

@@ -20,6 +20,6 @@ public sealed class UpdateProjectUserEndpoint(TenantDirectory tenants, PlatformA
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var patch = await this.BodyAsync(UserProfileJson.Default.UserProfilePatch, cancellationToken);
-        return Results.Json(Map(await profiles.UpdateAsync(project, this.RouteId("user"), patch, cancellationToken)), ProjectTenantJson.Default.ProjectUserBody);
+        return TypedResults.Json(Map(await profiles.UpdateAsync(project, this.RouteId("user"), patch, cancellationToken)), ProjectTenantJson.Default.ProjectUserBody);
     }
 }

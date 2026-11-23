@@ -15,6 +15,6 @@ public sealed class VerifyProjectOrganizationDomainEndpoint(ProjectOrganizationD
     protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
-        return Results.Json(await organizations.ChangeDomainAsync(project, this.Org, (string)this.HttpContext.GetRouteValue("domain")!, false, cancellationToken), ProjectOrganizationsJson.Default.ProjectOrganizationDomainBody);
+        return TypedResults.Json(await organizations.ChangeDomainAsync(project, this.Org, (string)this.HttpContext.GetRouteValue("domain")!, false, cancellationToken), ProjectOrganizationsJson.Default.ProjectOrganizationDomainBody);
     }
 }

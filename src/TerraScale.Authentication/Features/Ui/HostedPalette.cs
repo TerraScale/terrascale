@@ -2,7 +2,6 @@ using System.Globalization;
 
 namespace TerraScale.Authentication.Features.Ui;
 
-/// <summary>WCAG luminance derivation from the approved v3 brand.js, rendered under the page's CSP nonce.</summary>
 internal static class HostedPalette
 {
     private static readonly Color White = new(255, 255, 255);
@@ -17,7 +16,6 @@ internal static class HostedPalette
 
         var light = Derive(accent ?? HostedLayoutModel.DefaultAccent, text, false);
         var dark = Derive(accent ?? HostedLayoutModel.DefaultAccent, text, true);
-        // A page background never replaces the canvas used by chips inside the card.
         var footer = background is null ? string.Empty : Footer(background, text);
         var links = (light.Underline ? ":root[data-theme=light] .card a:not(.btn){text-decoration:underline}" : string.Empty)
             + (dark.Underline ? ":root[data-theme=dark] .card a:not(.btn){text-decoration:underline}" : string.Empty);
@@ -28,7 +26,6 @@ internal static class HostedPalette
     {
         var canvas = Parse(background);
         var away = On(canvas);
-        // Mid-grey can fail against both white and the design's near-black ink.
         if (Contrast(away, canvas) < 4.5)
         {
             away = new(0, 0, 0);
@@ -56,7 +53,6 @@ internal static class HostedPalette
 
     private static Color Push(Color color, Color target, Func<Color, bool> acceptable)
     {
-        // Test the emitted byte values: rounding must not move a passing ratio below AA.
         for (var step = 0; step < 60 && !acceptable(Round(color)); step++)
         {
             color = Mix(color, target, 0.06);

@@ -17,7 +17,7 @@ public sealed class GetAgentEndpoint(TenantDirectory tenants, PlatformAuthentica
         var project = await this.AccessAsync(caller, Roles.Viewer, cancellationToken);
         return await agents.GetAsync(project, this.RouteId("agent"), cancellationToken) switch
         {
-            AgentBody agent => Results.Json(agent, AgentJson.Default.AgentBody),
+            AgentBody agent => TypedResults.Json(agent, AgentJson.Default.AgentBody),
             NotFound notFound => ErrorResults.ToResult(notFound),
         };
     }

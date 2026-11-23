@@ -70,7 +70,6 @@ namespace TerraScale.Dashboard.Features.Organizations
             var requestedWizard = wizardOverride ?? http.Request.Query["newOrganization"].ToString();
             var regionsRead = tab == "projects" || requestedWizard == "project" || openCreateProject
                 ? placement.RegionsAsync(http.RequestAborted) : null;
-            // The projects and billing tabs render no members, invitations, audit events or ownership transfer.
             var accessRead = context.Organization is not null && tab is not ("projects" or "billing")
                 ? http.RequestServices.GetRequiredService<IOrganizationAccess>().ReadAsync(context, http.RequestAborted) : null;
             IReadOnlyList<string> regions = regionsRead is null ? [] : await regionsRead;
@@ -101,7 +100,6 @@ namespace TerraScale.Dashboard.Features.Organizations
             {
                 error = queryError;
             }
-            // Only an owner sets the two-factor policy; the card stays hidden while ts-auth does not report it.
             var requireMfa = tab == "organization" && context.Role == "owner" && context.Organization is { } owned
                 ? await http.RequestServices.GetRequiredService<ITsAuthMfa>().GetRequireMfaAsync(context.Session, owned.Id, http.RequestAborted) : null;
             var checkoutNotice = await StripeBilling.OrganizationCheckoutNoticeAsync(http, context.UserId);
@@ -119,14 +117,14 @@ namespace TerraScale.Dashboard.Features.Organizations
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form))
             {
                 return RequestError.FormExpired(http, operation.StartsWith("ownership", StringComparison.Ordinal) ? "/organization?tab=danger"
-                    : http.Request.Path.Value == "/api/v1/access/invitations" ? "/organization?tab=invitations" : "/organization?tab=members", Results.BadRequest("Invalid form token."));
+                    : http.Request.Path.Value == "/api/v1/access/invitations" ? "/organization?tab=invitations" : "/organization?tab=members", TypedResults.BadRequest("Invalid form token."));
             }
 
             try
@@ -146,7 +144,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                     if (http.Request.IsDatastarRequest)
                     {
                         await DatastarEvents.PatchElementsAsync(http, Members.OrganizationAccessPage.Create(model));
-                        return Results.Empty;
+                        return TypedResults.Empty;
                     }
                     return OrganizationView.Create(model);
                 }
@@ -188,7 +186,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                     context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, reload: true);
                     await PatchAsync(http, context, placement, tab: operation.StartsWith("ownership", StringComparison.Ordinal) ? "danger"
                         : http.Request.Query["tab"] == "invitations" ? "invitations" : "members");
-                    return Results.Empty;
+                    return TypedResults.Empty;
                 }
                 return HttpRedirects.SeeOther(operation.StartsWith("ownership", StringComparison.Ordinal) ? "/organization?tab=danger" : "/organization?tab=members");
             }
@@ -205,7 +203,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 {
                     await PatchAsync(http, context, placement, error.Message, operation.StartsWith("ownership", StringComparison.Ordinal) ? "danger"
                         : http.Request.Query["tab"] == "invitations" ? "invitations" : "members");
-                    return Results.Empty;
+                    return TypedResults.Empty;
                 }
                 return await PageAsync(http, context, placement, error.Message, error.StatusCode, operation.StartsWith("ownership", StringComparison.Ordinal) ? "danger" : null);
             }
@@ -216,13 +214,13 @@ namespace TerraScale.Dashboard.Features.Organizations
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, operation == "delete-project" ? "/organization?tab=projects" : "/organization?tab=danger", Results.StatusCode(403));
+                return RequestError.FormExpired(http, operation == "delete-project" ? "/organization?tab=projects" : "/organization?tab=danger", TypedResults.StatusCode(403));
             }
 
             try
@@ -256,7 +254,6 @@ namespace TerraScale.Dashboard.Features.Organizations
 
                     await lifecycle.DeleteAsync(context, form["confirmation"].ToString(), intent.Challenge.Proof, http.RequestAborted);
                 }
-                // Leaving or deleting moves the account to another organization.
                 if (operation is "leave" or "delete" || operation == "delete-project" && context.Project?.Id == projectId)
                 {
                     context = await accounts.GetContextAsync(context.Session, http.RequestAborted,
@@ -279,7 +276,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             {
                 await PatchAsync(http, context, placement, message, operation.StartsWith("ownership", StringComparison.Ordinal) ? "danger"
                     : http.Request.Query["tab"] == "invitations" ? "invitations" : "members");
-                return Results.Empty;
+                return TypedResults.Empty;
             }
             return await PageAsync(http, context, placement, message, status, operation.StartsWith("ownership", StringComparison.Ordinal) ? "danger" : null);
         }
@@ -289,13 +286,13 @@ namespace TerraScale.Dashboard.Features.Organizations
             var context = scopedContext ?? await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, operation is "projects" or "rename-project" ? "/organization?tab=projects" : "/organization", Results.BadRequest("Invalid form token."));
+                return RequestError.FormExpired(http, operation is "projects" or "rename-project" ? "/organization?tab=projects" : "/organization", TypedResults.BadRequest("Invalid form token."));
             }
 
             try
@@ -313,7 +310,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                     {
                         context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, reload: true);
                         await DatastarEvents.PatchElementsAsync(http, OrganizationPatch.Create(await PageModelAsync(http, context, placement)));
-                        return Results.Empty;
+                        return TypedResults.Empty;
                     }
                     return HttpRedirects.SeeOther("/organization");
                 }
@@ -354,7 +351,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 if (http.Request.IsDatastarRequest)
                 {
                     await PatchAsync(http, context, placement, message);
-                    return Results.Empty;
+                    return TypedResults.Empty;
                 }
                 return await PageAsync(http, context, placement, message, status);
             }

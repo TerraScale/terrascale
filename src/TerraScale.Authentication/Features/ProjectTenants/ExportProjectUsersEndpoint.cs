@@ -1,3 +1,4 @@
+using Dapper;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -8,13 +9,11 @@ using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Storage;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Features.ProjectTenants;
 
-/// <summary>Public identity fields only; credentials and authentication state are never serialized.</summary>
 public sealed record DirectoryUserBody(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("email")] string Email,
@@ -23,13 +22,11 @@ public sealed record DirectoryUserBody(
     [property: JsonPropertyName("disabled")] bool Disabled,
     [property: JsonPropertyName("linked_providers")] IReadOnlyList<DirectoryProviderBody> LinkedProviders);
 
-/// <summary>A verified public provider identity, never provider credentials.</summary>
 public sealed record DirectoryProviderBody(
     [property: JsonPropertyName("provider")] string Provider,
     [property: JsonPropertyName("client_id")] string ClientId,
     [property: JsonPropertyName("subject")] string Subject);
 
-/// <summary>A bounded directory page with a creation cutoff, not a transaction snapshot.</summary>
 public sealed record DirectoryPageBody(
     [property: JsonPropertyName("items")] IReadOnlyList<DirectoryUserBody> Items,
     [property: JsonPropertyName("next")] string? Next,
@@ -37,11 +34,9 @@ public sealed record DirectoryPageBody(
 
 internal sealed record DirectoryCursor(DateTimeOffset CreatedBefore, string Position);
 
-/// <summary><c>GET /v1/{project}/users/export</c>.</summary>
 public sealed class ExportProjectUsersEndpoint(TenantDirectory tenants, PlatformAuthentication authentication, AuthData data, PlatformDirectory platform, TimeProvider clock)
     : ProjectTenantEndpoint(tenants, authentication)
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(Root + "/users/export");
@@ -84,11 +79,14 @@ public sealed class ExportProjectUsersEndpoint(TenantDirectory tenants, Platform
         }
 
         var from = position ?? string.Empty;
-        var rows = await data.ReadAsync((db, token) => db.Users
-            .Where(user => user.InstanceId == projectId && user.CreatedAt < cutoff && string.Compare(user.Id, from) > 0)
-            .OrderBy(user => user.Id).Take(limit + 1)
-            .Select(user => new { User = user, Links = db.ProviderLinks.Where(link => link.UserId == user.Id).OrderBy(link => link.Provider).ThenBy(link => link.Subject).ToList() })
-            .ToListAsync(token), cancellationToken);
+        var take = limit + 1;
+        var users = (await data.ReadAsync(connection => connection.QueryAsync<UserRecord>(
+            "SELECT * FROM users WHERE instance_id = @projectId AND created_at < @cutoff AND id > @from ORDER BY id LIMIT @take", new { projectId, cutoff, from, take }),
+            cancellationToken)).AsList();
+        var ids = users.Select(user => user.Id).ToList();
+        var links = (await data.ReadAsync(connection => connection.QueryAsync<ProviderLinkRecord>(
+            "SELECT * FROM provider_links WHERE user_id IN @ids ORDER BY provider, subject", new { ids }), cancellationToken)).ToLookup(link => link.UserId, StringComparer.Ordinal);
+        var rows = users.Select(user => (User: user, Links: links[user.Id].ToList())).ToList();
         var items = rows.Take(limit).Select(row => new DirectoryUserBody(row.User.Id, row.User.Email, row.User.EmailVerified, row.User.CreatedAt, row.User.Disabled,
             [.. row.Links.Select(link => new DirectoryProviderBody(link.Provider, link.ClientId, link.Subject))])).ToArray();
         var next = rows.Count > limit
@@ -108,8 +106,8 @@ public sealed class ExportProjectUsersEndpoint(TenantDirectory tenants, Platform
             this.HttpContext.Response.Headers["X-Export-Next"] = next;
         }
 
-        return format == "csv" ? Results.Text(Csv(items), "text/csv", Encoding.UTF8)
-            : Results.Json(new DirectoryPageBody(items, next, cutoff), DirectoryExportJson.Default.DirectoryPageBody);
+        return format == "csv" ? TypedResults.Text(Csv(items), "text/csv", Encoding.UTF8)
+            : TypedResults.Json(new DirectoryPageBody(items, next, cutoff), DirectoryExportJson.Default.DirectoryPageBody);
     }
 
     private static string Csv(IEnumerable<DirectoryUserBody> items)
@@ -124,7 +122,6 @@ public sealed class ExportProjectUsersEndpoint(TenantDirectory tenants, Platform
         return csv.ToString();
     }
 
-    // Quoting alone does not prevent spreadsheet formulas. Prefix dangerous leading characters, then RFC 4180 quote.
     private static string Cell(string value) => "\"" + ((value.Length > 0 && "'=+-@\t\r\n".Contains(value[0], StringComparison.Ordinal) ? "'" : string.Empty) + value).Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
 }
 

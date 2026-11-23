@@ -34,7 +34,7 @@ public sealed class PasskeyHostedVerifyEndpoint(Sessions sessions, PasskeyCreden
     {
         if (SignInFlow.WrongSlug(this.HttpContext))
         {
-            return Results.NotFound();
+            return TypedResults.NotFound();
         }
 
         ChallengedSignIn? pending = null;
@@ -84,7 +84,7 @@ public sealed class PasskeyHostedVerifyEndpoint(Sessions sessions, PasskeyCreden
 
         async ValueTask<IResult> VerifyAsync(AuthenticatorAttestationRawResponse raw)
         {
-            return await passkeys.VerifyAsync(caller, body.Challenge, raw, body.Name is { Length: > 0 and <= 100 } ? body.Name : null, pending, cancellationToken).ConfigureAwait(false) switch
+            return await passkeys.VerifyAsync(caller, body.Challenge, raw, body.Name is { Length: > 0 and <= 100 } ? body.Name : null, pending, cancellationToken) switch
             {
                 PasskeyCredentialEntry entry => await Enrolled(this.HttpContext, sessions, caller, entry, pending is not null, cancellationToken),
                 Forbidden error => ErrorResults.ToResult(error),
@@ -103,7 +103,7 @@ public sealed class PasskeyHostedVerifyEndpoint(Sessions sessions, PasskeyCreden
             }
         }
 
-        return Results.Json(new PasskeyEnrolledBody(entry.CredentialId, entry.Name, entry.Aaguid, entry.CreatedAt),
+        return TypedResults.Json(new PasskeyEnrolledBody(entry.CredentialId, entry.Name, entry.Aaguid, entry.CreatedAt),
             WebAuthnJson.Default.PasskeyEnrolledBody, statusCode: StatusCodes.Status201Created);
     }
 

@@ -110,8 +110,6 @@ or return a value yourself.
 | Logs | 50 lines of 1 KiB per invocation |
 | Secrets | 50 per function; names `[A-Z_][A-Z0-9_]{0,63}`, values 4 KiB |
 
-A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
-
 ## Invocation metrics
 
 Every HTTP and cron invocation records wall-clock `durationMs`, `sqlCalls`, `sqlMs`, `rowsRead`, `rowsWritten`,
@@ -132,7 +130,7 @@ Errors count execution failures; a handler returning an HTTP error status still 
 Buckets use UTC, oldest first, including zero-filled empty intervals and the current incomplete interval.
 The `1h` window contains 60 minute buckets; `24h` and `7d` contain 24 and 168 hour buckets.
 
-Metrics survive the last-100 log limit. Like invocation logs, they cover the answering regional writer;
+Metrics survive the last-100 log limit. Like invocation logs, they cover the region that answered;
 this endpoint does not combine metrics from different regions. Each function has at most 228 aggregate records: a 60-slot minute ring
 and a 168-slot hour ring, each record holding fixed counters and a 64-bin power-of-two millisecond histogram.
 That bounds histogram storage to 14,592 counters per function, plus 228 fixed counter sets and record metadata.

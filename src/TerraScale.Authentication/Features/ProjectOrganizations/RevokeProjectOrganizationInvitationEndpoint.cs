@@ -16,6 +16,6 @@ public sealed class RevokeProjectOrganizationInvitationEndpoint(ProjectOrganizat
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         await organizations.RevokeInvitationAsync(project, this.Org, this.RouteId("invitation"), cancellationToken);
-        return Results.NoContent();
+        return TypedResults.NoContent();
     }
 }

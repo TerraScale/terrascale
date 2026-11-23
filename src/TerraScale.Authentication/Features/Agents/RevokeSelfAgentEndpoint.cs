@@ -17,6 +17,6 @@ public sealed class RevokeSelfAgentEndpoint(PlatformAuthentication authenticatio
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
         await agents.RevokeAsync(this.RouteId("project"), this.RouteId("agent"), caller.Id, caller.Id, cancellationToken);
-        return Results.NoContent();
+        return TypedResults.NoContent();
     }
 }

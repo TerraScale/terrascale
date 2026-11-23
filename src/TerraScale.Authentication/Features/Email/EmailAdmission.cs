@@ -1,5 +1,5 @@
 using System.Diagnostics.Metrics;
-using Microsoft.EntityFrameworkCore;
+using Dapper;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Storage;
@@ -33,30 +33,22 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
             var cutoff = now - Window;
             var purpose = message.Purpose;
             var tenant = message.Tenant;
-            var state = await data.ReadAsync(async (db, token) =>
-            {
-                await db.EmailReservations.Where(item => item.At <= cutoff).ExecuteDeleteAsync(token).ConfigureAwait(false);
-                var budget = await db.EmailBudgets.Where(row => row.Key == Key)
-                    .Select(row => new Versioned<EmailBudgetRecord>(row, EF.Property<string>(row, AuthDbContext.VersionProperty)))
-                    .SingleOrDefaultAsync(token).ConfigureAwait(false);
-                if (budget is null)
-                {
-                    return null;
-                }
-
-                return new
-                {
-                    Budget = budget,
-                    Total = await db.EmailReservations.CountAsync(token).ConfigureAwait(false),
-                    Authentication = await db.EmailReservations.CountAsync(item => item.Purpose == EmailPurpose.Authentication, token).ConfigureAwait(false),
-                    Purpose = await db.EmailReservations.CountAsync(item => item.Purpose == purpose, token).ConfigureAwait(false),
-                    Tenant = await db.EmailReservations.CountAsync(item => item.Purpose != EmailPurpose.Authentication && item.Tenant == tenant, token).ConfigureAwait(false),
-                    Attempt = attemptId != null && await db.EmailReservations.AnyAsync(item => item.AttemptId == attemptId, token).ConfigureAwait(false),
-                };
-            }, cancellationToken).ConfigureAwait(false);
+            var authentication = (long)EmailPurpose.Authentication;
+            var purposeValue = (long)purpose;
+            var counts = await data.ReadAsync(connection => connection.QuerySingleAsync<AdmissionCounts>(
+                """
+                DELETE FROM email_reservations WHERE at <= @cutoff;
+                SELECT (SELECT COUNT(*) FROM email_reservations) AS total,
+                    (SELECT COUNT(*) FROM email_reservations WHERE purpose = @authentication) AS authentication,
+                    (SELECT COUNT(*) FROM email_reservations WHERE purpose = @purposeValue) AS purpose,
+                    (SELECT COUNT(*) FROM email_reservations WHERE purpose <> @authentication AND tenant = @tenant) AS tenant,
+                    @attemptId IS NOT NULL AND EXISTS (SELECT 1 FROM email_reservations WHERE attempt_id = @attemptId) AS attempt
+                """, new { cutoff, authentication, purposeValue, tenant, attemptId }), cancellationToken);
+            var budgetRow = await this.BudgetAsync(cancellationToken);
+            var state = budgetRow is null ? null : new AdmissionState(budgetRow, counts.Total, counts.Authentication, counts.Purpose, counts.Tenant, counts.Attempt);
             if (state is null)
             {
-                await data.SaveAsync(Change.Insert(new EmailBudgetRecord(Key, DateTimeOffset.UnixEpoch)), cancellationToken).ConfigureAwait(false);
+                await data.SaveAsync(Change.Insert(new EmailBudgetRecord(Key, DateTimeOffset.UnixEpoch)), cancellationToken);
                 continue;
             }
 
@@ -74,7 +66,7 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
                 [
                     Change.Update(state.Budget, state.Budget.Value),
                     Change.Insert(new EmailReservationRecord(AuthIds.New(), now, purpose, tenant, attemptId)),
-                ], cancellationToken).ConfigureAwait(false))
+                ], cancellationToken))
             {
                 continue;
             }
@@ -100,9 +92,8 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
         until = until <= now ? now + TimeSpan.FromMinutes(1) : until > now + Window ? now + Window : until;
         for (var attempt = 0; attempt < 16; attempt++)
         {
-            var budget = await data.ReadAsync((db, token) => db.EmailBudgets.Where(budget => budget.Key == Key).WithVersion().SingleOrDefaultAsync(token), cancellationToken)
-                .ConfigureAwait(false) ?? throw new InvalidOperationException("Missing mail admission record.");
-            if (budget.Value.PausedUntil >= until || await data.SaveAsync(Change.Update(budget, budget.Value with { PausedUntil = until }), cancellationToken).ConfigureAwait(false))
+            var budget = await this.BudgetAsync(cancellationToken) ?? throw new InvalidOperationException("Missing mail admission record.");
+            if (budget.Value.PausedUntil >= until || await data.SaveAsync(Change.Update(budget, budget.Value with { PausedUntil = until }), cancellationToken))
             {
                 return;
             }
@@ -110,34 +101,45 @@ public sealed class EmailAdmission(AuthData data, TimeProvider clock)
 
         throw new InvalidOperationException("Mail provider pause could not be persisted.");
     }
+
+    private async Task<Versioned<EmailBudgetRecord>?> BudgetAsync(CancellationToken cancellationToken) =>
+        Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<EmailBudgetRecord>(
+            "SELECT * FROM email_budgets WHERE \"key\" = @Key", new { Key }), cancellationToken));
+
+    internal sealed record AdmissionCounts(int Total, int Authentication, int Purpose, int Tenant, bool Attempt);
+
+    private sealed record AdmissionState(Versioned<EmailBudgetRecord> Budget, int Total, int Authentication, int Purpose, int Tenant, bool Attempt);
 }
 
-public sealed record EmailBudgetRecord(string Key, DateTimeOffset PausedUntil);
+public sealed record EmailBudgetRecord(string Key, DateTimeOffset PausedUntil)
+{
+    public string? Version { get; init; }
+}
 
 public sealed record EmailReservationRecord(string Id, DateTimeOffset At, EmailPurpose Purpose, string Tenant, string? AttemptId = null);
 
 public sealed class AdmittedEmailSender(EmailAdmission admission, FailoverEmailSender provider, ILogger<AdmittedEmailSender> logger) : IEmailSender
 {
     public async Task SendAsync(string recipient, EmailMessage message, CancellationToken cancellationToken) =>
-        _ = await this.DeliverAsync(recipient, message, cancellationToken).ConfigureAwait(false);
+        _ = await this.DeliverAsync(recipient, message, cancellationToken);
 
     public async Task<EmailDeliveryOutcome> DeliverAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
     {
         var outcome = EmailDeliveryOutcome.Retryable;
         try
         {
-            if (!await admission.AcquireAsync(message, cancellationToken).ConfigureAwait(false))
+            if (!await admission.AcquireAsync(message, cancellationToken))
             {
                 AuthMetrics.Email("capacity_refused");
                 return EmailDeliveryOutcome.Retryable;
             }
             outcome = EmailDeliveryOutcome.Unknown;
-            var result = await provider.DeliverResultAsync(recipient, message, cancellationToken).ConfigureAwait(false);
+            var result = await provider.DeliverResultAsync(recipient, message, cancellationToken);
             outcome = result.Outcome;
             if (result.Outcome == EmailDeliveryOutcome.Retryable)
             {
                 AuthMetrics.Email("provider_exhausted");
-                await admission.PauseAsync(result.Reset, result.ResetDelay, cancellationToken).ConfigureAwait(false);
+                await admission.PauseAsync(result.Reset, result.ResetDelay, cancellationToken);
             }
             return result.Outcome;
         }

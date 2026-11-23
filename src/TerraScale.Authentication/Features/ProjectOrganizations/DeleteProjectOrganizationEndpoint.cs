@@ -16,6 +16,6 @@ public sealed class DeleteProjectOrganizationEndpoint(ProjectOrganizationDirecto
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         await organizations.DeleteAsync(project, this.Org, cancellationToken);
-        return Results.NoContent();
+        return TypedResults.NoContent();
     }
 }

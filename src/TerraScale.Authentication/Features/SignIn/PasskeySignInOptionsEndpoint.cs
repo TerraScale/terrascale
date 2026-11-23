@@ -8,13 +8,8 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.SignIn;
 
-/// <summary>
-/// <c>POST /ui/{slug}/sign-in/passkey/options</c>: the hosted sign-in step's WebAuthn assertion options for the address
-/// the visitor entered: a sealed single-use challenge and that account's credential ids with user verification required.
-/// </summary>
 public sealed class PasskeySignInOptionsEndpoint(PasskeyCredentials passkeys, HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/ui/{slug}/sign-in/passkey/options");
@@ -30,7 +25,6 @@ public sealed class PasskeySignInOptionsEndpoint(PasskeyCredentials passkeys, Ho
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)
@@ -46,7 +40,7 @@ public sealed class PasskeySignInOptionsEndpoint(PasskeyCredentials passkeys, Ho
         var assertion = await passkeys.SignInOptionsAsync(SignInFlow.Tenant(this.HttpContext), form.Email ?? string.Empty, cancellationToken);
         return assertion is null
             ? throw ApiException.Unavailable()
-            : Results.Json(new PasskeyOptionsBody(assertion.Value.Challenge, JsonDocument.Parse(assertion.Value.Options.ToJson()).RootElement),
+            : TypedResults.Json(new PasskeyOptionsBody(assertion.Value.Challenge, JsonDocument.Parse(assertion.Value.Options.ToJson()).RootElement),
                 WebAuthnJson.Default.PasskeyOptionsBody);
     }
 }

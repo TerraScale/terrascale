@@ -311,7 +311,7 @@ export class PrismaTerraScaleAdapter {
   }
 
   /**
-   * Opens a SQL WebSocket session and begins one interactive transaction of at most 5 seconds on it.
+   * Opens a SQL WebSocket session and begins one interactive transaction of at most 5 seconds on it; SERIALIZABLE runs it strong.
    * @param {PrismaIsolationLevel} [isolationLevel]
    * @returns {Promise<PrismaTerraScaleTransaction>}
    */
@@ -320,7 +320,7 @@ export class PrismaTerraScaleAdapter {
       throw new Error(`Unsupported isolation level: ${isolationLevel}. Only SERIALIZABLE is supported.`);
     const socket = await this.#database.connect();
     try {
-      await socket.begin();
+      await socket.begin(isolationLevel === "SERIALIZABLE" ? { consistency: "strong" } : {});
     } catch (error) {
       socket.close();
       throw adapterError(error);

@@ -3,12 +3,14 @@ clients, plus the retry rule."""
 
 from __future__ import annotations
 
+import base64
 import json
 import random
 import re
-from collections.abc import Callable, Sequence
+import threading
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote
 
 import httpx
@@ -21,6 +23,14 @@ from .sql import results as sql_results
 DEFAULT_BASE_URL = "https://api.terrascale.tech"
 USER_AGENT_PREFIX = "terrascale-python/"
 REGION_PIN = "X-TerraScale-Region-Pin"
+BOOKMARK = "TerraScale-Bookmark"
+CONSISTENCY = "TerraScale-Consistency"
+Consistency = Literal["fast", "strong"]
+CONSISTENCY_MODES: tuple[str, ...] = ("fast", "strong")
+MAX_BOOKMARK_LENGTH = 1024
+MAX_BOOKMARK_REGION_BYTES = 64
+BOOKMARK_FORMAT = 1
+RETRY_CONFLICTS = frozenset({"serialization_conflict", "schema_mismatch"})
 MAX_ATTEMPTS = 4
 MAX_BACKOFF = 30.0
 API_SERVICE = ("api.terrascale.tech", "the TerraBase API")
@@ -138,17 +148,152 @@ def issuer_parts(issuer: str | None) -> tuple[str, str]:
     return base, "/" + tenant
 
 
-# 503 codes that mean "try again later". storage_busy and unavailable are the
-# live API's documented 503 codes (openapi/v1.json).
 TRANSIENT = frozenset({
     "rate_limited", "capacity", "storage_busy", "unavailable", "storage_unavailable", "dependencies_unavailable",
     "auth_unavailable",
 })
-# Gateway answers (502 Bad Gateway, 504 Gateway Timeout): a replay-safe request can be repeated.
 GATEWAY = frozenset({502, 504})
-# Failures raised before any byte of the request reached the server, so even
-# a mutation can be repeated: the server never saw it.
 NOT_SENT = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
+
+
+def consistency(value: str | None) -> Consistency | None:
+    if value is None:
+        return None
+    if value == "fast":
+        return "fast"
+    if value == "strong":
+        return "strong"
+    raise ValueError("consistency must be 'fast' or 'strong'")
+
+
+def _invalid_bookmark() -> ValueError:
+    return ValueError("bookmark must be one TerraScale-Bookmark value returned by TerraScale")
+
+
+def _read_varint(data: bytes, at: int) -> tuple[int, int]:
+    value = 0
+    for index in range(10):
+        if at + index >= len(data):
+            break
+        current = data[at + index]
+        if index == 9 and current > 1:
+            break
+        value |= (current & 0x7F) << (7 * index)
+        if current < 0x80:
+            return value, at + index + 1
+    raise _invalid_bookmark()
+
+
+def _write_varint(out: bytearray, value: int) -> None:
+    while value >= 0x80:
+        out.append((value & 0x7F) | 0x80)
+        value >>= 7
+    out.append(value)
+
+
+def decode_bookmark(text: str) -> dict[str, int]:
+    if not isinstance(text, str) or len(text) > MAX_BOOKMARK_LENGTH or re.fullmatch(r"[A-Za-z0-9_-]*", text) is None:
+        raise _invalid_bookmark()
+    if not text:
+        return {}
+    try:
+        data = base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+    except ValueError:
+        raise _invalid_bookmark() from None
+    if not data or data[0] != BOOKMARK_FORMAT:
+        raise _invalid_bookmark()
+    count, at = _read_varint(data, 1)
+    if count > len(data) - at:
+        raise _invalid_bookmark()
+    entries: dict[str, int] = {}
+    previous: str | None = None
+    for _ in range(count):
+        length, at = _read_varint(data, at)
+        if length == 0 or length > MAX_BOOKMARK_REGION_BYTES or length > len(data) - at:
+            raise _invalid_bookmark()
+        try:
+            region = data[at:at + length].decode()
+        except UnicodeDecodeError:
+            raise _invalid_bookmark() from None
+        at += length
+        sequence, at = _read_varint(data, at)
+        if sequence == 0 or sequence >= 1 << 63 or previous is not None and region <= previous:
+            raise _invalid_bookmark()
+        entries[region] = sequence
+        previous = region
+    if at != len(data):
+        raise _invalid_bookmark()
+    return entries
+
+
+def encode_bookmark(entries: Mapping[str, int]) -> str:
+    if not entries:
+        return ""
+    out = bytearray([BOOKMARK_FORMAT])
+    _write_varint(out, len(entries))
+    for region in sorted(entries):
+        raw = region.encode()
+        _write_varint(out, len(raw))
+        out += raw
+        _write_varint(out, entries[region])
+    text = base64.urlsafe_b64encode(bytes(out)).decode().rstrip("=")
+    if len(text) > MAX_BOOKMARK_LENGTH:
+        raise _invalid_bookmark()
+    return text
+
+
+def bookmark(value: str) -> str:
+    decode_bookmark(value)
+    return value
+
+
+def merge_bookmarks(current: str | None, observed: str) -> str:
+    merged = decode_bookmark(current) if current else {}
+    for region, sequence in decode_bookmark(observed).items():
+        merged[region] = max(merged.get(region, 0), sequence)
+    return encode_bookmark(merged)
+
+
+class Bookmarks:
+    def __init__(self) -> None:
+        self._known: dict[str, str] = {}
+        self._lock = threading.Lock()
+
+    def get(self, database: str) -> str | None:
+        with self._lock:
+            return self._known.get(database)
+
+    def snapshot(self) -> dict[str, str]:
+        with self._lock:
+            return dict(self._known)
+
+    def set(self, database: str, value: str | None) -> None:
+        checked = bookmark(value) if value is not None else None
+        with self._lock:
+            if checked:
+                self._known[database] = checked
+            else:
+                self._known.pop(database, None)
+
+    def observe(self, database: str, value: str | None) -> str | None:
+        with self._lock:
+            current = self._known.get(database)
+            if not value:
+                return current
+            merged = merge_bookmarks(current, value)
+            if merged:
+                self._known[database] = merged
+            return merged or current
+
+
+def causality(consistency_mode: str | None, bookmark_value: str | None) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    mode = consistency(consistency_mode)
+    if mode is not None:
+        headers[CONSISTENCY] = mode
+    if bookmark_value is not None:
+        headers[BOOKMARK] = bookmark(bookmark_value)
+    return headers
 
 
 @dataclass
@@ -160,12 +305,31 @@ class Call:
     headers: dict[str, str] = field(default_factory=dict)
     body: Any = None
     content_type: str = "application/json"
-    # Only reads and read-only queries can be replayed.
     replay_safe: bool = False
     success: tuple[int, ...] = (200,)
     base_url: str | None = None
     timeout: httpx.Timeout | None = None
     anonymous: bool = False
+    causal: str | None = None
+
+    def causal_headers(self, bookmarks: Bookmarks) -> dict[str, str]:
+        if self.causal is None or BOOKMARK in self.headers:
+            return {}
+        known = bookmarks.get(self.causal)
+        return {BOOKMARK: known} if known else {}
+
+    def accept(self, response: httpx.Response, bookmarks: Bookmarks) -> Any:
+        if self.causal is not None:
+            values = response.headers.get_list(BOOKMARK)
+            try:
+                if len(values) > 1:
+                    raise ValueError("repeated bookmark")
+                bookmarks.observe(self.causal, values[0] if values else None)
+            except ValueError:
+                cls = InvalidResponseError if self.replay_safe else CommitUncertainError
+                raise cls(response.status_code, "invalid_response", "invalid bookmark; reconcile writes before retrying",
+                          request_id=response_request_id(response.headers)) from None
+        return self.decode(response)
 
     def decode(self, response: httpx.Response) -> Any:
         try:
@@ -216,7 +380,6 @@ def transport_failure(method: str, attempts: int, exc: Exception) -> TerraScaleE
 
 
 def name(value: str, what: str) -> str:
-    # The server validates names; the SDK only keeps them one path segment.
     if not isinstance(value, str) or value in ("", ".", "..") or "/" in value:
         raise ValueError(f"{what} {value!r} is not a valid name")
     return value
@@ -251,7 +414,6 @@ def _page_params(limit: int | None, cursor: str | None) -> dict[str, str]:
     return params
 
 
-# Databases ---------------------------------------------------------------
 
 def list_regions() -> Call:
     return Call("GET", ["v1", "regions"], lambda r: models.Regions.from_json(r.json()), replay_safe=True,
@@ -290,10 +452,14 @@ def placement(regions: Sequence[str] | None, all_regions: bool | None) -> dict[s
 
 
 def create_database(
-    project: str, db: str, ttl_seconds: int | None = None, regions: Sequence[str] | None = None, all_regions: bool | None = None
+    project: str, db: str, ttl_seconds: int | None = None, regions: Sequence[str] | None = None, all_regions: bool | None = None,
+    default_consistency: str | None = None,
 ) -> Call:
     body: dict[str, Any] = {"name": database_name(db)}
     body.update(placement(regions, all_regions))
+    mode = consistency(default_consistency)
+    if mode is not None:
+        body["defaultConsistency"] = mode
     if ttl_seconds is not None:
         body["ttlSeconds"] = ttl(ttl_seconds)
     return Call("POST", ["v1", "projects", project, "databases"],
@@ -379,15 +545,15 @@ def branch_database_if_id(project: str, db: str, branch: str, expected_id: str) 
                 lambda r: models.Database.from_json(r.json()), body={"name": database_name(branch)}, success=(201,))
 
 
-# SQL ---------------------------------------------------------------------
 
 def export_database(project: str, db: str) -> Call:
     return Call("GET", _db(project, db, "export"), _none, headers={"Accept": "text/plain"}, replay_safe=True)
 
 
-def execute(project: str, db: str, statements: list[dict[str, Any]]) -> Call:
+def execute(project: str, db: str, statements: list[dict[str, Any]], consistency_mode: str | None = None,
+            bookmark_value: str | None = None) -> Call:
     return Call("POST", _db(project, db, "sql", "execute"), lambda r: sql_results(r.json(), len(statements)),
-                body={"statements": statements})
+                headers=causality(consistency_mode, bookmark_value), body={"statements": statements}, causal=db)
 
 
 def read_table_shape(project: str, db: str, table: str) -> Call:

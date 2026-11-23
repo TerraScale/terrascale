@@ -4,20 +4,12 @@ using TerraScale.Authentication.Features.ProjectTenants;
 
 namespace TerraScale.Authentication.Features.Ui;
 
-/// <summary>
-/// Model for the shared hosted-page card.
-/// Razor encodes every value; the accent colour is additionally restricted to <c>#rrggbb</c>
-/// because it is interpolated into CSS.
-/// </summary>
 public sealed partial record HostedLayoutModel
 {
-    /// <summary>Default accent used when an instance has no valid theme colour: the TerraScale logo blue.</summary>
     public const string DefaultAccent = "#2158e8";
 
-    /// <summary>The brand shown when an instance has no theme of its own.</summary>
     public const string DefaultName = "TerraScale";
 
-    /// <summary>The footer links under the card when an instance configures none.</summary>
     public static readonly IReadOnlyList<(string Label, string Url)> DefaultFooter =
     [
         ("Status", "https://status.terrascale.tech"),
@@ -26,10 +18,6 @@ public sealed partial record HostedLayoutModel
         ("Terms", "https://docs.terrascale.tech/legal/terms"),
     ];
 
-    /// <summary>
-    /// Creates a model, discarding a theme colour that is not exactly <c>#rrggbb</c> and a title size outside 20 to 40 px.
-    /// A project theme names its logo, name, accent, title size and footer links; without one the TerraScale defaults apply.
-    /// </summary>
     public HostedLayoutModel(string title, string nonce, string? themeColor = null, string? logoUrl = null, string? name = null, int? titleSize = null,
         IReadOnlyList<(string Label, string Url)>? footer = null, string? defaultTheme = null, string? tenant = null,
         string? backgroundColor = null, string? textColor = null, string? locale = null)
@@ -60,10 +48,8 @@ public sealed partial record HostedLayoutModel
             theme.DefaultTheme, tenant, theme.BackgroundColor, theme.TextColor, locale);
     }
 
-    /// <summary>Page title, shown as <c>{title} · {name}</c>.</summary>
     public string Title { get; }
 
-    /// <summary>Per-response CSP nonce for inline styles and scripts.</summary>
     public string Nonce { get; }
 
     public bool ContinueOnly { get; init; }
@@ -72,40 +58,28 @@ public sealed partial record HostedLayoutModel
 
     public HostedPageCopy Copy => HostedCopies.For(this.Locale);
 
-    /// <summary>Validated accent colour override, or <see langword="null"/> for the default.</summary>
     public string? AccentColor { get; }
 
-    /// <summary>Instance logo URL, rendered as an encoded attribute; the TerraScale mark when null.</summary>
     public string? LogoUrl { get; }
 
-    /// <summary>The brand name beside the logo and in the tab title.</summary>
     public string Name { get; }
 
-    /// <summary>Validated step title size in pixels, or <see langword="null"/> for the default 24.</summary>
     public int? TitleSize { get; }
 
-    /// <summary>The footer links under the card.</summary>
     public IReadOnlyList<(string Label, string Url)> Footer { get; }
 
-    /// <summary>The initial theme until the visitor chooses one for this tenant.</summary>
     public string DefaultTheme { get; }
 
-    /// <summary>Tenant-scoped browser preference key; never contains credentials.</summary>
     public string ThemeKey { get; }
 
-    /// <summary>Validated optional page background.</summary>
     public string? BackgroundColor { get; }
 
-    /// <summary>Validated primary text colour, adjusted per surface and scheme for readable contrast.</summary>
     public string? TextColor { get; }
 
-    /// <summary>Derived text and accent tokens for both colour schemes and the page background.</summary>
     public string Palette { get; }
 
-    /// <summary>The hosted service's public origin, used to keep its own footer links in this tab.</summary>
     public Uri? PublicOrigin { get; init; }
 
-    /// <summary>Whether a footer destination leaves the hosted service's origin.</summary>
     public bool IsExternalFooterUrl(string url) => Uri.TryCreate(url, UriKind.Absolute, out var destination)
         && (this.PublicOrigin is not { } origin || destination.Scheme != origin.Scheme || destination.Port != origin.Port
             || !string.Equals(destination.IdnHost, origin.IdnHost, StringComparison.OrdinalIgnoreCase));
@@ -118,7 +92,6 @@ public sealed partial record HostedLayoutModel
     [GeneratedRegex(@"\A#[0-9A-Fa-f]{6}\z")]
     private static partial Regex HexColor();
 
-    /// <summary>The shared hosted-page stylesheet: the v3 auth design (.design/v3/auth), flat, light and dark.</summary>
     public const string PageCss = """
 @font-face { font-family: "Geist"; src: url("/fonts/Geist-Variable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
 @font-face { font-family: "Geist Mono"; src: url("/fonts/GeistMono-Variable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }

@@ -2,11 +2,15 @@ import { array, boolean, malformed, object, string } from "./decode.js";
 import { listenForSqlRefusal } from "./sql-connect-retry.js";
 import { SqlError } from "./errors.js";
 import { parseExactJson, stringifyExactJson } from "./json.js";
-import { decodeSqlResult, encodeStatement, sqlRowObjects, sqlStatement } from "./sql-execute.js";
+import { decodeSqlFrameResult, encodeStatement, sqlRowObjects, sqlStatement } from "./sql-execute.js";
+import { requireBookmark, requireConsistency } from "./bookmark.js";
 /**
  * @import { JsonObject, JsonValue } from "./json.js"
  * @import { V1SqlArguments, V1SqlExecuteResult, V1SqlStatement, V1SqlValue } from "./sql-execute.js"
+ * @import { V1BookmarkTracker, V1Consistency } from "./bookmark.js"
  */
+/** @typedef {{ readonly bookmark?: string | undefined; readonly consistency?: V1Consistency | undefined }} V1SqlFrameOptions */
+/** @typedef {{ readonly bookmarks: V1BookmarkTracker; readonly consistency: V1Consistency | undefined }} V1SqlSession */
 
 /**
  * The socket closed before an answer arrived. `closeCode` is the WebSocket close code, such as 1008 after a
@@ -27,12 +31,13 @@ export class SqlSocketClosedError extends Error {
   }
 }
 
-export const sqlSocketProtocol = "terrascale.sql.v1";
+export const sqlSocketProtocol = "terrascale.sql.v2";
 const maximumStatements = 256;
 const maximumFrameBytes = 1024 * 1024;
 const statusByCode = new Map([
-  ["forbidden_scope", 403], ["sql_sandbox", 403], ["serialization_conflict", 409], ["row_conflict", 409], ["too_large", 413], ["quota_exceeded", 429],
-  ["tenant_busy", 429], ["unauthorized", 401], ["write_outcome_unknown", 503], ["unavailable", 503], ["wrong_region", 421], ["internal_error", 500],
+  ["forbidden_scope", 403], ["sql_sandbox", 403], ["rule_denied", 403], ["serialization_conflict", 409], ["row_conflict", 409],
+  ["schema_mismatch", 412], ["too_large", 413], ["quota_exceeded", 429], ["tenant_busy", 429], ["unauthorized", 401],
+  ["write_outcome_unknown", 503], ["unavailable", 503], ["storage_busy", 503], ["request_timeout", 504], ["internal_error", 500],
 ]);
 
 /**
@@ -47,10 +52,13 @@ const statusByCode = new Map([
 /**
  * One SQL session over the TerraScale SQL WebSocket. Requests are answered in order. Outside a transaction every
  * `execute` and `batch` commits on its own, all or nothing; `transaction()` holds one transaction of at most 5 seconds.
+ * Every frame carries the newest TerraScale-Bookmark the client holds for the database, and every answer advances it.
  */
 export class V1SqlSocket {
   /** @type {SqlSocketLike} */
   #socket;
+  /** @type {V1SqlSession} */
+  #session;
   /** @type {Map<number, { resolve: (value: JsonObject) => void; reject: (error: unknown) => void; committing: boolean; control: boolean }>} */
   #pending = new Map();
   #nextId = 1;
@@ -58,9 +66,10 @@ export class V1SqlSocket {
   /** @type {SqlSocketClosedError | SqlError | undefined} */
   #closed;
 
-  /** @param {SqlSocketLike} socket */
-  constructor(socket) {
+  /** @param {SqlSocketLike} socket @param {V1SqlSession} session */
+  constructor(socket, session) {
     this.#socket = socket;
+    this.#session = session;
     socket.addEventListener("message", event => this.#receive(event.data));
     socket.addEventListener("close", event => this.#fail(new SqlSocketClosedError(event.code ?? 1006, event.reason ?? "")));
     socket.addEventListener("error", () => this.#fail(new SqlSocketClosedError(1006, "connection failed")));
@@ -68,28 +77,30 @@ export class V1SqlSocket {
 
   /**
    * @param {SqlSocketLike} socket
+   * @param {V1SqlSession} session
    * @param {AbortSignal | undefined} signal
    * @param {string} [token] Sent as the first frame when the upgrade carried no Authorization header.
    * @returns {Promise<V1SqlSocket>}
    */
-  static async open(socket, signal, token) {
-    const session = await V1SqlSocket.#connect(socket, signal);
-    if (token === undefined) return session;
+  static async open(socket, session, signal, token) {
+    const connected = await V1SqlSocket.#connect(socket, session, signal);
+    if (token === undefined) return connected;
     try {
-      await session.#request("auth", undefined, token);
+      await connected.#request({ type: "auth", token });
     } catch (error) {
-      session.close();
+      connected.close();
       throw error;
     }
-    return session;
+    return connected;
   }
 
   /**
    * @param {SqlSocketLike} socket
+   * @param {V1SqlSession} session
    * @param {AbortSignal | undefined} signal
    * @returns {Promise<V1SqlSocket>}
    */
-  static #connect(socket, signal) {
+  static #connect(socket, session, signal) {
     return new Promise((resolve, reject) => {
       const abort = () => { socket.close(1000, ""); reject(signal?.reason); };
       if (signal?.aborted) return abort();
@@ -109,7 +120,7 @@ export class V1SqlSocket {
           reject(new TypeError(`The server did not select the ${sqlSocketProtocol} subprotocol.`));
           return;
         }
-        resolve(new V1SqlSocket(socket));
+        resolve(new V1SqlSocket(socket, session));
       }, { once: true });
       socket.addEventListener("close", event => {
         signal?.removeEventListener("abort", abort);
@@ -124,12 +135,16 @@ export class V1SqlSocket {
   /** Whether the socket is closed. */
   get closed() { return this.#closed !== undefined; }
 
+  /** The newest TerraScale-Bookmark the client holds for this database; empty before the first answer. */
+  get bookmark() { return this.#session.bookmarks.current(); }
+
   /**
    * @param {V1SqlArguments} [args]
+   * @param {V1SqlFrameOptions} [options]
    * @returns {Promise<V1SqlExecuteResult>}
    */
-  async execute(/** @type {string | V1SqlStatement} */ sql, args) {
-    const [result] = await this.batch([sqlStatement(sql, args)]);
+  async execute(/** @type {string | V1SqlStatement} */ sql, args, options = {}) {
+    const [result] = await this.batch([sqlStatement(sql, args)], options);
     return /** @type {V1SqlExecuteResult} */ (result);
   }
 
@@ -137,44 +152,51 @@ export class V1SqlSocket {
    * @template [T=Record<string, V1SqlValue>]
    * @param {string} sql
    * @param {V1SqlArguments} [args]
+   * @param {V1SqlFrameOptions} [options]
    * @returns {Promise<T[]>}
    */
-  async query(sql, args) {
-    return sqlRowObjects(await this.execute(sql, args));
+  async query(sql, args, options = {}) {
+    return sqlRowObjects(await this.execute(sql, args, options));
   }
 
   /**
    * Runs 1 to 256 statements; outside a transaction they commit together or not at all.
    * @param {readonly (string | V1SqlStatement)[]} statements
+   * @param {V1SqlFrameOptions} [options]
    * @returns {Promise<readonly V1SqlExecuteResult[]>}
    */
-  async batch(statements) {
+  async batch(statements, options = {}) {
     if (!Array.isArray(statements) || statements.length === 0 || statements.length > maximumStatements)
       throw new TypeError(`SQL batches hold 1 to ${maximumStatements} statements.`);
-    const answer = await this.#request("execute", statements.map(encodeStatement));
-    const results = array(answer.results, "SQL results").map(decodeSqlResult);
+    const answer = await this.#request({ type: "execute", statements: statements.map(encodeStatement), ...this.#causality(options) });
+    const results = array(answer.results, "SQL results").map(decodeSqlFrameResult);
     if (results.length !== statements.length) malformed("SQL result count");
     return Object.freeze(results);
   }
 
-  /** @returns {Promise<void>} */
-  async begin() { await this.#request("begin"); }
+  /**
+   * Opens a transaction; `consistency: "strong"` makes it a 2-of-3 quorum transaction that commits or fails with serialization_conflict.
+   * @param {V1SqlFrameOptions} [options]
+   * @returns {Promise<void>}
+   */
+  async begin(options = {}) { await this.#request({ type: "begin", ...this.#causality(options) }); }
 
   /** @returns {Promise<void>} */
-  async commit() { await this.#request("commit"); }
+  async commit() { await this.#request({ type: "commit" }); }
 
   /** @returns {Promise<void>} */
-  async rollback() { await this.#request("rollback"); }
+  async rollback() { await this.#request({ type: "rollback" }); }
 
   /**
    * Runs `work` in one transaction: commits when it resolves and rolls back when it throws.
    * @template T
    * @param {(socket: V1SqlSocket) => Promise<T>} work
+   * @param {V1SqlFrameOptions} [options]
    * @returns {Promise<T>}
    */
-  async transaction(work) {
+  async transaction(work, options = {}) {
     if (typeof work !== "function") throw new TypeError("transaction takes an async function.");
-    await this.begin();
+    await this.begin(options);
     /** @type {T} */
     let value;
     try {
@@ -199,15 +221,27 @@ export class V1SqlSocket {
   }
 
   /**
-   * @param {"auth" | "execute" | "begin" | "commit" | "rollback"} type
-   * @param {unknown[]} [statements]
-   * @param {string} [token]
+   * @param {V1SqlFrameOptions} options
+   * @returns {{ bookmark?: string; consistency?: V1Consistency }}
+   */
+  #causality(options) {
+    if (options === null || typeof options !== "object" || Array.isArray(options)) throw new TypeError("SQL frame options must be an object.");
+    for (const member of Object.keys(options))
+      if (member !== "bookmark" && member !== "consistency") throw new TypeError(`Unknown SQL frame option ${member}.`);
+    const bookmark = requireBookmark(options.bookmark) ?? this.#session.bookmarks.current();
+    const consistency = requireConsistency(options.consistency) ?? this.#session.consistency;
+    return { ...(bookmark === "" ? {} : { bookmark }), ...(consistency === undefined ? {} : { consistency }) };
+  }
+
+  /**
+   * @param {{ type: "auth" | "execute" | "begin" | "commit" | "rollback"; statements?: unknown[]; token?: string; bookmark?: string; consistency?: V1Consistency }} request
    * @returns {Promise<JsonObject>}
    */
-  #request(type, statements, token) {
+  #request(request) {
     if (this.#closed !== undefined) return Promise.reject(this.#closed);
     const id = this.#nextId++;
-    const frame = stringifyExactJson(/** @type {any} */ (token !== undefined ? { id, type, token } : statements === undefined ? { id, type } : { id, type, statements }), "SQL frame");
+    const type = request.type;
+    const frame = stringifyExactJson(/** @type {any} */ ({ id, ...request }), "SQL frame");
     if (new TextEncoder().encode(frame).byteLength > maximumFrameBytes)
       return Promise.reject(new TypeError(`A SQL WebSocket frame holds at most ${maximumFrameBytes} bytes.`));
     return new Promise((resolve, reject) => {
@@ -245,6 +279,7 @@ export class V1SqlSocket {
     }
     try {
       this.#transaction = boolean(frame.transaction, "SQL transaction flag");
+      if (frame.bookmark !== undefined && frame.bookmark !== null) this.#session.bookmarks.observe(string(frame.bookmark, "SQL bookmark"));
       if (frame.type === "result") waiter.resolve(frame);
       else if (frame.type === "error") {
         const error = socketError(object(frame.error, "SQL error"));
@@ -283,9 +318,9 @@ export class V1SqlSocket {
 /** @param {JsonObject} error @returns {SqlError} */
 function socketError(error) {
   const code = string(error.code, "SQL error code");
-  const statement = error.statement;
+  const statement = error.statement ?? 0;
   if (typeof statement !== "number" || !Number.isSafeInteger(statement) || statement < 0) malformed("SQL error statement");
-  const sqlstate = string(error.sqlstate, "SQL error sqlstate");
+  const sqlstate = string(error.sqlState, "SQL error sqlState");
   if (!/^[0-9A-Z]{5}$/u.test(sqlstate)) malformed("SQL error sqlstate");
   return new SqlError({ status: statusByCode.get(code) ?? 400, code, message: string(error.message, "SQL error message"),
     statement, sqlstate, details: error, body: error });

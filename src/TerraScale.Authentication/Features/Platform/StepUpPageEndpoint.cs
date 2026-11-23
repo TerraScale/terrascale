@@ -2,10 +2,8 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.Platform;
 
-/// <summary>Fresh verification for an existing purpose-bound request. GET never sends mail.</summary>
 public sealed class StepUpPageEndpoint : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(StepUpHosted.Route);
@@ -18,6 +16,5 @@ public sealed class StepUpPageEndpoint : EndpointWithoutRequest<IResult>
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) => await StepUpHosted.HandleAsync(this.HttpContext, false, cancellationToken);
 }

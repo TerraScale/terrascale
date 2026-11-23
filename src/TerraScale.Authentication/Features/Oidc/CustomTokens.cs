@@ -30,8 +30,8 @@ public sealed class CustomTokens(ApiKeys keys, TenantDirectory tenants, KeyRing 
         }
 
         var claims = TrustedClaims.Minted(request.Claims);
-        await keys.RecordUseAsync(key, cancellationToken).ConfigureAwait(false);
-        var signing = await ring.GetActiveAsync(project, cancellationToken).ConfigureAwait(false);
+        await keys.RecordUseAsync(key, cancellationToken);
+        var signing = await ring.GetActiveAsync(project, cancellationToken);
         try
         {
             var now = clock.GetUtcNow();

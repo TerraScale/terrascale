@@ -1,17 +1,15 @@
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.Dashboard.Platform.Rpc;
-using TerraScale.TerraBase.Contracts.Logs;
+using TerraScale.Dashboard.Platform.Clients;
 
 namespace TerraScale.Dashboard.Features.Logs
 {
     public sealed record DatabaseLogEntry(string Id, DateTimeOffset Time, string Region, string Method, string Route,
         int Status, double LatencyMs, long Operations, bool IsQuery, string? RequestId = null);
-    // A cursor read (after=) lists settled requests oldest first, returns NextCursor, and sets Gap when requests after the cursor may have been discarded unread.
     public sealed record DatabaseLogBatch(string DatabaseId, IReadOnlyList<DatabaseLogEntry> Items, bool Truncated, bool RecordingLimited,
         string? NextCursor = null, bool Gap = false);
 
-    public sealed class DatabaseLogBackend(TerraBaseRpcClient rpc, IProjectAccessTokens tokens, IDatabaseBackend databases)
+    public sealed class DatabaseLogBackend(TerraBaseHttpClient terraBase, IProjectAccessTokens tokens, IDatabaseBackend databases)
     {
         public async Task<DatabaseLogBatch> ReadAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string status, CancellationToken cancellationToken)
         {
@@ -24,15 +22,13 @@ namespace TerraScale.Dashboard.Features.Logs
             {
                 throw PlatformDatabases.ReadOnly();
             }
-            // Resolve the UI identity against the current database catalog.
             var database = (await databases.ListAsync(scope, home, cancellationToken)).SingleOrDefault(item => item.Id == databaseId)
                 ?? throw new AccountAccessException("Database is unavailable.", 404);
             var session = scope.Session ?? throw new HttpRequestException("Current user authorization is required.");
             var access = await tokens.GetAsync(session, scope.OrganizationId, scope.ProjectId, ["databases:read"], cancellationToken);
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(TimeSpan.FromSeconds(30));
-            var result = await rpc.User<ILogsService>(access, home.Id).WithCancellationToken(timeout.Token)
-                .ReadAsync(scope.ProjectId, database.Name, status.Length == 0 ? null : status, null);
+            var result = TerraBaseResults.Require(await terraBase.ReadLogsAsync(ServiceCaller.User(access), scope.ProjectId, database.Name, null, timeout.Token));
             var batch = Batch(result);
             Validate(batch, databaseId, status);
             return batch;

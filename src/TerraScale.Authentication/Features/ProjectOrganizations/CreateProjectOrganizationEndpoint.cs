@@ -16,6 +16,6 @@ public sealed class CreateProjectOrganizationEndpoint(ProjectOrganizationDirecto
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.OrganizationBodyAsync(ProjectOrganizationsJson.Default.ProjectOrganizationRequest, cancellationToken);
-        return Results.Json(await organizations.CreateAsync(project, request, cancellationToken), ProjectOrganizationsJson.Default.ProjectOrganizationBody, statusCode: 201);
+        return TypedResults.Json(await organizations.CreateAsync(project, request, cancellationToken), ProjectOrganizationsJson.Default.ProjectOrganizationBody, statusCode: 201);
     }
 }

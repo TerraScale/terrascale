@@ -1,4 +1,3 @@
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Primitives;
 using TerraScale.Dashboard.Common.Accounts;
 using TerraScale.Dashboard.Common.UI;
@@ -26,8 +25,6 @@ namespace TerraScale.Dashboard.Features.Auth
         }
     }
 
-    // This intent exists only inside encrypted auth-flows. Its browser cookie contains
-    // a random correlation bearer, never the proof. Taking the intent is single use.
     public sealed record StepUpIntent(string UserId, string Browser, string? OrganizationId, string? ProjectId, string Purpose, string Audience,
         string Path, string Query, string Referer, Dictionary<string, string[]> Form, StepUpChallenge Challenge, string? Receipt = null, McpAuthorization? Mcp = null)
     {
@@ -98,7 +95,6 @@ namespace TerraScale.Dashboard.Features.Auth
         public static async Task<IResult> StartAsync(HttpContext http, AccountContext context, string purpose, string audience, string? receipt = null, McpAuthorization? mcp = null, string? boundOrganizationId = null)
         {
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
-            // API clients receive an actionable refusal; proofs must never be submitted in forms or URLs.
             if (!http.Request.Headers.Accept.ToString().Contains("text/html", StringComparison.OrdinalIgnoreCase) && http.Request.Headers["Sec-Fetch-Mode"] != "navigate")
             {
                 throw Required();
@@ -115,7 +111,7 @@ namespace TerraScale.Dashboard.Features.Auth
 
             await http.RequestServices.GetRequiredService<AuthFlows>().StoreStepUpAsync(http, new(context.UserId, Browser(http), context.Organization?.Id,
                 context.Project?.Id, purpose, audience, http.Request.Path, ScopeQuery(http, context), http.Request.Headers.Referer.ToString(), form.ToDictionary(pair => pair.Key, pair => pair.Value.Select(value => value ?? "").ToArray()), challenge, receipt, mcp));
-            return Results.Redirect(challenge.StepUpUrl);
+            return TypedResults.Redirect(challenge.StepUpUrl);
         }
 
         public static async Task<string?> ConsumeAsync(HttpContext http, AccountContext context, StepUpIntent intent)
@@ -145,8 +141,6 @@ namespace TerraScale.Dashboard.Features.Auth
                 var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: intent.Purpose != "change_email") ?? throw Required();
                 http.Items[IntentKey] = intent;
                 _ = Intent(http, context, intent.Purpose);
-                // The one-use encrypted intent and original browser binding authorize this
-                // continuation. The cross-site callback does not depend on a Strict CSRF cookie.
                 http.Request.Method = "POST";
                 http.Request.Path = intent.Path;
                 http.Request.Headers.Referer = intent.Referer;
@@ -156,7 +150,7 @@ namespace TerraScale.Dashboard.Features.Auth
                 return intent.Purpose switch
                 {
                     "change_email" => await EmailChange.SubmitAsync(http, sessions, accounts, services.GetRequiredService<IAuthEmailChangeGateway>(), false),
-                    "delete_account" => await AccountDeletion.DeleteAsync(http, sessions, accounts, services.GetRequiredService<ITsAuthPlatform>(), services.GetRequiredService<IDbContextFactory<DashboardDbContext>>(), services.GetRequiredService<AccessTokens>(), services.GetRequiredService<TerraScale.Dashboard.Features.Billing.StripeBilling>(), services.GetRequiredService<TerraScale.Dashboard.Platform.Persistence.IDashboardIdentity>()),
+                    "delete_account" => await AccountDeletion.DeleteAsync(http, sessions, accounts, services.GetRequiredService<ITsAuthPlatform>(), services.GetRequiredService<DashboardDb>(), services.GetRequiredService<AccessTokens>(), services.GetRequiredService<TerraScale.Dashboard.Features.Billing.StripeBilling>(), services.GetRequiredService<TerraScale.Dashboard.Platform.Persistence.IDashboardIdentity>()),
                     "create_pat" => await AuthEndpoints.AuthorizeAsync(http, "/profile?tab=access-tokens", intent.Form.GetValueOrDefault("name")?.SingleOrDefault() ?? "", intent.Mcp is null ? int.Parse(intent.Form["expiresInDays"].Single(), System.Globalization.CultureInfo.InvariantCulture) : 0, mcp: intent.Mcp, stepUp: intent),
                     "rotate_api_key" => await RotateDashboardCredentialEndpoint.RotateAsync(http, sessions, accounts, services.GetRequiredService<ApiKeyService>(), services.GetRequiredService<TerraScale.Dashboard.Common.Databases.DatabaseService>()),
                     "create_oauth_client" => await AuthenticationConsole.PostAsync(http, "clients", sessions, accounts, services.GetRequiredService<ITsAuthProjects>()),
@@ -180,7 +174,7 @@ namespace TerraScale.Dashboard.Features.Auth
         private static IResult Refused(HttpContext http, int status, string detail, string? code = null)
         {
             return RequestError.WantsJson(http)
-                ? Results.Problem(detail, statusCode: status, extensions: code is null ? null : new Dictionary<string, object?> { ["code"] = code })
+                ? TypedResults.Problem(detail, statusCode: status, extensions: code is null ? null : new Dictionary<string, object?> { ["code"] = code })
                 : RequestError.Response(http, status, detail);
         }
 

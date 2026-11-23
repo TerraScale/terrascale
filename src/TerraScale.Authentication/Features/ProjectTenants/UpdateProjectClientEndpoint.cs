@@ -82,7 +82,7 @@ public sealed class UpdateProjectClientEndpoint(TenantDirectory tenants, IOpenId
             descriptor.PostLogoutRedirectUris.Clear();
             descriptor.PostLogoutRedirectUris.UnionWith(redirects);
             await applications.UpdateAsync(application, descriptor, cancellationToken);
-            return Results.Json(Map(application), ProjectTenantJson.Default.ClientBody);
+            return TypedResults.Json(Map(application), ProjectTenantJson.Default.ClientBody);
         }
         finally
         {

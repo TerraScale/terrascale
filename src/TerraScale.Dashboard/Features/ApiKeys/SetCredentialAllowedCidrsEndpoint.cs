@@ -16,13 +16,13 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, "/api-keys", Results.BadRequest("Invalid form token."));
+                return RequestError.FormExpired(http, "/api-keys", TypedResults.BadRequest("Invalid form token."));
             }
 
             var cidrs = ApiKeyService.ParseCidrs(form["allowedCidrs"].ToString());
@@ -32,7 +32,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                 var key = await keys.SetAllowedCidrsAsync(context, keyId, cidrs, http.RequestAborted);
                 if (!DatabaseEndpoints.WantsHtml(http))
                 {
-                    return Results.Json(ApiKeyService.CredentialMetadata(key), ApiKeyContractJson.Default.ProjectCredentialMetadata);
+                    return TypedResults.Json(ApiKeyService.CredentialMetadata(key), ApiKeyContractJson.Default.ProjectCredentialMetadata);
                 }
             }
             catch (Exception error) when (DatabaseEndpoints.KnownFailure(error) || error is HttpRequestException)
@@ -40,10 +40,10 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             if (http.Request.IsDatastarRequest)
             {
                 await ApiKeyPages.DetailsAsync(http, context, keys, databases, keyId);
-                return Results.Empty;
+                return TypedResults.Empty;
             }
 
-            return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther("/api-keys/" + keyId) : Results.NoContent();
+            return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther("/api-keys/" + keyId) : TypedResults.NoContent();
         }
     }
 }

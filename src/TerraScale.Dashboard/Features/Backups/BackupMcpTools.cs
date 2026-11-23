@@ -1,4 +1,4 @@
-using TerraScale.TerraBase.Contracts.Backups;
+using TerraScale.Dashboard.Platform.Clients;
 using System.Text.Json.Serialization;
 using System.ComponentModel;
 using ModelContextProtocol.Server;

@@ -3,8 +3,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.WebUtilities;
 using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Platform.Datastar;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Functions;
+using TerraScale.Dashboard.Platform.Clients;
 
 namespace TerraScale.Dashboard.Features.Functions
 {
@@ -91,13 +90,13 @@ namespace TerraScale.Dashboard.Features.Functions
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "functions"), Results.BadRequest("Invalid form token."));
+                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "functions"), TypedResults.BadRequest("Invalid form token."));
             }
 
             var id = form["databaseId"].ToString();
@@ -133,13 +132,13 @@ namespace TerraScale.Dashboard.Features.Functions
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "functions"), Results.BadRequest("Invalid form token."));
+                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "functions"), TypedResults.BadRequest("Invalid form token."));
             }
 
             var id = form["databaseId"].ToString();
@@ -163,7 +162,7 @@ namespace TerraScale.Dashboard.Features.Functions
                     {
                         var missingLogs = Filter([], trigger, status);
                         await PatchDeployAsync(http, functions, context, database, null, missingLogs, "", "This function does not exist.", trigger, status);
-                        return Results.Empty;
+                        return TypedResults.Empty;
                     }
 
                     if (intent == "trigger")
@@ -177,7 +176,7 @@ namespace TerraScale.Dashboard.Features.Functions
                 {
                     var logs = Filter(await functions.LogsAsync(context, database, name, http.RequestAborted), trigger, status);
                     await PatchDeployAsync(http, functions, context, database, saved, logs, "Function deployed.", "", trigger, status);
-                    return Results.Empty;
+                    return TypedResults.Empty;
                 }
 
                 return HttpRedirects.SeeOther(DatabaseService.Path(id, "functions") + "?function=" + Uri.EscapeDataString(saved.Name) + "&deployed=1");
@@ -188,7 +187,7 @@ namespace TerraScale.Dashboard.Features.Functions
                 {
                     var logs = before is null ? [] : Filter(await functions.LogsAsync(context, database, name, http.RequestAborted), trigger, status);
                     await PatchDeployAsync(http, functions, context, database, before, logs, "", FailureText(error), trigger, status);
-                    return Results.Empty;
+                    return TypedResults.Empty;
                 }
 
                 var editing = form["editing"].ToString() == "1";
@@ -202,13 +201,13 @@ namespace TerraScale.Dashboard.Features.Functions
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "functions"), Results.BadRequest("Invalid form token."));
+                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "functions"), TypedResults.BadRequest("Invalid form token."));
             }
 
             var id = form["databaseId"].ToString();
@@ -277,13 +276,13 @@ namespace TerraScale.Dashboard.Features.Functions
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "functions"), Results.BadRequest("Invalid form token."));
+                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "functions"), TypedResults.BadRequest("Invalid form token."));
             }
 
             var id = form["databaseId"].ToString();
@@ -434,7 +433,7 @@ namespace TerraScale.Dashboard.Features.Functions
                 selected is null ? null : FunctionBackend.InvokeUrl(context, database, selected.Name), logs, "", false, "", "", null, runEvent, runResult, runError,
                 trigger, status, Stats: stats, RunQuery: runQuery);
             await DatastarEvents.PatchElementsAsync(http, FunctionsRunView.Create(model));
-            return Results.Empty;
+            return TypedResults.Empty;
         }
     }
 }

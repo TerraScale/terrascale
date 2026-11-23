@@ -5,10 +5,8 @@ using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Features.ProjectTenants;
 
-/// <summary><c>PUT /v1/{project}/settings</c>.</summary>
 public sealed partial class UpdateProjectSettingsEndpoint(TenantDirectory tenants, ProjectAuthSettings settings, PlatformAuthentication authentication) : ProjectTenantEndpoint(tenants, authentication)
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Put(Root + "/settings");
@@ -75,7 +73,7 @@ public sealed partial class UpdateProjectSettingsEndpoint(TenantDirectory tenant
             next = restrictions is not null ? next with { Restrictions = restrictions } : next;
             return next.Passcode || next.Password || next.MagicLink ? next : throw Invalid("At least one of passcode, password and magic_link must stay on.");
         }, cancellationToken);
-        return Results.Json(await this.SettingsAsync(projectId, updated, cancellationToken), ProjectTenantJson.Default.SettingsBody);
+        return TypedResults.Json(await this.SettingsAsync(projectId, updated, cancellationToken), ProjectTenantJson.Default.SettingsBody);
     }
 
     private static bool Https(string? value) => Uri.TryCreate(value, UriKind.Absolute, out var uri)

@@ -1,4 +1,4 @@
-using TerraScale.TerraBase.Contracts;
+using TerraScale.Dashboard.Platform.Clients;
 using System.ComponentModel;
 using System.Text.Json.Serialization;
 using Stripe;
@@ -72,7 +72,8 @@ namespace TerraScale.Dashboard.Features.Billing
                     paymentMethod = await PaymentMethodAsync(context, cancellationToken) switch { BillingCard card => card, NoCard => null, Unavailable => null };
                 }
                 catch (Exception error) when (error is TerraBaseException or HttpRequestException or StripeException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
-                { /* Card facts remain absent when the vendor cannot report them. */ }
+                {
+                }
             }
 
             var checkoutInProgress = false;

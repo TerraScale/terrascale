@@ -20,7 +20,7 @@ public sealed class RedeemAgentEnrollmentEndpoint(PlatformAuthentication authent
         var request = await this.BodyAsync(AgentEnrollmentJson.Default.AgentEnrollmentTokenRequest, cancellationToken);
         return await enrollments.RedeemAsync(project, enrollment, request.Proof, cancellationToken) switch
         {
-            AgentEnrollmentTokenBody token => Results.Json(token, AgentEnrollmentJson.Default.AgentEnrollmentTokenBody),
+            AgentEnrollmentTokenBody token => TypedResults.Json(token, AgentEnrollmentJson.Default.AgentEnrollmentTokenBody),
             Unauthorized unauthorized => ErrorResults.ToResult(unauthorized),
             Validation invalid => ErrorResults.ToResult(invalid),
         };

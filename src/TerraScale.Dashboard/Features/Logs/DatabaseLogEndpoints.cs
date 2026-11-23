@@ -3,7 +3,7 @@ using System.Text.Json;
 using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Platform.Datastar;
-using TerraScale.TerraBase.Contracts.Logs;
+using TerraScale.Dashboard.Platform.Clients;
 
 namespace TerraScale.Dashboard.Features.Logs
 {
@@ -41,13 +41,13 @@ namespace TerraScale.Dashboard.Features.Logs
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "logs"), Results.BadRequest("Invalid form token."));
+                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "logs"), TypedResults.BadRequest("Invalid form token."));
             }
 
             var databaseId = form["databaseId"].ToString();
@@ -114,7 +114,7 @@ namespace TerraScale.Dashboard.Features.Logs
             if (http.Request.IsDatastarRequest)
             {
                 await DatastarEvents.PatchElementsAsync(http, DatabaseLogSection.Create(model));
-                return Results.Empty;
+                return TypedResults.Empty;
             }
             var page = DatabaseLogView.Create(model);
             page.StatusCode = drainStatus != 200 ? drainStatus : code;

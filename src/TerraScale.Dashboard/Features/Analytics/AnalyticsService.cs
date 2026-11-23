@@ -1,4 +1,4 @@
-using TerraScale.TerraBase.Contracts;
+using TerraScale.Dashboard.Platform.Clients;
 using TerraScale.Dashboard.Platform.Observability;
 using System.Text.Json;
 using TerraScale.Dashboard.Common.UI;
@@ -120,23 +120,19 @@ namespace TerraScale.Dashboard.Features.Analytics
                 {
                     var (Requests, WorstP95Ms) = regions.GetValueOrDefault(regionCode);
                     var pointRequests = point.Requests.Values.Aggregate(0L, (sum, count) => checked(sum + Nonnegative(count)));
-                    // Percentiles cannot be added; report the worst observed bucket p95 across the selected range.
                     regions[regionCode] = (checked(Requests + pointRequests), MaxLatency(WorstP95Ms, point.P95Ms));
                 }
             }
             var regionRows = regions.Select(item => new AnalyticsRegionRow(item.Key, Regions.Country(item.Key), item.Value.Requests, item.Value.WorstP95Ms))
                 .OrderBy(row => Regions.Rank(row.Code)).ThenBy(row => row.Code, StringComparer.Ordinal).ToArray();
-            // A partial set of database-region gauges is not a project storage total.
             for (var index = 0; index < starts.Length; index++)
             {
                 storageMissing[index] = storageSamples[index] != identities.Length;
             }
-            // Replicas sample independently. Sum each identity's latest sample, never its samples over time.
             var latestStorage = identities.Select(group => group.OrderByDescending(point => point.Start).FirstOrDefault(point => point.StorageBytes is not null)?.StorageBytes).ToArray();
             return (new(requestTotal, errorTotal, operationTotal, latestStorage.Any(value => value is null) ? null : latestStorage.Aggregate(0L, (sum, value) => checked(sum + value!.Value)),
                 clientTotal, worstP95, regionRows), Charts);
 
-            // Home uses the same totals without generating unused chart geometry.
             IReadOnlyList<AnalyticsChart> Charts()
             {
                 var charts = new List<AnalyticsChart>();

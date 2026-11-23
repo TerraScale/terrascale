@@ -2,7 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Configuration;
-using TerraScale.Authentication.Storage;
+using TerraScale.Contracts.Consistency;
 using TerraScale.DotNet.TerraBase;
 using ZLogger;
 
@@ -39,9 +39,9 @@ public static class TerraBaseTransport
             var tried = new HashSet<IPEndPoint>();
             foreach (var host in otherRegions.Prepend(context.DnsEndPoint))
             {
-                foreach (var endpoint in await EndPointsAsync(resolve, host, cancellationToken).ConfigureAwait(false))
+                foreach (var endpoint in await EndPointsAsync(resolve, host, cancellationToken))
                 {
-                    if (tried.Add(endpoint) && await ConnectAsync(endpoint, cancellationToken).ConfigureAwait(false) is { } stream)
+                    if (tried.Add(endpoint) && await ConnectAsync(endpoint, cancellationToken) is { } stream)
                     {
                         if (host != context.DnsEndPoint)
                         {
@@ -56,7 +56,7 @@ public static class TerraBaseTransport
             logger.ZLogWarning($"No TerraBase machine answered at {context.DnsEndPoint.Host:@Region} or at any of {otherRegions.Count:@Fallbacks} fallbacks; storage fails closed");
             throw new HttpRequestException(HttpRequestError.ConnectionError, $"No TerraBase machine answered at {context.DnsEndPoint.Host}");
         };
-        HttpMessageHandler pipeline = new HomeReads.Handler { InnerHandler = new FailClosed(handler) };
+        HttpMessageHandler pipeline = new StrongConsistency { InnerHandler = new FailClosed(handler) };
         if (peerSecret is not null)
         {
             pipeline = new PeerCredentialHandler(peerSecret) { InnerHandler = pipeline };
@@ -68,6 +68,30 @@ public static class TerraBaseTransport
         peerSecret.Length == 64 && peerSecret.All(char.IsAsciiHexDigit)
             ? peerSecret
             : throw new AuthConfigurationException($"{PeerSecretVariable} must contain 64 hexadecimal characters");
+
+    private sealed class StrongConsistency : DelegatingHandler
+    {
+        private string? bookmark;
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            request.Headers.Remove(ConsistencyHeaders.Consistency);
+            request.Headers.Add(ConsistencyHeaders.Consistency, ConsistencyHeaders.StrongValue);
+            request.Headers.Remove(ConsistencyHeaders.Bookmark);
+            if (Volatile.Read(ref bookmark) is { } after)
+            {
+                request.Headers.Add(ConsistencyHeaders.Bookmark, after);
+            }
+
+            var response = await base.SendAsync(request, cancellationToken);
+            if (response.Headers.TryGetValues(ConsistencyHeaders.Bookmark, out var values) && values.LastOrDefault() is { Length: > 0 } latest)
+            {
+                Volatile.Write(ref bookmark, latest);
+            }
+
+            return response;
+        }
+    }
 
     private sealed class CallerHandler(CallerCredential caller) : DelegatingHandler
     {
@@ -95,7 +119,7 @@ public static class TerraBaseTransport
         {
             try
             {
-                return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                return await base.SendAsync(request, cancellationToken);
             }
             catch (HttpRequestException error)
             {
@@ -108,7 +132,7 @@ public static class TerraBaseTransport
     {
         try
         {
-            return [.. (await resolve(host.Host, cancellationToken).ConfigureAwait(false)).Select(address => new IPEndPoint(address, host.Port))];
+            return [.. (await resolve(host.Host, cancellationToken)).Select(address => new IPEndPoint(address, host.Port))];
         }
         catch (SocketException)
         {
@@ -123,7 +147,7 @@ public static class TerraBaseTransport
         dial.CancelAfter(DialTimeout);
         try
         {
-            await socket.ConnectAsync(endpoint, dial.Token).ConfigureAwait(false);
+            await socket.ConnectAsync(endpoint, dial.Token);
             return new NetworkStream(socket, ownsSocket: true);
         }
         catch (Exception error) when ((error is SocketException or OperationCanceledException) && !cancellationToken.IsCancellationRequested)

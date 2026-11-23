@@ -4,7 +4,7 @@ title: Regions
 
 # Regions
 
-A database lives in a set of regions you choose, at least one. Every region of the set accepts reads and writes. The region you call accepts the write; depending on the connection it commits it locally and confirms it, or forwards it to the region that orders writes. You pick the set; TerraBase decides which region of the set orders the database's writes, and moves that when the set changes.
+A database lives in a set of regions you choose, at least one. Every region of the set is an equal peer: each one serves reads and commits `INSERT`, `UPDATE` and `DELETE` where you called, and replicates them to the others. There is no home region and no writer region to choose, move or fail over. See [replication and consistency](/concepts/replication).
 
 | Region | ID |
 | --- | --- |
@@ -23,7 +23,9 @@ Content-Type: application/json
 {"name":"app","regions":["gru","fra"]}
 ```
 
-The list must contain at least one serving region, with no duplicates. The response lists `regions` sorted by region id. That order carries no meaning and does not say which region orders writes. Omit `regions` and the called region holds the database.
+The list must contain at least one serving region, with no duplicates. The response lists `regions` sorted by region id; the order carries no meaning, because every region is equal. Omit `regions` and the called region holds the database.
+
+Send `"defaultConsistency":"strong"` to run every request that names no mode in strong mode; the default is `fast`. The same field is accepted when you update the database.
 
 To place the database in every serving region, including regions added later, send `{"allRegions":true}` and do not send `regions`. The CLI flag is `-all-regions`. Send a list or `allRegions: true`, not both.
 
@@ -36,7 +38,7 @@ Content-Type: application/json
 {"regions":["sjc","fra"]}
 ```
 
-If the region that currently orders writes stays in the set, it keeps that role. If the new set drops it, regions you add stay added. The call answers `503` `replica_not_ready` until one of the requested regions has replicated the database. Repeat the same request: it finishes the change once a requested region is ready. A different change of the same database while one is running answers `409` `move_in_progress`.
+A region you add copies the database from its peers and then serves reads and writes like the others. The call answers `503` `replica_not_ready` until the added regions have caught up. Repeat the same request: it finishes the change once they are ready. Regions that stay in the set keep serving throughout. A different change of the same database while one is running answers `409` `move_in_progress`.
 
 SDKs take the same field:
 
@@ -95,20 +97,14 @@ curl -o /dev/null -s -w '%{time_starttransfer}\n' https://gru.api.terrascale.tec
 
 Home also shows a "Status probe" latency for each region: that one comes from TerraScale's status monitoring, not from your browser.
 
-## Earlier fields
-
-`homeRegion`, `replicaRegions` and `POST …/move-home` are earlier fields and still work during the transition. New calls send `regions`. `allRegions: true`, sent without `regions`, is how you ask for every serving region, including regions added later. Responses list `regions`.
-
 ## Connect from any region
 
-REST requests and Postgres sessions can reach the database from any region of its set. Reads are served in the region you call. A write sent to another region of the set is forwarded, or committed locally and confirmed, depending on the statement. See [replication](/concepts/replication).
+REST requests, WebSocket sessions and Postgres sessions can reach the database in any region of its set, and every region commits writes locally. Send the newest `TerraScale-Bookmark` you hold to read your own writes in whichever region answers; the SDKs do this for you. Requests without a bookmark read what their region already holds, which can briefly lag writes made in another region. See [replication and consistency](/concepts/replication).
 
-At any moment one region of the set orders that database's writes. TerraBase picks it and moves it when the regions change. You do not choose it. `TerraScale-Durability: home` waits until that region has applied a local write. The server forwards a timed-out local publish with `TerraBase-Publish-Id` set to the same transaction id, and that region applies the write once. A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
-
-A region of the set can lag behind the region that orders writes. Postgres and WebSocket sessions preserve read-your-writes by using the ordering region until the region you call catches up. REST reads are eventually consistent. A region that already holds the database can serve reads it already holds while the ordering region is unreachable. A database in a single region waits for that region.
+If a region becomes unreachable, the other regions keep serving reads and fast writes with no failover step. Strong transactions need two of the three regions of a three-region set. `ts db regions <db>` and `GET …/databases/{database}/regions` show each region's health and replication lag.
 
 ## Storage and billing
 
-Database files in every region of the set are encrypted at rest. Adding a region places a copy of your data in that region. Removing a region erases the database's files in that region, usually within half a minute; a region that cannot be reached then erases them when it is back. Snapshots that region took stay in it and cannot be restored while it is outside the set.
+Database files in every region of the set are encrypted at rest. Adding a region places a copy of your data in that region. Removing a region erases the database's files in that region, usually within half a minute; a region that cannot be reached then erases them when it is back. Backups and point-in-time history do not depend on any one region and stay available.
 
 The catalog's regionsPerDatabase counts the regions in which a database's writes and stored bytes are metered: one per database on every plan. Copies in the database's other regions are not billed separately. See [pricing](/pricing).

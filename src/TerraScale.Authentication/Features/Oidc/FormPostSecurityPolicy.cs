@@ -5,18 +5,10 @@ using static OpenIddict.Server.OpenIddictServerEvents;
 
 namespace TerraScale.Authentication.Features.Oidc;
 
-/// <summary>
-/// Gives OpenIddict's response_mode=form_post page its own CSP: only OpenIddict's fixed autosubmit script may run, and the
-/// form may post only to the callback's origin. It runs after <see cref="ProjectRedirectPolicy"/> and OpenIddict's own
-/// validation, so the redirect URI is already a registered (and project-allowed) callback; every other response keeps the
-/// generic CSP from <see cref="Ui.BrowserSecurity"/>.
-/// </summary>
 public sealed class FormPostSecurityPolicy : IOpenIddictServerHandler<ApplyAuthorizationResponseContext>
 {
-    /// <summary>SHA-256 of OpenIddict 7.7.1's inline <c>record.form.submit();</c>, the only script on the page.</summary>
     public const string AutoSubmitScriptHash = "sha256-j7OoGArf6XW6YY4cAyS3riSSvrJRqpSi1fOF9vQ5SrI=";
 
-    /// <inheritdoc />
     public ValueTask HandleAsync(ApplyAuthorizationResponseContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -33,10 +25,6 @@ public sealed class FormPostSecurityPolicy : IOpenIddictServerHandler<ApplyAutho
         return ValueTask.CompletedTask;
     }
 
-    /// <summary>
-    /// The CSP source allowing a post to <paramref name="redirectUri"/>: its origin for http(s) DNS and IPv4 hosts (IDN as
-    /// punycode), or its scheme alone where CSP has no host syntax (IPv6 literals, native-app schemes).
-    /// </summary>
     public static string? FormTarget(string? redirectUri)
     {
         if (!Uri.TryCreate(redirectUri, UriKind.Absolute, out var uri) || !IsCspToken(uri.Scheme))

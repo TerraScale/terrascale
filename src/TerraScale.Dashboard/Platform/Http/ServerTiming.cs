@@ -5,8 +5,6 @@ using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Platform.Http
 {
-    // Per-request time spent waiting on each upstream, so a slow page names the dependency it waited on.
-    // Browsers show the Server-Timing header in their network panel; the log line keeps prod regressions visible.
     public sealed class ServerTiming
     {
         private static readonly AsyncLocal<ServerTiming?> Current = new();
@@ -21,29 +19,21 @@ namespace TerraScale.Dashboard.Platform.Http
         private bool reads;
         private bool probe;
 
-        // A point in this request's upstream history: it stays current until the request sends something that can change
-        // state (a state write, or a ts-auth or Stripe mutation), so a value read before it is still as fresh as a re-read.
         public sealed record Mark(ServerTiming Request, int Writes)
         {
             public bool Current => ServerTiming.Current.Value == Request && Volatile.Read(ref Request.writes) == Writes && Volatile.Read(ref Request.pendingWrites) == 0;
         }
 
-        // A freshly authorized context also serves a form action until that action sends a write.
-        // Individual read memoization below remains limited to GET/HEAD.
         public static Mark? Now()
         {
             return Current.Value is { pendingWrites: 0 } timing ? new(timing, Volatile.Read(ref timing.writes)) : null;
         }
 
-        // Coalesce identical reads only within this GET/HEAD. A mutation invalidates earlier reads;
-        // failed reads can be retried and no task or authority survives into another request.
         public static Task<T> ReadAsync<T>(object key, Func<Task<T>> read)
         {
             return ReadAsync(key, read, false);
         }
 
-        // Public issuer metadata cannot change because this request wrote account or database
-        // state. Share it through those writes, but never into the next request (key rotation).
         public static Task<T> PublicReadAsync<T>(object key, Func<Task<T>> read)
         {
             return ReadAsync(key, read, true);
@@ -84,15 +74,12 @@ namespace TerraScale.Dashboard.Platform.Http
             return started.Shared;
         }
 
-        // Token grants change none of the account/permission/billing records the dashboard context reads.
-        // All other HTTP mutations invalidate it, including failed writes.
         private static bool Mutates(HttpRequestMessage request)
         {
             return request.Method != HttpMethod.Get && request.Method != HttpMethod.Head && request.Method != HttpMethod.Options &&
             !(Upstream(request.RequestUri) == "auth" && request.RequestUri!.AbsolutePath.EndsWith("/oauth/token", StringComparison.Ordinal));
         }
 
-        // Upstream names by host: ts-auth, TerraBase's public API, the dashboard's own state database, Stripe.
         public static string Upstream(Uri? uri)
         {
             return uri?.Host switch
@@ -123,7 +110,6 @@ namespace TerraScale.Dashboard.Platform.Http
             }
         }
 
-        // Union of intervals measures elapsed dependency time without counting concurrent calls twice.
         private double Wall(string? upstream = null)
         {
             double total = 0, end = 0;
@@ -135,7 +121,6 @@ namespace TerraScale.Dashboard.Platform.Http
             return total;
         }
 
-        // Calls that overlap add up, so an upstream's total can exceed the page's own time when they ran in parallel.
         public string Header()
         {
             var parts = new List<string> { Metric("app", clock.Elapsed.TotalMilliseconds, "") };
@@ -187,9 +172,6 @@ namespace TerraScale.Dashboard.Platform.Http
             }
         }
 
-        // Times every request sent through a dashboard HttpClient into the current page's record.
-        // A TerraBase MagicOnion call (Platform/Rpc) counts like an HTTP one: a mutation invalidates this request's
-        // earlier reads, and the call is timed and logged under its fixed service/method name.
         public static async Task<T> RpcAsync<T>(string operation, bool mutation, Func<Task<T>> call)
         {
             var timing = Current.Value;
@@ -280,7 +262,6 @@ namespace TerraScale.Dashboard.Platform.Http
                     var ended = timing.clock.Elapsed.TotalMilliseconds;
                     var upstream = Upstream(request.RequestUri);
                     timing.Record(upstream, started, ended);
-                    // Only fixed operation names escape: no URL, query, token, record ID or customer name.
                     var operation = Operation(request.RequestUri);
                     var status = response is null ? 0 : (int)response.StatusCode;
                     var level = UpstreamLevel(status);

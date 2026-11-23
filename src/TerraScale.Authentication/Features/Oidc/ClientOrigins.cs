@@ -1,4 +1,5 @@
-using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
+using Dapper;
 using Microsoft.Net.Http.Headers;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Storage;
@@ -81,8 +82,8 @@ public static class ClientOrigins
 
     private static async Task<bool> AllowsAsync(AuthData data, string tenant, string origin, CancellationToken cancellationToken)
     {
-        var registered = await data.ReadAsync((db, token) => db.OidcApplications.Where(client => client.InstanceId == tenant)
-            .Select(client => client.AllowedOrigins).ToListAsync(token), cancellationToken);
-        return registered.Any(origins => origins.Contains(origin, StringComparer.Ordinal));
+        var registered = await data.ReadAsync(connection => connection.QueryAsync<string>(
+            "SELECT allowed_origins FROM oidc_applications WHERE instance_id = @tenant", new { tenant }), cancellationToken);
+        return registered.Any(origins => JsonSerializer.Deserialize(origins, StorageJson.Default.IReadOnlyListString) is { } allowed && allowed.Contains(origin, StringComparer.Ordinal));
     }
 }

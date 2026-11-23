@@ -3,10 +3,8 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.Social;
 
-/// <summary>The platform OAuth callback registered at GitHub and Google.</summary>
 public sealed class PlatformSocialCallbackEndpoint(PlatformSocialSignIn social) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/signin/{provider}");
@@ -19,7 +17,6 @@ public sealed class PlatformSocialCallbackEndpoint(PlatformSocialSignIn social) 
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) => new(social.CompleteAsync(this.HttpContext,
         OidcIssuer.InstanceId, (string)this.HttpContext.GetRouteValue("provider")!, cancellationToken));
 }

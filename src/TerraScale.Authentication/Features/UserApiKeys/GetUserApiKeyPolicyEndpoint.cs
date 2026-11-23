@@ -14,6 +14,6 @@ public sealed class GetUserApiKeyPolicyEndpoint(TenantDirectory tenants, Platfor
     protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var project = await this.AccessAsync(caller, Roles.Viewer, cancellationToken);
-        return Results.Json(await keys.PolicyAsync(project, cancellationToken), UserApiKeyJson.Default.UserApiKeyPolicyBody);
+        return TypedResults.Json(await keys.PolicyAsync(project, cancellationToken), UserApiKeyJson.Default.UserApiKeyPolicyBody);
     }
 }

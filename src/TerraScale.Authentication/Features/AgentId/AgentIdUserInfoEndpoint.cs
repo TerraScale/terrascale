@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http.HttpResults;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore;
 using Microsoft.AspNetCore.Authentication;
@@ -43,7 +44,7 @@ public abstract class AgentIdUserInfoEndpoint(AgentIdTransactions transactions, 
     {
         if (this.HttpContext.GetOpenIddictServerRequest() is null)
         {
-            return Results.NotFound();
+            return TypedResults.NotFound();
         }
 
         var principal = (await this.HttpContext.AuthenticateAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme)).Principal;
@@ -64,11 +65,11 @@ public abstract class AgentIdUserInfoEndpoint(AgentIdTransactions transactions, 
 
         var profile = principal.HasScope(Scopes.Profile);
         var shared = registration is not null && AgentIdIssuer.SharesOwnerEmail(clientId, principal.GetScopes(), registration.Shared) ? registration : null;
-        return Results.Json(new AgentIdUserInfoBody(subject, "agent", profile ? live.Agent.Value.Name : null, profile ? principal.GetClaim(AgentIdIssuer.OwnerSubjectClaim) : null,
+        return TypedResults.Json(new AgentIdUserInfoBody(subject, "agent", profile ? live.Agent.Value.Name : null, profile ? principal.GetClaim(AgentIdIssuer.OwnerSubjectClaim) : null,
             shared?.Email, shared?.EmailVerified), AgentIdJson.Default.AgentIdUserInfoBody);
     }
 
-    private static IResult Refused() =>
-        Results.Challenge(OidcResults.Error(OidcErrors.InvalidToken, "The access token no longer identifies an agent that can sign in."),
+    private static ChallengeHttpResult Refused() =>
+        TypedResults.Challenge(OidcResults.Error(OidcErrors.InvalidToken, "The access token no longer identifies an agent that can sign in."),
             [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
 }

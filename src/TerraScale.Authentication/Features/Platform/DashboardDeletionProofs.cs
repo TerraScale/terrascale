@@ -1,5 +1,5 @@
+using Dapper;
 using System.Text.Json.Nodes;
-using Microsoft.EntityFrameworkCore;
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Errors;
@@ -15,7 +15,10 @@ public sealed record DashboardDeletionAcknowledgement(string Scope, string Subje
 
 public readonly union DeletionAcknowledgementResult(Done, NotFound, Conflict);
 
-public sealed record DeletionCursorRecord(string Name, string? After);
+public sealed record DeletionCursorRecord(string Name, string? After)
+{
+    public string? Version { get; init; }
+}
 
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
@@ -30,14 +33,21 @@ internal static class DashboardDeletionProofs
 
     internal static async Task<DashboardDeletionList> ListAsync(AuthData data, CancellationToken cancellationToken)
     {
-        var position = await data.ReadAsync((db, token) => db.DeletionCursors.Where(cursor => cursor.Name == Pending).WithVersion().SingleOrDefaultAsync(token),
-            cancellationToken).ConfigureAwait(false);
+        var position = Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<DeletionCursorRecord>(
+            "SELECT * FROM deletion_cursors WHERE name = @Pending", new { Pending }), cancellationToken));
         var after = position?.Value.After ?? string.Empty;
-        var page = await data.ReadAsync((db, token) => Proven(db, db.DeletionJobs.Where(job => job.DashboardVerifiedAt == null && string.Compare(job.Id, after) > 0))
-            .OrderBy(job => job.Id).Take(20).ToListAsync(token),
-            cancellationToken).ConfigureAwait(false);
+        var platform = PlatformDirectory.Instance;
+        var page = (await data.ReadAsync(connection => connection.QueryAsync<DeletionJob>(
+            """
+            SELECT * FROM deletion_jobs WHERE dashboard_verified_at IS NULL AND id > @after AND instance_id = @platform AND auth_logical_verified_at IS NOT NULL
+                AND (scope = 'account' AND organization_id IS NULL AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = deletion_jobs.subject_id)
+                    OR scope = 'organization' AND (organization_id IS NULL OR organization_id = subject_id)
+                        AND NOT EXISTS (SELECT 1 FROM organizations o WHERE o.id = deletion_jobs.subject_id)
+                    OR scope = 'project' AND organization_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM projects p WHERE p.id = deletion_jobs.subject_id))
+            ORDER BY id LIMIT 20
+            """, new { after, platform }), cancellationToken)).AsList();
         var next = new DeletionCursorRecord(Pending, page.Count == 20 ? page[^1].Id : null);
-        if (!await data.SaveAsync(position is null ? Change.Insert(next) : Change.Update(position, next), cancellationToken).ConfigureAwait(false))
+        if (!await data.SaveAsync(position is null ? Change.Insert(next) : Change.Update(position, next), cancellationToken))
         {
             return new([]);
         }
@@ -56,15 +66,22 @@ internal static class DashboardDeletionProofs
         var key = DeletionJob.Key(PlatformDirectory.Instance, request.Scope, request.SubjectId);
         for (var attempt = 0; attempt < 4; attempt++)
         {
-            var job = await data.ReadAsync((db, token) => Proven(db, db.DeletionJobs.Where(job => job.Id == key)).WithVersion().SingleOrDefaultAsync(token),
-                cancellationToken).ConfigureAwait(false);
+            var platform = PlatformDirectory.Instance;
+            var job = Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<DeletionJob>(
+                """
+                SELECT * FROM deletion_jobs WHERE id = @key AND instance_id = @platform AND auth_logical_verified_at IS NOT NULL
+                AND (scope = 'account' AND organization_id IS NULL AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = deletion_jobs.subject_id)
+                    OR scope = 'organization' AND (organization_id IS NULL OR organization_id = subject_id)
+                        AND NOT EXISTS (SELECT 1 FROM organizations o WHERE o.id = deletion_jobs.subject_id)
+                    OR scope = 'project' AND organization_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM projects p WHERE p.id = deletion_jobs.subject_id))
+                """, new { key, platform }), cancellationToken));
             if (job is null || Proof(job.Value) is not { } proof || proof != new DashboardDeletionProof(id!, request.Scope, request.SubjectId, request.OrganizationId))
             {
                 return Missing();
             }
 
             if (job.Value.DashboardVerifiedAt is not null
-                || await data.SaveAsync(Change.Update(job, job.Value with { DashboardVerifiedAt = clock.GetUtcNow() }), cancellationToken).ConfigureAwait(false))
+                || await data.SaveAsync(Change.Update(job, job.Value with { DashboardVerifiedAt = clock.GetUtcNow() }), cancellationToken))
             {
                 return new Done();
             }
@@ -72,12 +89,6 @@ internal static class DashboardDeletionProofs
 
         return new Conflict("Retry acknowledgement of the same proof.", "deletion_changed");
     }
-
-    private static IQueryable<DeletionJob> Proven(AuthDbContext db, IQueryable<DeletionJob> jobs) =>
-        jobs.Where(job => job.InstanceId == PlatformDirectory.Instance && job.AuthLogicalVerifiedAt != null
-            && (job.Scope == "account" && job.OrganizationId == null && !db.Users.Any(user => user.Id == job.SubjectId)
-                || job.Scope == "organization" && (job.OrganizationId == null || job.OrganizationId == job.SubjectId) && !db.Organizations.Any(organization => organization.Id == job.SubjectId)
-                || job.Scope == "project" && job.OrganizationId != null && !db.Projects.Any(project => project.Id == job.SubjectId)));
 
     private static DashboardDeletionProof? Proof(DeletionJob job) =>
         job.DueAt == job.RequestedAt.AddDays(30) && PlatformDirectory.IsId(job.SubjectId) && PlatformDirectory.IsId(job.ErasureId)

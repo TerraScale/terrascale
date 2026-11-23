@@ -16,6 +16,6 @@ public sealed class DeleteProjectOrganizationMemberEndpoint(ProjectOrganizationD
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         await organizations.ChangeMemberAsync(project, this.Org, this.RouteId("user"), null, true, cancellationToken);
-        return Results.NoContent();
+        return TypedResults.NoContent();
     }
 }

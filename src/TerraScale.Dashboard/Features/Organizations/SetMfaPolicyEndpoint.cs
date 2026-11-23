@@ -16,18 +16,18 @@ namespace TerraScale.Dashboard.Features.Organizations
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             if (context.Role != "owner")
             {
-                return Results.StatusCode(403);
+                return TypedResults.StatusCode(403);
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, "/organization", Results.BadRequest("Invalid form token."));
+                return RequestError.FormExpired(http, "/organization", TypedResults.BadRequest("Invalid form token."));
             }
 
             try
@@ -42,7 +42,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                 {
                     context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, reload: true);
                     await DatastarEvents.PatchElementsAsync(http, TerraScale.Dashboard.Features.Organizations.OrganizationPageView.Create(await OrganizationEndpoints.PageModelAsync(http, context, placement)));
-                    return Results.Empty;
+                    return TypedResults.Empty;
                 }
                 return HttpRedirects.SeeOther("/organization");
             }
@@ -57,7 +57,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             if (http.Request.IsDatastarRequest)
             {
                 await OrganizationEndpoints.PatchAsync(http, context, placement, message, "organization");
-                return Results.Empty;
+                return TypedResults.Empty;
             }
             return await OrganizationEndpoints.PageAsync(http, context, placement, message, status, "organization");
         }

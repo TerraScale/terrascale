@@ -1,4 +1,4 @@
-using TerraScale.TerraBase.Contracts;
+using TerraScale.Dashboard.Platform.Clients;
 using Stripe;
 using AccountService = TerraScale.Dashboard.Common.Accounts.AccountService;
 using TerraScale.Dashboard.Features.Accounts;
@@ -25,8 +25,6 @@ namespace TerraScale.Dashboard.Features.Billing
         public static async Task<BillingPage> LoadAsync(ShellModel shell, StripeBilling billing, SpendingService spending,
             IQueryCollection query, DateTimeOffset now, InternalBillingService internalBilling, UsageOverageReporter reporter, CancellationToken cancellationToken)
         {
-            // All provider work finishes before Razor starts the response. A
-            // corrupt binding can then produce a complete service error page.
             var page = new BillingPage(shell, PlanCatalog.Plans)
             {
                 Binding = await billing.ReadBindingAsync(shell.Context, cancellationToken)
@@ -42,7 +40,6 @@ namespace TerraScale.Dashboard.Features.Billing
                     History = new([], InvoiceHistory.ForBrowser([], query, now), InvoiceHistory.Summarize([], now), now, "", internalControls.OrganizationCapCents)
                 };
             }
-            // The plan changes, the payment method and the invoices are separate Stripe reads; they run together.
             var changesRead = BillingPlanPresentation.ForAsync(page, billing, query, now, cancellationToken);
             var paymentMethodRead = billing.PaymentMethodAsync(shell.Context, cancellationToken);
             var invoicesRead = billing.InvoicesAsync(shell.Context, cancellationToken);
@@ -98,7 +95,6 @@ namespace TerraScale.Dashboard.Features.Billing
             };
         }
 
-        // The next invoice is the renewal charge: the scheduled plan's price when a change applies at renewal, else the current plan's.
         private static InvoiceRenewal? Renewal(BillingBinding? binding, BillingPlanState? state)
         {
             static long Price(string key, string interval)

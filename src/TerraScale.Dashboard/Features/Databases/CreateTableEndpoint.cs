@@ -15,13 +15,13 @@ namespace TerraScale.Dashboard.Features.Databases
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, cancellationToken);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "tables"), Results.BadRequest("Invalid form token."));
+                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "tables"), TypedResults.BadRequest("Invalid form token."));
             }
 
             var id = form["databaseId"].ToString();
@@ -67,7 +67,7 @@ namespace TerraScale.Dashboard.Features.Databases
             return DatabaseResults.WantsHtml(http)
                 ? await DatabaseEndpoints.DetailPageAsync(http, context, id, "tables", http.RequestServices.GetRequiredService<IDatabaseBackend>(),
                     http.RequestServices.GetRequiredService<DatabaseService>(), parsed.Error, status: status, formError: parsed.Error, tableDraft: parsed.Draft)
-                : Results.Problem(parsed.Error, statusCode: status);
+                : TypedResults.Problem(parsed.Error, statusCode: status);
         }
 
         private async Task<IResult> OpenAsync(HttpContext http, AccountContext context, string id, IFormCollection form, CreateTableResult parsed, CancellationToken cancellationToken)
@@ -87,7 +87,7 @@ namespace TerraScale.Dashboard.Features.Databases
 
             return DatabaseResults.WantsHtml(http)
                 ? HttpRedirects.SeeOther(DatabaseService.Path(id, "sql"))
-                : Results.Json(new { sql });
+                : TypedResults.Json(new { sql });
         }
 
         private async Task<IResult> CreateAsync(HttpContext http, AccountContext context, string id, IFormCollection form, CreateTableResult parsed, CancellationToken cancellationToken)
@@ -115,7 +115,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 var location = DatabaseService.Path(id, "tables") + "?table=" + Uri.EscapeDataString(parsed.Draft.Name) + "&created=" + Uri.EscapeDataString(parsed.Draft.Name);
                 return DatabaseResults.WantsHtml(http)
                     ? HttpRedirects.SeeOther(location)
-                    : Results.Json(new { columns = result.Columns, rows = result.Rows, rowsAffected = result.RowsAffected, lastInsertRowId = result.LastInsertRowId });
+                    : TypedResults.Json(new { columns = result.Columns, rows = result.Rows, rowsAffected = result.RowsAffected, lastInsertRowId = result.LastInsertRowId });
             }
             catch (Exception error) when (SqlWorkspace.Unavailable(error) && !cancellationToken.IsCancellationRequested)
             {

@@ -1,14 +1,18 @@
+using Dapper;
+using System.Data;
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.TerraBase.Contracts;
+using TerraScale.Dashboard.Platform.Clients;
 
 namespace TerraScale.Dashboard.Features.Billing
 {
-    // Converges TerraBase to every organization's entitled plan every 30 seconds, whatever was missed: a TerraBase wipe or
-    // re-seed, an enrollment after the last billing change, a failed publish, or a paid checkout whose webhook never came.
-    public sealed class PlanReconciler(IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, StripeBilling billing, BillingSchemaGate gate, TerraBasePlanSync plans, TimeProvider clock, ILogger<PlanReconciler> logger, BackgroundJobs jobs) : BackgroundService
+    public sealed class PlanReconciler(DashboardDb storage, OrganizationStore organizations, StripeBilling billing, BillingSchemaGate gate, TerraBasePlanSync plans, TimeProvider clock, ILogger<PlanReconciler> logger, BackgroundJobs jobs) : BackgroundService
     {
+        private const string PendingWhere = " WHERE erasure_id IS NULL AND kind = 'stripe' AND checkout_id <> '' AND subscription_id = '' AND status = 'pending'";
+        private const string CheckoutsDue = "SELECT count(*) FROM billing" + PendingWhere;
+        private const string PendingCheckouts = DashboardSql.Billing.Select + PendingWhere;
+        private const string ReceiptsDue = "SELECT count(*) FROM stripe_event_receipts WHERE completed_at IS NULL AND processing_until <= @Now";
+
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30), clock);
@@ -16,7 +20,7 @@ namespace TerraScale.Dashboard.Features.Billing
             {
                 try { await RunOnceAsync(stoppingToken); }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
-                catch (Exception error) when (error is DbUpdateException or TimeoutException or TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or OperationCanceledException)
+                catch (Exception error) when (error is DBConcurrencyException or TimeoutException or TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or OperationCanceledException)
                 {
                     logger.PlanReconciliationIsUnavailableRetryingIn(error.GetType().Name);
                 }
@@ -27,20 +31,24 @@ namespace TerraScale.Dashboard.Features.Billing
         {
             if (!await gate.AllowsAsync(cancellationToken)) { return; }
             var candidates = await organizations.ListAsync(cancellationToken);
-            await using var snapshot = await storage.CreateDbContextAsync(cancellationToken);
             var now = clock.GetUtcNow();
-            var checkoutDue = await snapshot.Billing.AsNoTracking().AnyAsync(row => row.ErasureId == null && row.Kind == "stripe" && row.CheckoutId != "" && row.SubscriptionId == "" && row.Status == "pending", cancellationToken);
-            var receiptDue = await snapshot.StripeEventReceipts.AsNoTracking().AnyAsync(row => row.CompletedAt == null && row.ProcessingUntil <= now, cancellationToken);
+            bool checkoutDue;
+            bool receiptDue;
+            await using (var snapshot = await storage.OpenAsync(cancellationToken))
+            {
+                checkoutDue = await snapshot.ExecuteScalarAsync<long>(CheckoutsDue) > 0;
+                receiptDue = await snapshot.ExecuteScalarAsync<long>(ReceiptsDue, new { Now = now }) > 0;
+            }
+
             if (!checkoutDue && !receiptDue && !candidates.Any(row => row.BillingStatus == "active" && row.PaymentGraceUntil <= now) &&
                 !await plans.AnyDueAsync(candidates, cancellationToken)) { return; }
             await jobs.RunAsync("plan-reconciliation", TimeSpan.FromSeconds(30), async (claim, token) =>
             {
                 await billing.RecoverEventReceiptsAsync(token);
                 List<BillingBinding> pending;
-                await using (var db = await storage.CreateDbContextAsync(token))
+                await using (var connection = await storage.OpenAsync(token))
                 {
-                    pending = await db.Billing.AsNoTracking().Where(row => row.ErasureId == null && row.Kind == "stripe" && row.CheckoutId != "" && row.SubscriptionId == "" && row.Status == "pending")
-                        .ToListAsync(token);
+                    pending = (await connection.QueryAsync<BillingBinding>(PendingCheckouts)).AsList();
                 }
 
                 foreach (var binding in pending)
@@ -49,7 +57,7 @@ namespace TerraScale.Dashboard.Features.Billing
                     {
                         await billing.ReconcilePendingCheckoutAsync(binding, token);
                     }
-                    catch (Exception error) when (error is DbUpdateException or TimeoutException or TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or Stripe.StripeException)
+                    catch (Exception error) when (error is DBConcurrencyException or TimeoutException or TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or Stripe.StripeException)
                     {
                         logger.APendingCheckoutDidNotReconcile(error.GetType().Name);
                     }

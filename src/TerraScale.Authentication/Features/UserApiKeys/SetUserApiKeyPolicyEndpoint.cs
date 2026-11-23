@@ -15,6 +15,6 @@ public sealed class SetUserApiKeyPolicyEndpoint(TenantDirectory tenants, Platfor
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(UserApiKeyJson.Default.UserApiKeyPolicyBody, cancellationToken);
-        return Results.Json(await keys.SetPolicyAsync(project, request.AllowedScopes, caller.Id, cancellationToken), UserApiKeyJson.Default.UserApiKeyPolicyBody);
+        return TypedResults.Json(await keys.SetPolicyAsync(project, request.AllowedScopes, caller.Id, cancellationToken), UserApiKeyJson.Default.UserApiKeyPolicyBody);
     }
 }

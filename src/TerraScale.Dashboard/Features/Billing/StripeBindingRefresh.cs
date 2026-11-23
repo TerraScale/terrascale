@@ -1,12 +1,19 @@
+using Dapper;
+using System.Data;
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.TerraBase.Contracts;
+using TerraScale.Dashboard.Platform.Clients;
 
 namespace TerraScale.Dashboard.Features.Billing
 {
-    public sealed class StripeBindingRefresh(IDbContextFactory<DashboardDbContext> storage, StripeBilling billing, BillingSchemaGate gate, TimeProvider clock, ILogger<StripeBindingRefresh> logger, BackgroundJobs jobs) : BackgroundService
+    public sealed class StripeBindingRefresh(DashboardDb storage, StripeBilling billing, BillingSchemaGate gate, TimeProvider clock, ILogger<StripeBindingRefresh> logger, BackgroundJobs jobs) : BackgroundService
     {
+        private const string StripeOrganizations = """
+        SELECT organization_id FROM billing
+        WHERE erasure_id IS NULL AND kind = 'stripe' AND (subscription_id <> '' OR checkout_id <> '') AND (@After IS NULL OR organization_id > @After)
+        ORDER BY organization_id LIMIT 200
+        """;
+
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             using var timer = new PeriodicTimer(TimeSpan.FromDays(1), clock);
@@ -14,7 +21,7 @@ namespace TerraScale.Dashboard.Features.Billing
             {
                 try { await RunOnceAsync(stoppingToken); }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
-                catch (Exception error) when (error is DbUpdateException or TimeoutException or TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or OperationCanceledException)
+                catch (Exception error) when (error is DBConcurrencyException or TimeoutException or TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or OperationCanceledException)
                 {
                     logger.StripeBindingRefreshIsUnavailableRetryingNext(error.GetType().Name);
                 }
@@ -30,14 +37,9 @@ namespace TerraScale.Dashboard.Features.Billing
                 while (true)
                 {
                     List<string> organizationIds;
-                    await using (var db = await storage.CreateDbContextAsync(token))
+                    await using (var connection = await storage.OpenAsync(token))
                     {
-                        organizationIds = await db.Billing.AsNoTracking()
-                            .Where(row => row.ErasureId == null && row.Kind == "stripe" && (row.SubscriptionId != "" || row.CheckoutId != "") && (after == null || string.Compare(row.OrganizationId, after) > 0))
-                            .OrderBy(row => row.OrganizationId)
-                            .Select(row => row.OrganizationId)
-                            .Take(200)
-                            .ToListAsync(token);
+                        organizationIds = (await connection.QueryAsync<string>(StripeOrganizations, new { After = after })).AsList();
                     }
 
                     foreach (var organizationId in organizationIds)
@@ -46,7 +48,7 @@ namespace TerraScale.Dashboard.Features.Billing
                         {
                             await billing.RefreshAsync(organizationId, token);
                         }
-                        catch (Exception error) when (error is DbUpdateException or TimeoutException or TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or Stripe.StripeException)
+                        catch (Exception error) when (error is DBConcurrencyException or TimeoutException or TerraBaseException or HttpRequestException or IOException or JsonException or InvalidOperationException or Stripe.StripeException)
                         {
                             logger.AStripeBindingCouldNotBeRefreshed(error.GetType().Name);
                         }

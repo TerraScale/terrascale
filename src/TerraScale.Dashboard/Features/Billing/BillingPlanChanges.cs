@@ -3,7 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.ComponentModel;
 using Stripe;
-using TerraScale.TerraBase.Contracts;
+using TerraScale.Dashboard.Platform.Clients;
 using AccountService = TerraScale.Dashboard.Common.Accounts.AccountService;
 
 namespace TerraScale.Dashboard.Features.Billing
@@ -17,8 +17,6 @@ namespace TerraScale.Dashboard.Features.Billing
         [property: Description("Whether the change applies now (upgrade) instead of at renewal (downgrade).")] bool Immediate, DateTimeOffset EffectiveAt,
         [property: Description("Estimated charge today in the smallest currency unit.")] long AmountDueCents, long ProrationCents, string Currency, string Note);
 
-    // Stripe owns all current, pending and scheduled plan facts. The separate CAS
-    // receipt only serializes changes and preserves their provider idempotency key.
     public sealed partial class StripeBilling
     {
         public async Task<BillingPlanState?> PlanStateAsync(AccountContext context, CancellationToken cancellationToken)
@@ -89,7 +87,6 @@ namespace TerraScale.Dashboard.Features.Billing
             }
 
             var receipt = await ReserveChangeAsync(context, snapshot, "change", key, interval, cancellationToken);
-            // Recheck the live role and subscription after the persistent reservation.
             context = await OwnerAsync(context, cancellationToken);
             snapshot = await PlanSnapshotAsync(context, cancellationToken) ?? throw Conflict("The subscription changed. Reload billing.");
             if (Realized(receipt, snapshot.State)) { await FinishChangeAsync(context.Organization!.Id, receipt, cancellationToken); return Rank(key) > Rank(receipt.SourcePlanKey) ? "pending" : "scheduled"; }
@@ -133,8 +130,6 @@ namespace TerraScale.Dashboard.Features.Billing
                 var schedule = snapshot.Subscription.ScheduleId is { Length: > 0 } scheduleId ? await schedules.GetAsync(scheduleId, cancellationToken: cancellationToken) : null;
                 if (schedule?.Metadata.GetValueOrDefault("dashboard_change_key") != receipt.RequestId)
                 {
-                    // Stripe rejects every other parameter with from_subscription, so the update below binds the change key.
-                    // A schedule without the key is ours only when this receipt's idempotent create replays its ID.
                     SubscriptionSchedule created;
                     try { created = await schedules.CreateAsync(new() { FromSubscription = snapshot.Subscription.Id }, Idempotent("plan-" + receipt.RequestId + "-schedule"), cancellationToken); }
                     catch (StripeException) when (schedule is not null) { throw Conflict("The subscription schedule does not belong to this change."); }
@@ -159,7 +154,6 @@ namespace TerraScale.Dashboard.Features.Billing
                     Phases = [
                         new() { StartDate = schedule.CurrentPhase.StartDate, EndDate = snapshot.Item.CurrentPeriodEnd, Items = [new() { Price = snapshot.Item.Price.Id, Quantity = 1 }],
                             TrialEnd = snapshot.Subscription.Status == "trialing" ? snapshot.Subscription.TrialEnd : null },
-                        // Stripe starts each later phase where the previous one ends.
                         new() { Duration = new() { Interval = interval == "annual" ? "year" : "month", IntervalCount = 1 },
                             Items = [new() { Price = nextPrice!.Id, Quantity = 1 }], Metadata = new() { ["organization_id"] = context.Organization!.Id, ["plan"] = key, ["interval"] = interval } }
                     ]
@@ -220,7 +214,6 @@ namespace TerraScale.Dashboard.Features.Billing
             var client = await ClientAsync(cancellationToken);
             var checkout = await client.V1.Checkout.Sessions.GetAsync(binding.CheckoutId, cancellationToken: cancellationToken);
             ValidateCheckout(binding, checkout);
-            // A paid checkout cannot be canceled; reconcile it instead of dead-ending.
             if (checkout.Status == "complete")
             {
                 return PaymentOutcome(binding.ReturnPath, await RefreshAsync(orgId, cancellationToken) ? "success" : "pending");
@@ -326,7 +319,6 @@ namespace TerraScale.Dashboard.Features.Billing
             {
                 var pendingMapped = (pending.SubscriptionItems is { Count: 1 } pendingItems && pendingItems[0].Quantity == 1 ? EffectivePlan(pendingItems[0].Price) : null) ?? throw Conflict("The pending plan needs billing attention.");
                 (pendingKey, pendingInterval) = (pendingMapped.Plan.Key, pendingMapped.Interval);
-                // The update's open invoice is where the customer authenticates (3D Secure) or retries its payment.
                 if (subscription.LatestInvoice is { Status: "open" } invoice && invoice.CustomerId == binding.CustomerId)
                 {
                     paymentUrl = Invoices.InvoiceHistory.SafeUrl(invoice.HostedInvoiceUrl);
@@ -432,8 +424,6 @@ namespace TerraScale.Dashboard.Features.Billing
 
                     return price;
                 }
-                // Once a mutation can have reached Stripe its original price and
-                // idempotency key are inseparable, even if the price is archived.
                 if (current.Status != "reserved")
                 {
                     throw new IOException("Billing change price binding is unavailable.");
@@ -451,8 +441,6 @@ namespace TerraScale.Dashboard.Features.Billing
         }
         private async Task AbandonReservationAsync(string orgId, BillingChangeReceipt receipt)
         {
-            // A reserved receipt has never admitted a vendor mutation. An applying
-            // receipt can have an unknown provider outcome and must keep its key.
             using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             var current = await storage.ChangeRowAsync(orgId, cleanup.Token);
             if (current is null || current.OrganizationId != orgId || current.RequestId != receipt.RequestId || current.Status != "reserved")
@@ -465,15 +453,12 @@ namespace TerraScale.Dashboard.Features.Billing
         }
         private async Task SettleChangeAsync(AccountContext context, BillingChangeReceipt receipt)
         {
-            // Stripe accepted the operation, so it is the outcome even when the local projection loses a race with the
-            // webhooks reconciling the same change; they and the next billing view finish it from Stripe's facts.
             try { await ReconcileChangeAsync(context, receipt); }
             catch (Exception error) when (error is IOException or TerraBaseException or HttpRequestException or StripeException or AccountAccessException or OperationCanceledException)
             { logger.BillingAppliedInStripeReconciliationDeferred(receipt.Action, receipt.RequestId, error.GetType().Name, BillingMutations.Describe(error)); }
         }
         private async Task ReconcileChangeAsync(AccountContext context, BillingChangeReceipt receipt)
         {
-            // Stripe accepted the operation. Reconcile even if the browser closed.
             using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             await RefreshAsync(context.Organization!.Id, cleanup.Token);
             var snapshot = await PlanSnapshotAsync(context, cleanup.Token);

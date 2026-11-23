@@ -2,9 +2,10 @@ import { array, malformed, object, string } from "./decode.js";
 import { SqlError } from "./errors.js";
 import { requireDatabaseSelector } from "./ids.js";
 import { ExactDecimal, stringifyExactJson } from "./json.js";
+import { bookmarkHeader, causalHeaders } from "./bookmark.js";
 /**
- * @import { JsonValue } from "./json.js"
- * @import { V1RequestOptions } from "./terrabase-v1.js"
+ * @import { JsonObject, JsonValue } from "./json.js"
+ * @import { V1SqlRequestOptions } from "./bookmark.js"
  * @import { V1Transport } from "./transport.js"
  */
 
@@ -36,6 +37,7 @@ import { ExactDecimal, stringifyExactJson } from "./json.js";
 const maximumStatements = 256;
 const maximumSqlLength = 16_384;
 const maximumSerializationResends = 2;
+const resentCodes = new Set(["serialization_conflict", "schema_mismatch"]);
 
 /** @param {unknown} value @param {string} where */
 function requireArgument(value, where) {
@@ -101,12 +103,18 @@ export function decodeSqlValue(value) {
   return malformed("SQL value");
 }
 
-/** @param {JsonValue | undefined} value @returns {V1SqlExecuteResult} */
-export function decodeSqlResult(value) {
-  const raw = object(value, "SQL statement result");
+/**
+ * @param {JsonObject} raw
+ * @param {"decltype" | "type"} typeKey
+ * @param {JsonValue | undefined} affected
+ * @param {JsonValue | null} rowid
+ * @returns {V1SqlExecuteResult}
+ */
+function sqlResult(raw, typeKey, affected, rowid) {
   const columns = array(raw.columns, "SQL columns").map(entry => {
     const column = object(entry, "SQL column");
-    const decltype = column.decltype === null || column.decltype === undefined ? null : string(column.decltype, "SQL column decltype");
+    const type = column[typeKey];
+    const decltype = type === null || type === undefined ? null : string(type, "SQL column type");
     return Object.freeze({ name: string(column.name, "SQL column name"), decltype });
   });
   const rows = array(raw.rows, "SQL rows").map(entry => {
@@ -114,37 +122,52 @@ export function decodeSqlResult(value) {
     if (row.length !== columns.length) malformed("SQL row width");
     return Object.freeze(row);
   });
-  const affected = raw.rows_affected;
-  if (typeof affected !== "number" || !Number.isSafeInteger(affected) || affected < 0) malformed("SQL rows_affected");
-  const rowid = raw.last_insert_rowid ?? null;
-  if (rowid !== null && !(rowid instanceof ExactDecimal) && !(typeof rowid === "number" && Number.isInteger(rowid))) malformed("SQL last_insert_rowid");
+  if (typeof affected !== "number" || !Number.isSafeInteger(affected) || affected < 0) malformed("SQL rows affected");
+  if (rowid !== null && !(rowid instanceof ExactDecimal) && !(typeof rowid === "number" && Number.isInteger(rowid))) malformed("SQL last insert rowid");
   return Object.freeze({ columns: Object.freeze(columns), rows: Object.freeze(rows), rowsAffected: affected, lastInsertRowid: rowid });
+}
+
+/** @param {JsonValue | undefined} value @returns {V1SqlExecuteResult} */
+export function decodeSqlResult(value) {
+  const raw = object(value, "SQL statement result");
+  return sqlResult(raw, "decltype", raw.rows_affected, raw.last_insert_rowid ?? null);
+}
+
+/** @param {JsonValue | undefined} value @returns {V1SqlExecuteResult} */
+export function decodeSqlFrameResult(value) {
+  const raw = object(value, "SQL statement result");
+  return sqlResult(raw, "type", raw.rowsAffected, raw.lastInsertRowId ?? null);
 }
 
 /**
  * Runs 1 to 256 statements as one transaction: all commit or none do. BEGIN, COMMIT and ROLLBACK are refused.
- * A refused statement throws SqlError with its index.
+ * A refused statement throws SqlError with its index. The newest TerraScale-Bookmark the client holds for the database
+ * goes with the request, and the answer's bookmark is tracked for the next one.
  * @param {V1Transport} transport
  * @param {string} database
  * @param {readonly (string | V1SqlStatement)[]} statements
- * @param {V1RequestOptions} [options]
+ * @param {V1SqlRequestOptions} [options]
  * @returns {Promise<readonly V1SqlExecuteResult[]>}
  */
 export async function executeSql(transport, database, statements, options = {}) {
   if (!Array.isArray(statements) || statements.length === 0 || statements.length > maximumStatements)
     throw new TypeError(`SQL batches hold 1 to ${maximumStatements} statements.`);
   if (options === null || typeof options !== "object" || Array.isArray(options)) throw new TypeError("SQL request options must be an object.");
-  for (const member of Object.keys(options)) if (member !== "signal") throw new TypeError(`Unknown SQL request option ${member}.`);
+  for (const member of Object.keys(options))
+    if (!["signal", "bookmark", "consistency"].includes(member)) throw new TypeError(`Unknown SQL request option ${member}.`);
   const body = stringifyExactJson({ statements: statements.map(encodeStatement) }, "SQL statements");
   const databaseSelector = requireDatabaseSelector(database);
+  const tracker = transport.bookmarks(databaseSelector);
   for (let attempt = 0; ; attempt++) {
     try {
-      const response = await transport.call("executeSql", { database: databaseSelector }, { body, signal: options.signal });
+      const response = await transport.call("executeSql", { database: databaseSelector }, { body, signal: options.signal, headers: causalHeaders(options, tracker) });
+      tracker.observe(response.headers.get(bookmarkHeader));
       const results = array(object(response.value, "SQL execute response").results, "SQL results").map(decodeSqlResult);
       if (results.length !== statements.length) malformed("SQL result count");
       return Object.freeze(results);
     } catch (error) {
-      if (error instanceof SqlError && error.code === "serialization_conflict" && attempt < maximumSerializationResends) {
+      if (error instanceof SqlError) tracker.observe(error.headers.get(bookmarkHeader));
+      if (error instanceof SqlError && resentCodes.has(error.code) && attempt < maximumSerializationResends) {
         const span = Math.min(100 << Math.min(attempt, 5), 2_000);
         const delay = span / 2 + Math.floor(Math.random() * (span / 2 + 1));
         const signal = options.signal;

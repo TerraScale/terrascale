@@ -5,13 +5,6 @@ using ZLogger;
 
 namespace TerraScale.Authentication.Hosting;
 
-/// <summary>
-/// A log-safe stand-in for an exception: the original type names and stack traces, never their
-/// messages. Messages are free text that can carry credentials (URLs with codes, connection
-/// strings, upstream error bodies), so no log sink receives them. The cause chain is kept as
-/// <see cref="Exception.InnerException"/> (all children of an <see cref="AggregateException"/>
-/// appear in the rendering) and <see cref="StackTrace"/> reports the original frames.
-/// </summary>
 public sealed class ScrubbedException : Exception
 {
     private readonly string? originalStackTrace;
@@ -19,7 +12,6 @@ public sealed class ScrubbedException : Exception
 
     private const int MaxDepth = 16;
 
-    /// <summary>Wraps <paramref name="original"/> and, recursively, its causes.</summary>
     public ScrubbedException(Exception original)
         : this(original, 0)
     {
@@ -33,36 +25,27 @@ public sealed class ScrubbedException : Exception
         this.rendered = original is ScrubbedException already ? already.rendered : Render(original, 0);
     }
 
-    /// <summary>Required by CA1032; use the wrapping constructor.</summary>
     public ScrubbedException()
         : this(new InvalidOperationException())
     {
     }
 
-    /// <summary>Required by CA1032; the message is discarded like any other.</summary>
     public ScrubbedException(string message)
         : this(new InvalidOperationException(message))
     {
     }
 
-    /// <summary>Required by CA1032; wraps <paramref name="innerException"/> and discards <paramref name="message"/>.</summary>
     public ScrubbedException(string message, Exception innerException)
         : this(new InvalidOperationException(message, innerException))
     {
     }
 
-    /// <summary>Full name of the wrapped exception type.</summary>
     public string OriginalType { get; } = string.Empty;
 
-    /// <inheritdoc />
     public override string? StackTrace => this.originalStackTrace;
 
-    /// <inheritdoc />
     public override string ToString() => this.rendered;
 
-    // The wrapped chain stops at the same depth the rendering does.
-    // Frames come from the runtime's own trace data, never the virtual StackTrace property,
-    // which a custom exception could override to return its message (or to throw).
     private static string? FramesOf(Exception exception)
     {
         try
@@ -84,13 +67,10 @@ public sealed class ScrubbedException : Exception
     private static string Describe(Exception exception) =>
         exception is ScrubbedException ? exception.Message : $"{exception.GetType().FullName} (message withheld)";
 
-    // Rendering is bounded in depth and in total exceptions, and each exception object is
-    // rendered once, so a self-referencing aggregate graph cannot blow up a log call.
     private const int MaxRendered = 64;
 
     private static string Render(Exception root, int depth)
     {
-        // A using declaration cannot be passed by ref, so the builder is disposed explicitly.
         var builder = ZString.CreateStringBuilder();
         try
         {
@@ -105,8 +85,6 @@ public sealed class ScrubbedException : Exception
         }
     }
 
-    // Every visit counts against the budget, including repeated and depth-limited ones, so
-    // neither a wide aggregate of one shared child nor a deep fan-out can grow the output.
     private static void Append(ref Utf16ValueStringBuilder builder, Exception exception, int depth, HashSet<Exception> seen, ref int visits)
     {
         if (++visits > MaxRendered || depth > MaxDepth)
@@ -127,13 +105,11 @@ public sealed class ScrubbedException : Exception
             builder.AppendLine(trace);
         }
 
-        // An aggregate's InnerException is only its first child; render every one.
         IEnumerable<Exception> causes = exception is AggregateException aggregate
             ? aggregate.InnerExceptions
             : exception.InnerException is { } inner ? [inner] : [];
         foreach (var cause in causes)
         {
-            // Stop walking a wide aggregate as soon as the shared budget is spent.
             if (visits >= MaxRendered)
             {
                 builder.AppendLine(" ---> (further causes truncated)");
@@ -146,21 +122,12 @@ public sealed class ScrubbedException : Exception
     }
 }
 
-/// <summary>
-/// Wraps the logger factory so every provider (console, OpenTelemetry, Sentry, anything added
-/// later) receives exceptions only as <see cref="ScrubbedException"/>, whether they arrive as the
-/// exception argument, as a structured log value or as a scope. This covers framework and
-/// library log calls as well as ts-auth's own.
-/// </summary>
 public sealed partial class SafeLoggerFactory(ILoggerFactory inner) : ILoggerFactory
 {
-    /// <inheritdoc />
     public ILogger CreateLogger(string categoryName) => new SafeLogger(inner.CreateLogger(categoryName));
 
-    /// <inheritdoc />
     public void AddProvider(ILoggerProvider provider) => inner.AddProvider(provider);
 
-    /// <inheritdoc />
     public void Dispose() => inner.Dispose();
 
     private sealed class SafeLogger(ILogger inner) : ILogger
@@ -173,7 +140,6 @@ public sealed partial class SafeLoggerFactory(ILoggerFactory inner) : ILoggerFac
 
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {
-            // Entries no provider wants are dropped before any inspection work.
             if (!inner.IsEnabled(logLevel))
             {
                 return;
@@ -182,28 +148,17 @@ public sealed partial class SafeLoggerFactory(ILoggerFactory inner) : ILoggerFac
             var scrubbed = exception is null ? null : new ScrubbedException(exception);
             if (state is string text)
             {
-                // A string is its own message; it cannot render anything else.
                 inner.Log(logLevel, eventId, text, scrubbed, static (value, _) => value);
                 return;
             }
 
-            // Every other state is rebuilt from its template and normalized values. Neither
-            // the state's own ToString nor the caller's formatter ever runs, so no custom type
-            // can render an exception message through them.
             inner.Log(logLevel, eventId, SafeState.From(state), scrubbed, static (value, _) => value.ToString());
         }
     }
 
-    /// <summary>
-    /// Structured log state rebuilt from a template and normalized values: scalars of exact,
-    /// known types as they are, exceptions as their scrubbed rendering, sequences as bounded
-    /// renderings of their normalized elements, and every other object as a placeholder.
-    /// </summary>
     private sealed class SafeState(IReadOnlyList<KeyValuePair<string, object?>> values, string message)
         : IReadOnlyList<KeyValuePair<string, object?>>
     {
-        // One budget per state across all of its values, nested sequences and exception
-        // graphs, so no small self-referencing input can expand into a huge rendering.
         private const int MaxNodes = 2_000;
         private const int MaxElements = 100;
         private const int MaxDepth = 4;
@@ -217,7 +172,6 @@ public sealed partial class SafeLoggerFactory(ILoggerFactory inner) : ILoggerFac
             List<KeyValuePair<string, object?>> pairs;
             try
             {
-                // Only in-memory key/value shapes are read; lazy sequences are never enumerated.
                 pairs = state switch
                 {
                     null => [],
@@ -230,12 +184,10 @@ public sealed partial class SafeLoggerFactory(ILoggerFactory inner) : ILoggerFac
             }
             catch (Exception inspection) when (inspection is not OutOfMemoryException)
             {
-                // A state that cannot be enumerated must never fail the operation being logged.
                 pairs = [new("State", $"[{state!.GetType().Name} log state withheld]")];
             }
 
             var budget = new Budget();
-            // ZLogger reads parameters only when the message template is the last pair, so it stays last.
             var cleaned = pairs
                 .Select(pair => new KeyValuePair<string, object?>(pair.Key ?? string.Empty, Normalize(pair.Value, 0, budget)))
                 .OrderBy(pair => pair.Key == "{OriginalFormat}")
@@ -247,17 +199,11 @@ public sealed partial class SafeLoggerFactory(ILoggerFactory inner) : ILoggerFac
             return new SafeState(cleaned, message);
         }
 
-        // No metadata is read, so one shared empty LogInfo decodes every state.
         private static readonly LogInfo DecodingInfo = new(new LogCategory(string.Empty), default, LogLevel.None, default, null, null, default, null, string.Empty, string.Empty, 0);
 
-        // ZLogger's pooled state is valid only until its entry is returned, so the template and
-        // parameters are copied here, inside Log. Only those are read, so the entry's metadata stays empty.
         private static List<KeyValuePair<string, object?>> ZLoggerPairs(IZLoggerEntryCreatable zlogger)
         {
             var entry = zlogger.CreateEntry(in DecodingInfo);
-            // entry.Return() releases the state once, so take that reference first, as ZLoggerLogger does. Without it the
-            // pooled state goes back to ZLogger's pool while its ZLog call still holds it, and another thread's call reuses
-            // it: another call site's template and values (main run 38282841575).
             (zlogger as IReferenceCountable)?.Retain();
             try
             {
@@ -276,9 +222,6 @@ public sealed partial class SafeLoggerFactory(ILoggerFactory inner) : ILoggerFac
             }
         }
 
-        // Message-template rendering with the standard semantics ({{ and }} escapes, alignment,
-        // format specifiers, "(null)") over the normalized values, positionally like
-        // Microsoft.Extensions.Logging. The original formatter is never called.
         private static string Format(string template, List<KeyValuePair<string, object?>> values)
         {
             var arguments = values.Where(pair => pair.Key != "{OriginalFormat}").Select(pair => pair.Value ?? "(null)").ToArray();
@@ -298,7 +241,6 @@ public sealed partial class SafeLoggerFactory(ILoggerFactory inner) : ILoggerFac
                 {
                     var hole = template[(position + 1)..end];
                     var suffix = hole.IndexOfAny([',', ':']) is var split and >= 0 ? hole[split..] : string.Empty;
-                    // ZLogger writes its format after a comma ("{Count,0.00}"); after a comma only an integer alignment is valid.
                     if (suffix.StartsWith(','))
                     {
                         var rest = suffix[1..];
@@ -337,8 +279,6 @@ public sealed partial class SafeLoggerFactory(ILoggerFactory inner) : ILoggerFac
 
         public override string ToString() => message;
 
-        // Scalars of exact framework types whose rendering is fixed. Reference types are
-        // matched by exact runtime type, because a subclass could override ToString.
         private static bool IsSafeScalar(object value) =>
             value is string or bool or char or byte or sbyte or short or ushort or int or uint or long or ulong
                 or float or double or decimal or Enum or DateTime or DateTimeOffset or TimeSpan or Guid
@@ -366,7 +306,6 @@ public sealed partial class SafeLoggerFactory(ILoggerFactory inner) : ILoggerFac
                 null => string.Empty,
                 _ when IsSafeScalar(value) => value.ToString() ?? string.Empty,
                 Exception exception => new ScrubbedException(exception).ToString(),
-                // An endpoint is shown by its display name, read through the non-virtual property.
                 Endpoint endpoint => endpoint.DisplayName ?? "(endpoint)",
                 System.Collections.ICollection items when depth < MaxDepth => RenderItems(items, depth, budget),
                 _ => $"[{value.GetType().Name} withheld]",
@@ -391,14 +330,12 @@ public sealed partial class SafeLoggerFactory(ILoggerFactory inner) : ILoggerFac
             }
             catch (Exception inspection) when (inspection is not OutOfMemoryException)
             {
-                // A sequence that throws while enumerating is withheld, never rethrown.
                 return $"[{items.GetType().Name} withheld]";
             }
 
             return "[" + string.Join(", ", parts) + "]";
         }
 
-        // A dictionary entry contributes its key and its value; anything else is itself.
         private static IEnumerable<object?> Parts(object? item)
         {
             if (item is System.Collections.DictionaryEntry entry)
@@ -426,10 +363,8 @@ public sealed partial class SafeLoggerFactory(ILoggerFactory inner) : ILoggerFac
 
 }
 
-/// <summary>Registration for <see cref="SafeLoggerFactory"/>.</summary>
 public static class SafeLoggingExtensions
 {
-    /// <summary>Replaces the logger factory with one that withholds exception messages from every provider.</summary>
     public static IServiceCollection AddSafeLogging(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);

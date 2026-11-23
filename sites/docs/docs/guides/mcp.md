@@ -117,5 +117,3 @@ The dashboard retains its authorization and confirmation requirements.
 
 `execute_sql` still accepts writes and schema changes allowed by the key's scopes;
 it does not use this resource-deletion handoff.
-
-A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

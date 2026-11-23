@@ -15,7 +15,7 @@ namespace TerraScale.Dashboard.Features.Observability
         }
 
         public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-            ValueTask.FromResult(Results.Text("ok"));
+            ValueTask.FromResult<IResult>(TypedResults.Text("ok"));
     }
 
     public sealed class ReadyzEndpoint(DependencyReadiness readiness) : EndpointWithoutRequest<IResult>
@@ -60,6 +60,6 @@ namespace TerraScale.Dashboard.Features.Observability
         }
 
         public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-            ValueTask.FromResult(Results.Json(new { status = "ok", region = readiness.Region, version = readiness.Revision }));
+            ValueTask.FromResult<IResult>(TypedResults.Json(new { status = "ok", region = readiness.Region, version = readiness.Revision }));
     }
 }

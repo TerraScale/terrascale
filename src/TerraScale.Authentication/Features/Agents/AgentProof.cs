@@ -28,7 +28,7 @@ public static class AgentProof
             ValidateLifetime = false,
             RequireSignedTokens = true,
             RequireExpirationTime = true,
-        }).ConfigureAwait(false);
+        });
         var unixNow = now.ToUnixTimeSeconds();
         return result.IsValid && result.SecurityToken is JsonWebToken { Alg: SecurityAlgorithms.EcdsaSha256 } token
             && token.Id is { Length: > 0 and <= 128 }

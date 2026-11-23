@@ -4,11 +4,9 @@ using ZLogger;
 
 namespace TerraScale.Authentication.Features.ProjectTenants;
 
-/// <summary><c>DELETE /v1/{project}/providers/{provider}</c>.</summary>
 public sealed class DeleteProjectProviderEndpoint(TenantDirectory tenants, ProjectAuthSettings settings, PlatformAuthentication authentication,
     ILogger<DeleteProjectProviderEndpoint> logger) : ProjectTenantEndpoint(tenants, authentication)
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Delete(Root + "/providers/{provider}");
@@ -25,6 +23,6 @@ public sealed class DeleteProjectProviderEndpoint(TenantDirectory tenants, Proje
 
         var updated = await settings.UpdateAsync(projectId, current => current with { Providers = [.. (current.Providers ?? []).Where(other => other.Provider != provider)] }, cancellationToken);
         logger.ZLogInformation($"Audit: user {caller.Id:@UserId} removed the {provider:@Provider} sign-in provider of project {projectId:@ProjectId}");
-        return Results.Json(await this.SettingsAsync(projectId, updated, cancellationToken), ProjectTenantJson.Default.SettingsBody);
+        return TypedResults.Json(await this.SettingsAsync(projectId, updated, cancellationToken), ProjectTenantJson.Default.SettingsBody);
     }
 }

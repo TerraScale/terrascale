@@ -17,6 +17,6 @@ public sealed class ReplayWebhookDeliveryEndpoint(TenantDirectory tenants, Platf
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         await history.ReplayAsync(projectId, this.RouteId("id"), this.RouteId("delivery"), cancellationToken);
-        return Results.NoContent();
+        return TypedResults.NoContent();
     }
 }

@@ -1,5 +1,5 @@
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
+using Dapper;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Sso;
 using TerraScale.Authentication.Storage;
@@ -12,16 +12,17 @@ public sealed partial class ProjectOrganizationDirectory
     {
         var now = clock.GetUtcNow();
         var cutoff = now.AddHours(-24);
-        var domains = await data.ReadAsync((db, token) => db.ProjectOrganizationDomains
-            .Where(row => row.VerifiedAt != null && (row.CheckedAt == null || row.CheckedAt <= cutoff)
-                && (row.LeaseUntil == null || row.LeaseUntil <= now))
-            .OrderBy(row => row.CheckedAt).Take(100).WithVersion().ToListAsync(token), cancellationToken).ConfigureAwait(false);
+        var domains = Versioned.All(await data.ReadAsync(connection => connection.QueryAsync<ProjectOrganizationDomain>(
+            """
+            SELECT * FROM project_organization_domains WHERE verified_at IS NOT NULL AND (checked_at IS NULL OR checked_at <= @cutoff)
+                AND (lease_until IS NULL OR lease_until <= @now) ORDER BY checked_at LIMIT 100
+            """, new { cutoff, now }), cancellationToken));
         await Parallel.ForEachAsync(domains, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken },
             async (row, token) =>
             {
                 var leased = row.Value with { LeaseUntil = clock.GetUtcNow().AddMinutes(1) };
                 var claim = Change.Update(row, leased);
-                if (!await data.SaveAsync(claim, token).ConfigureAwait(false))
+                if (!await data.SaveAsync(claim, token))
                 {
                     return;
                 }
@@ -30,7 +31,7 @@ public sealed partial class ProjectOrganizationDirectory
                 {
                     using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20), clock);
                     using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, timeout.Token);
-                    var verified = await this.PublishedAsync(leased, linked.Token).ConfigureAwait(false);
+                    var verified = await this.PublishedAsync(leased, linked.Token);
                     var failures = verified ? 0 : leased.FailedChecks + 1;
                     var updated = leased with
                     {
@@ -46,7 +47,7 @@ public sealed partial class ProjectOrganizationDirectory
                             organizationId: leased.OrganizationId)));
                     }
 
-                    await data.SaveAsync(changes, token).ConfigureAwait(false);
+                    await data.SaveAsync(changes, token);
                 }
                 catch (ApiException failure) when (failure.Code == "dns_unavailable")
                 {
@@ -56,7 +57,7 @@ public sealed partial class ProjectOrganizationDirectory
                 {
                     DomainCheckFailed(logger, failure, leased.ProjectId, leased.OrganizationId);
                 }
-            }).ConfigureAwait(false);
+            });
     }
 
     private async Task<bool> PublishedAsync(ProjectOrganizationDomain domain, CancellationToken cancellationToken)
@@ -65,10 +66,10 @@ public sealed partial class ProjectOrganizationDirectory
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, $"{SsoConnections.Resolver}?name=_terrascale-org.{Uri.EscapeDataString(domain.Domain)}&type=TXT");
             request.Headers.Accept.ParseAdd("application/dns-json");
-            using var response = await clients.CreateClient(SsoConnections.HttpClientName).SendAsync(request, cancellationToken).ConfigureAwait(false);
+            using var response = await clients.CreateClient(SsoConnections.HttpClientName).SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
-            using var answer = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false),
-                cancellationToken: cancellationToken).ConfigureAwait(false);
+            using var answer = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(cancellationToken),
+                cancellationToken: cancellationToken);
             if (answer.RootElement.ValueKind != JsonValueKind.Object || !answer.RootElement.TryGetProperty("Status", out var status) || status.ValueKind != JsonValueKind.Number || !status.TryGetInt32(out var code) || code is not (0 or 3))
             {
                 throw new ApiException(503, "dns_unavailable", "The DNS resolver is unavailable.");

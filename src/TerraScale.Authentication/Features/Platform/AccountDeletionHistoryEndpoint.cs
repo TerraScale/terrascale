@@ -6,14 +6,11 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.Platform;
 
-/// <summary>Opaque history correlation; never a physical-erasure certificate.</summary>
 internal sealed record AccountDeletionHistory(string ErasureId, DateTimeOffset RequestedAt, DateTimeOffset? AuthLogicalVerifiedAt,
     string? HistoryStatus, DateTimeOffset? HistoryCompletedAt);
 
-/// <summary>Reads one receipt-authorized history job without exposing the subject or its records.</summary>
 public sealed class AccountDeletionHistoryEndpoint(AccountDeletion accounts) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/v1/terrascale/account/deletion/history");
@@ -30,7 +27,6 @@ public sealed class AccountDeletionHistoryEndpoint(AccountDeletion accounts) : E
         Metadata(new RequiresSecurity(SecuritySchemes.AccountDeletionReceipt));
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         this.HttpContext.Response.Headers.CacheControl = "no-store";
@@ -64,7 +60,7 @@ public sealed class AccountDeletionHistoryEndpoint(AccountDeletion accounts) : E
 
         return await accounts.HistoryAsync(hash, organization, cancellationToken) switch
         {
-            AccountDeletionHistory history => Results.Json(history, DeletionHistoryJson.Default.AccountDeletionHistory),
+            AccountDeletionHistory history => TypedResults.Json(history, DeletionHistoryJson.Default.AccountDeletionHistory),
             NotFound failure => ErrorResults.ToResult(failure),
             Conflict failure => ErrorResults.ToResult(failure),
         };

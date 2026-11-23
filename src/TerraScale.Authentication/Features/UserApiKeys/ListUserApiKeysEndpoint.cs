@@ -15,6 +15,6 @@ public sealed class ListUserApiKeysEndpoint(TenantDirectory tenants, PlatformAut
     {
         var project = await this.AccessAsync(caller, Roles.Viewer, cancellationToken);
         _ = await this.Tenants.UserAsync(project, this.RouteId("user"), cancellationToken);
-        return Results.Json(await keys.ListAsync(project, this.RouteId("user"), cancellationToken), UserApiKeyJson.Default.UserApiKeyPageBody);
+        return TypedResults.Json(await keys.ListAsync(project, this.RouteId("user"), cancellationToken), UserApiKeyJson.Default.UserApiKeyPageBody);
     }
 }

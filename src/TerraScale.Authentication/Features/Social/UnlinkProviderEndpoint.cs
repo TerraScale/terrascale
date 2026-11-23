@@ -9,14 +9,10 @@ using TerraScale.Authentication.Features.SignIn;
 
 namespace TerraScale.Authentication.Features.Social;
 
-/// <summary>Fresh email-code proof before unlinking a provider.</summary>
-/// <param name="Code">A current sign-in code sent to the account's verified email.</param>
 public sealed record UnlinkProviderRequest([property: JsonPropertyName("code")] string? Code);
 
-/// <summary>Unlinks a provider after reauthentication, retaining email-code recovery.</summary>
 public sealed class UnlinkProviderEndpoint(PlatformAuthentication authentication, HostedAuth hosted, Passcodes passcodes, Users users) : PlatformEndpoint(authentication)
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Delete("/v1/terrascale/account/providers/{provider}");
@@ -25,7 +21,6 @@ public sealed class UnlinkProviderEndpoint(PlatformAuthentication authentication
         Produces<OAuthErrorBody>(StatusCodes.Status429TooManyRequests);
     }
 
-    /// <inheritdoc />
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
         var provider = this.HttpContext.GetRouteValue("provider") as string;
@@ -48,6 +43,6 @@ public sealed class UnlinkProviderEndpoint(PlatformAuthentication authentication
             return ErrorResults.ToResult(new Unauthorized("A current sign-in code is required.", "invalid_credentials"));
         }
 
-        return Results.NoContent();
+        return TypedResults.NoContent();
     }
 }

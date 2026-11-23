@@ -1,7 +1,5 @@
-using Microsoft.EntityFrameworkCore;
-using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.Dashboard.Platform.Clients;
 using TerraScale.DotNet.TerraBase;
-using TerraScale.TerraBase.Contracts;
 
 namespace TerraScale.Dashboard.Platform.Persistence;
 
@@ -9,45 +7,39 @@ public static class DashboardStorage
 {
     public const string ProjectId = "00000000000000000000000005";
     public const string Database = "ts-dashboard";
-    public const string WriteHeader = "TerraScale-Write";
+    public const string StateHttpClientName = "dashboard-state";
 
-    public static IServiceCollection AddDashboardStorage(this IServiceCollection services)
+    extension(IServiceCollection services)
     {
-        services.AddSingleton<Transport>();
-        services.AddSingleton<BackgroundJobs>();
-        services.AddSingleton(provider => new TerraBaseSqlClient(provider.GetRequiredService<Transport>().Client,
-            new TerraBaseSqlClientOptions { BaseAddress = TerraBaseRpcClient.Origin(provider.GetRequiredService<IHostEnvironment>()) }).Database(ProjectId, Database));
-        services.AddHostedService<StorageSweeper>();
-        services.AddPooledDbContextFactory<DashboardDbContext>((provider, options) => options.UseTerraBase(provider.GetRequiredService<TerraBaseSqlDatabase>()).AddInterceptors(StateWrites.Instance));
-        return services;
-    }
-
-    public sealed class Transport(IDashboardIdentity identity) : IDisposable
-    {
-        public HttpClient Client { get; } = new(new Home(identity) { InnerHandler = TerraBaseHttp.CreateHandler() });
-
-        public void Dispose()
+        public IServiceCollection AddDashboardStorage()
         {
-            Client.Dispose();
+            services.AddSingleton(provider => ServiceUrls.From(provider.GetRequiredService<IHostEnvironment>(), Environment.GetEnvironmentVariable));
+            services.AddSingleton<CausalBookmarks>();
+            services.AddHttpClient(StateHttpClientName, (provider, client) => client.BaseAddress = provider.GetRequiredService<ServiceUrls>().TerraBase)
+                .ConfigurePrimaryHttpMessageHandler(TerraBaseHttp.CreateHandler)
+                .AddHttpMessageHandler(provider => new TerraBaseHeaders(provider.GetRequiredService<IDashboardIdentity>(), provider.GetRequiredService<CausalBookmarks>(), true))
+                .AddHttpMessageHandler(() => new StrongConsistency());
+            services.AddHttpClient(TerraBaseHttpClient.HttpClientName, (provider, client) => client.BaseAddress = provider.GetRequiredService<ServiceUrls>().TerraBase)
+                .ConfigurePrimaryHttpMessageHandler(TerraBaseHttp.CreateHandler)
+                .AddHttpMessageHandler(provider => new TerraBaseHeaders(provider.GetRequiredService<IDashboardIdentity>(), provider.GetRequiredService<CausalBookmarks>(), false));
+            services.AddHttpClient(PlatformHttpClient.HttpClientName, (provider, client) => client.BaseAddress = provider.GetRequiredService<ServiceUrls>().Platform)
+                .ConfigurePrimaryHttpMessageHandler(TerraBaseHttp.CreateHandler)
+                .AddHttpMessageHandler(provider => new PlatformHeaders(provider.GetRequiredService<IDashboardIdentity>(), provider.GetRequiredService<CausalBookmarks>()));
+            services.AddHttpClient(ControlPlaneClient.HttpClientName, (provider, client) =>
+                    client.BaseAddress = provider.GetRequiredService<ServiceUrls>() is { Control: { } control } ? control : provider.GetRequiredService<ServiceUrls>().TerraBase)
+                .ConfigurePrimaryHttpMessageHandler(TerraBaseHttp.CreateHandler)
+                .AddHttpMessageHandler(provider => new TerraBaseHeaders(provider.GetRequiredService<IDashboardIdentity>(), provider.GetRequiredService<CausalBookmarks>(), false));
+            services.AddSingleton(provider => new TerraBaseHttpClient(Transport(provider, TerraBaseHttpClient.HttpClientName)));
+            services.AddSingleton(provider => new PlatformHttpClient(Transport(provider, PlatformHttpClient.HttpClientName)));
+            services.AddSingleton(provider => new ControlPlaneClient(Transport(provider, ControlPlaneClient.HttpClientName)));
+            services.AddSingleton(provider => new DashboardDb(new TerraBaseSqlClient(provider.GetRequiredService<IHttpClientFactory>().CreateClient(StateHttpClientName),
+                new TerraBaseSqlClientOptions { BaseAddress = provider.GetRequiredService<ServiceUrls>().TerraBase }).Database(ProjectId, Database)));
+            services.AddSingleton<BackgroundJobs>();
+            services.AddHostedService<StorageSweeper>();
+            return services;
         }
     }
 
-    private sealed class Home(IDashboardIdentity identity) : DelegatingHandler
-    {
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            var credentials = await identity.ReadAsync(cancellationToken);
-            request.Headers.Remove(TerraBaseRpc.PeerCredentialHeader);
-            request.Headers.Add(TerraBaseRpc.PeerCredentialHeader, credentials.TerraBasePeerSecret);
-            if (credentials.Caller is { } caller)
-            {
-                request.Headers.Remove(CallerCredential.HeaderName);
-                request.Headers.Add(CallerCredential.HeaderName, caller.Token);
-            }
-            request.Headers.Remove(WriteHeader);
-            request.Headers.Add(WriteHeader, "home");
-            return await ServerTiming.RpcAsync("state/sql/" + request.RequestUri?.Segments[^1], false,
-                () => base.SendAsync(request, cancellationToken));
-        }
-    }
+    private static ServiceTransport Transport(IServiceProvider provider, string name) =>
+        new(provider.GetRequiredService<IHttpClientFactory>().CreateClient(name));
 }

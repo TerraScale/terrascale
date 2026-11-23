@@ -1,4 +1,6 @@
-using Microsoft.EntityFrameworkCore;
+using System.Data;
+using System.Text.Json;
+using Dapper;
 using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Platform.Mcp;
@@ -12,7 +14,7 @@ public static class McpRegistrations
     public static readonly TimeSpan UnfinishedLifetime = TimeSpan.FromHours(24);
     public static readonly TimeSpan IdleLifetime = TimeSpan.FromDays(30);
 
-    public static async Task<McpRegistration> CreateAsync(IDbContextFactory<DashboardDbContext> storage, string name, string[] redirectUris, DateTimeOffset now,
+    public static async Task<McpRegistration> CreateAsync(DashboardDb storage, string name, string[] redirectUris, DateTimeOffset now,
         CancellationToken cancellationToken)
     {
         var at = now.UtcDateTime;
@@ -20,41 +22,44 @@ public static class McpRegistrations
         {
             Id = AccountService.NewId(),
             Name = name,
-            RedirectUris = [.. redirectUris],
+            RedirectUris = JsonSerializer.Serialize(redirectUris, McpRowJson.Default.StringArray),
             CreatedAt = at,
             LastActivityAt = at,
             Version = AccountService.NewId(),
         };
-        await using var db = await storage.CreateDbContextAsync(cancellationToken);
-        db.McpClients.Add(row);
-        await db.SaveChangesAsync(cancellationToken);
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        await connection.ExecuteAsync(DashboardSql.McpClients.Insert, row);
         return Registration(row);
     }
 
-    public static Task<McpRegistration?> ReadActiveAsync(IDbContextFactory<DashboardDbContext> storage, TimeProvider time, string clientId, CancellationToken cancellationToken)
+    public static Task<McpRegistration?> ReadActiveAsync(DashboardDb storage, TimeProvider time, string clientId, CancellationToken cancellationToken)
     {
         return ReadAsync(storage, time, clientId, Activity.None, cancellationToken);
     }
 
-    public static Task<McpRegistration?> CompleteSignInAsync(IDbContextFactory<DashboardDbContext> storage, TimeProvider time, string clientId, CancellationToken cancellationToken)
+    public static Task<McpRegistration?> CompleteSignInAsync(DashboardDb storage, TimeProvider time, string clientId, CancellationToken cancellationToken)
     {
         return ReadAsync(storage, time, clientId, Activity.SignIn, cancellationToken);
     }
 
-    public static Task<McpRegistration?> TouchAsync(IDbContextFactory<DashboardDbContext> storage, TimeProvider time, string clientId, CancellationToken cancellationToken)
+    public static Task<McpRegistration?> TouchAsync(DashboardDb storage, TimeProvider time, string clientId, CancellationToken cancellationToken)
     {
         return ReadAsync(storage, time, clientId, Activity.Authenticated, cancellationToken);
     }
 
-    public static async Task ReclaimUnfinishedAsync(DashboardDbContext db, DateTime now, CancellationToken cancellationToken)
+    private const string Reclaim = "DELETE FROM mcp_clients WHERE first_sign_in_completed_at IS NULL AND closed_at IS NULL AND created_at <= @Cutoff";
+    private const string ById = DashboardSql.McpClients.Select + " WHERE id = @Id";
+
+    public static async Task ReclaimUnfinishedAsync(DashboardDb storage, DateTime now, CancellationToken cancellationToken)
     {
-        var cutoff = now - UnfinishedLifetime;
-        await db.McpClients.Where(row => row.FirstSignInCompletedAt == null && row.ClosedAt == null && row.CreatedAt <= cutoff).ExecuteDeleteAsync(cancellationToken);
+        ArgumentNullException.ThrowIfNull(storage);
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        await connection.ExecuteAsync(Reclaim, new { Cutoff = now - UnfinishedLifetime });
     }
 
     private enum Activity { None, SignIn, Authenticated }
 
-    private static async Task<McpRegistration?> ReadAsync(IDbContextFactory<DashboardDbContext> storage, TimeProvider time, string clientId, Activity activity,
+    private static async Task<McpRegistration?> ReadAsync(DashboardDb storage, TimeProvider time, string clientId, Activity activity,
         CancellationToken cancellationToken)
     {
         if (!Canonical(clientId))
@@ -62,11 +67,10 @@ public static class McpRegistrations
             return null;
         }
 
-        await using var db = await storage.CreateDbContextAsync(cancellationToken);
+        await using var connection = await storage.OpenAsync(cancellationToken);
         for (var attempt = 0; attempt < 8; attempt++)
         {
-            db.ChangeTracker.Clear();
-            var row = await db.McpClients.SingleOrDefaultAsync(client => client.Id == clientId, cancellationToken);
+            var row = await connection.QuerySingleOrDefaultAsync<McpClientRow>(ById, new { Id = clientId });
             if (row is null || row.ClosedAt is not null)
             {
                 return null;
@@ -101,14 +105,11 @@ public static class McpRegistrations
                 row.LastActivityAt = now;
             }
 
+            row.OriginalVersion = row.Version;
             row.Version = AccountService.NewId();
-            try
+            if (await connection.ExecuteAsync(DashboardSql.McpClients.Update, row) == 1)
             {
-                await db.SaveChangesAsync(cancellationToken);
                 return expired ? null : Registration(row);
-            }
-            catch (DbUpdateConcurrencyException)
-            {
             }
         }
         throw new IOException("MCP registration changed concurrently.");
@@ -116,7 +117,7 @@ public static class McpRegistrations
 
     private static McpRegistration Registration(McpClientRow row)
     {
-        return new(row.Id, row.Name, [.. row.RedirectUris], Utc(row.CreatedAt), Utc(row.LastActivityAt),
+        return new(row.Id, row.Name, JsonSerializer.Deserialize(row.RedirectUris, McpRowJson.Default.StringArray) ?? [], Utc(row.CreatedAt), Utc(row.LastActivityAt),
             row.FirstSignInCompletedAt is { } first ? Utc(first) : null, row.ClosedAt is { } closed ? Utc(closed) : null);
     }
 

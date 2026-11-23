@@ -1,8 +1,8 @@
+using Dapper;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.Metadata;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using TerraScale.Authentication.Configuration;
@@ -26,6 +26,7 @@ public sealed record ProjectStepUpRequest(string ClientId, string? Password = nu
 {
     public override string ToString() => nameof(ProjectStepUpRequest);
 }
+
 public sealed record ProjectStepUpBody(string Proof, DateTimeOffset ExpiresAt)
 {
     public override string ToString() => nameof(ProjectStepUpBody);
@@ -146,8 +147,9 @@ public sealed class ProjectStepUpEndpoint(PlatformAuthentication authentication,
         try
         {
             var now = clock.GetUtcNow();
-            var current = await data.ReadAsync((db, token) => db.Sessions.Where(session => session.InstanceId == project && session.Id == live.Session.Id)
-                .WithVersion().SingleOrDefaultAsync(token), cancellationToken);
+            var sessionId = live.Session.Id;
+            var current = Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<SessionRecord>(
+                "SELECT * FROM sessions WHERE instance_id = @project AND id = @sessionId", new { project, sessionId }), cancellationToken));
             if (current is null || current.Value.Revoked || current.Value.ExpiresAt <= now
                 || await proofs.RequirementsAsync(caller, cancellationToken) is not { } requirements
                 || !await data.SaveAsync([.. requirements, Change.Update(current, current.Value with { VerifiedAt = now })], cancellationToken))
@@ -175,7 +177,7 @@ public sealed class ProjectStepUpEndpoint(PlatformAuthentication authentication,
                         : passwordVerified && method != "pwd" ? new[] { "pwd", method, "mfa" } : new[] { method },
                 },
             });
-            var result = Results.Json(new ProjectStepUpBody(proof, expires), ProjectTenantJson.Default.ProjectStepUpBody);
+            var result = TypedResults.Json(new ProjectStepUpBody(proof, expires), ProjectTenantJson.Default.ProjectStepUpBody);
             if (reservation is not null)
             {
                 await reservation.ReturnAsync(cancellationToken);

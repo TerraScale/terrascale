@@ -19,7 +19,7 @@ public sealed class ValidateImpersonationToken(Impersonations impersonations) : 
         }
 
         var tenant = Tenancy.Current(context.Transaction.GetHttpRequest()?.HttpContext);
-        if (await impersonations.FindAsync(tenant, id, context.CancellationToken).ConfigureAwait(false) is not { } live
+        if (await impersonations.FindAsync(tenant, id, context.CancellationToken) is not { } live
             || live.User.Id != context.Principal.GetClaim(Claims.Subject))
         {
             context.Reject(OidcErrors.InvalidToken, "The impersonation has ended.");
@@ -38,7 +38,7 @@ public sealed class LimitImpersonationToken(Impersonations impersonations) : IOp
         }
 
         var tenant = Tenancy.Current(context.Transaction.GetHttpRequest()?.HttpContext);
-        if (await impersonations.FindAsync(tenant, id, context.CancellationToken).ConfigureAwait(false) is not { } live
+        if (await impersonations.FindAsync(tenant, id, context.CancellationToken) is not { } live
             || live.Record.ClientId != context.Request?.ClientId || live.User.Id != context.Principal.GetClaim(Claims.Subject))
         {
             context.Reject(OidcErrors.InvalidGrant, "The impersonation has ended or belongs to another client.");

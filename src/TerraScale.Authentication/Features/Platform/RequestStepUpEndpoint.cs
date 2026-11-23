@@ -3,10 +3,8 @@ using TerraScale.Authentication.Errors;
 
 namespace TerraScale.Authentication.Features.Platform;
 
-/// <summary>Starts a dedicated hosted reauthentication without approving any operation.</summary>
 public sealed class RequestStepUpEndpoint(StepUpProofs proofs, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/v1/terrascale/step-up");
@@ -15,11 +13,10 @@ public sealed class RequestStepUpEndpoint(StepUpProofs proofs, PlatformAuthentic
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
     }
 
-    /// <inheritdoc />
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken) =>
         await proofs.RequestAsync(caller, await this.BodyAsync(StepUpJson.Default.StepUpRequest, cancellationToken), cancellationToken) switch
         {
-            StepUpBody body => Results.Json(body, StepUpJson.Default.StepUpBody, statusCode: StatusCodes.Status201Created),
+            StepUpBody body => TypedResults.Json(body, StepUpJson.Default.StepUpBody, statusCode: StatusCodes.Status201Created),
             Validation failure => ErrorResults.ToResult(failure),
             QuotaExceeded failure => ErrorResults.ToResult(failure),
             Forbidden failure => ErrorResults.ToResult(failure),

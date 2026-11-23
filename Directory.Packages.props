@@ -18,23 +18,6 @@
     <PackageVersion Include="Microsoft.CodeAnalysis.Workspaces.Common" Version="5.9.0" />
     <PackageVersion Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" Version="5.9.0" />
   </ItemGroup>
-  <!-- Microsoft.Extensions track the .NET 11 SDK and shared framework; lower pins
-       downgrade what ASP.NET Core 11 requires (NU1109). -->
-  <ItemGroup Label="Protocol Buffers (Features/Sync page pull)">
-    <PackageVersion Include="Google.Protobuf" Version="3.36.2" />
-    <PackageVersion Include="Grpc.Tools" Version="2.84.0" />
-  </ItemGroup>
-  <!-- Dashboard-to-TerraBase RPC (src/TerraScale.TerraBase.Contracts): MagicOnion over gRPC with MessagePack. -->
-  <ItemGroup Label="MagicOnion">
-    <PackageVersion Include="MagicOnion.Abstractions" Version="7.11.0" />
-    <PackageVersion Include="MagicOnion.Client" Version="7.11.0" />
-    <PackageVersion Include="MessagePack" Version="3.1.12" />
-    <!-- MagicOnion's gRPC dependencies, pinned to the Grpc.Tools release train above. -->
-    <PackageVersion Include="Grpc.AspNetCore.Server" Version="2.84.0" />
-    <PackageVersion Include="Grpc.Core.Api" Version="2.84.0" />
-    <PackageVersion Include="Grpc.Net.Client" Version="2.84.0" />
-    <PackageVersion Include="Grpc.Net.Common" Version="2.84.0" />
-  </ItemGroup>
   <ItemGroup Label="Microsoft Extensions (Core)">
     <PackageVersion Include="Microsoft.Extensions.Configuration" Version="11.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Binder" Version="11.0.0" />
@@ -57,7 +40,6 @@
   </ItemGroup>
   <ItemGroup Label="API and hosting">
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="11.0.0" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.15" />
     <PackageVersion Include="Scalar.AspNetCore" Version="2.17.13" />
     <PackageVersion Include="RazorSlices" Version="0.12.1" />
   </ItemGroup>
@@ -98,23 +80,14 @@
     <!-- Last MIT release: 9.x NuGet binaries introduce commercial maintenance terms. -->
     <PackageVersion Include="JsonSchema.Net" Version="8.0.5" />
   </ItemGroup>
-  <!-- S3-compatible object storage (Tigris) for continuous backups (Features/Backup). -->
   <ItemGroup Label="Object storage">
     <PackageVersion Include="AWSSDK.S3" Version="4.0.104.1" />
   </ItemGroup>
-  <!-- Revision notifications between regions for region replicas (Features/Replicas). -->
-  <ItemGroup Label="Messaging">
-    <PackageVersion Include="NATS.Client.Core" Version="3.3.2" />
-    <PackageVersion Include="NATS.Client.JetStream" Version="3.3.2" />
-    <PackageVersion Include="NATS.Client.KeyValueStore" Version="3.3.2" />
-  </ItemGroup>
-  <!-- Cron expressions for scheduled backups (Features/Management/Backups). -->
   <ItemGroup Label="Scheduling">
     <PackageVersion Include="Cronos" Version="0.13.0" />
     <PackageVersion Include="Jint" Version="4.17.0" />
   </ItemGroup>
   <ItemGroup Label="Performance primitives">
-    <PackageVersion Include="K4os.Compression.LZ4.Streams" Version="1.3.8" />
     <PackageVersion Include="NativeCompressions" Version="0.6.1" />
     <PackageVersion Include="Ulid" Version="1.4.1" />
     <PackageVersion Include="NUlid" Version="1.7.3" />

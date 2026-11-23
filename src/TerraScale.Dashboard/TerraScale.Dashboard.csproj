@@ -10,6 +10,7 @@
     <ServerGarbageCollection>true</ServerGarbageCollection>
     <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
     <GarbageCollectionAdaptationMode>1</GarbageCollectionAdaptationMode>
+    <InterceptorsNamespaces>$(InterceptorsNamespaces);Dapper.AOT</InterceptorsNamespaces>
   </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="../../sites/landing/static/pricing.json" LogicalName="TerraScale.Dashboard.Common.Accounts.pricing.json" />
@@ -20,12 +21,14 @@
     <PackageReference Include="RazorSlices" />
     <PackageReference Include="Scalar.AspNetCore" />
     <PackageReference Include="Stripe.net" />
-    <PackageReference Include="MagicOnion.Client" />
-    <PackageReference Include="NUlid" />
+    <PackageReference Include="Dapper" />
+    <PackageReference Include="Dapper.AOT" />
+    <PackageReference Include="dbup-core" />
+    <PackageReference Include="Ulid" />
     <ProjectReference Include="../TerraScale.Endpoints/TerraScale.Endpoints.csproj" />
-    <ProjectReference Include="../TerraScale.TerraBase.Contracts/TerraScale.TerraBase.Contracts.csproj" />
-    <ProjectReference Include="../../sdk/dotnet/src/TerraScale.EntityFrameworkCore/TerraScale.EntityFrameworkCore.csproj" />
-    <!-- web/ is also the asset build's npm project; its manifests are build inputs, never shipped. -->
+    <ProjectReference Include="../TerraScale.Contracts/TerraScale.Contracts.csproj" />
+    <ProjectReference Include="../../sdk/dotnet/src/TerraScale.DotNet/TerraScale.DotNet.csproj" />
+    <EmbeddedResource Include="Platform/Persistence/Schema/*.sql" LogicalName="TerraScale.Dashboard.Schema.%(Filename)%(Extension)" />
     <Content Remove="web/package.json;web/package-lock.json" />
     <None Update="**/*" Watch="false" />
     <Content Include="web/static/**/*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
@@ -34,11 +37,9 @@
     <Watch Include="Features/**/*.css" />
   </ItemGroup>
   <Target Name="BundleDashboardAssets" BeforeTargets="PrepareForBuild">
-    <!-- The asset build's npm project (package.json, node_modules, build/) is web/. -->
     <Exec WorkingDirectory="$(MSBuildProjectDirectory)/web" Command="npm ci --ignore-scripts" Condition="!Exists('web/node_modules/lightningcss/package.json')" />
     <Exec WorkingDirectory="$(MSBuildProjectDirectory)/web" Command="node build/build-css.mjs" />
     <Exec WorkingDirectory="$(MSBuildProjectDirectory)/web" Command="node build/build-js.mjs" />
-    <!-- The bundles are content-hashed and generated above, after the static glob ran: list the files that exist now. -->
     <ItemGroup>
       <Content Remove="web/static/js/**" />
       <Content Include="web/static/js/**/*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Watch="false" />

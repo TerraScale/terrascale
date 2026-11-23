@@ -1,4 +1,3 @@
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Common.UI;
@@ -9,19 +8,18 @@ namespace TerraScale.Dashboard.Features.Profile
     {
         private const int PauseDoublings = 4;
 
-        public static Task<IResult> ProgressAsync(HttpContext http, IDbContextFactory<DashboardDbContext> storage, IDashboardIdentity identity, ITsAuthPlatform platform)
+        public static Task<IResult> ProgressAsync(HttpContext http, DashboardDb storage, IDashboardIdentity identity, ITsAuthPlatform platform)
         {
             return CheckStatusAsync(http, storage, identity, platform);
         }
 
-        // This page's continuation never calls DELETE or billing, even for an unknown receipt.
-        public static Task<IResult> StatusAsync(HttpContext http, IDbContextFactory<DashboardDbContext> storage, IDashboardIdentity identity,
+        public static Task<IResult> StatusAsync(HttpContext http, DashboardDb storage, IDashboardIdentity identity,
             ITsAuthPlatform platform, DashboardSessions sessions, AccessTokens tokens)
         {
             return CheckStatusAsync(http, storage, identity, platform, sessions, tokens);
         }
 
-        private static async Task<IResult> CheckStatusAsync(HttpContext http, IDbContextFactory<DashboardDbContext> storage, IDashboardIdentity identity,
+        private static async Task<IResult> CheckStatusAsync(HttpContext http, DashboardDb storage, IDashboardIdentity identity,
             ITsAuthPlatform platform, DashboardSessions? sessions = null, AccessTokens? tokens = null)
         {
             var caller = http.RequestAborted;
@@ -36,7 +34,7 @@ namespace TerraScale.Dashboard.Features.Profile
                     var form = await FormRequests.ReadAsync(http, budget.Token);
                     if (!Csrf.Validate(http, form))
                     {
-                        return RequestError.FormExpired(http, "/account-deletion", Results.StatusCode(403));
+                        return RequestError.FormExpired(http, "/account-deletion", TypedResults.StatusCode(403));
                     }
 
                     _ = int.TryParse(form["_retry"], out attempt);

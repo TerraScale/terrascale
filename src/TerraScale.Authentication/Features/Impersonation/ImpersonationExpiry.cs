@@ -7,13 +7,13 @@ public sealed class ImpersonationExpiry(AuthSchema schema, Impersonations impers
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await schema.Ready.WaitAsync(stoppingToken).ConfigureAwait(false);
+        await schema.Ready.WaitAsync(stoppingToken);
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1), clock);
-        while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
+        while (await timer.WaitForNextTickAsync(stoppingToken))
         {
             try
             {
-                await impersonations.ExpireAsync(stoppingToken).ConfigureAwait(false);
+                await impersonations.ExpireAsync(stoppingToken);
             }
             catch (Exception error) when (!stoppingToken.IsCancellationRequested)
             {

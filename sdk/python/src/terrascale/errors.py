@@ -28,6 +28,8 @@ __all__ = [
     "CommitUncertainError",
     "SqlError",
     "SqlErrorCodes",
+    "SerializationConflictError",
+    "SchemaMismatchError",
     "error_for",
     "VersionMismatchError",
     "PreconditionRequiredError",
@@ -176,6 +178,7 @@ class SqlErrorCodes:
     FORBIDDEN_SCOPE = "forbidden_scope"
     SQL_SANDBOX = "sql_sandbox"
     SERIALIZATION_CONFLICT = "serialization_conflict"
+    SCHEMA_MISMATCH = "schema_mismatch"
     ROW_CONFLICT = "row_conflict"
     TOO_LARGE = "too_large"
     QUERY_CANCELED = "query_canceled"
@@ -191,7 +194,6 @@ class SqlErrorCodes:
     INTERNAL_ERROR = "internal_error"
 
 
-
 class SqlError(APIError):
     """A SQL statement error; write_outcome_unknown requires reconciliation. ``code`` is one of
     :class:`SqlErrorCodes`, ``statement`` the zero-based failing statement and
@@ -199,13 +201,33 @@ class SqlError(APIError):
 
     @property
     def is_transient(self) -> bool:
-        return self.code in (SqlErrorCodes.SERIALIZATION_CONFLICT, SqlErrorCodes.TENANT_BUSY)
+        return self.code in (SqlErrorCodes.SERIALIZATION_CONFLICT, SqlErrorCodes.SCHEMA_MISMATCH, SqlErrorCodes.TENANT_BUSY)
+
+
+class SerializationConflictError(SqlError, ConflictError):
+    """409 ``serialization_conflict``: a concurrent transaction won and this one was rolled back; nothing was written.
+    Run the whole transaction again."""
+
+
+class SchemaMismatchError(SqlError):
+    """412 ``schema_mismatch``: the schema changed while the statement ran and nothing was written.
+    Run the whole transaction again."""
+
+
+def sql_error_class(code: str) -> type[SqlError]:
+    if code == SqlErrorCodes.SERIALIZATION_CONFLICT:
+        return SerializationConflictError
+    if code == SqlErrorCodes.SCHEMA_MISMATCH:
+        return SchemaMismatchError
+    return SqlError
 
 
 _BY_CODE: dict[str, type[APIError]] = {
     "key_revoked": KeyRevokedError,
     "key_expired": KeyExpiredError,
     "unique_violation": UniqueViolationError,
+    "serialization_conflict": SerializationConflictError,
+    "schema_mismatch": SchemaMismatchError,
 }
 _BY_STATUS: dict[int, type[APIError]] = {
     400: InvalidRequestError,
@@ -229,11 +251,11 @@ def error_for(status: int, body: Any, headers: Any = None, *, mutation: bool = F
     if headers is not None:
         retry_after = parse_retry_after(headers.get("retry-after"))
     statement = err.get("statement") if type(err.get("statement")) is int else None
-    raw_state = err.get("sqlstate")
+    raw_state = err.get("sqlState")
     sqlstate = raw_state if isinstance(raw_state, str) and raw_state else None
     cls = _BY_CODE.get(code) or _BY_STATUS.get(status) or APIError
     if statement is not None and raw_code and isinstance(raw_state, str):
-        cls = SqlError
+        cls = sql_error_class(code)
     elif mutation and (code in ("commit_uncertain", "write_outcome_unknown", "internal_error")
                        or 500 <= status < 600 and code == f"http_{status}"):
         cls = CommitUncertainError

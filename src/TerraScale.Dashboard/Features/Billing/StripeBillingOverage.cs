@@ -1,6 +1,7 @@
+using TerraScale.Dashboard.Platform.Persistence;
+using Dapper;
 using System.Diagnostics;
 using System.Globalization;
-using Microsoft.EntityFrameworkCore;
 using Stripe;
 using AccountService = TerraScale.Dashboard.Common.Accounts.AccountService;
 
@@ -28,16 +29,33 @@ public sealed partial class StripeBilling
 
     internal void RecordWaitingOverageMonths(long count, DateTimeOffset? oldest) => telemetry.ReportWaitingOverageMonths(count, oldest);
 
+    private const string ClaimOverage = """
+        UPDATE billing_overage_charges SET claim_owner = @ClaimOwner, claim_until = @ClaimUntil
+        WHERE id = @Id AND state = @Pending AND (claim_until IS NULL OR claim_until < @ClaimedAt)
+        """;
+
+    private const string OverageById = DashboardSql.BillingOverageCharges.Select + " WHERE id = @Id";
+
+    private const string CompleteOverage = """
+        UPDATE billing_overage_charges
+        SET state = @State, provider_id = @ProviderId, provider_amount_cents = @ProviderAmountCents, accepted_at = @AcceptedAt, skip_reason = @SkipReason,
+            claim_owner = NULL, claim_until = NULL
+        WHERE id = @Id AND claim_owner = @Owner AND state = @Pending
+        """;
+
     internal async Task DispatchOverageAsync(string chargeId, CancellationToken cancellationToken)
     {
         var owner = AccountService.NewId();
         var claimedAt = time.GetUtcNow();
         var claimUntil = claimedAt + DispatchClaim;
-        await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+        await using (var connection = await storage.OpenAsync(cancellationToken))
         {
-            var claimed = await db.OverageCharges.Where(row => row.Id == chargeId && row.State == OverageCharge.Pending && (row.ClaimUntil == null || row.ClaimUntil < claimedAt))
-                .ExecuteUpdateAsync(row => row.SetProperty(charge => charge.ClaimOwner, owner).SetProperty(charge => charge.ClaimUntil, claimUntil), cancellationToken);
-            if (claimed != 1) { return; }
+            var claimed = await connection.ExecuteAsync(ClaimOverage,
+                new { Id = chargeId, OverageCharge.Pending, ClaimedAt = claimedAt, ClaimOwner = owner, ClaimUntil = claimUntil });
+            if (claimed != 1)
+            {
+                return;
+            }
         }
         OverageOutcome outcome = new Released();
         try
@@ -56,10 +74,10 @@ public sealed partial class StripeBilling
     {
         OverageCharge charge;
         BillingSubscription? subscription;
-        await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+        await using (var connection = await storage.OpenAsync(cancellationToken))
         {
-            charge = await db.OverageCharges.AsNoTracking().SingleAsync(row => row.Id == chargeId, cancellationToken);
-            subscription = await db.BillingSubscriptions.AsNoTracking().SingleOrDefaultAsync(row => row.OrganizationId == charge.OrganizationId && row.SubscriptionId == charge.SubscriptionId, cancellationToken);
+            charge = await connection.QuerySingleAsync<OverageCharge>(OverageById, new { Id = chargeId });
+            subscription = await connection.QuerySingleOrDefaultAsync<BillingSubscription>(SubscriptionOf, new { charge.OrganizationId, charge.SubscriptionId });
         }
         var binding = await storage.BindingRowAsync(charge.OrganizationId, cancellationToken);
         if (binding is null || binding.State == "deleting" || binding.ErasureId is not null) { return new Released(); }
@@ -131,16 +149,18 @@ public sealed partial class StripeBilling
             _ => throw new UnreachableException(),
         };
         DateTimeOffset? acceptedAt = providerId is null ? null : now;
-        await using var db = await storage.CreateDbContextAsync(CancellationToken.None);
-        var saved = await db.OverageCharges.Where(row => row.Id == chargeId && row.ClaimOwner == owner && row.State == OverageCharge.Pending)
-            .ExecuteUpdateAsync(row => row
-                .SetProperty(charge => charge.State, state)
-                .SetProperty(charge => charge.ProviderId, providerId)
-                .SetProperty(charge => charge.ProviderAmountCents, providerAmount)
-                .SetProperty(charge => charge.AcceptedAt, acceptedAt)
-                .SetProperty(charge => charge.SkipReason, reason)
-                .SetProperty(charge => charge.ClaimOwner, (string?)null)
-                .SetProperty(charge => charge.ClaimUntil, (DateTimeOffset?)null), CancellationToken.None);
+        await using var connection = await storage.OpenAsync(CancellationToken.None);
+        var saved = await connection.ExecuteAsync(CompleteOverage, new
+        {
+            Id = chargeId,
+            Owner = owner,
+            OverageCharge.Pending,
+            State = state,
+            ProviderId = providerId,
+            ProviderAmountCents = providerAmount,
+            AcceptedAt = acceptedAt,
+            SkipReason = reason,
+        });
         if (saved != 1) { return; }
         switch (outcome)
         {

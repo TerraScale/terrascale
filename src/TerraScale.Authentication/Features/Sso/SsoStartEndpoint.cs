@@ -6,10 +6,8 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.Sso;
 
-/// <summary><c>GET /ui/terrascale/sso</c>: sends the browser to the identity provider of the email's organization.</summary>
 public sealed class SsoStartEndpoint(SsoSignIn sso, HostedAuth hosted) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(SsoSignIn.StartPath);
@@ -24,7 +22,6 @@ public sealed class SsoStartEndpoint(SsoSignIn sso, HostedAuth hosted) : Endpoin
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var email = this.HttpContext.Request.Query["email"].ToString().Trim();
@@ -52,6 +49,6 @@ public sealed class SsoStartEndpoint(SsoSignIn sso, HostedAuth hosted) : Endpoin
             MaxAge = SsoSignIn.Lifetime,
         });
         this.HttpContext.Response.Headers.CacheControl = "no-store";
-        return Results.Redirect(start.Location);
+        return TypedResults.Redirect(start.Location);
     }
 }

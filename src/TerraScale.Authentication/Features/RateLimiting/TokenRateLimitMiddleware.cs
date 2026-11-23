@@ -13,35 +13,25 @@ using ZLogger;
 
 namespace TerraScale.Authentication.Features.RateLimiting;
 
-/// <summary>
-/// IPv4-mapped addresses share the IPv4 budget; IPv6 shares a /64 and an additional /48 budget.
-/// Untrusted forwarding headers and submitted client identifiers never select a bucket. Missing peers and storage failures
-/// fail closed with an OAuth error.
-/// </summary>
 public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimiter limiter, AuthOptions options, ILogger<TokenRateLimitMiddleware> logger, bool clientLimit)
 {
     public const int ProxyFactor = 4;
 
     private const string TokenPath = "/" + OidcIssuer.Slug + "/oauth/token";
 
-    // The device authorization endpoint writes two tokens per unauthenticated call, so it shares the token budget.
     private const string DevicePath = "/" + OidcIssuer.Slug + "/oauth/device";
     private static readonly TimeSpan Window = TimeSpan.FromMinutes(1);
     private static readonly object TrustedProxyKey = new();
 
-    /// <summary>Registers socket-peer admission before forwarded headers are processed.</summary>
     public static IApplicationBuilder UsePeerGuard(IApplicationBuilder app) =>
         app.UseMiddleware<TokenRateLimitMiddleware>(false);
 
-    /// <summary>Registers resolved-client admission after forwarding and before client authentication.</summary>
     public static IApplicationBuilder UseClientGuard(IApplicationBuilder app) =>
         app.UseMiddleware<TokenRateLimitMiddleware>(true);
 
-    /// <summary>Runs the guard for the real issuer's token endpoint, then the authentication pipeline.</summary>
     public async Task InvokeAsync(HttpContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
-        // OpenIddict treats casing and a single trailing slash as equivalent endpoint paths.
         if (!HttpMethods.IsPost(context.Request.Method)
             || !(context.Request.Path.Equals(TokenPath, StringComparison.OrdinalIgnoreCase)
                 || context.Request.Path.Equals(TokenPath + "/", StringComparison.OrdinalIgnoreCase)
@@ -62,14 +52,13 @@ public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimite
         }
         catch (ApiException error) when (error.Status == StatusCodes.Status503ServiceUnavailable)
         {
-            // The limiter's storage failed and it fails closed; name the cause (its type only), so an outage is visible.
             logger.ZLogWarning(error.InnerException ?? error, $"Token request refused: its rate limit could not be checked");
             context.Response.Headers.CacheControl = "no-store";
             context.Response.Headers.RetryAfter = "2";
             refusal = CustomTokenEndpoint.Matches(context.Request.Path)
-                ? Results.Json(new ErrorBody(new ErrorDetail("temporarily_unavailable", "The token request could not be checked; retry shortly.")),
+                ? TypedResults.Json(new ErrorBody(new ErrorDetail("temporarily_unavailable", "The token request could not be checked; retry shortly.")),
                     statusCode: StatusCodes.Status503ServiceUnavailable)
-                : Results.Json(new OAuthErrorBody(OidcErrors.TemporarilyUnavailable, "The token request could not be checked; retry shortly."),
+                : TypedResults.Json(new OAuthErrorBody(OidcErrors.TemporarilyUnavailable, "The token request could not be checked; retry shortly."),
                     statusCode: StatusCodes.Status503ServiceUnavailable);
         }
 
@@ -82,8 +71,6 @@ public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimite
         await next(context);
     }
 
-    // A project tenant's token endpoint, existing or not, charges the same per-peer budget as the platform's: the
-    // budget belongs to the caller's address, not to the tenant it names.
     internal static bool IsProjectTokenPath(PathString path) =>
         (path.Value ?? string.Empty).Split('/') is [_, var tenant, var oauth, var token, ..] rest
         && rest.Length <= 5 && (rest.Length == 4 || rest[4].Length == 0)
@@ -93,7 +80,6 @@ public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimite
 
     private async Task<TimeSpan?> LimitAsync(HttpContext context)
     {
-        // Only the guard before forwarding can mark the actual socket peer as trusted. No request header supplies this marker.
         if (clientLimit && !context.Items.ContainsKey(TrustedProxyKey))
         {
             return null;
@@ -112,7 +98,6 @@ public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimite
             }
 
             maximum = (int)Math.Min((long)maximum * ProxyFactor, int.MaxValue);
-            // Proxy and ordinary peer capacities must not compete in a shared IPv6 prefix or folded bucket.
             purpose = "token-proxy-ip";
         }
 
@@ -125,7 +110,6 @@ public sealed class TokenRateLimitMiddleware(RequestDelegate next, AttemptLimite
         {
             var bytes = address.GetAddressBytes();
             Array.Clear(bytes, 6, bytes.Length - 6);
-            // AttemptLimiter accepts Int32 capacities; avoid overflow for a large configured peer budget.
             var siteMaximum = (int)Math.Min((long)maximum * HostedAuth.SiteFactor, int.MaxValue);
             return await limiter.AcquireAsync(OidcIssuer.InstanceId, purpose + "-site", limiter.Fold(new IPAddress(bytes).ToString()), siteMaximum, Window, context.RequestAborted);
         }

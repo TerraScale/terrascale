@@ -4,10 +4,8 @@ using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Features.ProjectTenants;
 
-/// <summary><c>GET /v1/{project}/sessions</c>.</summary>
 public sealed class ListProjectSessionsEndpoint(TenantDirectory tenants, PlatformAuthentication authentication) : ProjectTenantEndpoint(tenants, authentication)
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(Root + "/sessions");
@@ -31,6 +29,6 @@ public sealed class ListProjectSessionsEndpoint(TenantDirectory tenants, Platfor
         }
 
         var page = await this.Tenants.SessionsAsync(projectId, user, limit, after, cancellationToken);
-        return Results.Json(new ProjectSessionPageBody([.. page.Items.Select(item => new ProjectSessionBody(item.Id, item.Session.UserId, item.Email, item.Session.CreatedAt, item.Session.ExpiresAt))], page.Next), ProjectTenantJson.Default.ProjectSessionPageBody);
+        return TypedResults.Json(new ProjectSessionPageBody([.. page.Items.Select(item => new ProjectSessionBody(item.Id, item.Session.UserId, item.Email, item.Session.CreatedAt, item.Session.ExpiresAt))], page.Next), ProjectTenantJson.Default.ProjectSessionPageBody);
     }
 }

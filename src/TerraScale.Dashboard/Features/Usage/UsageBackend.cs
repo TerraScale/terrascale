@@ -1,15 +1,12 @@
 using System.Net;
-using TerraScale.Dashboard.Platform.Rpc;
-using TerraScale.TerraBase.Contracts.Usage;
+using TerraScale.Dashboard.Platform.Clients;
 using TerraScale.Dashboard.Platform.Observability;
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.TerraBase.Contracts;
 
 namespace TerraScale.Dashboard.Features.Usage
 {
-    // TerraBase owns counters; dashboard billing remains separate from these best-effort observations.
-    public sealed class UsageBackend(TerraBaseRpcClient rpc, TimeProvider time, IProjectAccessTokens tokens) : IUsageMeasurements
+    public sealed class UsageBackend(TerraBaseHttpClient terraBase, TimeProvider time, IProjectAccessTokens tokens) : IUsageMeasurements
     {
         public async Task<UsageMeasurements> ReadAsync(UsageSelection selection, CancellationToken cancellationToken)
         {
@@ -62,8 +59,7 @@ namespace TerraScale.Dashboard.Features.Usage
                             throw new JsonException("Usage database scope is invalid.");
                         }
 
-                        var row = await rpc.User<IUsageService>(token, configured.Region.Length == 0 ? null : configured.Region.ToLowerInvariant()).WithCancellationToken(deadline.Token)
-                            .GetDatabaseUsageAsync(project.Id, configured.Name, bucket, first, now);
+                        var row = TerraBaseResults.Require(await terraBase.GetDatabaseUsageAsync(ServiceCaller.User(token), project.Id, configured.Name, first, now, deadline.Token));
                         if (row.DatabaseId != databaseId)
                         {
                             throw new JsonException("Usage returned a different database.");
@@ -71,14 +67,13 @@ namespace TerraScale.Dashboard.Features.Usage
 
                         return new(UsageSourceState.Measured, DatabaseReading(row, project, first, now, bucket));
                     }
-                    var totals = await rpc.User<IUsageService>(token).WithCancellationToken(deadline.Token).GetProjectUsageAsync(project.Id, bucket, first, now);
+                    var totals = TerraBaseResults.Require(await terraBase.GetProjectUsageAsync(ServiceCaller.User(token), project.Id, first, now, deadline.Token));
                     if (totals.ProjectId != project.Id || Count(totals.Databases) != totals.Items.Count ||
                         totals.Items.Select(item => item.DatabaseId).Distinct(StringComparer.Ordinal).Count() != totals.Items.Count)
                     {
                         throw new JsonException("Usage returned a different project or repeated database.");
                     }
 
-                    // The typed RPC response can contain null nested values from a malformed producer.
                     if (totals.Period is null || totals.Items.Any(item => item.Period is null))
                     {
                         throw new JsonException("Usage returned no metering period.");
@@ -99,8 +94,6 @@ namespace TerraScale.Dashboard.Features.Usage
                 }
                 catch (HttpRequestException error) when (error.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
                 { return new(UsageSourceState.Unauthorized); }
-                // Only a producer 404 after authorization can describe an unregistered empty project.
-                // It provides no authoritative monthly organization ledger, including deleted-project usage.
                 catch (HttpRequestException error) when (authorized && error.StatusCode == HttpStatusCode.NotFound && databaseId.Length == 0 && project.Databases.Count == 0)
                 { return new(UsageSourceState.Measured, new(project.Id, "", 0, new(first, End(now, bucket), bucket, 0, 0), [], [])); }
                 catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.NotFound)

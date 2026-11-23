@@ -15,6 +15,6 @@ public sealed class ListProjectWaitlistEndpoint(TenantDirectory tenants, Platfor
     {
         var projectId = await this.AccessAsync(caller, Roles.Viewer, cancellationToken);
         var (limit, after) = this.Paging(50);
-        return Results.Json(await invitations.WaitlistAsync(projectId, limit, after, cancellationToken), ProjectTenantJson.Default.WaitlistPageBody);
+        return TypedResults.Json(await invitations.WaitlistAsync(projectId, limit, after, cancellationToken), ProjectTenantJson.Default.WaitlistPageBody);
     }
 }

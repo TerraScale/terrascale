@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http.HttpResults;
 using System.Diagnostics;
 using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Errors;
@@ -20,7 +21,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Invitations
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, "/invitations/" + Uri.EscapeDataString(token), Results.StatusCode(403));
+                return RequestError.FormExpired(http, "/invitations/" + Uri.EscapeDataString(token), TypedResults.StatusCode(403));
             }
 
             var session = await sessions.ReadAsync(http);
@@ -45,12 +46,12 @@ namespace TerraScale.Dashboard.Features.Organizations.Invitations
             { return await InvitationEndpoints.PageAsync(http, sessions, invitations, token, error.Message, error.StatusCode); }
         }
 
-        private static IResult Accepted(HttpContext http, PendingInvitation pending, string action)
+        private static StatusCodeHttpResult Accepted(HttpContext http, PendingInvitation pending, string action)
         {
             http.Response.Headers.Location = action == "decline" ? "/databases?invitation=declined" : pending.Project is { } project
                 ? "/databases?organizationId=" + pending.Organization.Id + "&projectId=" + project.Id
                 : "/organization?tab=members&invitation=accepted";
-            return Results.StatusCode(StatusCodes.Status303SeeOther);
+            return TypedResults.StatusCode(StatusCodes.Status303SeeOther);
         }
     }
 }

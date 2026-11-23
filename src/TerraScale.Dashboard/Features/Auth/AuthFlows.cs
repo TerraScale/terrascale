@@ -1,15 +1,19 @@
+using Dapper;
+using System.Data;
 using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Auth
 {
-    public sealed partial class AuthFlows(IDbContextFactory<DashboardDbContext> storage, IDashboardIdentity identity, TimeProvider time)
+    public sealed partial class AuthFlows(DashboardDb storage, IDashboardIdentity identity, TimeProvider time)
     {
+        private const string ByToken = DashboardSql.AuthFlows.Select + " WHERE token_hash = @TokenHash AND purpose = @Purpose";
+        private const string RemoveToken = "DELETE FROM auth_flows WHERE token_hash = @TokenHash AND purpose = @Purpose";
+
         private const string OidcCookiePrefix = "ts-dashboard-oidc-";
         public static readonly TimeSpan OidcLifetime = TimeSpan.FromHours(1);
 
@@ -55,9 +59,9 @@ namespace TerraScale.Dashboard.Features.Auth
             var token = Random();
             var credentials = await identity.ReadAsync(context.RequestAborted);
             var (nonce, ciphertext, tag) = Seal(value, credentials.SessionEncryptionKey, purpose);
-            await using (var db = await storage.CreateDbContextAsync(context.RequestAborted))
+            await using (var connection = await storage.OpenAsync(context.RequestAborted))
             {
-                db.AuthFlows.Add(new AuthFlowRow
+                await connection.ExecuteAsync(DashboardSql.AuthFlows.Insert, new AuthFlowRow
                 {
                     Id = AccountService.NewId(),
                     TokenHash = Key(token),
@@ -68,7 +72,6 @@ namespace TerraScale.Dashboard.Features.Auth
                     CreatedAt = time.GetUtcNow().UtcDateTime,
                     ExpiresAt = expires.UtcDateTime,
                 });
-                await db.SaveChangesAsync(context.RequestAborted);
             }
 
             var options = Options(context);
@@ -99,23 +102,14 @@ namespace TerraScale.Dashboard.Features.Auth
             }
 
             var hash = Key(token);
-            await using var db = await storage.CreateDbContextAsync(context.RequestAborted);
-            return await db.AuthFlows.AsNoTracking().SingleOrDefaultAsync(flow => flow.TokenHash == hash && flow.Purpose == purpose, context.RequestAborted);
+            await using var connection = await storage.OpenAsync(context.RequestAborted);
+            return await connection.QuerySingleOrDefaultAsync<AuthFlowRow>(ByToken, new { TokenHash = hash, Purpose = purpose });
         }
 
         private async Task<bool> TakeAsync(AuthFlowRow row, CancellationToken cancellationToken)
         {
-            await using var db = await storage.CreateDbContextAsync(cancellationToken);
-            db.AuthFlows.Remove(row);
-            try
-            {
-                await db.SaveChangesAsync(cancellationToken);
-                return true;
-            }
-            catch (DbUpdateConcurrencyException)
-            {
-                return false;
-            }
+            await using var connection = await storage.OpenAsync(cancellationToken);
+            return await connection.ExecuteAsync(DashboardSql.AuthFlows.Delete, row) == 1;
         }
 
         public async Task HoldAlertSecretAsync(HttpContext context, AccountContext account, string ruleName, string secret)
@@ -156,8 +150,8 @@ namespace TerraScale.Dashboard.Features.Auth
             if (IsToken(token))
             {
                 var hash = Key(token);
-                await using var db = await storage.CreateDbContextAsync(context.RequestAborted);
-                await db.AuthFlows.Where(flow => flow.TokenHash == hash && flow.Purpose == purpose).ExecuteDeleteAsync(context.RequestAborted);
+                await using var connection = await storage.OpenAsync(context.RequestAborted);
+                await connection.ExecuteAsync(RemoveToken, new { TokenHash = hash, Purpose = purpose });
             }
             context.Response.Cookies.Delete(cookie, Options(context));
         }

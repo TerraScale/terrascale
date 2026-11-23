@@ -14,13 +14,13 @@ public static class OrganizationWizard
         var context = await AccountRequest.RequireAsync(http, sessions, accounts);
         if (context is null)
         {
-            return Results.Unauthorized();
+            return TypedResults.Unauthorized();
         }
 
         var form = await FormRequests.ReadAsync(http, http.RequestAborted);
         if (!Csrf.Validate(http, form))
         {
-            return RequestError.FormExpired(http, "/organization", Results.StatusCode(403));
+            return RequestError.FormExpired(http, "/organization", TypedResults.StatusCode(403));
         }
 
         try

@@ -18,7 +18,7 @@ public sealed class NotificationsLiveEndpoint(DashboardSessions sessions, Accoun
         var region = view switch { "shell" => "ts-notifications-topbar", "inbox" => "notification-inbox", "dialog" => "ts-notifications-body", _ => "" };
         if (region.Length == 0)
         {
-            return Results.BadRequest();
+            return TypedResults.BadRequest();
         }
 
         var live = new LiveView(time);
@@ -49,6 +49,6 @@ public sealed class NotificationsLiveEndpoint(DashboardSessions sessions, Accoun
         }
 
         await live.StreamAsync(http, ReadAsync, live.ChangesAsync(cancellationToken), cancellationToken);
-        return Results.Empty;
+        return TypedResults.Empty;
     }
 }

@@ -1,5 +1,5 @@
-using Microsoft.EntityFrameworkCore;
 using System.Text.Json.Serialization;
+using Dapper;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Errors;
@@ -34,12 +34,19 @@ public sealed record ConsumeStepUpRequest(
     public override string ToString() => nameof(ConsumeStepUpRequest);
 }
 
-internal sealed record StepUpRecord(string InstanceId, string Id, string UserId, long AuthEpoch, string? AuthStamp,
+public sealed record StepUpRecord(string InstanceId, string Id, string UserId, long AuthEpoch, string? AuthStamp,
     string TokenHash, string Purpose, string Audience, string ReturnUri, DateTimeOffset ExpiresAt,
     bool PrimaryVerified = false, bool Approved = false, bool Consumed = false, bool MailRequested = false,
-    IReadOnlyList<CredentialBinding>? Bindings = null, string? OrganizationId = null);
-internal sealed record StepUpDeletionGrant(string InstanceId, string UserId, long AuthEpoch, string? AuthStamp, string ReceiptHash,
-    DateTimeOffset ExpiresAt, string AuthorizationHash, IReadOnlyList<CredentialBinding> Bindings);
+    IReadOnlyList<CredentialBinding>? Bindings = null, string? OrganizationId = null)
+{
+    public string? Version { get; init; }
+}
+
+public sealed record StepUpDeletionGrant(string InstanceId, string UserId, long AuthEpoch, string? AuthStamp, string ReceiptHash,
+    DateTimeOffset ExpiresAt, string AuthorizationHash, IReadOnlyList<CredentialBinding> Bindings)
+{
+    public string? Version { get; init; }
+}
 
 public sealed record StepUpGrantBody([property: JsonPropertyName("operation_grant")] string OperationGrant)
 {
@@ -80,7 +87,7 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
     public async Task<UserRecord> ConsumeHeaderAsync(UserRecord caller, HttpRequest request, string purpose, string? organizationId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await this.ConsumeAsync(caller, Proof(request), purpose, "ts-auth", null, cancellationToken, organizationId).ConfigureAwait(false) switch
+        return await this.ConsumeAsync(caller, Proof(request), purpose, "ts-auth", null, cancellationToken, organizationId) switch
         {
             StepUpConsumption consumed => consumed.Caller,
             Forbidden => throw Required(),
@@ -90,7 +97,7 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
     internal async Task<PreparedStepUp?> PrepareHeaderAsync(UserRecord caller, HttpRequest request, string purpose, string? organizationId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return await this.PrepareAsync(caller, Proof(request), purpose, "ts-auth", null, cancellationToken, organizationId).ConfigureAwait(false);
+        return await this.PrepareAsync(caller, Proof(request), purpose, "ts-auth", null, cancellationToken, organizationId);
     }
 
     public async Task<StepUpBodyResult> RequestAsync(UserRecord caller, StepUpRequest request, CancellationToken cancellationToken)
@@ -107,7 +114,7 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
             return new Validation("Use a supported purpose/audience and the registered dashboard origin's /auth/step-up/callback.");
         }
 
-        return await this.IssueAsync(caller, request.Purpose, request.Audience, callback, request.OrganizationId, cancellationToken).ConfigureAwait(false);
+        return await this.IssueAsync(caller, request.Purpose, request.Audience, callback, request.OrganizationId, cancellationToken);
     }
 
     internal async Task<StepUpBody> RequestAgentApprovalAsync(UserRecord caller, string enrollmentId, string returnPath, CancellationToken cancellationToken) =>
@@ -121,7 +128,7 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
 
     private async Task<StepUpBodyResult> IssueAsync(UserRecord caller, string purpose, string audience, Uri returnUri, string? binding, CancellationToken cancellationToken)
     {
-        if (!await limiter.TryAcquireAsync(caller.InstanceId, "step-up-issuance", caller.Id, MaxRequests, RequestWindow, cancellationToken).ConfigureAwait(false))
+        if (!await limiter.TryAcquireAsync(caller.InstanceId, "step-up-issuance", caller.Id, MaxRequests, RequestWindow, cancellationToken))
         {
             return new QuotaExceeded("Too many verification requests; retry after fifteen minutes.", "rate_limited");
         }
@@ -130,7 +137,7 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
         var secret = id + "." + Tokens.RandomToken(43);
         var record = new StepUpRecord(caller.InstanceId, id, caller.Id, caller.AuthEpoch, caller.AuthStamp, Tokens.Sha256Hex(secret),
             purpose, audience, returnUri.AbsoluteUri, clock.GetUtcNow().AddMinutes(5), OrganizationId: binding);
-        if (!await data.SaveAsync([Change.Assert(caller), Change.Insert(record)], cancellationToken).ConfigureAwait(false))
+        if (!await data.SaveAsync([Change.Assert(caller), Change.Insert(record)], cancellationToken))
         {
             return StepUpRequired();
         }
@@ -140,7 +147,7 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
 
     internal async Task<(StepUpRecord Record, string Version)?> ReadAsync(UserRecord caller, string id, CancellationToken cancellationToken)
     {
-        var rowData = await data.ReadAsync((db, token) => db.StepUpProofs.Where(proof => proof.Id == id).WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
+        var rowData = await this.ProofAsync(id, cancellationToken);
         return rowData?.Value is { } record
             && record.InstanceId == caller.InstanceId && record.UserId == caller.Id && record.Id == id
             && record.AuthEpoch == caller.AuthEpoch && record.AuthStamp == caller.AuthStamp && !record.Consumed && record.ExpiresAt > clock.GetUtcNow()
@@ -151,24 +158,24 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
     {
         var verified = Merge(caller, record.Bindings ?? []);
         if (record.ExpiresAt <= clock.GetUtcNow() || verified is null
-            || await this.RequirementsAsync(verified, cancellationToken).ConfigureAwait(false) is not { } requirements)
+            || await this.RequirementsAsync(verified, cancellationToken) is not { } requirements)
         {
             return false;
         }
 
-        return await data.SaveAsync([.. requirements, Change.Update(record, version)], cancellationToken).ConfigureAwait(false)
+        return await data.SaveAsync([.. requirements, Change.Update(record, version)], cancellationToken)
             && record.ExpiresAt > clock.GetUtcNow();
     }
 
     public async Task<StepUpConsumptionResult> ConsumeAsync(UserRecord caller, string? proof, string purpose, string audience, string? receiptHash, CancellationToken cancellationToken, string? organizationId = null)
     {
         ArgumentNullException.ThrowIfNull(caller);
-        if (await this.PrepareAsync(caller, proof, purpose, audience, receiptHash, cancellationToken, organizationId).ConfigureAwait(false) is not { } prepared)
+        if (await this.PrepareAsync(caller, proof, purpose, audience, receiptHash, cancellationToken, organizationId) is not { } prepared)
         {
             return StepUpRequired();
         }
 
-        if (prepared.Record.ExpiresAt <= clock.GetUtcNow() || !await data.SaveAsync(prepared.Operations, cancellationToken).ConfigureAwait(false)
+        if (prepared.Record.ExpiresAt <= clock.GetUtcNow() || !await data.SaveAsync(prepared.Operations, cancellationToken)
             || prepared.Record.ExpiresAt <= clock.GetUtcNow())
         {
             return StepUpRequired();
@@ -182,7 +189,7 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
         ArgumentNullException.ThrowIfNull(caller);
         if (!Pair(purpose, audience) || receiptHash is not null && purpose != "delete_account"
             || proof is not { Length: 70 } || proof[26] != '.' || !PlatformDirectory.IsId(proof[..26])
-            || await this.ReadAsync(caller, proof[..26], cancellationToken).ConfigureAwait(false) is not { Record: { Approved: true, PrimaryVerified: true, Bindings.Count: > 0 } } current
+            || await this.ReadAsync(caller, proof[..26], cancellationToken) is not { Record: { Approved: true, PrimaryVerified: true, Bindings.Count: > 0 } } current
             || current.Record.Purpose != purpose || current.Record.Audience != audience
             || current.Record.OrganizationId != organizationId
             || !Tokens.FixedTimeEquals(current.Record.TokenHash, Tokens.Sha256Hex(proof))
@@ -192,7 +199,7 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
         }
 
         var verified = Merge(caller, current.Record.Bindings ?? []);
-        if (verified is null || await this.RequirementsAsync(verified, cancellationToken).ConfigureAwait(false) is not { } requirements)
+        if (verified is null || await this.RequirementsAsync(verified, cancellationToken) is not { } requirements)
         {
             return null;
         }
@@ -215,14 +222,15 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
         ArgumentNullException.ThrowIfNull(request);
         if (receiptHash is not null && !request.Headers.ContainsKey(Header))
         {
-            if (await data.ReadAsync((db, token) => db.StepUpDeletionGrants.SingleOrDefaultAsync(row => row.InstanceId == caller.InstanceId && row.ReceiptHash == receiptHash, token),
-                cancellationToken).ConfigureAwait(false) is { } grant
+            var instance = caller.InstanceId;
+            if (await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<StepUpDeletionGrant>(
+                "SELECT * FROM step_up_deletion_grants WHERE instance_id = @instance AND receipt_hash = @receiptHash", new { instance, receiptHash }), cancellationToken) is { } grant
                 && grant.InstanceId == caller.InstanceId && grant.UserId == caller.Id && grant.AuthEpoch == caller.AuthEpoch
                 && grant.AuthStamp == caller.AuthStamp && grant.ReceiptHash == receiptHash && grant.ExpiresAt > clock.GetUtcNow()
                 && grant.Bindings.Count > 0
                 && request.Headers[DeletionAuthorizationHeader] is [string { Length: 43 } authorization]
                 && Tokens.FixedTimeEquals(grant.AuthorizationHash, Tokens.Sha256Hex(authorization))
-                && await credentials.AreCurrentAsync(caller.InstanceId, grant.Bindings, cancellationToken).ConfigureAwait(false))
+                && await credentials.AreCurrentAsync(caller.InstanceId, grant.Bindings, cancellationToken))
             {
                 var continued = Merge(caller, grant.Bindings);
                 if (continued is not null)
@@ -232,7 +240,7 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
             }
         }
 
-        return await this.ConsumeAsync(caller, Proof(request), "delete_account", "ts-auth", receiptHash, cancellationToken).ConfigureAwait(false);
+        return await this.ConsumeAsync(caller, Proof(request), "delete_account", "ts-auth", receiptHash, cancellationToken);
     }
 
     public async Task<StepUpUserResult> DeleteOrganizationAsync(UserRecord caller, HttpRequest request, string organizationId, CancellationToken cancellationToken)
@@ -245,7 +253,7 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
         }
 
         var id = proof[..26];
-        var current = await data.ReadAsync((db, token) => db.StepUpProofs.Where(row => row.Id == id).WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
+        var current = await this.ProofAsync(id, cancellationToken);
         if (current?.Value is not { Consumed: true, Approved: true, PrimaryVerified: true, Purpose: "delete_organization", Audience: "ts-auth", Bindings: { Count: > 0 } bindings } record
             || record.InstanceId != caller.InstanceId || record.UserId != caller.Id || record.Id != id
             || record.AuthEpoch != caller.AuthEpoch || record.AuthStamp != caller.AuthStamp || record.OrganizationId != organizationId
@@ -256,8 +264,8 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
         }
 
         var verified = Merge(caller, bindings);
-        if (verified is null || await this.RequirementsAsync(verified, cancellationToken).ConfigureAwait(false) is not { } requirements
-            || !await data.SaveAsync([.. requirements, Change.Delete(current)], cancellationToken).ConfigureAwait(false)
+        if (verified is null || await this.RequirementsAsync(verified, cancellationToken) is not { } requirements
+            || !await data.SaveAsync([.. requirements, Change.Delete(current)], cancellationToken)
             || record.ExpiresAt <= clock.GetUtcNow())
         {
             return StepUpRequired();
@@ -279,24 +287,32 @@ public sealed class StepUpProofs(AuthData data, Credentials credentials, AuthOpt
 
     internal async Task<IReadOnlyList<Change>?> RequirementsAsync(UserRecord caller, CancellationToken cancellationToken) =>
         await credentials.RequireAsync(caller.InstanceId, [.. caller.AuthenticationBindings.Where(binding => binding != Credentials.UserState(caller.Id, caller.AuthStamp!))],
-            cancellationToken).ConfigureAwait(false) is { } lineage ? [Change.Assert(caller), .. lineage] : null;
+            cancellationToken) is { } lineage ? [Change.Assert(caller), .. lineage] : null;
 
     public async Task<int> PruneAsync(int batchSize, CancellationToken cancellationToken = default)
     {
         var now = clock.GetUtcNow();
-        return await data.InBatchesAsync(batchSize, (db, token) => db.StepUpProofs.Where(row => row.ExpiresAt <= now).OrderBy(row => row.ExpiresAt).Take(batchSize)
-                .ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false)
-            + await data.InBatchesAsync(batchSize, (db, token) => db.StepUpDeletionGrants.Where(row => row.ExpiresAt <= now
-                    && db.StepUpDeletionGrants.Where(expired => expired.ExpiresAt <= now).OrderBy(expired => expired.ExpiresAt).Take(batchSize)
-                        .Any(expired => expired.InstanceId == row.InstanceId && expired.ReceiptHash == row.ReceiptHash))
-                .ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false)
-            + await data.InBatchesAsync(batchSize, (db, token) => db.Passcodes.Where(row => row.Purpose == "step-up" && row.ExpiresAt <= now
-                    && db.Passcodes.Where(expired => expired.Purpose == "step-up" && expired.ExpiresAt <= now).OrderBy(expired => expired.ExpiresAt).Take(batchSize)
-                        .Any(expired => expired.InstanceId == row.InstanceId && expired.Key == row.Key))
-                .ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false)
-            + await data.InBatchesAsync(batchSize, (db, token) => db.EmailChanges.Where(row => row.ExpiresAt <= now).OrderBy(row => row.ExpiresAt).Take(batchSize)
-                .ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false);
+        return await data.InBatchesAsync(batchSize, connection => connection.ExecuteAsync(
+                "DELETE FROM step_up_proofs WHERE id IN (SELECT id FROM step_up_proofs WHERE expires_at <= @now ORDER BY expires_at LIMIT @batchSize)",
+                new { now, batchSize }), cancellationToken)
+            + await data.InBatchesAsync(batchSize, connection => connection.ExecuteAsync(
+                """
+                DELETE FROM step_up_deletion_grants WHERE (instance_id, receipt_hash) IN (
+                    SELECT instance_id, receipt_hash FROM step_up_deletion_grants WHERE expires_at <= @now ORDER BY expires_at LIMIT @batchSize)
+                """, new { now, batchSize }), cancellationToken)
+            + await data.InBatchesAsync(batchSize, connection => connection.ExecuteAsync(
+                """
+                DELETE FROM passcodes WHERE (instance_id, "key") IN (
+                    SELECT instance_id, "key" FROM passcodes WHERE purpose = 'step-up' AND expires_at <= @now ORDER BY expires_at LIMIT @batchSize)
+                """, new { now, batchSize }), cancellationToken)
+            + await data.InBatchesAsync(batchSize, connection => connection.ExecuteAsync(
+                "DELETE FROM email_changes WHERE user_id IN (SELECT user_id FROM email_changes WHERE expires_at <= @now ORDER BY expires_at LIMIT @batchSize)",
+                new { now, batchSize }), cancellationToken);
     }
+
+    private async Task<Versioned<StepUpRecord>?> ProofAsync(string id, CancellationToken cancellationToken) =>
+        Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<StepUpRecord>(
+            "SELECT * FROM step_up_proofs WHERE id = @id", new { id }), cancellationToken));
 
     internal static ApiException Required() => new(403, "step_up_required", "A fresh, approved, purpose-bound single-use proof is required.");
 

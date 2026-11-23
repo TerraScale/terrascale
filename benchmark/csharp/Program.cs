@@ -105,13 +105,16 @@ internal static class Runner
         var runTag = new TerraScaleIdGenerator().NewId()[18..].ToLowerInvariant();
         List<ScenarioResult> results = [];
 
+        async Task<string> AccessTokenAsync(CancellationToken ct) =>
+            await auth.Oidc.RequestClientCredentialsTokenAsync(keyId, options.ApiKey, project: options.Project, cancellationToken: ct) switch
+            {
+                TerraScaleAuthTokenResponse token => token.AccessToken,
+                AuthRefused refused => throw new InvalidOperationException($"Token exchange refused: {refused.ErrorCode} {refused.Message}"),
+            };
+
         results.Add(await MeasureAsync("auth_token_exchange", options.Warmup, options.Iterations, async ct =>
         {
-            var tokenResult = await auth.Oidc.RequestClientCredentialsTokenAsync(keyId, options.ApiKey, project: options.Project, cancellationToken: ct);
-            if (tokenResult is AuthRefused refused)
-            {
-                throw new InvalidOperationException($"Token exchange refused: {refused.ErrorCode} {refused.Message}");
-            }
+            await AccessTokenAsync(ct);
         }, cancellationToken));
 
         var lcCounter = 0;
@@ -179,6 +182,31 @@ internal static class Runner
                     throw new InvalidOperationException($"Expected {options.BatchSize} batch results, got {batchResults.Count}.");
                 }
             }, cancellationToken));
+
+            var consistency = new ConsistencyChannel(
+                http,
+                new Uri(options.TerraBaseUrl, $"/v1/projects/{Uri.EscapeDataString(options.Project)}/databases/{Uri.EscapeDataString(workDbName)}/sql/execute"),
+                await AccessTokenAsync(cancellationToken));
+            foreach (var mode in Enum.GetValues<ConsistencyMode>())
+            {
+                var wire = ConsistencyChannel.Wire(mode);
+                results.Add(await MeasureAsync($"sql_{wire}_write", options.Warmup, options.Iterations, async ct =>
+                {
+                    var id = nextId++;
+                    await consistency.ExecuteAsync(mode, "INSERT INTO bench_items (id, tag, amount) VALUES (?, ?, ?)", [id, wire, id * 10], causal: false, ct);
+                }, cancellationToken));
+
+                results.Add(await MeasureAsync($"sql_{wire}_bookmark_read", options.Warmup, options.Iterations, async ct =>
+                {
+                    var id = nextId++;
+                    await consistency.ExecuteAsync(mode, "INSERT INTO bench_items (id, tag, amount) VALUES (?, ?, ?)", [id, wire, id * 10], causal: true, ct);
+                    var read = await consistency.ExecuteAsync(mode, "SELECT id, tag, amount FROM bench_items WHERE id = ?", [id], causal: true, ct);
+                    if (read.Rows != 1)
+                    {
+                        throw new InvalidOperationException($"Expected 1 row after {wire} bookmark read for id {id}, got {read.Rows}.");
+                    }
+                }, cancellationToken));
+            }
 
             await using (var session = await db.ConnectAsync(cancellationToken))
             {

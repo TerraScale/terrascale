@@ -1,7 +1,6 @@
-using Grpc.Core;
-using Microsoft.EntityFrameworkCore;
+using System.Data;
 using TerraScale.Dashboard.Platform.TsAuth;
-using TerraScale.TerraBase.Contracts;
+using TerraScale.Dashboard.Platform.Clients;
 using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Features.Data;
 
@@ -21,7 +20,7 @@ namespace TerraScale.Dashboard.Common.Databases
 
         internal static int Status(Exception error)
         {
-            return error switch { AccountAccessException access => access.StatusCode, TerraBaseException provider => provider.Status, DatabaseWrongRegionException => 409, DbUpdateConcurrencyException => StatusCodes.Status412PreconditionFailed, HttpRequestException { StatusCode: { } status } when (int)status is >= 400 and <= 599 => (int)status, _ => 503 };
+            return error switch { AccountAccessException access => access.StatusCode, TerraBaseException provider => provider.Status, DatabaseWrongRegionException => 409, DBConcurrencyException => StatusCodes.Status412PreconditionFailed, HttpRequestException { StatusCode: { } status } when (int)status is >= 400 and <= 599 => (int)status, _ => 503 };
         }
 
         internal static string Message(Exception error)
@@ -65,12 +64,12 @@ namespace TerraScale.Dashboard.Common.Databases
 
         private static bool AnsweredFailure(Exception error)
         {
-            return error is TerraBaseException { Status: >= 500, InnerException: RpcException { Trailers: var trailers } } && trailers.GetValueBytes(TerraBaseRpc.FaultTrailer) is not null;
+            return error is TerraBaseException { Status: >= 500, ErrorCode: not ("unavailable" or "invalid_response" or "deadline_exceeded") };
         }
 
         internal static IResult Failure(Exception error)
         {
-            return Results.Problem(Message(error), statusCode: Status(error), extensions: error switch
+            return TypedResults.Problem(Message(error), statusCode: Status(error), extensions: error switch
             {
                 SqlOutcomeUnknownException unknown => new Dictionary<string, object?> { ["operationId"] = unknown.AttemptId, ["outcome"] = "unknown" },
                 DatabaseSqlException { Code: { } code } sql => new Dictionary<string, object?> { ["code"] = code, ["sqlstate"] = sql.Sqlstate },
@@ -87,7 +86,7 @@ namespace TerraScale.Dashboard.Common.Databases
 
         internal static IResult ToResult(Failure failure)
         {
-            return Results.Problem(DatabaseMutations.MessageOf(failure), statusCode: DatabaseMutations.StatusOf(failure));
+            return TypedResults.Problem(DatabaseMutations.MessageOf(failure), statusCode: DatabaseMutations.StatusOf(failure));
         }
 
         internal static IResult PageFailureOf(HttpContext http, AccountContext context, Failure failure)

@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http.HttpResults;
 using System.Diagnostics;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Features.Identity;
@@ -19,7 +20,7 @@ internal static class AgentEnrollmentHosted
         var services = context.RequestServices;
         if (SignInFlow.WrongSlug(context))
         {
-            return Results.NotFound();
+            return TypedResults.NotFound();
         }
 
         var tenant = SignInFlow.Tenant(context);
@@ -32,7 +33,7 @@ internal static class AgentEnrollmentHosted
         if (await services.GetRequiredService<Sessions>().ResolveVersionedAsync(tenant, context.Request.Cookies[Tenancy.SessionCookie(tenant)], cancellationToken) is not { } live)
         {
             return post ? SignInFlow.Refused(context)
-                : Results.Redirect($"/ui/{tenant}/sign-in?next={Uri.EscapeDataString(context.Request.Path + context.Request.QueryString)}");
+                : TypedResults.Redirect($"/ui/{tenant}/sign-in?next={Uri.EscapeDataString(context.Request.Path + context.Request.QueryString)}");
         }
 
         var form = post ? await context.Request.ReadFormAsync(cancellationToken) : null;
@@ -83,11 +84,11 @@ internal static class AgentEnrollmentHosted
         };
     }
 
-    private static IResult StepUp(HttpContext context, string tenant, AgentStepUpRequired required)
+    private static RedirectHttpResult StepUp(HttpContext context, string tenant, AgentStepUpRequired required)
     {
         var now = context.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow();
         context.Response.Cookies.Append(StepUpCookie, required.StepUp.Proof, Options(tenant, required.StepUp.ExpiresAt - now));
-        return Results.Redirect(required.StepUp.StepUpUrl);
+        return TypedResults.Redirect(required.StepUp.StepUpUrl);
     }
 
     private static IResult Finish(HttpContext context, string tenant, AgentEnrollmentStep step)

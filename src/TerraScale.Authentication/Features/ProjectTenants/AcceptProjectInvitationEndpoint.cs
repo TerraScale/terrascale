@@ -22,7 +22,7 @@ public sealed class AcceptProjectInvitationEndpoint(ProjectInvitations invitatio
         if (SignInFlow.WrongSlug(this.HttpContext)
             || await invitations.LookupAsync(SignInFlow.Tenant(this.HttpContext), this.HttpContext.GetRouteValue("token") as string ?? "", cancellationToken) is not { } invitation)
         {
-            return Results.NotFound();
+            return TypedResults.NotFound();
         }
 
         return SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.SignUp, invitation.ProjectId, invitation.Email,

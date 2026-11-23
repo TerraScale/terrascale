@@ -12,12 +12,12 @@ namespace TerraScale.Dashboard.Features.Organizations.Audit
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             if (!context.CanManage)
             {
-                return Results.StatusCode(403);
+                return TypedResults.StatusCode(403);
             }
 
             var filter = OrganizationFilters.For(http);
@@ -27,7 +27,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Audit
             var pages = Math.Max(1, (events.Count + pageSize - 1) / pageSize);
             var page = Math.Min(filter.Page, pages);
             http.Response.Headers.CacheControl = "no-store";
-            return Results.Json(new
+            return TypedResults.Json(new
             {
                 retentionDays = snapshot.AuditRetentionDays,
                 total = events.Count,

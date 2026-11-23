@@ -47,7 +47,7 @@ namespace TerraScale.Dashboard.Features.Analytics
             if (http.Request.IsDatastarRequest)
             {
                 await DatastarEvents.PatchElementsAsync(http, AnalyticsPageView.Create(page));
-                return Results.Empty;
+                return TypedResults.Empty;
             }
 
             return AnalyticsView.Create(page);

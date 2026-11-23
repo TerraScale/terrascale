@@ -3,10 +3,8 @@ using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Features.ProjectTenants;
 
-/// <summary><c>GET /v1/{project}/settings</c>.</summary>
 public sealed class GetProjectSettingsEndpoint(TenantDirectory tenants, ProjectAuthSettings settings, PlatformAuthentication authentication) : ProjectTenantEndpoint(tenants, authentication)
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(Root + "/settings");
@@ -16,6 +14,6 @@ public sealed class GetProjectSettingsEndpoint(TenantDirectory tenants, ProjectA
     protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Viewer, cancellationToken);
-        return Results.Json(await this.SettingsAsync(projectId, await settings.GetAsync(projectId, cancellationToken), cancellationToken), ProjectTenantJson.Default.SettingsBody);
+        return TypedResults.Json(await this.SettingsAsync(projectId, await settings.GetAsync(projectId, cancellationToken), cancellationToken), ProjectTenantJson.Default.SettingsBody);
     }
 }

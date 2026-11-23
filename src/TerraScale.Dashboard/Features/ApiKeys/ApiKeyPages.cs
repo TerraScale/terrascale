@@ -72,7 +72,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                     if (http.Request.IsDatastarRequest)
                     {
                         await DatastarEvents.PatchElementsAsync(http, ApiKeyDetailsContent.Create(details));
-                        return Results.Empty;
+                        return TypedResults.Empty;
                     }
 
                     var view = ApiKeyDetailsView.Create(details);
@@ -84,7 +84,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             if (http.Request.IsDatastarRequest)
             {
                 await DatastarEvents.PatchElementsAsync(http, ApiKeysContent.Create(page));
-                return Results.Empty;
+                return TypedResults.Empty;
             }
 
             var result = ApiKeysView.Create(page);
@@ -112,7 +112,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             if (http.Request.IsDatastarRequest)
             {
                 await DatastarEvents.PatchElementsAsync(http, ApiKeyDetailsContent.Create(page));
-                return Results.Empty;
+                return TypedResults.Empty;
             }
 
             var view = ApiKeyDetailsView.Create(page);
@@ -276,10 +276,10 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             if (http.Request.IsDatastarRequest)
             {
                 await ApiKeyPages.PageAsync(http, context, keys, databases);
-                return Results.Empty;
+                return TypedResults.Empty;
             }
 
-            return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther("/api-keys" + http.Request.QueryString) : Results.NoContent();
+            return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther("/api-keys" + http.Request.QueryString) : TypedResults.NoContent();
         }
     }
 }

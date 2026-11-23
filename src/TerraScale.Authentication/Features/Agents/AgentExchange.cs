@@ -1,6 +1,6 @@
+using Dapper;
 using System.Collections.Frozen;
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using OpenIddict.Abstractions;
@@ -31,15 +31,12 @@ public sealed class LiveAgents(AuthData data, TimeProvider clock)
             return null;
         }
 
-        using var home = HomeReads.Begin();
-        var (agent, owner, keyed) = await data.ReadAsync(async (db, token) =>
-        {
-            var agent = await db.Agents.Where(row => row.ProjectId == tenant && row.Id == agentId && row.OwnerUserId == ownerId).WithVersion()
-                .SingleOrDefaultAsync(token).ConfigureAwait(false);
-            var owner = agent is null ? null : await db.Users.Where(row => row.InstanceId == tenant && row.Id == ownerId).WithVersion().SingleOrDefaultAsync(token).ConfigureAwait(false);
-            var keyed = agent is not null && await db.AgentKeys.AnyAsync(row => row.ProjectId == tenant && row.AgentId == agentId && row.RevokedAt == null, token).ConfigureAwait(false);
-            return (agent, owner, keyed);
-        }, cancellationToken).ConfigureAwait(false);
+        var agent = Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<AgentRecord>(
+            "SELECT * FROM agents WHERE project_id = @tenant AND id = @agentId AND owner_user_id = @ownerId", new { tenant, agentId, ownerId }), cancellationToken));
+        var owner = agent is null ? null : Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
+            "SELECT * FROM users WHERE instance_id = @tenant AND id = @ownerId", new { tenant, ownerId }), cancellationToken));
+        var keyed = agent is not null && await data.ReadAsync(connection => connection.ExecuteScalarAsync<bool>(
+            "SELECT EXISTS (SELECT 1 FROM agent_keys WHERE project_id = @tenant AND agent_id = @agentId AND revoked_at IS NULL)", new { tenant, agentId }), cancellationToken);
         return agent is not null && owner is not null && keyed && (agent.Value.ExpiresAt is not { } expires || expires > clock.GetUtcNow())
             && AgentDirectory.Status(agent.Value, new AgentOwner(owner.Value.Id, owner.Value.AuthEpoch, owner.Value.AuthStamp, owner.Value.Disabled)) == AgentStatus.Active
                 ? new(agent, owner)
@@ -85,12 +82,12 @@ public sealed class AgentExchange(KeyRing ring, LiveAgents live, AuthOptions opt
             return OidcResults.Forbid(OidcErrors.InvalidRequest, $"Send grant_type, subject_token and subject_token_type {SubjectTokenType}; nothing else.");
         }
 
-        if (await this.ValidateAsync(subject).ConfigureAwait(false) is not var (ownerId, agentId, expires))
+        if (await this.ValidateAsync(subject) is not var (ownerId, agentId, expires))
         {
             return this.Refuse(null, "subject token signature, issuer, type or claims");
         }
 
-        if (await live.ActiveAsync(agentId, ownerId, cancellationToken).ConfigureAwait(false) is not { } current)
+        if (await live.ActiveAsync(agentId, ownerId, cancellationToken) is not { } current)
         {
             return this.Refuse(agentId, "agent, key or owner not active");
         }
@@ -116,7 +113,7 @@ public sealed class AgentExchange(KeyRing ring, LiveAgents live, AuthOptions opt
             return null;
         }
 
-        var keys = await ring.GetPublicAsync(OidcIssuer.InstanceId, Jwt.KeyId(subject), CancellationToken.None).ConfigureAwait(false);
+        var keys = await ring.GetPublicAsync(OidcIssuer.InstanceId, Jwt.KeyId(subject), CancellationToken.None);
         try
         {
             var result = await Handler.ValidateTokenAsync(subject, new TokenValidationParameters
@@ -130,7 +127,7 @@ public sealed class AgentExchange(KeyRing ring, LiveAgents live, AuthOptions opt
                 RequireExpirationTime = true,
                 ValidateLifetime = true,
                 ClockSkew = TimeSpan.Zero,
-            }).ConfigureAwait(false);
+            });
             if (!result.IsValid || result.SecurityToken is not JsonWebToken token || token.Audiences.Any())
             {
                 return null;

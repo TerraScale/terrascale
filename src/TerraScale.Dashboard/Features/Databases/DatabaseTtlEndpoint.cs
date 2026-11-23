@@ -19,9 +19,9 @@ namespace TerraScale.Dashboard.Features.Databases
         {
             var http = HttpContext;
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
-            if (context is null) { return Results.Unauthorized(); }
+            if (context is null) { return TypedResults.Unauthorized(); }
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
-            if (!Csrf.Validate(http, form)) { return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "settings"), Results.BadRequest("Invalid form token.")); }
+            if (!Csrf.Validate(http, form)) { return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "settings"), TypedResults.BadRequest("Invalid form token.")); }
             var id = form["databaseId"].ToString();
             try
             {
@@ -39,7 +39,7 @@ namespace TerraScale.Dashboard.Features.Databases
                     {
                         return await DatabaseSettingsEndpoints.PageAsync(http, await databases.CurrentAsync(context, http.RequestAborted), id, ttlHours: clear ? "" : form["ttlHours"].ToString(), expirySaved: true);
                     }
-                    return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "settings")) : Results.Json(database, DatabaseTtlJson.Default.DatabaseRecord);
+                    return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "settings")) : TypedResults.Json(database, DatabaseTtlJson.Default.DatabaseRecord);
                 }
 
                 var failure = DatabaseMutations.RefusedMutation(saved);

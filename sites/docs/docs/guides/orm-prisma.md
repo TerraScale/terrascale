@@ -62,8 +62,6 @@ An interactive transaction runs over one dedicated SQL WebSocket session, and th
 
 The adapter maps the server's SQLSTATE to Prisma's error kinds: unique violations to P2002, not-null violations to P2011, foreign-key violations to P2003, missing tables to P2021 and missing columns to P2022. Every other refusal keeps the server's message and surfaces as a generic database error.
 
-A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
-
 ## Migrations
 
 Prisma does not run migrations here: `prisma migrate dev` and `prisma db push` (and the shadow database they need) are not supported. Generate SQL instead and apply it yourself:
@@ -81,3 +79,20 @@ For later changes, diff against the applied migrations with `--from-migrations p
 - `queryRaw`/`executeRaw`: one statement per SQL API request, with SQLite column types mapped from the server's declared types.
 - `executeScript`: a generated migration script applied as one atomic batch.
 - `startTransaction`: an interactive transaction over a dedicated SQL WebSocket session, with savepoint operations and a 5-second server-side limit.
+
+## Over the Postgres wire
+
+Prisma's `postgresql` provider also connects through the [Postgres wire](/guides/postgres-clients), and `prisma migrate` and `prisma db pull` introspect the database through its `pg_catalog` and `information_schema` views:
+
+```prisma
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+```
+
+```sh
+DATABASE_URL="postgresql://any:${TERRASCALE_API_KEY}@pg.terrascale.tech:5432/${TERRASCALE_PROJECT_ID}%2F${TERRASCALE_DATABASE_NAME}?sslmode=require"
+```
+
+Interactive transactions with `isolationLevel: Prisma.TransactionIsolationLevel.Serializable` run in [strong mode](/concepts/replication#strong-mode).

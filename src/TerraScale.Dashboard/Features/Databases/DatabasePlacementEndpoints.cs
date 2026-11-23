@@ -16,13 +16,13 @@ namespace TerraScale.Dashboard.Features.Databases
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "replication"), Results.BadRequest("Invalid form token."));
+                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "replication"), TypedResults.BadRequest("Invalid form token."));
             }
 
             var id = form["databaseId"].ToString();
@@ -41,7 +41,7 @@ namespace TerraScale.Dashboard.Features.Databases
                         return DatabaseResults.WantsHtml(http) || http.Request.IsDatastarRequest
                             ? await DatabaseEndpoints.DetailPageAsync(http, await databases.CurrentAsync(context, http.RequestAborted), id, "replication", backend, databases,
                                 status: StatusCodes.Status202Accepted, regions: new(asked, pending.Message))
-                            : Results.Problem(pending.Message, statusCode: StatusCodes.Status503ServiceUnavailable,
+                            : TypedResults.Problem(pending.Message, statusCode: StatusCodes.Status503ServiceUnavailable,
                                 extensions: new Dictionary<string, object?> { ["code"] = RegionsCopying.Code });
                     case Failure failure when !(DatabaseResults.WantsHtml(http) || http.Request.IsDatastarRequest) || DatabaseMutations.StatusOf(failure) == 404:
                         return DatabaseResults.PageFailureOf(http, context, failure);
@@ -52,7 +52,7 @@ namespace TerraScale.Dashboard.Features.Databases
                         return await DatabaseEndpoints.DetailPageAsync(http, await databases.CurrentAsync(context, http.RequestAborted), id, "replication", backend, databases,
                             regions: new(asked, ""));
                     case DatabaseRecord database:
-                        return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "replication")) : Results.Json(DatabaseEndpoints.DatabaseOutput(database));
+                        return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "replication")) : TypedResults.Json(DatabaseEndpoints.DatabaseOutput(database));
                 }
 
                 throw new UnreachableException();

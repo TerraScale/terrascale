@@ -12,8 +12,6 @@ using TerraScale.Dashboard.Platform.Datastar;
 
 namespace TerraScale.Dashboard.Features.AuthenticationManagement
 {
-    // The project's end-user tenant at ts-auth, managed with the signed-in user's own token.
-    // ts-auth checks the project role on every call; the dashboard mirrors it: any project role reads, the admin project role changes.
     public static partial class AuthenticationConsole
     {
         public const string Unreachable = "ts-auth is unreachable right now. Try again shortly.";
@@ -44,24 +42,24 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             };
             if (!known)
             {
-                return Results.NotFound();
+                return TypedResults.NotFound();
             }
 
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, "/auth/" + key, Results.StatusCode(403));
+                return RequestError.FormExpired(http, "/auth/" + key, TypedResults.StatusCode(403));
             }
 
             if (!(parts is ["organization-picker"] ? context.CanSetOrganizationPicker : context.CanManageProject) || context.Project is null)
             {
-                return Results.StatusCode(403);
+                return TypedResults.StatusCode(403);
             }
 
             var (session, project, cancel) = (context.Session, context.Project.Id, http.RequestAborted);
@@ -353,7 +351,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                     page = page with { Saved = true };
                 }
                 await DatastarEvents.PatchElementsAsync(http, AuthenticationSectionView.Create(page));
-                return Results.Empty;
+                return TypedResults.Empty;
             }
 
             if (error.Length > 0)
@@ -367,7 +365,6 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             return HttpRedirects.SeeOther("/auth/" + key + query.Add("saved", "1").ToString());
         }
 
-        // At least one first factor stays on; ts-auth enforces the same rule.
         private static string[] RestrictionList(string? value) =>
             (value ?? "").Split(['\n', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
@@ -376,7 +373,6 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             return passcode || password || magicLink ? new TsAuthProjectMethods(passcode, password, signUpMode, magicLink, username) : new Validation("Keep email passcode, password or magic-link sign-in on.");
         }
 
-        // Empty values clear a branding field.
         public static Valid<TsAuthProjectBranding> Branding(string? name, string? logoUrl, string? themeColor)
         {
             static string? Clean(string? value)
@@ -403,7 +399,6 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             return new TsAuthProjectBranding(title, logo, color);
         }
 
-        // A blank secret keeps the stored one; ts-auth requires it the first time. Never log the update.
         public static Valid<TsAuthProjectProviderUpdate> Provider(string provider, string? clientId, string? clientSecret, string? issuer, string? teamId, string? keyId, string? tenant = null, TsAuthProjectOAuth2? oauth2 = null)
         {
             static string? Clean(string? value)
@@ -725,7 +720,6 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
         ];
     }
 
-    // The social sign-in providers ts-auth supports, in its order, with where the customer creates the OAuth client.
     public sealed record AuthenticationProvider(string Key, string Name, string ClientIdLabel, string ConsoleName, string ConsoleUrl)
     {
         public static AuthenticationProvider? Find(string key)

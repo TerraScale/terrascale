@@ -81,8 +81,6 @@ namespace TerraScale.Dashboard.Platform.Mcp
             {
                 return schema;
             }
-            // Constructor parameters can be required for deserialization while their nullable output
-            // properties are deliberately omitted. Keep the schema aligned with the serializer's policy.
             foreach (var property in context.TypeInfo.Properties)
             {
                 if (!property.IsGetNullable && Nullable.GetUnderlyingType(property.PropertyType) is null)
@@ -123,7 +121,6 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 options.ServerInfo = new() { Name = "terrascale-dashboard", Title = "TerraScale Dashboard", Version = "1.0.0" };
                 options.ServerInstructions = "TerraScale dashboard tools manage organizations, projects, databases, data, credentials, billing and profile. Omit scope IDs to use your saved selection. organizationId alone uses its selected or default accessible project, or the first accessible project. projectId alone stays within the selected organization; select_project can switch across accessible organizations. Explicit tool scopes never change the saved selection. Call get_context first to discover accessible IDs. Organization details, billing and usage require organization membership. Project collaborators can read their exact project's overview and notifications, with organization member counts unavailable and organization-wide notifications excluded.";
             }).WithHttpTransport(options => options.SessionMode = HttpServerSessionMode.Stateless)
-                // The SDK reports params it cannot deserialize as -32603 "An error occurred."; they are the caller's invalid params.
                 .WithMessageFilters(filters => filters.AddIncomingFilter(next => (context, cancellationToken) =>
                     context.JsonRpcMessage is JsonRpcRequest { Params: { } parameters } request && (parameters is not JsonObject ||
                         request.Method == RequestMethods.ToolsCall && parameters["arguments"] is { } arguments && arguments is not JsonObject)
@@ -187,8 +184,6 @@ namespace TerraScale.Dashboard.Platform.Mcp
 
                         return Failure(error.Message);
                     }
-                    // Upstream refusals and outages keep the
-                    // dashboard's own wording instead of the SDK's generic "An error occurred invoking" result.
                     catch (Exception error) when (error is HttpRequestException or IOException or TimeoutException or DatabaseWrongRegionException ||
                                                   error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
                     {
@@ -198,7 +193,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
                         }
 
                         Log(request.Services).MCPToolFailedUpstreamWithCode(LoggedTool(request.Params?.Name),
-                            DatabaseResults.Status(error), error.GetType().Name, (error as TerraScale.TerraBase.Contracts.TerraBaseException)?.ErrorCode ?? "none");
+                            DatabaseResults.Status(error), error.GetType().Name, (error as TerraScale.Dashboard.Platform.Clients.TerraBaseException)?.ErrorCode ?? "none");
                         return Failure(DatabaseResults.Message(error));
                     }
                     catch (Stripe.StripeException error)
@@ -216,7 +211,6 @@ namespace TerraScale.Dashboard.Platform.Mcp
         private static readonly Lazy<Dictionary<string, JsonElement>> InputSchemas =
             new(() => Catalog.Value.Tools.ToDictionary(tool => tool.ProtocolTool.Name, tool => tool.ProtocolTool.InputSchema));
 
-        // Argument binding fails after the filters with the SDK's generic "An error occurred invoking"; name the field instead.
         private static string? ArgumentProblem(CallToolRequestParams? call)
         {
             if (call is null || !InputSchemas.Value.TryGetValue(call.Name, out var schema))
@@ -249,7 +243,6 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 }
 
                 string[] types = type.ValueKind == JsonValueKind.Array ? [.. type.EnumerateArray().Select(item => item.GetString() ?? "")] : [type.GetString() ?? ""];
-                // Numbers may arrive as numeric strings (the SDK reads them with AllowReadingFromString).
                 var numeric = types.FirstOrDefault(item => item is "integer" or "number");
                 var valid = numeric is not null && value.ValueKind == JsonValueKind.String
                     ? numeric == "integer" ? long.TryParse(value.GetString(), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out _)
@@ -304,13 +297,11 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 if (!AuthenticationHeaderValue.TryParse(context.Request.Headers.Authorization, out var header) ||
                     !header.Scheme.Equals("Bearer", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(header.Parameter))
                 {
-                    // RFC 9728: the challenge points clients without a token at the OAuth sign-in metadata.
                     context.Response.Headers.WWWAuthenticate = $"Bearer realm=\"TerraScale MCP\", resource_metadata=\"{McpOAuth.ResourceMetadataUrl(context)}\"" +
                         (context.Request.Headers.Authorization.Count == 0 ? "" : ", error=\"invalid_token\"");
                     context.Response.StatusCode = 401;
                     return;
                 }
-                // A 1 MiB opaque cursor can occupy six times that size in escaped JSON.
                 if (context.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } bodyLimit)
                 {
                     bodyLimit.MaxRequestBodySize = 6 * 1024 * 1024 + 16 * 1024;
@@ -357,7 +348,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
         internal static IResult UnsupportedStatelessMethod(HttpContext http)
         {
             http.Response.Headers.Allow = "POST";
-            return Results.StatusCode(StatusCodes.Status405MethodNotAllowed);
+            return TypedResults.StatusCode(StatusCodes.Status405MethodNotAllowed);
         }
 
         internal static AccountContext Scope(HttpContext? http, string? organizationId, string? projectId)

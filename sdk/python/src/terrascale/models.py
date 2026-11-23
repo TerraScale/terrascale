@@ -58,19 +58,18 @@ class Regions:
 
 @dataclass(frozen=True)
 class ReplicaStatus:
-    """One region's pull progress observed by the writer; unknown observations are None."""
+    """One region's applied bookmark, health and round-trip lag as observed by the answering region.
+    Every region accepts writes; ``lag_ms`` is None when no peer in the region has answered."""
 
     region: str
-    role: str | None = None
-    lag_ms: float | None = None
-    last_pulled_at: str | None = None
-    last_verified: str | None = None
-    revision: str | None = None
+    applied_bookmark: str
+    healthy: bool
+    lag_ms: int | None = None
 
 
 @dataclass(frozen=True)
 class DatabaseRegions:
-    """Selected regions and writer-observed pull progress sampled at observed_at."""
+    """Every selected region's replication state sampled at observed_at."""
 
     database_id: str
     observed_at: str
@@ -78,7 +77,7 @@ class DatabaseRegions:
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> DatabaseRegions:
-        if any(not isinstance(body[k], str) or not body[k] for k in ("observedAt",)):
+        if not isinstance(body["observedAtUtc"], str) or not body["observedAtUtc"]:
             raise ValueError("invalid database regions")
         replicas = body["regions"]
         if not isinstance(replicas, list):
@@ -87,30 +86,24 @@ class DatabaseRegions:
         for item in replicas:
             if not isinstance(item, dict) or not isinstance(item.get("region"), str) or not item["region"]:
                 raise ValueError("invalid database regions replicas")
-            role = item.get("role")
-            if role is not None and (not isinstance(role, str) or not role):
-                raise ValueError("invalid replica role")
-            lag = item.get("lagMs")
-            if lag is not None and not isinstance(lag, (int, float)):
+            applied = item["appliedBookmark"]
+            if not isinstance(applied, str):
+                raise ValueError("invalid replica appliedBookmark")
+            healthy = item["healthy"]
+            if not isinstance(healthy, bool):
+                raise ValueError("invalid replica healthy")
+            lag = item["lagMs"]
+            if type(lag) is not int:
                 raise ValueError("invalid replica lagMs")
-            timestamps = {}
-            for name in ("lastPulledAt", "lastVerified"):
-                value = item.get(name)
-                if value is not None and (not isinstance(value, str) or not value):
-                    raise ValueError(f"invalid replica {name}")
-                timestamps[name] = value
-            revision = item.get("revision")
-            if revision is not None and (not isinstance(revision, str) or not revision):
-                raise ValueError("invalid replica revision")
-            statuses.append(ReplicaStatus(region=item["region"], role=role, lag_ms=lag,
-                                          last_pulled_at=timestamps["lastPulledAt"],
-                                          last_verified=timestamps["lastVerified"], revision=revision))
-        return cls(database_id=validate_id(body["databaseId"]), observed_at=body["observedAt"], regions=statuses)
+            statuses.append(ReplicaStatus(region=item["region"], applied_bookmark=applied, healthy=healthy,
+                                          lag_ms=lag if lag >= 0 else None))
+        return cls(database_id=validate_id(body["databaseId"]), observed_at=body["observedAtUtc"], regions=statuses)
 
 
 @dataclass(frozen=True)
 class Database:
-    """Lifecycle metadata with the answering region, complete region set and placement epoch."""
+    """Lifecycle metadata with the answering region, complete region set, placement epoch and default consistency.
+    Every region in ``regions`` accepts writes."""
 
     id: str
     project_id: str
@@ -125,6 +118,7 @@ class Database:
     regions: list[str] = field(default_factory=list)
     all_regions: bool = False
     placement_version: int = 0
+    default_consistency: str = "fast"
 
     @classmethod
     def from_json(cls, body: dict[str, Any]) -> Database:
@@ -142,19 +136,23 @@ class Database:
         version = body["placementVersion"]
         if not isinstance(version, int) or isinstance(version, bool):
             raise ValueError("invalid database placementVersion")
+        mode = body.get("defaultConsistency", "fast")
+        if mode not in ("fast", "strong"):
+            raise ValueError("invalid database defaultConsistency")
         return cls(
             id=validate_id(body["id"]),
             project_id=validate_id(body["projectId"]),
             name=body["name"],
             created_at=body["createdAt"],
             region=body["region"],
-            branched_from=body["branchedFrom"],
+            branched_from=body.get("branchedFrom"),
             previous_name=body.get("previousName"),
             conflict_of=validate_id(body["conflictOf"]) if body.get("conflictOf") is not None else None,
             expires_at=body.get("expiresAt"),
             regions=sorted(regions),
             all_regions=body.get("allRegions", False),
             placement_version=version,
+            default_consistency=mode,
             raw=body,
         )
 

@@ -1,10 +1,10 @@
 using System.Net;
+using Dapper;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Security;
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Storage;
@@ -114,15 +114,15 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
     public async Task<(ApiKeyRecord Key, string Secret)> CreateAsync(UserRecord caller, string organizationId, string? projectId, string name, IReadOnlyList<string> scopes, string? database, DateTimeOffset? expiresAt, IReadOnlyList<string> allowedCidrs, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(caller);
-        if (await limiter.AcquireAsync(Instance, "api-key-create", caller.Id, CreationsPerUserPerHour, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false) is { } wait)
+        if (await limiter.AcquireAsync(Instance, "api-key-create", caller.Id, CreationsPerUserPerHour, TimeSpan.FromHours(1), cancellationToken) is { } wait)
         {
             throw ApiException.RateLimited("Too many API keys created; retry after the Retry-After delay.", wait);
         }
 
         return await directory.CommitAsync(async () =>
         {
-            var authority = await this.AuthorizeAsync(caller, organizationId, projectId, cancellationToken).ConfigureAwait(false);
-            await directory.FenceAsync(organizationId, projectId, null, cancellationToken).ConfigureAwait(false);
+            var authority = await this.AuthorizeAsync(caller, organizationId, projectId, cancellationToken);
+            await directory.FenceAsync(organizationId, projectId, null, cancellationToken);
             if (projectId is not null && scopes.Except(TerraBaseScopes.For(authority.Role)).Any())
             {
                 throw PlatformDirectory.Forbidden();
@@ -133,11 +133,11 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
             {
                 SecretBindings = [Credentials.UserState(caller.Id, caller.AuthStamp!)],
             };
-            List<Change> operations = [.. await this.RequirementsAsync(caller, cancellationToken).ConfigureAwait(false), .. authority.Assertions, Change.Insert(key)];
+            List<Change> operations = [.. await this.RequirementsAsync(caller, cancellationToken), .. authority.Assertions, Change.Insert(key)];
 
             operations.Add(directory.Audit(organizationId, caller.Id, "api_key.created", id, string.Join(' ', scopes)));
             return new PlatformDirectory.Plan<(ApiKeyRecord, string)>(operations, (key, secret));
-        }, cancellationToken).ConfigureAwait(false);
+        }, cancellationToken);
     }
 
     public const int ScopedKeysPerMinute = 600;
@@ -148,8 +148,8 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
         ArgumentNullException.ThrowIfNull(parent);
         return directory.CommitAsync(async () =>
         {
-            await directory.FenceAsync(parent.OrganizationId, projectId, null, cancellationToken).ConfigureAwait(false);
-            var project = await directory.ProjectAsync(projectId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+            await directory.FenceAsync(parent.OrganizationId, projectId, null, cancellationToken);
+            var project = await directory.ProjectAsync(projectId, cancellationToken) ?? throw PlatformDirectory.NotFound();
             var (id, secret) = Generate();
             var key = new ApiKeyRecord(id, Instance, parent.OrganizationId, projectId, database, "scoped " + database, scopes, Tokens.Sha256Hex(secret), null, null,
                 parent.CreatedBy, clock.GetUtcNow(), expiresAt, parent.AllowedCidrs ?? [])
@@ -170,25 +170,26 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
 
     public async Task<Page<ApiKeyRecord>> ListAsync(string userId, string organizationId, string? projectId, int limit, string? after, CancellationToken cancellationToken)
     {
-        _ = await this.AuthorizeAsync(userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
+        _ = await this.AuthorizeAsync(userId, organizationId, projectId, cancellationToken);
         var from = PlatformDirectory.Cursor(after);
-        var rows = await data.ReadAsync((db, token) => db.ApiKeys
-            .Where(key => key.OrganizationId == organizationId && key.ProjectId == projectId && string.Compare(key.Id, from) > 0)
-            .OrderBy(key => key.Id).Take(limit + 1).ToListAsync(token), cancellationToken).ConfigureAwait(false);
+        var take = limit + 1;
+        var rows = (await data.ReadAsync(connection => connection.QueryAsync<ApiKeyRecord>(
+            "SELECT * FROM api_keys WHERE organization_id = @organizationId AND project_id IS @projectId AND id > @from ORDER BY id LIMIT @take",
+            new { organizationId, projectId, from, take }), cancellationToken)).AsList();
         return PlatformDirectory.Paged(rows, limit, key => key.Id);
     }
 
     public async Task<ApiKeyRecord> GetAsync(string userId, string organizationId, string? projectId, string keyId, CancellationToken cancellationToken)
     {
-        _ = await this.AuthorizeAsync(userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
-        return (await this.OwnedAsync(organizationId, projectId, keyId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound()).Value;
+        _ = await this.AuthorizeAsync(userId, organizationId, projectId, cancellationToken);
+        return (await this.OwnedAsync(organizationId, projectId, keyId, cancellationToken) ?? throw PlatformDirectory.NotFound()).Value;
     }
 
     public Task RevokeAsync(string userId, string organizationId, string? projectId, string keyId, CancellationToken cancellationToken) =>
         directory.CommitAsync(async () =>
         {
-            var authority = await this.AuthorizeAsync(userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
-            var key = await this.OwnedAsync(organizationId, projectId, keyId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+            var authority = await this.AuthorizeAsync(userId, organizationId, projectId, cancellationToken);
+            var key = await this.OwnedAsync(organizationId, projectId, keyId, cancellationToken) ?? throw PlatformDirectory.NotFound();
             return new PlatformDirectory.Plan<bool>(
                 [.. authority.Assertions, Change.Delete(key), directory.Audit(organizationId, userId, "api_key.revoked", keyId)], true);
         }, cancellationToken);
@@ -196,9 +197,9 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
     public Task<ApiKeyRecord> SetAllowedCidrsAsync(string userId, string organizationId, string? projectId, string keyId, IReadOnlyList<string> allowedCidrs, CancellationToken cancellationToken) =>
         directory.CommitAsync(async () =>
         {
-            var authority = await this.AuthorizeAsync(userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
-            await directory.FenceAsync(organizationId, projectId, null, cancellationToken).ConfigureAwait(false);
-            var key = await this.OwnedAsync(organizationId, projectId, keyId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+            var authority = await this.AuthorizeAsync(userId, organizationId, projectId, cancellationToken);
+            await directory.FenceAsync(organizationId, projectId, null, cancellationToken);
+            var key = await this.OwnedAsync(organizationId, projectId, keyId, cancellationToken) ?? throw PlatformDirectory.NotFound();
             if (projectId is not null && key.Value.Scopes.Except(TerraBaseScopes.For(authority.Role)).Any())
             {
                 throw PlatformDirectory.Forbidden();
@@ -218,9 +219,9 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
                 throw StepUpProofs.Required();
             }
 
-            var authority = await this.AuthorizeAsync(caller, organizationId, projectId, cancellationToken).ConfigureAwait(false);
-            await directory.FenceAsync(organizationId, projectId, null, cancellationToken).ConfigureAwait(false);
-            var key = await this.OwnedAsync(organizationId, projectId, keyId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+            var authority = await this.AuthorizeAsync(caller, organizationId, projectId, cancellationToken);
+            await directory.FenceAsync(organizationId, projectId, null, cancellationToken);
+            var key = await this.OwnedAsync(organizationId, projectId, keyId, cancellationToken) ?? throw PlatformDirectory.NotFound();
             if (projectId is not null && key.Value.Scopes.Except(TerraBaseScopes.For(authority.Role)).Any())
             {
                 throw PlatformDirectory.Forbidden();
@@ -237,7 +238,7 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
                 PreviousSecretBindings = previousTtl > TimeSpan.Zero ? key.Value.SecretBindings : [],
             };
             return new PlatformDirectory.Plan<(ApiKeyRecord, string)>(
-                [.. await this.RequirementsAsync(caller, cancellationToken).ConfigureAwait(false), .. authority.Assertions, Change.Update(key, rotated),
+                [.. await this.RequirementsAsync(caller, cancellationToken), .. authority.Assertions, Change.Update(key, rotated),
                     directory.Audit(organizationId, caller.Id, "api_key.rotated", keyId)], (rotated, secret));
         }, cancellationToken);
 
@@ -248,16 +249,15 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
             return null;
         }
 
-        if (await this.ReadAsync(keyId, cancellationToken).ConfigureAwait(false) is not { } key
-            || key.ExpiresAt <= clock.GetUtcNow() || !await this.ParentActsAsync(key, cancellationToken).ConfigureAwait(false))
+        if (await this.ReadAsync(keyId, cancellationToken) is not { } key
+            || key.ExpiresAt <= clock.GetUtcNow() || !await this.ParentActsAsync(key, cancellationToken))
         {
             return null;
         }
 
-        var current = key.SecretBindings.Count == 0 || await credentials.AreCurrentAsync(Instance, key.SecretBindings, cancellationToken).ConfigureAwait(false);
+        var current = key.SecretBindings.Count == 0 || await credentials.AreCurrentAsync(Instance, key.SecretBindings, cancellationToken);
         var previous = key.PreviousSecretHash is not null && key.PreviousSecretExpiresAt > clock.GetUtcNow()
-            && (key.PreviousSecretBindings.Count == 0 || await credentials.AreCurrentAsync(Instance, key.PreviousSecretBindings, cancellationToken).ConfigureAwait(false));
-        // These digests are a transient authentication view; the stored rotation record keeps both original lineages.
+            && (key.PreviousSecretBindings.Count == 0 || await credentials.AreCurrentAsync(Instance, key.PreviousSecretBindings, cancellationToken));
         return current || previous ? key with { SecretHash = current ? key.SecretHash : string.Empty, PreviousSecretHash = previous ? key.PreviousSecretHash : null } : null;
     }
 
@@ -270,16 +270,14 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
             return "key_revoked";
         }
 
-        // The key, and the organization and project its token names, together: one storage round trip, where reading the key
-        // first made two, and TerraBase's two-second answer window is spent on them (#853). The token is this issuer's own
-        // signed claim, and the key must still belong to that organization: the same answer as the key's own reads.
-        var row = await data.ReadAsync((db, token) => db.ApiKeys.Where(key => key.Id == keyId && key.InstanceId == Instance)
-            .Select(key => new
-            {
-                Key = key,
-                Organization = db.Organizations.Any(organization => organization.Id == organizationId),
-                ProjectOrganization = db.Projects.Where(project => project.Id == projectId).Select(project => project.OrganizationId).FirstOrDefault(),
-            }).SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
+        var row = await this.ReadAsync(keyId, cancellationToken) is { } found
+            ? await data.ReadAsync(connection => connection.QuerySingleAsync<KeyScope>(
+                """
+                SELECT EXISTS (SELECT 1 FROM organizations WHERE id = @organizationId) AS organization,
+                    (SELECT organization_id FROM projects WHERE id = @projectId) AS project_organization
+                """, new { organizationId, projectId }), cancellationToken) with
+            { Key = found }
+            : null;
         if (row?.Key is not { } key)
         {
             return "key_revoked";
@@ -290,7 +288,7 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
             return "key_expired";
         }
 
-        if (!await this.ParentActsAsync(key, cancellationToken).ConfigureAwait(false))
+        if (!await this.ParentActsAsync(key, cancellationToken))
         {
             return "key_revoked";
         }
@@ -319,16 +317,18 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
         var now = clock.GetUtcNow();
         try
         {
-            var usage = await data.ReadAsync((db, token) => db.ApiKeyUsage.Where(row => row.KeyId == key.Id).WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
+            var keyId = key.Id;
+            var usage = Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<ApiKeyUsageRecord>(
+                "SELECT * FROM api_key_usage WHERE key_id = @keyId", new { keyId }), cancellationToken));
             if (usage is not null && usage.Value.LastUsedAt > now - UsageGranularity)
             {
                 return;
             }
 
             var record = new ApiKeyUsageRecord(key.Id, Instance, key.OrganizationId, key.ProjectId, now);
-            await data.SaveAsync(usage is null ? Change.Insert(record) : Change.Update(usage, record), cancellationToken).ConfigureAwait(false);
+            await data.SaveAsync(usage is null ? Change.Insert(record) : Change.Update(usage, record), cancellationToken);
         }
-        catch (Exception error) when (error is HttpRequestException or TimeoutException or DbUpdateException)
+        catch (Exception error) when (error is HttpRequestException or TimeoutException or ApiException)
         {
             logger.ZLogWarning($"Recording an API key's use failed ({error.GetType().Name:@Error}); the token is issued either way");
         }
@@ -338,14 +338,15 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
     {
         ArgumentNullException.ThrowIfNull(keys);
         var ids = keys.Select(key => key.Id).ToArray();
-        return await data.ReadAsync((db, token) => db.ApiKeyUsage.Where(usage => ids.Contains(usage.KeyId))
-            .ToDictionaryAsync(usage => usage.KeyId, usage => usage.LastUsedAt, StringComparer.Ordinal, token), cancellationToken).ConfigureAwait(false);
+        return (await data.ReadAsync(connection => connection.QueryAsync<ApiKeyUsageRecord>(
+            "SELECT * FROM api_key_usage WHERE key_id IN @ids", new { ids }), cancellationToken))
+            .ToDictionary(usage => usage.KeyId, usage => usage.LastUsedAt, StringComparer.Ordinal);
     }
 
     public async Task<ApiKeyRecord?> AuthenticateAsync(string? secret, CancellationToken cancellationToken)
     {
         if (Parse(secret) is not { } parsed
-            || await this.FindAsync(parsed.Id, cancellationToken).ConfigureAwait(false) is not { } key)
+            || await this.FindAsync(parsed.Id, cancellationToken) is not { } key)
         {
             return null;
         }
@@ -363,7 +364,7 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
     private async Task<bool> ParentActsAsync(ApiKeyRecord key, CancellationToken cancellationToken) =>
         key.ParentKeyId is not { } parentId
         || key.ParentGeneration is { Length: 16 } generation
-            && await this.FindAsync(parentId, cancellationToken).ConfigureAwait(false) is { ParentKeyId: null } parent
+            && await this.FindAsync(parentId, cancellationToken) is { ParentKeyId: null } parent
             && parent.OrganizationId == key.OrganizationId
             && this.Digests(parent).Any(digest => digest.StartsWith(generation, StringComparison.Ordinal));
 
@@ -374,11 +375,12 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
     }
 
     private async Task<IReadOnlyList<Change>> RequirementsAsync(UserRecord caller, CancellationToken cancellationToken) =>
-        await proofs.RequirementsAsync(caller, cancellationToken).ConfigureAwait(false)
+        await proofs.RequirementsAsync(caller, cancellationToken)
             ?? throw PlatformDirectory.Conflict("authentication_conflict", "This sign-in lost a concurrent change in another region. Sign in again before issuing an API key secret.");
 
     private Task<ApiKeyRecord?> ReadAsync(string keyId, CancellationToken cancellationToken) =>
-        data.ReadAsync((db, token) => db.ApiKeys.SingleOrDefaultAsync(key => key.Id == keyId && key.InstanceId == Instance, token), cancellationToken);
+        data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<ApiKeyRecord>(
+            "SELECT * FROM api_keys WHERE id = @keyId AND instance_id = @Instance", new { keyId, Instance }), cancellationToken);
 
     private async Task<(string Role, Change[] Assertions)> AuthorizeAsync(UserRecord caller, string organizationId, string? projectId, CancellationToken cancellationToken)
     {
@@ -388,32 +390,37 @@ public sealed partial class ApiKeys(AuthData data, Credentials credentials, Step
             throw PlatformDirectory.Forbidden();
         }
 
-        if (!await credentials.AreCurrentAsync(Instance, caller.AuthenticationBindings, cancellationToken).ConfigureAwait(false))
+        if (!await credentials.AreCurrentAsync(Instance, caller.AuthenticationBindings, cancellationToken))
         {
             throw PlatformDirectory.Conflict("authentication_conflict", "This sign-in lost a concurrent change in another region. Sign in again before issuing an API key secret.");
         }
 
-        return await this.AuthorizeAsync(caller.Id, organizationId, projectId, cancellationToken).ConfigureAwait(false);
+        return await this.AuthorizeAsync(caller.Id, organizationId, projectId, cancellationToken);
     }
 
-    // Organization keys need the admin organization role; project keys the project's member role.
     private async Task<(string Role, Change[] Assertions)> AuthorizeAsync(string userId, string organizationId, string? projectId, CancellationToken cancellationToken)
     {
         if (projectId is null)
         {
-            var organization = await directory.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
+            var organization = await directory.OrganizationAccessAsync(userId, organizationId, cancellationToken);
             PlatformDirectory.RequireRole(organization, Roles.Admin);
             return (organization.Role!, [PlatformDirectory.Authority(organization), Change.Assert(organization.Organization)]);
         }
 
-        var project = await directory.ProjectAccessAsync(userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
+        var project = await directory.ProjectAccessAsync(userId, organizationId, projectId, cancellationToken);
         PlatformDirectory.RequireRole(project, Roles.Member);
         return (project.Role, [PlatformDirectory.Authority(project, Roles.Member), Change.Assert(project.Organization), Change.Assert(project.Project)]);
     }
 
     private async Task<Versioned<ApiKeyRecord>?> OwnedAsync(string organizationId, string? projectId, string keyId, CancellationToken cancellationToken) =>
         IsKeyId(keyId)
-            ? await data.ReadAsync((db, token) => db.ApiKeys.Where(key => key.Id == keyId && key.InstanceId == Instance && key.OrganizationId == organizationId && key.ProjectId == projectId)
-                .WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false)
+            ? Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<ApiKeyRecord>(
+                "SELECT * FROM api_keys WHERE id = @keyId AND instance_id = @Instance AND organization_id = @organizationId AND project_id IS @projectId",
+                new { keyId, Instance, organizationId, projectId }), cancellationToken))
             : null;
+
+    internal sealed record KeyScope(bool Organization, string? ProjectOrganization)
+    {
+        public ApiKeyRecord? Key { get; init; }
+    }
 }

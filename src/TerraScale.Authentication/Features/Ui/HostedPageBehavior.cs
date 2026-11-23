@@ -1,6 +1,5 @@
 namespace TerraScale.Authentication.Features.Ui;
 
-/// <summary>Progressive browser form controls. Credentials are submitted only in the existing same-origin forms.</summary>
 internal static class HostedPageBehavior
 {
     public const string Script = """

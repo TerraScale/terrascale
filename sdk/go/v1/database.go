@@ -4,27 +4,24 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+
+	"terrascale.tech/sdk/internal/causal"
 )
 
-// Database is a handle to one database of a project, by current name or immutable
-// ULID. It performs no I/O.
 type Database struct {
 	c       *Client
 	project string
 	name    string
+	causal  *causal.Tracker
 }
 
-// Database returns a handle by current name or immutable ULID within a project.
-// project is the project ID from the Management API; the API key's organization
-// selects the tenant.
 func (c *Client) Database(project, name string) *Database {
-	return &Database{c: c, project: project, name: name}
+	tracker, _ := c.bookmarks.LoadOrStore(project+"/"+name, new(causal.Tracker))
+	return &Database{c: c, project: project, name: name, causal: tracker.(*causal.Tracker)}
 }
 
-// Project returns the project id.
 func (d *Database) Project() string { return d.project }
 
-// Name returns the database selector used to construct the handle.
 func (d *Database) Name() string { return d.name }
 
 func (d *Database) path(extra ...string) ([]string, error) {
@@ -37,18 +34,14 @@ func (d *Database) path(extra ...string) ([]string, error) {
 	return append([]string{"v1", "projects", d.project, "databases", d.name}, extra...), nil
 }
 
-// DatabaseInfo is a database as returned by Database.Create.
 type DatabaseInfo struct {
 	ID        string `json:"id" ulid:"required"`
 	ProjectID string `json:"projectId" ulid:"required"`
 	Name      string `json:"name"`
 	Region    string `json:"region"`
-	// Created is true when the call created the database (201).
-	Created bool `json:"-"`
+	Created   bool   `json:"-"`
 }
 
-// Create creates the database in its project. An existing name fails with
-// ErrNameTaken. Needs the databases:write scope.
 func (d *Database) Create(ctx context.Context) (*DatabaseInfo, error) {
 	if err := checkName("database", d.name); err != nil {
 		return nil, err
@@ -66,8 +59,6 @@ func (d *Database) Create(ctx context.Context) (*DatabaseInfo, error) {
 	return &info, nil
 }
 
-// Delete deletes the database and its data; its branches stay. Needs the
-// databases:write scope.
 func (d *Database) Delete(ctx context.Context) error {
 	p, err := d.path()
 	if err != nil {

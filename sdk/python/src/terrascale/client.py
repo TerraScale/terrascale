@@ -58,7 +58,7 @@ from .auth import (
     verify_user_api_key_call,
 )
 from .custom_tokens import ClaimValue, CustomToken, mint_custom_token_call
-from .errors import APIError, CommitUncertainError, InvalidResponseError, SqlError, SqlErrorCodes, error_for
+from .errors import APIError, CommitUncertainError, InvalidResponseError, SqlError, error_for
 from .ids import is_valid_id, validate_id
 from .session import SqlSession
 from .shapes import Shape
@@ -131,8 +131,13 @@ class TerraScale:
         self._headers = {"User-Agent": _spec.USER_AGENT_PREFIX + __version__, "Accept": "application/json"}
         if region is not None and (not isinstance(region, str) or region.strip()):
             self._headers[_spec.REGION_PIN] = _spec.region(region)
+        self._bookmarks = _spec.Bookmarks()
 
-    # Lifecycle -----------------------------------------------------------
+    @property
+    def bookmarks(self) -> dict[str, str]:
+        """The newest TerraScale-Bookmark seen per database handle name, sent on its later requests."""
+        return self._bookmarks.snapshot()
+
 
     def close(self) -> None:
         if self._source is not None:
@@ -146,7 +151,6 @@ class TerraScale:
     def __exit__(self, *exc: object) -> None:
         self.close()
 
-    # Transport -----------------------------------------------------------
 
     def _bearer(self) -> str:
         if self._source is not None:
@@ -168,7 +172,7 @@ class TerraScale:
                 else None
             )
             token = "" if direct or call.anonymous else project_key or self._bearer()
-            headers = dict(call.headers) if direct else {**self._headers, **call.headers}
+            headers = dict(call.headers) if direct else {**self._headers, **call.causal_headers(self._bookmarks), **call.headers}
             if not direct and not call.anonymous:
                 headers["Authorization"] = f"Bearer {token}"
             if content is not None:
@@ -183,7 +187,6 @@ class TerraScale:
                         timeout=call.timeout if call.timeout is not None else httpx.USE_CLIENT_DEFAULT)
             except (httpx.TransportError, httpx.DecodingError) as exc:
                 attempt += 1
-                # A connect or pool failure never reached the server, so even a write can be repeated.
                 if not call.replay_safe and not isinstance(exc, _spec.NOT_SENT):
                     raise CommitUncertainError(0, "commit_uncertain", "transport failure; the write may have committed") from exc
                 if isinstance(exc, httpx.DecodingError):
@@ -193,18 +196,17 @@ class TerraScale:
                 time.sleep(_spec.backoff(attempt, None))
                 continue
             if 200 <= response.status_code < 300:
-                return call.decode(response)
+                return call.accept(response, self._bookmarks)
             err = _error(response, mutation=not call.replay_safe)
             if response.status_code == 401 and err.code in {"key_revoked", "key_expired"}:
                 if self._source is not None:
                     self._source.reject(err)
                 raise err
             if response.status_code == 401 and self._source is not None and not refreshed and not direct and project_key is None:
-                # Refresh an ordinary token refusal once, never a permanent key refusal.
                 self._source.invalidate(token)
                 refreshed = True
                 continue
-            if isinstance(err, SqlError) and err.code == SqlErrorCodes.SERIALIZATION_CONFLICT and conflicts < 2:
+            if isinstance(err, SqlError) and err.code in _spec.RETRY_CONFLICTS and conflicts < 2:
                 conflicts += 1
                 time.sleep(_spec.backoff(conflicts, None))
                 continue
@@ -253,7 +255,6 @@ class TerraScale:
         finally:
             response.close()
 
-    # Databases -----------------------------------------------------------
 
     def database(self, name: str) -> Database:
         """A handle by current database name or immutable ULID; no request is made."""
@@ -285,9 +286,11 @@ class TerraScale:
         ttl_seconds: int | None = None,
         regions: Sequence[str] | None = None,
         all_regions: bool | None = None,
+        default_consistency: _spec.Consistency | None = None,
     ) -> models.Database:
-        """Create in the selected regions, or the answering region; TTL expiry deletes the database and backups."""
-        return self._send(_spec.create_database(self.project, name, ttl_seconds, regions, all_regions))
+        """Create in the selected regions, or the answering region; every region accepts writes.
+        ``default_consistency`` is fast (the server default) or strong; TTL expiry deletes the database and backups."""
+        return self._send(_spec.create_database(self.project, name, ttl_seconds, regions, all_regions, default_consistency))
 
     def fork_database(
         self, source: str, name: str, *, point_in_time: str | None = None, ttl_seconds: int | None = None,
@@ -318,7 +321,7 @@ class TerraScale:
         return self._send(_spec.clear_database_ttl(self.project, database))
 
     def delete_database(self, database: str) -> None:
-        """Delete the database and backups; a region outside its placement returns 421 wrong_region."""
+        """Delete the database and backups from any region holding it."""
         self._send(_spec.delete_database(self.project, database))
 
     def delete_database_if_id(self, database: str, expected_id: str) -> None:
@@ -328,7 +331,7 @@ class TerraScale:
     def export_database(self, database: str) -> Iterator[bytes]:
         """Stream the database as one SQL dump (BEGIN … COMMIT) with ``sql:read``.
 
-        The region that orders the database's writes serves the export; consume the iterator to
+        Any region holding the database serves the export; consume the iterator to
         read the dump and close it when done.
         """
         return self._stream(_spec.export_database(self.project, _spec.database_selector(database)))
@@ -659,11 +662,11 @@ class Database:
 
 
     def regions(self) -> models.DatabaseRegions:
-        """Read selected regions and writer-observed pull progress with databases:read; observations are not acknowledgements."""
+        """Read each selected region's applied bookmark, lag and health with databases:read; not acknowledgements."""
         return self._c._send(_spec.get_database_regions(*self._p))
 
     def delete(self) -> None:
-        """Delete in the region that orders the database's writes. HTTP 204 confirms logical deletion and local cleanup;
+        """Delete from any region holding the database. HTTP 204 confirms logical deletion and local cleanup;
         remote erasure is retried durably and may complete later."""
         self._c._send(_spec.delete_database(*self._p))
 
@@ -679,28 +682,45 @@ class Database:
         """Delete only when the name still resolves to expected_id; a changed identity answers 409."""
         self._c._send(_spec.delete_database_if_id(*self._p, expected_id))
 
-    @overload
-    def query(self, sql: str, args: Args = None) -> builtins.list[Row]: ...
+    @property
+    def bookmark(self) -> str | None:
+        """The newest TerraScale-Bookmark seen for this database; later requests send it to read their writes in any region."""
+        return self._c._bookmarks.get(self.name)
+
+    @bookmark.setter
+    def bookmark(self, value: str | None) -> None:
+        self._c._bookmarks.set(self.name, value)
 
     @overload
-    def query(self, sql: str, args: Args, mapper: Callable[..., T]) -> builtins.list[T]: ...
+    def query(self, sql: str, args: Args = None, *, consistency: _spec.Consistency | None = None,
+              bookmark: str | None = None) -> builtins.list[Row]: ...
 
-    def query(self, sql: str, args: Args = None, mapper: Callable[..., T] | None = None) -> builtins.list[Any]:
+    @overload
+    def query(self, sql: str, args: Args, mapper: Callable[..., T], *, consistency: _spec.Consistency | None = None,
+              bookmark: str | None = None) -> builtins.list[T]: ...
+
+    def query(self, sql: str, args: Args = None, mapper: Callable[..., T] | None = None, *,
+              consistency: _spec.Consistency | None = None, bookmark: str | None = None) -> builtins.list[Any]:
         """Run one statement and return its rows, or ``mapper(**row)`` for each row."""
-        result = self.execute(sql, args)
+        result = self.execute(sql, args, consistency=consistency, bookmark=bookmark)
         return result.rows if mapper is None else result.as_(mapper)
 
-    def execute(self, sql: str | Statement, args: Args = None) -> StatementResult:
-        """Run one statement, reads and writes, with positional or named arguments."""
-        return (self._c._send(_spec.execute(*self._p, _sql.statements([_sql.statement(sql, args)]))))[0]
+    def execute(self, sql: str | Statement, args: Args = None, *, consistency: _spec.Consistency | None = None,
+                bookmark: str | None = None) -> StatementResult:
+        """Run one statement, reads and writes, with positional or named arguments.
+        ``consistency`` is fast or strong; ``bookmark`` replaces this database's bookmark for the call."""
+        call = _spec.execute(*self._p, _sql.statements([_sql.statement(sql, args)]), consistency, bookmark)
+        return (self._c._send(call))[0]
 
-    def batch(self, statements: Sequence[str | tuple[str, Args] | Statement]) -> builtins.list[StatementResult]:
+    def batch(self, statements: Sequence[str | tuple[str, Args] | Statement], *,
+              consistency: _spec.Consistency | None = None, bookmark: str | None = None) -> builtins.list[StatementResult]:
         """Run 1 to 256 statements as one all-or-nothing transaction; one result per statement."""
-        return self._c._send(_spec.execute(*self._p, _sql.statements(statements)))
+        return self._c._send(_spec.execute(*self._p, _sql.statements(statements), consistency, bookmark))
 
-    def connect(self) -> SqlSession:
-        """Open a SQL WebSocket session for interactive transactions; close it or use ``with``."""
-        return SqlSession(self)
+    def connect(self, *, consistency: _spec.Consistency | None = None) -> SqlSession:
+        """Open a SQL WebSocket session for interactive transactions; close it or use ``with``.
+        ``consistency`` is the session's default fast or strong mode."""
+        return SqlSession(self, consistency=consistency)
 
     def shape(self, table: str, *, where: str | None = None, columns: Sequence[str] | None = None) -> Shape:
         """Follow a table with optional SQL filtering and column projection."""

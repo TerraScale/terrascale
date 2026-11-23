@@ -18,38 +18,35 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"terrascale.tech/sdk/internal/causal"
 )
 
 const (
-	postgresMaxBytes       = 1024*1024 - 64 // reserve producer message framing
+	postgresMaxBytes       = 1024*1024 - 64
 	postgresResultBytes    = 16 * 1024 * 1024
 	postgresConnectTimeout = 5 * time.Second
+	postgresBookmark       = "terrascale.bookmark"
+	postgresConsistency    = "terrascale.consistency"
+	postgresSerialization  = "40001"
 )
 
-// PostgresConfig addresses the public PostgreSQL listener with a project-scoped dashboard API key.
-// Zero routing/trust fields use pg.terrascale.tech:5432 and verified system trust.
 type PostgresConfig struct {
-	// Host and Port override the public listener address for a custom deployment.
-	Host string
-	Port uint16
-	// TLSServerName defaults to Host; CACertificatePEM replaces system roots when supplied.
+	Host             string
+	Port             uint16
 	TLSServerName    string
 	CACertificatePEM []byte
-	// Database is a name, optionally qualified as the key's project ULID/name.
-	Database string
-	// KeyID is optional; when supplied it must equal the ID in Password.
-	KeyID string
-	// Password is the complete dashboard API key: <ULID>_<52 lowercase Crockford base32 characters>. It may start with sk_.
-	Password string
+	Database         string
+	KeyID            string
+	Password         string
+	Consistency      Consistency
+	Bookmark         string
 }
 
-// String and GoString keep credentials out of ordinary configuration diagnostics.
 func (PostgresConfig) String() string {
 	return "terrascale PostgreSQL configuration (credentials redacted)"
 }
 func (config PostgresConfig) GoString() string { return config.String() }
 
-// PostgresError retains SQLSTATE without exposing driver messages or bound data.
 type PostgresError struct {
 	Kind     string
 	SQLState string
@@ -63,8 +60,15 @@ func (err *PostgresError) Error() string {
 	return "terrascale PostgreSQL " + err.Kind + " failure"
 }
 
-// Unwrap exposes only context cancellation, never a credential-bearing driver error.
 func (err *PostgresError) Unwrap() error { return err.cause }
+
+func (err *PostgresError) Is(target error) bool {
+	return target == ErrSerializationConflict && err.SQLState == postgresSerialization
+}
+
+func (err *PostgresError) IsSerializationConflict() bool {
+	return err.SQLState == postgresSerialization
+}
 
 func postgresFailure(err error) error {
 	if errors.Is(err, context.Canceled) {
@@ -80,14 +84,11 @@ func postgresFailure(err error) error {
 	return &PostgresError{Kind: "connection"}
 }
 
-// PostgresValue holds a native pgx scalar or nil for SQL NULL.
-// JSON results are json.RawMessage; numeric results retain pgtype.Numeric precision.
 type PostgresValue struct {
 	oid   uint32
 	value any
 }
 
-// PostgresParameter binds a pgx-compatible value, including nil and pgtype scalars.
 func PostgresParameter(value any) PostgresValue  { return PostgresValue{value: value} }
 func PostgresInt8(value int64) PostgresValue     { return PostgresValue{oid: 20, value: value} }
 func PostgresText(value string) PostgresValue    { return PostgresValue{oid: 25, value: value} }
@@ -95,7 +96,6 @@ func (value PostgresValue) Int8() (int64, bool)  { v, ok := value.value.(int64);
 func (value PostgresValue) Text() (string, bool) { v, ok := value.value.(string); return v, ok }
 func (value PostgresValue) OID() uint32          { return value.oid }
 
-// Value returns the decoded pgx value, or nil for SQL NULL.
 func (value PostgresValue) Value() any { return value.value }
 
 type PostgresQuery struct {
@@ -107,8 +107,7 @@ type PostgresColumn struct {
 	OID  uint32
 }
 type PostgresResult struct {
-	Command string
-	// CommandTag preserves the complete server tag, including DDL object and row counts.
+	Command      string
 	CommandTag   string
 	AffectedRows uint64
 	Columns      []PostgresColumn
@@ -176,18 +175,17 @@ func buildPostgresConfig(config PostgresConfig) (*pgx.ConnConfig, error) {
 		len(config.TLSServerName) > 253 || strings.ContainsAny(config.TLSServerName, " \t\r\n,/@\x00") ||
 		!postgresDatabaseName.MatchString(name) || postgresReservedName.MatchString(name) || qualified && ValidateID(project) != nil ||
 		ValidateID(keyID) != nil || len(secret) != 52 || strings.Trim(secret, "0123456789abcdefghjkmnpqrstvwxyz") != "" ||
-		config.KeyID != "" && config.KeyID != keyID || len(config.CACertificatePEM) > 64*1024 {
+		config.KeyID != "" && config.KeyID != keyID || len(config.CACertificatePEM) > 64*1024 ||
+		config.Consistency != "" && !config.Consistency.Valid() || !causal.Valid(config.Bookmark) {
 		return nil, &PostgresError{Kind: "configuration"}
 	}
-	var roots *x509.CertPool // nil uses the platform's system certificate roots.
+	var roots *x509.CertPool
 	if len(config.CACertificatePEM) != 0 {
 		roots = x509.NewCertPool()
 		if !roots.AppendCertsFromPEM(config.CACertificatePEM) {
 			return nil, &PostgresError{Kind: "configuration"}
 		}
 	}
-	// pgx has no environment-free config constructor. Refuse service selection
-	// before parsing; explicit nonempty stub passwords also prevent pgpass reads.
 	if os.Getenv("PGSERVICE") != "" {
 		return nil, &PostgresError{Kind: "configuration"}
 	}
@@ -204,7 +202,6 @@ func buildPostgresConfig(config PostgresConfig) (*pgx.ConnConfig, error) {
 		MinVersion: tls.VersionTLS13,
 		NextProtos: []string{"postgresql"},
 		VerifyConnection: func(state tls.ConnectionState) error {
-			// SSLRequest establishes the protocol; the public edge permits absent ALPN.
 			if state.NegotiatedProtocol != "" && state.NegotiatedProtocol != "postgresql" {
 				return &PostgresError{Kind: "tls_protocol"}
 			}
@@ -217,10 +214,11 @@ func buildPostgresConfig(config PostgresConfig) (*pgx.ConnConfig, error) {
 	return driver, nil
 }
 
-// PostgresClient serializes one mature-driver connection without reconnect or write replay.
 type PostgresClient struct {
 	gate   chan struct{}
 	driver *pgx.Conn
+	causal causal.Tracker
+	synced string
 }
 
 func ConnectPostgres(ctx context.Context, config PostgresConfig) (*PostgresClient, error) {
@@ -234,10 +232,52 @@ func ConnectPostgres(ctx context.Context, config PostgresConfig) (*PostgresClien
 	if err != nil {
 		return nil, postgresFailure(err)
 	}
-	return &PostgresClient{driver: connection, gate: make(chan struct{}, 1)}, nil
+	client := &PostgresClient{driver: connection, gate: make(chan struct{}, 1)}
+	if err := client.causal.Observe(config.Bookmark); err != nil {
+		connection.Close(ctx)
+		return nil, &PostgresError{Kind: "configuration"}
+	}
+	if config.Consistency != "" {
+		if _, err := client.run(ctx, PostgresQuery{Statement: "SET " + postgresConsistency + " = '" + string(config.Consistency) + "'"}); err != nil {
+			connection.Close(ctx)
+			return nil, err
+		}
+	}
+	return client, nil
 }
 
-// acquire owns this logical session until released; waiting is cancellation-aware.
+func (client *PostgresClient) Bookmark() string { return client.causal.Load() }
+
+func (client *PostgresClient) sync(ctx context.Context) error {
+	outgoing, err := client.causal.Outgoing(ctx)
+	if err != nil {
+		return &PostgresError{Kind: "query", cause: err}
+	}
+	if outgoing == "" || outgoing == client.synced {
+		return nil
+	}
+	if _, err := client.run(ctx, PostgresQuery{Statement: "SET " + postgresBookmark + " = '" + outgoing + "'"}); err != nil {
+		return err
+	}
+	client.synced = outgoing
+	return client.causal.Observe(outgoing)
+}
+
+func (client *PostgresClient) observe() error {
+	if client.driver == nil {
+		return nil
+	}
+	reported := client.driver.PgConn().ParameterStatus(postgresBookmark)
+	if reported == "" || reported == client.synced {
+		return nil
+	}
+	if err := client.causal.Observe(reported); err != nil {
+		return &PostgresError{Kind: "protocol"}
+	}
+	client.synced = reported
+	return nil
+}
+
 func (client *PostgresClient) acquire(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return postgresFailure(err)
@@ -257,20 +297,16 @@ func (client *PostgresClient) acquire(ctx context.Context) error {
 	}
 }
 
-// Preserve pgx codecs while preferring the producer's supported parameter format.
 type postgresTextCodec struct{ pgtype.Codec }
 
 func (postgresTextCodec) PreferredFormat() int16 { return pgx.TextFormatCode }
 
-// Decode without Rows.Scan: its error path drains Rows before returning.
 func postgresDecode(types *pgtype.Map, field pgconn.FieldDescription, raw []byte) (any, error) {
 	if raw == nil {
 		return nil, nil
 	}
 	if field.DataTypeOID == 1700 && field.Format == pgx.TextFormatCode {
 		if index := bytes.IndexAny(raw, "eE"); index >= 0 {
-			// Producer finite reals use scientific text. Shift the native decimal scale
-			// exactly; never expand a string or coerce through floating point.
 			exponent, err := strconv.ParseInt(string(raw[index+1:]), 10, 32)
 			if err != nil || exponent < -postgresMaxBytes || exponent > postgresMaxBytes {
 				return nil, &PostgresError{Kind: "decode"}
@@ -301,19 +337,20 @@ func (client *PostgresClient) abort(ctx context.Context) {
 	if secure, ok := physical.(*tls.Conn); ok {
 		physical = secure.NetConn()
 	}
-	physical.Close() // Unblock I/O before pgx/Rows cleanup, including TLS close_notify.
+	physical.Close()
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
 	client.driver.PgConn().Close(canceled)
 }
 
-// Query sends the SQL and typed values separately through PostgreSQL binding.
-// BEGIN, COMMIT and ROLLBACK remain distinct statements; callbacks are never retried.
 func (client *PostgresClient) Query(ctx context.Context, query PostgresQuery) (PostgresResult, error) {
 	if err := client.acquire(ctx); err != nil {
 		return PostgresResult{}, err
 	}
 	defer func() { <-client.gate }()
+	if err := client.sync(ctx); err != nil {
+		return PostgresResult{}, err
+	}
 	return client.run(ctx, query)
 }
 
@@ -367,6 +404,9 @@ func (client *PostgresClient) run(ctx context.Context, query PostgresQuery) (Pos
 	}
 	if stream.err != nil {
 		return PostgresResult{}, stream.err
+	}
+	if err := client.observe(); err != nil {
+		return PostgresResult{}, err
 	}
 	result.CommandTag = stream.tag.String()
 	result.Command, _, _ = strings.Cut(result.CommandTag, " ")

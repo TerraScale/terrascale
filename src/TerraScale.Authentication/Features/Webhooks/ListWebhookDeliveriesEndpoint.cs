@@ -16,6 +16,6 @@ public sealed class ListWebhookDeliveriesEndpoint(TenantDirectory tenants, Platf
     protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
-        return Results.Json(await history.DeliveriesAsync(projectId, this.RouteId("id"), cancellationToken), WebhooksJson.Default.WebhookDeliveryPage);
+        return TypedResults.Json(await history.DeliveriesAsync(projectId, this.RouteId("id"), cancellationToken), WebhooksJson.Default.WebhookDeliveryPage);
     }
 }

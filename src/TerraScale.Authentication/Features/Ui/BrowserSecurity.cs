@@ -5,10 +5,8 @@ using TerraScale.Authentication.Security;
 
 namespace TerraScale.Authentication.Features.Ui;
 
-/// <summary>Response headers and cookies shared by every hosted page.</summary>
 public static class BrowserSecurity
 {
-    /// <summary>Applies baseline protection after endpoint and error handling, retaining page-specific CSPs.</summary>
     public static void ApplyResponseHeaders(HttpResponse response, bool https)
     {
         ArgumentNullException.ThrowIfNull(response);
@@ -24,8 +22,6 @@ public static class BrowserSecurity
 
         if (headers.ContentSecurityPolicy.Count == 0)
         {
-            // Scalar generates its nonce while rendering; OnStarting runs after it and after error responses clear headers.
-            // Scalar 2.17.13 also injects these fixed styles without nonces; hashes keep other inline style elements blocked.
             headers.ContentSecurityPolicy = response.HttpContext.Items[ScalarOptions.NonceHttpContextItemKey] is string nonce
                 ? $"default-src 'none'; script-src 'self' 'nonce-{nonce}'; style-src 'self' 'nonce-{nonce}' "
                     + "'sha256-vdYLq+JIuYUT8YppztWIsjJdCfzEYhgcJp8cEVP6zzY=' "
@@ -38,13 +34,8 @@ public static class BrowserSecurity
         }
     }
 
-    /// <summary>Creates a fresh CSP nonce for one response.</summary>
     public static string NewNonce() => Tokens.RandomToken(24);
 
-    /// <summary>
-    /// Applies the hosted-page CSP with <paramref name="nonce"/> allowing only this response's
-    /// inline styles and scripts, plus no-store, nosniff, frame and referrer protection.
-    /// </summary>
     public static void ApplyPageHeaders(HttpResponse response, string nonce)
     {
         ArgumentNullException.ThrowIfNull(response);
@@ -58,7 +49,6 @@ public static class BrowserSecurity
         headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
     }
 
-    /// <summary>Sets the tenant's hosted session cookie: Secure, HttpOnly, SameSite=Lax, whole-origin path.</summary>
     public static void SetSessionCookie(HttpResponse response, string value, string tenant)
     {
         ArgumentNullException.ThrowIfNull(response);
@@ -72,7 +62,6 @@ public static class BrowserSecurity
         });
     }
 
-    /// <summary>Expires the tenant's hosted session cookie with the same path and flags.</summary>
     public static void DeleteSessionCookie(HttpResponse response, string tenant)
     {
         ArgumentNullException.ThrowIfNull(response);

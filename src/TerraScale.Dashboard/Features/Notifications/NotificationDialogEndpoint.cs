@@ -14,18 +14,18 @@ namespace TerraScale.Dashboard.Features.Notifications
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             context = await NotificationCommands.RefreshAsync(accounts, context, http.RequestAborted);
             if (!http.Request.IsDatastarRequest)
             {
-                return Results.Redirect("/notifications");
+                return TypedResults.Redirect("/notifications");
             }
 
             await ApiKeyExpiryNotifications.RefreshAsync(http, context);
             await DatastarEvents.PatchElementsAsync(http, NotificationPatch.Create(NotificationEndpoints.Page(http, context, true)));
-            return Results.Empty;
+            return TypedResults.Empty;
         }
     }
 }

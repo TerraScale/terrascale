@@ -27,21 +27,21 @@ public sealed class PasskeyDeleteEndpoint(PasskeyCredentials passkeys, TotpCrede
         }
 
         var id = value;
-        var entries = await passkeys.ListAsync(caller, cancellationToken).ConfigureAwait(false);
+        var entries = await passkeys.ListAsync(caller, cancellationToken);
         if (entries.All(entry => entry.CredentialId != id))
         {
             return ErrorResults.ToResult(new NotFound("No passkey with this id is enrolled for the account.", "passkey_not_found"));
         }
 
-        if (await PasskeyGuard.LastFactorAsync(platform, mfa, caller.Id, entries.Count - 1, cancellationToken).ConfigureAwait(false))
+        if (await PasskeyGuard.LastFactorAsync(platform, mfa, caller.Id, entries.Count - 1, cancellationToken))
         {
             return ErrorResults.ToResult(PasskeyGuard.LastFactor);
         }
 
         var verified = await proofs.ConsumeHeaderAsync(caller, this.HttpContext.Request, "delete_passkey", null, cancellationToken);
-        return await passkeys.DeleteAsync(verified, id, cancellationToken).ConfigureAwait(false) switch
+        return await passkeys.DeleteAsync(verified, id, cancellationToken) switch
         {
-            PasskeyCredentialEntry => Results.NoContent(),
+            PasskeyCredentialEntry => TypedResults.NoContent(),
             Forbidden error => ErrorResults.ToResult(error),
             NotFound error => ErrorResults.ToResult(error),
             Conflict error => ErrorResults.ToResult(error),

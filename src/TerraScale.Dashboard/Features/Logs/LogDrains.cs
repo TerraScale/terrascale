@@ -1,10 +1,12 @@
+using TerraBaseDbConnection = TerraScale.DotNet.TerraBase.TerraBaseDbConnection;
+using System.Data.Common;
+using Dapper;
+using System.Data;
 using System.Globalization;
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Features.Logs
 {
@@ -22,15 +24,33 @@ namespace TerraScale.Dashboard.Features.Logs
 
     public readonly union LogDrainDeleted(Done, Forbidden, NotFound);
 
-    public sealed partial class LogDrains(IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, ILogDrainSource source, ICustomerDelivery delivery, IDashboardIdentity identity,
+    public sealed partial class LogDrains(DashboardDb storage, OrganizationStore organizations, ILogDrainSource source, ICustomerDelivery delivery, IDashboardIdentity identity,
         TimeProvider clock, ILogger<LogDrains> logger, BackgroundJobs jobs, BillingSchemaGate gate)
     {
+        private const string DrainOfProject = DashboardSql.LogDrains.Select + " WHERE project_id = @ProjectId";
+        private const string DrainOf = DashboardSql.LogDrains.Select + " WHERE project_id = @ProjectId AND organization_id = @OrganizationId";
+        private const string DrainById = DashboardSql.LogDrains.Select + " WHERE id = @Id";
+        private const string LiveDrain = DashboardSql.LogDrains.Select + """
+             WHERE id = @Id AND revision = @Revision
+              AND EXISTS (SELECT 1 FROM project_databases AS member WHERE member.id = @DatabaseId AND member.project_id = log_drains.project_id
+                  AND member.organization_id = log_drains.organization_id)
+            """;
+        private const string DrainIds = "SELECT id FROM log_drains ORDER BY id";
+        private const string CursorsOf = DashboardSql.LogDrainCursors.Select + " WHERE drain_id = @DrainId";
+        private const string RemoveJobs = "DELETE FROM background_jobs WHERE id LIKE @Prefix || '%'";
+        private const string RemoveDrain = """
+            DELETE FROM log_drain_cursors WHERE drain_id IN (SELECT id FROM log_drains WHERE project_id = @ProjectId AND organization_id = @OrganizationId);
+            DELETE FROM log_drains WHERE project_id = @ProjectId AND organization_id = @OrganizationId;
+            DELETE FROM background_jobs WHERE id LIKE @Prefix || '%'
+            """;
+        private const string JobById = DashboardSql.BackgroundJobs.Select + " WHERE id = @Id";
+
         private static readonly string[] ReservedHeaders = ["host", "content-length", "content-type", "transfer-encoding", "connection", "te", "upgrade", "expect", "cookie", "idempotency-key", "x-terrascale-delivery"];
 
         public async Task<LogDrain?> ReadAsync(string projectId, CancellationToken cancellationToken)
         {
-            await using var db = await storage.CreateDbContextAsync(cancellationToken);
-            return await db.LogDrains.AsNoTracking().SingleOrDefaultAsync(row => row.ProjectId == projectId, cancellationToken) is { } row ? Drain(row) : null;
+            await using var connection = await storage.OpenAsync(cancellationToken);
+            return await connection.QuerySingleOrDefaultAsync<LogDrainRow>(DrainOfProject, new { ProjectId = projectId }) is { } row ? Drain(row) : null;
         }
 
         public async Task<LogDrainSaved> SaveAsync(AccountContext context, string? url, string? headerName, string? headerValue, CancellationToken cancellationToken)
@@ -61,10 +81,11 @@ namespace TerraScale.Dashboard.Features.Logs
 
             var key = (await identity.ReadAsync(cancellationToken)).SessionEncryptionKey;
             var header = value is null ? null : SealedSecret.Seal(value, key, "log-drain/" + project.Id);
-            await using var db = await storage.CreateDbContextAsync(cancellationToken);
+            await using var connection = await storage.OpenAsync(cancellationToken);
             for (var attempt = 0; ; attempt++)
             {
-                var row = await db.LogDrains.SingleOrDefaultAsync(drain => drain.ProjectId == project.Id && drain.OrganizationId == organization.Id, cancellationToken);
+                var row = await connection.QuerySingleOrDefaultAsync<LogDrainRow>(DrainOf, new { ProjectId = project.Id, OrganizationId = organization.Id });
+                var create = row is null;
                 var previousRevision = row?.Revision;
                 var keep = header is null && name is not null && row?.HeaderName == name;
                 if (name is not null && header is null && !keep)
@@ -83,9 +104,9 @@ namespace TerraScale.Dashboard.Features.Logs
                         Url = target,
                         CreatedAt = clock.GetUtcNow().UtcDateTime,
                     };
-                    db.LogDrains.Add(row);
                 }
 
+                row.OriginalRevision = row.Revision;
                 row.Revision = AccountService.NewId();
                 row.Url = target;
                 row.HeaderName = name;
@@ -100,19 +121,23 @@ namespace TerraScale.Dashboard.Features.Logs
                 row.LastErrorAt = null;
                 row.LastErrorStatus = null;
                 row.LastGapAt = null;
-                if (previousRevision is not null)
-                {
-                    var prefix = "log-drain/" + project.Id + "/" + previousRevision + "/";
-                    db.BackgroundJobs.RemoveRange(await db.BackgroundJobs.Where(job => job.Id.StartsWith(prefix)).ToListAsync(cancellationToken));
-                }
+                var saved = row;
                 try
                 {
-                    await db.SaveChangesAsync(cancellationToken);
+                    await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+                    if (previousRevision is not null)
+                    {
+                        await connection.ExecuteAsync(RemoveJobs, new { Prefix = "log-drain/" + project.Id + "/" + previousRevision + "/" }, transaction);
+                    }
+
+                    DashboardDb.Expect(create
+                        ? await connection.ExecuteAsync(DashboardSql.LogDrains.Insert, saved, transaction)
+                        : await connection.ExecuteAsync(DashboardSql.LogDrains.Update, saved, transaction));
+                    await transaction.CommitAsync(cancellationToken);
                     return new Done();
                 }
-                catch (DbUpdateException error) when (attempt < 2 && (error is DbUpdateConcurrencyException || error.InnerException is TerraBaseSqlException { Code: TerraBaseSqlErrorCodes.UniqueViolation }))
+                catch (Exception error) when (attempt < 2 && (error is DBConcurrencyException || DashboardDb.IsDuplicate(error)))
                 {
-                    db.ChangeTracker.Clear();
                 }
             }
         }
@@ -125,10 +150,8 @@ namespace TerraScale.Dashboard.Features.Logs
             }
 
             var (organization, project) = owner;
-            await using var db = await storage.CreateDbContextAsync(cancellationToken);
-            await db.LogDrains.Where(row => row.ProjectId == project.Id && row.OrganizationId == organization.Id).ExecuteDeleteAsync(cancellationToken);
-            var prefix = "log-drain/" + project.Id + "/";
-            await db.BackgroundJobs.Where(row => row.Id.StartsWith(prefix)).ExecuteDeleteAsync(cancellationToken);
+            await using var connection = await storage.OpenAsync(cancellationToken);
+            await connection.ExecuteAsync(RemoveDrain, new { ProjectId = project.Id, OrganizationId = organization.Id, Prefix = "log-drain/" + project.Id + "/" });
             return new Done();
         }
 
@@ -136,15 +159,15 @@ namespace TerraScale.Dashboard.Features.Logs
         {
             if (!await gate.AllowsAsync(cancellationToken)) { return; }
             List<string> drains;
-            await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+            await using (var connection = await storage.OpenAsync(cancellationToken))
             {
-                drains = await db.LogDrains.AsNoTracking().OrderBy(row => row.Id).Select(row => row.Id).ToListAsync(cancellationToken);
+                drains = (await connection.QueryAsync<string>(DrainIds)).AsList();
             }
 
             foreach (var id in drains)
             {
                 try { await ShipAsync(id, cancellationToken); }
-                catch (Exception error) when (error is HttpRequestException or IOException or JsonException or InvalidOperationException or DbUpdateException or ArgumentException or FormatException ||
+                catch (Exception error) when (error is HttpRequestException or IOException or JsonException or InvalidOperationException or DBConcurrencyException or ArgumentException or FormatException ||
                     error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
                 {
                     logger.AProjectLogDrainCouldNot(error.GetType().Name);
@@ -154,8 +177,8 @@ namespace TerraScale.Dashboard.Features.Logs
 
         private async Task ShipAsync(string id, CancellationToken cancellationToken)
         {
-            await using var db = await storage.CreateDbContextAsync(cancellationToken);
-            if (await db.LogDrains.Include(row => row.Cursors).SingleOrDefaultAsync(row => row.Id == id, cancellationToken) is not { } drain)
+            await using var db = await storage.OpenAsync(cancellationToken);
+            if (await DrainWithCursorsAsync(db, DrainById, new { Id = id }) is not { } drain)
             {
                 return;
             }
@@ -175,60 +198,70 @@ namespace TerraScale.Dashboard.Features.Logs
             foreach (var database in project.Databases.Values)
             {
                 var jobId = "log-drain/" + drain.ProjectId + "/" + drain.Revision + "/" + database.Id;
-                var snapshot = await db.BackgroundJobs.AsNoTracking().Where(row => row.Id == jobId)
-                    .Select(row => new { State = row, Now = DateTime.UtcNow }).SingleOrDefaultAsync(cancellationToken);
-                if (snapshot is not null && snapshot.State.LeaseUntil > snapshot.Now) { continue; }
+                var snapshot = await db.QuerySingleOrDefaultAsync<BackgroundJobRow>(JobById, new { Id = jobId });
+                if (snapshot is not null && DateTime.SpecifyKind(snapshot.LeaseUntil, DateTimeKind.Utc) > clock.GetUtcNow().UtcDateTime)
+                {
+                    continue;
+                }
+
                 var preparedCursor = drain.Cursors.FirstOrDefault(row => row.DatabaseId == database.Id)?.Cursor ?? Start(Utc(drain.CreatedAt));
-                var batch = snapshot?.State.Payload is null ? await source.ReadAsync(drain.ProjectId, database.Id, preparedCursor, cancellationToken) : null;
-                if (batch is { Items.Count: 0 } && (!batch.Gap || snapshot?.State.Cursor == "gap/" + preparedCursor)) { continue; }
+                var batch = snapshot?.Payload is null ? await source.ReadAsync(drain.ProjectId, database.Id, preparedCursor, cancellationToken) : null;
+                if (batch is { Items.Count: 0 } && (!batch.Gap || snapshot?.Cursor == "gap/" + preparedCursor))
+                {
+                    continue;
+                }
+
                 await jobs.RunAsync(jobId, TimeSpan.Zero, async (claim, token) =>
                 {
                     var state = claim.State;
-                    var owner = state.Owner;
-                    var current = await claim.Database.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+                    var connection = claim.Connection;
+                    LogDrainRow? current;
+                    await using (var prepared = await connection.BeginTransactionAsync(token))
                     {
-                        claim.Database.ChangeTracker.Clear();
-                        await using var prepared = await claim.Database.Database.BeginTransactionAsync(token);
-                        var held = await claim.Database.BackgroundJobs.AsNoTracking()
-                            .SingleOrDefaultAsync(row => row.Id == jobId && row.Owner == owner && row.LeaseUntil > DateTime.UtcNow, token);
-                        if (held is null) { return null; }
-                        claim.Database.Entry(state).CurrentValues.SetValues(held);
-                        claim.Database.Entry(state).State = EntityState.Unchanged;
-                        var current = await claim.Database.LogDrains.Include(row => row.Cursors)
-                            .SingleOrDefaultAsync(row => row.Id == id && row.Revision == drain.Revision &&
-                                claim.Database.ProjectDatabases.Any(member => member.Id == database.Id && member.ProjectId == row.ProjectId && member.OrganizationId == row.OrganizationId), token);
+                        current = await DrainWithCursorsAsync(connection, LiveDrain, new { Id = id, drain.Revision, DatabaseId = database.Id }, prepared);
                         if (current is null)
                         {
-                            await claim.Database.BackgroundJobs.Where(row => row.Id == jobId && row.Owner == state.Owner && row.Checkpoint == state.Checkpoint)
-                                .ExecuteDeleteAsync(token);
-                            claim.Database.Entry(state).State = EntityState.Detached;
+                            await claim.ForgetAsync(prepared, token);
                             await prepared.CommitAsync(token);
-                            return null;
+                            return;
                         }
+
                         var cursor = current.Cursors.FirstOrDefault(row => row.DatabaseId == database.Id)?.Cursor ?? Start(Utc(current.CreatedAt));
                         if (state.Payload is null)
                         {
-                            if (cursor != preparedCursor || batch is null) { return null; }
-                            if (batch.Gap) { current.LastGapAt = clock.GetUtcNow().UtcDateTime; }
+                            if (cursor != preparedCursor || batch is null)
+                            {
+                                return;
+                            }
+
+                            if (batch.Gap)
+                            {
+                                current.LastGapAt = clock.GetUtcNow().UtcDateTime;
+                            }
+
                             if (batch.Items.Count == 0 || batch.NextCursor == cursor)
                             {
                                 if (batch.Gap)
                                 {
                                     state.Cursor = "gap/" + cursor;
-                                    await claim.SaveAsync(token);
+                                    await SaveDrainAsync(connection, current, prepared);
+                                    await claim.SaveAsync(prepared, token);
                                     await prepared.CommitAsync(token);
                                 }
-                                return null;
+
+                                return;
                             }
+
                             state.NextCursor = batch.NextCursor ?? throw new IOException("Log source returned no next cursor.");
                             state.Payload = Otlp(current.ProjectId, database, batch.Items);
                             state.DeliveryId = AccountService.NewId();
-                            await claim.SaveAsync(token);
+                            await SaveDrainAsync(connection, current, prepared);
+                            await claim.SaveAsync(prepared, token);
                         }
+
                         await prepared.CommitAsync(token);
-                        return current;
-                    });
-                    if (current is null) { return; }
+                    }
+
                     var saved = current.Cursors.FirstOrDefault(row => row.DatabaseId == database.Id);
 
                     var payload = state.Payload ?? throw new IOException("The claimed log batch has no payload.");
@@ -249,28 +282,41 @@ namespace TerraScale.Dashboard.Features.Logs
                     {
                         current.LastErrorAt = clock.GetUtcNow().UtcDateTime;
                         current.LastErrorStatus = status;
-                        await claim.SaveAsync(token);
+                        await claim.SaveAsync((connection, transaction) => SaveDrainAsync(connection, current, transaction), token);
                         return;
                     }
-                    if (saved is null)
-                    {
-                        claim.Database.LogDrainCursors.Add(new LogDrainCursorRow
-                        {
-                            Id = AccountService.NewId(),
-                            DrainId = id,
-                            DatabaseId = database.Id,
-                            Cursor = nextCursor
-                        });
-                    }
-                    else { saved.Cursor = nextCursor; }
+                    var cursorRow = saved is null
+                        ? new LogDrainCursorRow { Id = AccountService.NewId(), DrainId = id, DatabaseId = database.Id, Cursor = nextCursor }
+                        : saved with { Cursor = nextCursor };
                     current.LastSuccessAt = clock.GetUtcNow().UtcDateTime;
                     state.Cursor = state.NextCursor;
                     state.Payload = null;
                     state.NextCursor = null;
                     state.DeliveryId = null;
-                    await claim.SaveAsync(token);
-                }, cancellationToken, fence: snapshot?.State.Checkpoint ?? "", databaseId: database.Id);
+                    await claim.SaveAsync(async (connection, transaction) =>
+                    {
+                        await connection.ExecuteAsync(saved is null ? DashboardSql.LogDrainCursors.Insert : DashboardSql.LogDrainCursors.Update, cursorRow, transaction);
+                        await SaveDrainAsync(connection, current, transaction);
+                    }, token);
+                }, cancellationToken, fence: snapshot?.Checkpoint ?? "", databaseId: database.Id);
             }
+        }
+
+        private static async Task SaveDrainAsync(TerraBaseDbConnection connection, LogDrainRow drain, DbTransaction transaction)
+        {
+            drain.OriginalRevision = drain.Revision;
+            DashboardDb.Expect(await connection.ExecuteAsync(DashboardSql.LogDrains.Update, drain, transaction));
+        }
+
+        private static async Task<LogDrainRow?> DrainWithCursorsAsync(TerraBaseDbConnection connection, string sql, object key, DbTransaction? transaction = null)
+        {
+            if (await connection.QuerySingleOrDefaultAsync<LogDrainRow>(sql, key, transaction) is not { } drain)
+            {
+                return null;
+            }
+
+            drain.Cursors.AddRange(await connection.QueryAsync<LogDrainCursorRow>(CursorsOf, new { DrainId = drain.Id }, transaction));
+            return drain;
         }
 
         public static byte[] Otlp(string projectId, DatabaseRecord database, IReadOnlyList<DatabaseLogEntry> entries)
@@ -309,14 +355,15 @@ namespace TerraScale.Dashboard.Features.Logs
 
         private static string Start(DateTimeOffset time)
         {
-            var bytes = new byte[16];
+            Span<byte> bytes = stackalloc byte[16];
+            bytes.Clear();
             var milliseconds = time.ToUnixTimeMilliseconds();
             for (var i = 0; i < 6; i++)
             {
                 bytes[i] = (byte)(milliseconds >> (8 * (5 - i)));
             }
 
-            return new NUlid.Ulid(bytes).ToString();
+            return new Ulid(bytes).ToString();
         }
 
         private static object Text(string key, string value)

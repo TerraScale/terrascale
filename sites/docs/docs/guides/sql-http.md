@@ -15,8 +15,6 @@ Authorization: Bearer <access token>
 Content-Type: application/json
 ```
 
-A client may send `X-TerraScale-Region-Pin` with one region ID, and an empty value is omitted.
-
 Exchange a project API key for the access token first, as in [getting started](/getting-started/#exchange-the-key-for-an-access-token); tokens live at most 60 seconds and the key itself is refused as a bearer token. Get the project ID from the dashboard or `ts projects`.
 
 The body carries `statements`, each with `sql` and either positional `args` or a `named` map:
@@ -49,11 +47,35 @@ A refused statement rolls back the whole request and answers an `error` object:
 
 ## Transactions
 
-One request is one transaction. `BEGIN`, `COMMIT` and `ROLLBACK` are refused; `SAVEPOINT`, `RELEASE` and `ROLLBACK TO` are accepted within the request. For interactive transactions use the WebSocket session (`…/sql/ws`, subprotocol `terrascale.sql.v1`) or the Postgres wire, both limited to 5 seconds per transaction. See [SQL](/concepts/sql#transactions).
+One request is one transaction. `SAVEPOINT`, `RELEASE` and `ROLLBACK TO` are accepted within the request. `BEGIN STRONG` (or `BEGIN ISOLATION LEVEL SERIALIZABLE`) as the first statement and `COMMIT` as the last run the whole batch in strong mode; any other `BEGIN`, `COMMIT` or `ROLLBACK` is refused. For interactive transactions use the WebSocket session (`…/sql/ws`, subprotocol `terrascale.sql.v2`) or the Postgres wire, both limited to 5 seconds per transaction. See [SQL](/concepts/sql#transactions).
 
-## Read and write routing
+## Consistency and bookmarks
 
-Reads are served in the region you call. A write sent to another region is forwarded, or committed locally and confirmed. The answer carries `TerraScale-Write-Route` (`route=local|home; reason=…; commit=home|local`) and `Server-Timing`. Send `TerraScale-Write: home` to send the request to the region that orders writes. `TerraScale-Write: local` is accepted and ignored. `auto` is the default. Send `TerraScale-Durability: home` to answer only after that region applied the write. Set the body field `durability` to `all` to answer only after every region of the set holds the commit (a 10-second wait answers `503 unavailable`). The server forwards a timed-out local publish with `TerraBase-Publish-Id` set to the same transaction id, and the ordering region applies that write once. A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has. See [multi-region writes and conflicts](/guides/multi-region-writes-and-conflicts).
+Every region of the database's set runs the request where you called it; there is no home region and no forwarding. Two optional headers control how it runs:
+
+| Header | Values | Effect |
+| --- | --- | --- |
+| `TerraScale-Consistency` | `fast` (default) or `strong` | `fast` commits in the region you called and replicates afterwards. `strong` commits on two of three regions after checking every row the transaction read and wrote. |
+| `TerraScale-Bookmark` | A bookmark from an earlier response | The region waits until it has applied the writes the bookmark covers, then runs the request: read-your-writes in any region. |
+
+Every response carries `TerraScale-Bookmark` (the newest bookmark covering this request) and `TerraScale-Consistency` (the mode it actually ran in; schema changes and writes to tables with a secondary `UNIQUE` constraint always run `strong`). Keep the newest bookmark and send it on the next request:
+
+```bash
+curl -sS --fail-with-body -D headers.txt --header @/dev/fd/3 \
+  -H 'Content-Type: application/json' -H 'TerraScale-Consistency: strong' \
+  -d '{"statements":[{"sql":"UPDATE accounts SET balance = balance - ? WHERE id = ?","args":[25,"acct_1"]}]}' \
+  "https://api.terrascale.tech/v1/projects/$PROJECT_ID/databases/app/sql/execute" \
+  3< <(printf 'Authorization: Bearer %s\n' "$TERRASCALE_ACCESS_TOKEN")
+BOOKMARK=$(awk -F': ' 'tolower($1)=="terrascale-bookmark"{print $2}' headers.txt | tr -d '\r')
+
+curl -sS --fail-with-body --header @/dev/fd/3 \
+  -H 'Content-Type: application/json' -H "TerraScale-Bookmark: $BOOKMARK" \
+  -d '{"statements":[{"sql":"SELECT balance FROM accounts WHERE id = ?","args":["acct_1"]}]}' \
+  "https://sjc.api.terrascale.tech/v1/projects/$PROJECT_ID/databases/app/sql/execute" \
+  3< <(printf 'Authorization: Bearer %s\n' "$TERRASCALE_ACCESS_TOKEN")
+```
+
+A strong request that loses a race answers `409 serialization_conflict` (SQLSTATE `40001`) and applied nothing; send it again. A malformed bookmark answers `400 invalid_bookmark`. See [replication and consistency](/concepts/replication) and [multi-region writes and conflicts](/guides/multi-region-writes-and-conflicts).
 
 ## Export a database
 
@@ -64,7 +86,7 @@ Authorization: Bearer <access token>
 
 The response is one SQL script (`application/sql`, `attachment`) holding the whole database: every table's schema and rows, then its indexes, views and triggers, wrapped in one transaction. The dump comes from a single read snapshot, so it is consistent — no half-applied writes appear in it. The same statements run back into a fresh database through `sql/execute` or the SDKs.
 
-Exports need the `sql:read` scope and are served by the region that orders the database's writes. If an export fails partway, the connection is closed instead of returning a partial file, so retry the whole request.
+Exports need the `sql:read` scope and are served by the region you call, from the data that region has applied. If an export fails partway, the connection is closed instead of returning a partial file, so retry the whole request.
 
 ## Limits
 

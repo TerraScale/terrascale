@@ -218,17 +218,11 @@ ts db placement example -regions sjc,fra
 ts db regions example
 ```
 
-`db create` takes `-regions`, a comma-separated list of region ids, at least one.
+`db create` takes `-regions`, a comma-separated list of one to nine region ids. Every region of the set is an equal peer that accepts reads and writes; there is no home region to pick.
 `-all-regions` places the database in every serving region, including regions added later.
 `db placement <name> -regions …` changes the set later with the same `-regions` list, or with `-all-regions`.
-Changing the set does not name which region orders writes: TerraBase picks that region and moves it when the set changes.
-When a requested region is not ready, the regions you added stay added and `ts db placement <name> -regions …` exits with a message asking you to run the same command again.
-`db regions <db>` prints each region's pull progress.
-`-json` output still carries the earlier fields while the server sends them. `ts db move-home` no longer exists.
-
-### Earlier fields
-
-`-home-region` and `-replica-regions` are earlier flags and still work. New commands use `-regions` and `-all-regions`.
+When an added region has not caught up yet, the regions you added stay added and `ts db placement <name> -regions …` exits with a message asking you to run the same command again.
+`db regions <db>` prints each region's health, replication lag in milliseconds and applied bookmark.
 
 Database deletion asks you to type the database name in a terminal before it
 deletes data. For an unattended script, explicitly consent
@@ -346,6 +340,26 @@ ts sql example "SELECT id, name FROM people ORDER BY id"
 
 With several projects, put `-project <name>` before `sql`. For a multiline SQL shell with session history, use `ts shell <db>` (`.run` submits; each engine call runs exactly one statement).
 
+### Consistency and bookmarks
+
+`ts sql` and `ts shell` take two options, after the database name:
+
+| Option | Effect |
+| --- | --- |
+| `-consistency fast\|strong` | `fast` commits in the region you reach and replicates afterwards; `strong` commits on two of three regions after checking the rows the statement read and wrote. Without it the database's default applies (`fast` unless set otherwise). |
+| `-bookmark <bookmark>` | Waits until the region you reach has applied the writes this bookmark covers, then runs: read-your-writes from another machine or region. |
+
+After each statement, `ts sql` prints `bookmark <value>` on stderr (with `-json`, the result's `bookmark` field). Pass it to a later command:
+
+```sh
+ts sql example "UPDATE accounts SET balance = balance - 25 WHERE id = 'acct_1'" -consistency strong
+# bookmark AQMDZnJhBANncnUKA3NqYwc
+ts sql example "SELECT balance FROM accounts WHERE id = 'acct_1'" -bookmark AQMDZnJhBANncnUKA3NqYwc
+ts shell example -consistency strong
+```
+
+Schema changes and writes to tables with a secondary `UNIQUE` constraint always run strong. See [replication and consistency](/concepts/replication).
+
 ## Functions
 
 ```sh
@@ -427,10 +441,6 @@ ts -expires 30d -allow-cidr 203.0.113.0/24 keys create app 01JD2V5QANWG7Z4KQVKJF
 Replace the documentation network above with your application's real egress CIDR.
 Expiry accepts `30d`, `90d`, `365d` or `never`; CIDRs are comma-separated. Treat the
 one-time key output as a secret; write it only to a private file or secret store.
-
-## Push streams
-
-A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 
 ## Sign out
 

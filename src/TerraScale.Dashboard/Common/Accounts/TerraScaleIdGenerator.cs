@@ -1,38 +1,38 @@
-using NUlid;
-using NUlid.Rng;
+namespace TerraScale.Dashboard.Common.Accounts;
 
-namespace TerraScale.Dashboard.Common.Accounts
+public sealed class TerraScaleIdGenerator(TimeProvider timeProvider)
 {
-    // Cryptographic ULIDs remain monotonic within this service, including across backward clock adjustments.
-    public sealed class TerraScaleIdGenerator
+    private readonly Lock _gate = new();
+    private Ulid _last;
+
+    public string NewId()
     {
-        private readonly object gate = new();
-        private readonly MonotonicUlidRng random = new(new CSUlidRng());
-        private readonly TimeProvider timeProvider;
-        private DateTimeOffset? lastTime;
-        public TerraScaleIdGenerator() : this(TimeProvider.System)
+        lock (_gate)
         {
-        }
-
-        internal TerraScaleIdGenerator(TimeProvider timeProvider)
-        {
-            this.timeProvider = timeProvider;
-        }
-
-        public string NewId()
-        {
-            lock (gate)
+            var now = timeProvider.GetUtcNow();
+            var next = Ulid.NewUlid(now);
+            if (now.ToUnixTimeMilliseconds() <= _last.Time.ToUnixTimeMilliseconds())
             {
-                var now = timeProvider.GetUtcNow();
-                if (lastTime is { } previous && now < previous)
-                {
-                    now = previous;
-                }
+                next = Increment(_last);
+            }
 
-                var id = Ulid.NewUlid(now, random).ToString();
-                lastTime = now;
-                return id;
+            _last = next;
+            return next.ToString();
+        }
+    }
+
+    private static Ulid Increment(Ulid previous)
+    {
+        Span<byte> bytes = stackalloc byte[16];
+        previous.TryWriteBytes(bytes);
+        for (var index = 15; index >= 6; index--)
+        {
+            if (++bytes[index] != 0)
+            {
+                break;
             }
         }
+
+        return new Ulid(bytes);
     }
 }

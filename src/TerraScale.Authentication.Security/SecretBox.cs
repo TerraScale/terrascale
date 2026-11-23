@@ -3,19 +3,12 @@ using System.Text;
 
 namespace TerraScale.Authentication.Security;
 
-/// <summary>
-/// Encrypts recoverable secrets at rest under the 32-byte master key (<c>TS_AUTH_MASTER_KEY</c>)
-/// with AES-256-GCM. The stored form is <c>v1:</c> + base64(nonce[12] ‖ ciphertext ‖ tag[16]).
-/// The <c>context</c> names the record that owns the secret and is authenticated as associated
-/// data, so a box copied into another record or tenant fails to open.
-/// </summary>
 public static class SecretBox
 {
     private const string Prefix = "v1:";
     private const int NonceSize = 12;
     private const int TagSize = 16;
 
-    /// <summary>Encrypts <paramref name="plaintext"/> with a fresh random nonce.</summary>
     public static string Seal(ReadOnlySpan<byte> masterKey, ReadOnlySpan<byte> plaintext, string context)
     {
         ArgumentException.ThrowIfNullOrEmpty(context);
@@ -27,10 +20,6 @@ public static class SecretBox
         return Prefix + Convert.ToBase64String(raw);
     }
 
-    /// <summary>
-    /// Decrypts a box sealed under the same key and context.
-    /// Throws <see cref="CryptographicException"/> for any malformed, tampered or misbound box.
-    /// </summary>
     public static byte[] Open(ReadOnlySpan<byte> masterKey, string boxed, string context)
     {
         ArgumentNullException.ThrowIfNull(boxed);

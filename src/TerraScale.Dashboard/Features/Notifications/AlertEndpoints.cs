@@ -55,13 +55,13 @@ namespace TerraScale.Dashboard.Features.Notifications
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, "/notifications/alerts", Results.BadRequest("Invalid form token."));
+                return RequestError.FormExpired(http, "/notifications/alerts", TypedResults.BadRequest("Invalid form token."));
             }
 
             try
@@ -131,7 +131,7 @@ namespace TerraScale.Dashboard.Features.Notifications
         {
             if (context.Project is null)
             {
-                return Results.Text(error.Length > 0 ? error : "Select a project.", statusCode: status == 200 ? 404 : status);
+                return TypedResults.Text(error.Length > 0 ? error : "Select a project.", statusCode: status == 200 ? 404 : status);
             }
 
             IReadOnlyList<AlertRule> items = [];
@@ -147,7 +147,7 @@ namespace TerraScale.Dashboard.Features.Notifications
             if (http.Request.IsDatastarRequest)
             {
                 await DatastarEvents.PatchElementsAsync(http, AlertsContent.Create(model));
-                return Results.Empty;
+                return TypedResults.Empty;
             }
 
             var page = AlertsView.Create(model);

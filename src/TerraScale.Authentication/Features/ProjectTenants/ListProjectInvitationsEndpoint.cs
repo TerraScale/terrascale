@@ -15,6 +15,6 @@ public sealed class ListProjectInvitationsEndpoint(TenantDirectory tenants, Plat
     {
         var projectId = await this.AccessAsync(caller, Roles.Viewer, cancellationToken);
         var (limit, after) = this.Paging(50);
-        return Results.Json(await invitations.ListAsync(projectId, limit, after, cancellationToken), ProjectTenantJson.Default.ProjectInvitationPageBody);
+        return TypedResults.Json(await invitations.ListAsync(projectId, limit, after, cancellationToken), ProjectTenantJson.Default.ProjectInvitationPageBody);
     }
 }

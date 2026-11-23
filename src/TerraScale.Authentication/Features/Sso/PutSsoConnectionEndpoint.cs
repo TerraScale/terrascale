@@ -4,17 +4,14 @@ using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Features.Sso;
 
-/// <summary><c>PUT /v1/terrascale/organizations/{organization}/sso</c>.</summary>
 public sealed class PutSsoConnectionEndpoint(SsoConnections connections, PlatformDirectory platform, PlatformAuthentication authentication) : SsoEndpoint(platform, authentication)
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Put(Connection);
         this.Describe("put_sso_connection", "Create or change the organization's SSO connection", "Needs the owner role. A new domain starts unverified, with a fresh TXT verification value; the issuer's discovery document must name the same https issuer. client_secret may be omitted to keep the stored one. 409 conflict when another organization verified the domain or this organization has a connection for another domain.", "Single sign-on", typeof(SsoConnectionRequest), StatusCodes.Status200OK, typeof(SsoConnectionBody), conflict: true);
     }
 
-    /// <inheritdoc />
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
         var organizationId = await this.OrganizationAsync(caller, Roles.Owner, cancellationToken);

@@ -163,7 +163,7 @@ Writes use new rules on their next request. Reads use them when replication reac
 | `409 must_refetch` | Refetch the shape with current authorization |
 | `412 version_mismatch` | Read the latest rules before deploying |
 | `428 precondition_required` | Supply `If-Match` or `If-None-Match` |
-| `421 wrong_region` | Nothing was applied; use the indicated home region |
+| `421 wrong_region` | Nothing was applied; send the request to a region of the database's set |
 | `503 write_outcome_unknown` | Inspect the result before another write; it may have committed |
 
 A denied request does not disclose its condition text. Use the owner-only simulator to diagnose it. After a timeout or unknown write outcome, do not automatically replay a mutation.

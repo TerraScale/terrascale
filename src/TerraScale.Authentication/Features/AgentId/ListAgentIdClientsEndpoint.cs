@@ -14,5 +14,5 @@ public sealed class ListAgentIdClientsEndpoint(PlatformAuthentication authentica
     }
 
     protected override async Task<IResult> HandleOwnerAsync(UserRecord owner, CancellationToken cancellationToken) =>
-        Results.Json(await clients.ListAsync(owner.Id, cancellationToken), AgentIdClientJson.Default.AgentIdClientPageBody);
+        TypedResults.Json(await clients.ListAsync(owner.Id, cancellationToken), AgentIdClientJson.Default.AgentIdClientPageBody);
 }

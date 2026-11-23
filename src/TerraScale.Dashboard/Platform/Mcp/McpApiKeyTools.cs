@@ -11,18 +11,12 @@ using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Features.Functions;
 using TerraScale.Dashboard.Features.Rules;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Functions;
-using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.Dashboard.Platform.Clients;
 using TerraScale.Dashboard.Platform.TsAuth;
-using TerraScale.TerraBase.Contracts.Backups;
-using TerraScale.TerraBase.Contracts.Management;
 
 namespace TerraScale.Dashboard.Platform.Mcp
 {
-    // Machine credentials never become dashboard users. Every operation retains the original
-    // ts-auth project/database scopes and TerraBase authorizes the RPC with that same token.
-    public sealed class McpApiKeyTools(IHttpClientFactory http, IDatabaseBackend databases, IBackupBackend backups, TerraBaseRpcClient rpc, ILogger<McpApiKeyTools> logger, TimeProvider time)
+    public sealed class McpApiKeyTools(IHttpClientFactory http, IDatabaseBackend databases, IBackupBackend backups, TerraBaseHttpClient terraBase, PlatformHttpClient platform, ILogger<McpApiKeyTools> logger)
     {
         internal const string ContextKey = "TerraScale.Dashboard/mcp-api-key";
         internal static readonly HashSet<string> Tools = new(StringComparer.Ordinal)
@@ -44,8 +38,6 @@ namespace TerraScale.Dashboard.Platform.Mcp
             {
                 var client = new TsAuthClient(http.CreateClient("platform"));
                 var result = await client.Oidc.ExchangeApiKeyAsync(key, project, ct);
-                // Claims come only from the fixed HTTPS ts-auth token endpoint, never a caller-supplied JWT.
-                // TerraBase independently validates the signature, audience, expiry and live key revocation.
                 var pieces = result.AccessToken.Split('.');
                 if (result.TokenType != "Bearer" || result.ExpiresIn <= 0 || pieces.Length != 3) return null;
                 using var body = JsonDocument.Parse(WebEncoders.Base64UrlDecode(pieces[1]));
@@ -151,7 +143,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
             var regions = await databases.RegionsAsync(ct);
             var region = DatabaseRegion.Resolve(regions, Text("region", Environment.GetEnvironmentVariable("TS_REGION") ?? regions[0].Id))
                 ?? throw new AccountAccessException("Choose a region listed by TerraScale discovery.", 422);
-            var management = rpc.User<IManagementService>(scope.AccessToken, region.Id).WithCancellationToken(ct);
+            var management = new ManagementClient(terraBase, ServiceCaller.User(scope.AccessToken), ct);
             if (tool == "create_database")
             {
                 var ttl = DatabaseTtl.Seconds(Hours());
@@ -165,20 +157,19 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 return Reply(new McpDatabaseList([.. page.Items.Select(Output)], page.Next, page.Next is not null, (int)limit), McpAgentJson.Default.McpDatabaseList);
             }
             if (!TerraScaleIds.IsValid(databaseId)) throw new AccountAccessException(DatabaseService.DatabaseIdRule, 422);
-            // Scoped data keys have no catalog scope. SQL routes accept ULIDs, so no privileged listing is needed.
             if (dataTool)
             {
                 async Task<CallToolResult> ExecuteAsync(DatabaseRegion home)
                 {
                     if (functionTool)
                     {
-                        async Task<T> AtHomeAsync<T>(Func<IFunctionsService, Task<T>> operation, CancellationToken cancellationToken)
+                        async Task<T> AtHomeAsync<T>(Func<FunctionsClient, Task<T>> operation, CancellationToken cancellationToken)
                         {
-                            var client = rpc.User<IFunctionsService>(scope.AccessToken, home.Id).WithCancellationToken(cancellationToken).WithDeadline(time.GetUtcNow().UtcDateTime.AddSeconds(30));
+                            var client = new FunctionsClient(platform, ServiceCaller.User(scope.AccessToken), cancellationToken);
                             try { return await operation(client); }
                             catch (TerraBaseWrongRegionException wrong) when (DatabaseRegion.Resolve(regions, wrong.HomeRegion) is { } owner && owner.Id != home.Id)
                             {
-                                return await operation(rpc.User<IFunctionsService>(scope.AccessToken, owner.Id).WithCancellationToken(cancellationToken).WithDeadline(time.GetUtcNow().UtcDateTime.AddSeconds(30)));
+                                return await operation(new FunctionsClient(platform, ServiceCaller.User(scope.AccessToken), cancellationToken));
                             }
                         }
                         var name = Text("name");
@@ -266,14 +257,13 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 try { return await ExecuteAsync(region); }
                 catch (DatabaseWrongRegionException wrong) when (DatabaseRegion.Resolve(regions, wrong.HomeRegion) is { } home && home.Id != region.Id)
                 {
-                    // A 421 definitively refused execution. Never retry an ambiguous write failure.
                     return await ExecuteAsync(home);
                 }
             }
             var database = await management.GetDatabaseAsync(scope.ProjectId, databaseId);
             region = DatabaseRegion.Resolve(await databases.RegionsAsync(ct), database.HomeRegion.Length > 0 ? database.HomeRegion : database.Region)
                 ?? throw new AccountAccessException("The database home region is unavailable.", 503);
-            management = rpc.User<IManagementService>(scope.AccessToken, region.Id).WithCancellationToken(ct);
+            management = new ManagementClient(terraBase, ServiceCaller.User(scope.AccessToken), ct);
             if (tool == "get_database") return Reply(Output(database), McpAgentJson.Default.McpDatabase);
             if (RulesMcpTools.Names.Contains(tool)) return await RulesMcpTools.CallAsync(management, scope.ProjectId, databaseId, tool, arguments);
             if (tool == "fork_database")

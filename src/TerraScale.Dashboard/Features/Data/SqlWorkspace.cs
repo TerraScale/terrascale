@@ -1,6 +1,5 @@
-using System.Linq.Expressions;
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
+using Dapper;
 using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Data
@@ -23,10 +22,29 @@ namespace TerraScale.Dashboard.Features.Data
             return error is IOException or HttpRequestException or JsonException or OperationCanceledException or TimeoutException || DatabaseResults.KnownFailure(error);
         }
 
-        public static async Task EraseAsync(IDbContextFactory<DashboardDbContext> storage, Expression<Func<SqlWorkspaceRow, bool>> owned, CancellationToken cancellationToken)
+        private const string EraseProject = "DELETE FROM sql_workspaces WHERE organization_id = @OrganizationId AND project_id = @ProjectId";
+        private const string EraseOrganization = "DELETE FROM sql_workspaces WHERE organization_id = @OrganizationId";
+        private const string EraseUser = "DELETE FROM sql_workspaces WHERE user_id = @UserId";
+
+        public static async Task EraseProjectAsync(DashboardDb storage, string organizationId, string projectId, CancellationToken cancellationToken)
         {
-            await using var db = await storage.CreateDbContextAsync(cancellationToken);
-            await db.SqlWorkspaces.Where(owned).ExecuteDeleteAsync(cancellationToken);
+            ArgumentNullException.ThrowIfNull(storage);
+            await using var connection = await storage.OpenAsync(cancellationToken);
+            await connection.ExecuteAsync(EraseProject, new { OrganizationId = organizationId, ProjectId = projectId });
+        }
+
+        public static async Task EraseOrganizationAsync(DashboardDb storage, string organizationId, CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(storage);
+            await using var connection = await storage.OpenAsync(cancellationToken);
+            await connection.ExecuteAsync(EraseOrganization, new { OrganizationId = organizationId });
+        }
+
+        public static async Task EraseUserAsync(DashboardDb storage, string userId, CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(storage);
+            await using var connection = await storage.OpenAsync(cancellationToken);
+            await connection.ExecuteAsync(EraseUser, new { UserId = userId });
         }
     }
 }

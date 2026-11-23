@@ -15,12 +15,12 @@ public static class PublicAddresses
         UseProxy = false,
         ConnectCallback = async (context, cancellationToken) =>
         {
-            var addresses = await Dns.GetHostAddressesAsync(context.DnsEndPoint.Host, cancellationToken).ConfigureAwait(false);
+            var addresses = await Dns.GetHostAddressesAsync(context.DnsEndPoint.Host, cancellationToken);
             var address = addresses.Length > 0 && addresses.All(IsPublic) ? addresses[0] : throw new HttpRequestException("The host has no public address.");
             var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
             try
             {
-                await socket.ConnectAsync(new IPEndPoint(address, context.DnsEndPoint.Port), cancellationToken).ConfigureAwait(false);
+                await socket.ConnectAsync(new IPEndPoint(address, context.DnsEndPoint.Port), cancellationToken);
                 return new NetworkStream(socket, ownsSocket: true);
             }
             catch

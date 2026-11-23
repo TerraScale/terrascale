@@ -1,4 +1,4 @@
-using TerraScale.TerraBase.Contracts;
+using TerraScale.Dashboard.Platform.Clients;
 using Stripe;
 using TerraScale.Dashboard.Platform.Contracts;
 using TerraScale.Dashboard.Features.Auth;
@@ -37,13 +37,13 @@ namespace TerraScale.Dashboard.Features.Billing
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, "/organization?tab=billing", Results.StatusCode(403));
+                return RequestError.FormExpired(http, "/organization?tab=billing", TypedResults.StatusCode(403));
             }
 
             try { return HttpRedirects.SeeOther(await billing.StartCheckoutAsync(context, form["plan"].ToString(), form["interval"].ToString(), form["return"].ToString(), http.RequestAborted)); }
@@ -54,7 +54,7 @@ namespace TerraScale.Dashboard.Features.Billing
                     return HttpRedirects.SeeOther("/organization?tab=billing&payment=blocked");
                 }
 
-                return Results.Problem(error.Message, statusCode: error is AccountAccessException access ? access.StatusCode : 422);
+                return TypedResults.Problem(error.Message, statusCode: error is AccountAccessException access ? access.StatusCode : 422);
             }
             catch (Exception error) when (error is StripeException or TerraBaseException or HttpRequestException or IOException ||
                 error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
@@ -62,7 +62,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 http.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger<CheckoutStartEndpoint>().CheckoutForOrganizationIsUnavailable(context.Organization?.Id, error.GetType().Name, BillingMutations.Describe(error));
                 if (!DatabaseEndpoints.WantsHtml(http))
                 {
-                    return Results.Problem("Checkout is temporarily unavailable. Return to billing to reconcile before trying again.", statusCode: 503);
+                    return TypedResults.Problem("Checkout is temporarily unavailable. Return to billing to reconcile before trying again.", statusCode: 503);
                 }
 
                 var page = BillingCheckoutUnavailable.Create(new DocumentModel("Checkout unavailable", DocumentModel.NonceFor(http)));

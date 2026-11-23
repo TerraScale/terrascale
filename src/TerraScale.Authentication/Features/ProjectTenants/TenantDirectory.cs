@@ -1,5 +1,5 @@
 using System.Net;
-using Microsoft.EntityFrameworkCore;
+using Dapper;
 using OpenIddict.Abstractions;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
@@ -22,17 +22,17 @@ public sealed class TenantDirectory(AuthData data, Users users, Sessions session
 
     public async Task CheckAccessAsync(string userId, string projectId, string minimum, CancellationToken cancellationToken)
     {
-        var project = await platform.ProjectAsync(projectId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
-        PlatformDirectory.RequireRole(await platform.ProjectAccessAsync(userId, project.Value.OrganizationId, projectId, cancellationToken).ConfigureAwait(false), minimum);
+        var project = await platform.ProjectAsync(projectId, cancellationToken) ?? throw PlatformDirectory.NotFound();
+        PlatformDirectory.RequireRole(await platform.ProjectAccessAsync(userId, project.Value.OrganizationId, projectId, cancellationToken), minimum);
     }
 
     public async Task CheckKeyAccessAsync(ApiKeyRecord key, string projectId, string scope, IPAddress? address, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(key);
-        var project = await platform.ProjectAsync(projectId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+        var project = await platform.ProjectAsync(projectId, cancellationToken) ?? throw PlatformDirectory.NotFound();
         if (key.ProjectId != projectId || key.OrganizationId != project.Value.OrganizationId || key.Database is not null
-            || await platform.ClosureAsync("organization", key.OrganizationId, cancellationToken).ConfigureAwait(false) is not null
-            || await platform.ClosureAsync("project", projectId, cancellationToken).ConfigureAwait(false) is not null)
+            || await platform.ClosureAsync("organization", key.OrganizationId, cancellationToken) is not null
+            || await platform.ClosureAsync("project", projectId, cancellationToken) is not null)
         {
             throw PlatformDirectory.NotFound();
         }
@@ -57,7 +57,7 @@ public sealed class TenantDirectory(AuthData data, Users users, Sessions session
     public async Task AuditKeyFailureAsync(ApiKeyRecord key, string operation, string target, int status, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(key);
-        if (!await data.SaveAsync(platform.Audit(key.OrganizationId, key.Id, operation + ".failed", key.ProjectId, $"{target} status={status}"), cancellationToken).ConfigureAwait(false))
+        if (!await data.SaveAsync(platform.Audit(key.OrganizationId, key.Id, operation + ".failed", key.ProjectId, $"{target} status={status}"), cancellationToken))
         {
             throw ApiException.Unavailable();
         }
@@ -72,33 +72,40 @@ public sealed class TenantDirectory(AuthData data, Users users, Sessions session
         var from = PlatformDirectory.Cursor(after);
         var needle = string.IsNullOrWhiteSpace(query) ? null : query.Trim().ToLowerInvariant();
         var end = needle + "\uffff";
-        var rows = await data.ReadAsync((db, token) => db.Users
-            .Where(user => user.InstanceId == projectId && string.Compare(user.Id, from) > 0
-                && (needle == null || string.Compare(user.Email, needle) >= 0 && string.Compare(user.Email, end) < 0))
-            .OrderBy(user => user.Id).Take(limit + 1)
-            .Select(user => new { User = user, Links = db.ProviderLinks.Where(link => link.UserId == user.Id).OrderBy(link => link.Provider).ThenBy(link => link.Subject).ToList() })
-            .ToListAsync(token), cancellationToken).ConfigureAwait(false);
-        return PlatformDirectory.Paged([.. rows.Select(row => row.User with { LinkedProviders = [.. row.Links.Select(link => link.Identity)] })], limit, user => user.Id);
+        var take = limit + 1;
+        var users = (await data.ReadAsync(connection => connection.QueryAsync<UserRecord>(
+            """
+            SELECT * FROM users WHERE instance_id = @projectId AND id > @from AND (@needle IS NULL OR email >= @needle AND email < @end)
+            ORDER BY id LIMIT @take
+            """, new { projectId, from, needle, end, take }), cancellationToken)).AsList();
+        var ids = users.Select(user => user.Id).ToList();
+        var links = (await data.ReadAsync(connection => connection.QueryAsync<ProviderLinkRecord>(
+            "SELECT * FROM provider_links WHERE user_id IN @ids ORDER BY provider, subject", new { ids }), cancellationToken)).ToLookup(link => link.UserId, StringComparer.Ordinal);
+        return PlatformDirectory.Paged([.. users.Select(user => user with { LinkedProviders = [.. links[user.Id].Select(link => link.Identity)] })], limit, user => user.Id);
     }
 
     public async Task<UserRecord> UserAsync(string projectId, string userId, CancellationToken cancellationToken) =>
-        await users.GetAsync(projectId, userId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+        await users.GetAsync(projectId, userId, cancellationToken) ?? throw PlatformDirectory.NotFound();
 
     public async Task<UserRecord> SetDisabledAsync(string projectId, string userId, bool disabled, CancellationToken cancellationToken) =>
-        await users.SetDisabledAsync(projectId, userId, disabled, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
+        await users.SetDisabledAsync(projectId, userId, disabled, cancellationToken) ?? throw PlatformDirectory.NotFound();
 
     public async Task<Page<ProjectSession>> SessionsAsync(string projectId, string? userId, int limit, string? after, CancellationToken cancellationToken)
     {
-        var configuration = (await settings.GetAsync(projectId, cancellationToken).ConfigureAwait(false)).Configuration ?? ConfigurationBody.Default;
+        var configuration = (await settings.GetAsync(projectId, cancellationToken)).Configuration ?? ConfigurationBody.Default;
         var lifetime = TimeSpan.FromSeconds(configuration.SessionLifetimeSeconds);
         var now = clock.GetUtcNow();
         var from = PlatformDirectory.Cursor(after);
-        var rows = await data.ReadAsync((db, token) => db.Sessions
-            .Where(session => session.InstanceId == projectId && !session.Revoked && session.ExpiresAt > now && (userId == null || session.UserId == userId)
-                && string.Compare(session.Id, from) > 0)
-            .OrderBy(session => session.Id).Take(limit + 1)
-            .Join(db.Users, session => session.UserId, user => user.Id, (session, user) => new { Session = session, User = user })
-            .ToListAsync(token), cancellationToken).ConfigureAwait(false);
+        var take = limit + 1;
+        var found = (await data.ReadAsync(connection => connection.QueryAsync<SessionRecord>(
+            """
+            SELECT * FROM sessions WHERE instance_id = @projectId AND revoked = 0 AND expires_at > @now AND (@userId IS NULL OR user_id = @userId) AND id > @from
+            ORDER BY id LIMIT @take
+            """, new { projectId, now, userId, from, take }), cancellationToken)).AsList();
+        var owners = found.Select(session => session.UserId).Distinct(StringComparer.Ordinal).ToList();
+        var byId = (await data.ReadAsync(connection => connection.QueryAsync<UserRecord>("SELECT * FROM users WHERE id IN @owners", new { owners }), cancellationToken))
+            .ToDictionary(user => user.Id, StringComparer.Ordinal);
+        var rows = found.Where(session => byId.ContainsKey(session.UserId)).Select(session => (Session: session, User: byId[session.UserId])).ToList();
         var next = rows.Count > limit ? rows[limit - 1].Session.Id : null;
         List<ProjectSession> items = [];
         foreach (var row in rows.Take(limit))
@@ -117,13 +124,13 @@ public sealed class TenantDirectory(AuthData data, Users users, Sessions session
     }
 
     public async Task<bool> RevokeSessionAsync(string projectId, string id, CancellationToken cancellationToken) =>
-        await data.ReadAsync((db, token) => db.Sessions.Where(session => session.InstanceId == projectId && session.Id == id).Select(session => session.TokenHash)
-            .SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false) is { } tokenHash
-        && await sessions.RevokeStoredAsync(projectId, tokenHash, cancellationToken).ConfigureAwait(false);
+        await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<string>(
+            "SELECT token_hash FROM sessions WHERE instance_id = @projectId AND id = @id", new { projectId, id }), cancellationToken) is { } tokenHash
+        && await sessions.RevokeStoredAsync(projectId, tokenHash, cancellationToken);
 
     public async Task<IReadOnlyList<OidcApplication>> ClientsAsync(string projectId, CancellationToken cancellationToken) =>
-        await data.ReadAsync((db, token) => db.OidcApplications.Where(client => client.InstanceId == projectId).OrderBy(client => client.Id).ToListAsync(token), cancellationToken)
-            .ConfigureAwait(false);
+        (await data.ReadAsync(connection => connection.QueryAsync<OidcApplication>(
+            "SELECT * FROM oidc_applications WHERE instance_id = @projectId ORDER BY id", new { projectId }), cancellationToken)).AsList();
 
     public async Task<(OidcApplication Client, string? Secret)> CreateClientAsync(HttpContext context, UserRecord caller, string projectId, NewClient client, IOpenIddictApplicationManager manager, CancellationToken cancellationToken)
     {
@@ -164,13 +171,13 @@ public sealed class TenantDirectory(AuthData data, Users users, Sessions session
         descriptor.RedirectUris.UnionWith(client.RedirectUris);
         descriptor.PostLogoutRedirectUris.UnionWith(client.RedirectUris);
         var application = new OidcApplication { AllowedOrigins = client.AllowedOrigins };
-        await manager.PopulateAsync(application, descriptor, cancellationToken).ConfigureAwait(false);
+        await manager.PopulateAsync(application, descriptor, cancellationToken);
         var previous = context.Items[Tenancy.ItemKey];
         context.Items[Tenancy.ItemKey] = projectId;
         context.Items[ClientIssuanceCaller] = caller;
         try
         {
-            await manager.CreateAsync(application, secret, cancellationToken).ConfigureAwait(false);
+            await manager.CreateAsync(application, secret, cancellationToken);
             return (application, secret);
         }
         catch (OpenIddictExceptions.ValidationException error)
@@ -186,12 +193,12 @@ public sealed class TenantDirectory(AuthData data, Users users, Sessions session
 
     public async Task AuditClientRotationAsync(string userId, string projectId, string clientId, CancellationToken cancellationToken)
     {
-        var project = await platform.ProjectAsync(projectId, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
-        await data.SaveAsync(platform.Audit(project.Value.OrganizationId, userId, "oauth_client.rotated", clientId), cancellationToken).ConfigureAwait(false);
+        var project = await platform.ProjectAsync(projectId, cancellationToken) ?? throw PlatformDirectory.NotFound();
+        await data.SaveAsync(platform.Audit(project.Value.OrganizationId, userId, "oauth_client.rotated", clientId), cancellationToken);
     }
 
     public async Task<bool> DeleteClientAsync(string projectId, string clientId, CancellationToken cancellationToken) =>
-        await data.ReadAsync((db, token) => db.OidcApplications.SingleOrDefaultAsync(client => client.InstanceId == projectId && client.Id == clientId, token), cancellationToken)
-            .ConfigureAwait(false) is { } client
-        && await data.SaveAsync(Change.Delete(client), cancellationToken).ConfigureAwait(false);
+        await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<OidcApplication>(
+            "SELECT * FROM oidc_applications WHERE instance_id = @projectId AND id = @clientId", new { projectId, clientId }), cancellationToken) is { } client
+        && await data.SaveAsync(Change.Delete(client), cancellationToken);
 }

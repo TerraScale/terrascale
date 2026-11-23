@@ -3,14 +3,6 @@ using System.Globalization;
 
 namespace TerraScale.Authentication.Hosting;
 
-/// <summary>
-/// Server-Timing for bearer-authenticated API calls (<c>/v1/…</c> and the UserInfo endpoint) and token requests:
-/// <c>app;dur=…, storage;dur=…;desc="N calls, W writes"</c>, so a caller such as the dashboard can tell ts-auth's storage
-/// time from its own transport, and how many storage writes (each waits for another region) a request made. Hosted pages
-/// never get it: storage call counts there could hint whether an account exists. A token request's counts reveal nothing
-/// the client does not already hold: it presents the code, refresh token or credential itself.
-/// Concurrent storage calls add up, so <c>storage</c> can exceed <c>app</c>.
-/// </summary>
 public sealed class StorageTiming
 {
     private static readonly AsyncLocal<StorageTiming?> Scope = new();
@@ -21,7 +13,6 @@ public sealed class StorageTiming
 
     private int writes;
 
-    /// <summary>Times API requests and writes their Server-Timing header before the response starts.</summary>
     public static IApplicationBuilder Use(IApplicationBuilder app) => app.Use(async (HttpContext context, RequestDelegate next) =>
     {
         var token = HttpMethods.IsPost(context.Request.Method)
@@ -42,12 +33,10 @@ public sealed class StorageTiming
                 $"app;dur={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1}, storage;dur={TimeSpan.FromTicks(Interlocked.Read(ref timing.ticks)).TotalMilliseconds:F1};desc=\"{Volatile.Read(ref timing.calls)} calls, {Volatile.Read(ref timing.writes)} writes\""));
             return Task.CompletedTask;
         });
-        // Set inside this async method, so the scope ends with the request and never leaks to the caller.
         Scope.Value = timing;
         await next(context);
     });
 
-    /// <summary>Wraps the storage transport so each call made while timing a request is counted.</summary>
     public static HttpMessageHandler Wrap(HttpMessageHandler inner) => new Handler { InnerHandler = inner };
 
     private sealed class Handler : DelegatingHandler
@@ -56,13 +45,13 @@ public sealed class StorageTiming
         {
             if (Scope.Value is not { } timing)
             {
-                return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                return await base.SendAsync(request, cancellationToken);
             }
 
             var started = Stopwatch.GetTimestamp();
             try
             {
-                return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                return await base.SendAsync(request, cancellationToken);
             }
             finally
             {

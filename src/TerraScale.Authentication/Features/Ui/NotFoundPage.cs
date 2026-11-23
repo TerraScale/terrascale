@@ -4,14 +4,8 @@ using TerraScale.Authentication.Features.Oidc;
 
 namespace TerraScale.Authentication.Features.Ui;
 
-/// <summary>
-/// Answers a browser navigation that ends in an empty 404 (an unknown path, an unknown tenant's hosted page) with the
-/// hosted "Page not found" page instead of a blank error. APIs, documentation, probes and OAuth/OIDC protocol paths keep
-/// their own answers.
-/// </summary>
 public static class NotFoundPage
 {
-    /// <summary>The status-code-pages handler; runs only for responses with no body that have not started.</summary>
     public static async Task HandleAsync(StatusCodeContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -22,7 +16,7 @@ public static class NotFoundPage
         }
 
         var page = new SignInPageModel(SignInStep.NotFound, OidcIssuer.Slug);
-        await SignInPageModel.Render(http, page, StatusCodes.Status404NotFound).ExecuteAsync(http).ConfigureAwait(false);
+        await SignInPageModel.Render(http, page, StatusCodes.Status404NotFound).ExecuteAsync(http);
     }
 
     private static bool Applies(HttpRequest request)
@@ -47,7 +41,6 @@ public static class NotFoundPage
             }
         }
 
-        // /{slug}/oauth/* and /{slug}/.well-known/* are protocol endpoints; their errors belong to OpenIddict.
         var segments = (path.Value ?? string.Empty).Split('/', 4, StringSplitOptions.RemoveEmptyEntries);
         return segments.Length < 2 || !(segments[1].Equals("oauth", StringComparison.OrdinalIgnoreCase)
             || segments[1].Equals(".well-known", StringComparison.OrdinalIgnoreCase));

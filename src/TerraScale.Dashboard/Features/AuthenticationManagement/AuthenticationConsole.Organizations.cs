@@ -88,7 +88,7 @@ public static partial class AuthenticationConsole
                 view = "domains";
                 break;
             default:
-                return Results.NotFound();
+                return TypedResults.NotFound();
         }
 
         return HttpRedirects.SeeOther("/auth/organizations?org=" + Uri.EscapeDataString(org) + "&view=" + view);

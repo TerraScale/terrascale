@@ -1,16 +1,21 @@
+using System.Data;
+using Dapper;
 using System.Text;
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Data
 {
     public sealed record SqlRunReceipt(string Id, DatabaseSqlResult? Result, int ReturnedRows, string Error, int Status, DateTimeOffset CreatedAt);
 
-    public sealed class SqlRuns(IDbContextFactory<DashboardDbContext> storage, TimeProvider time)
+    public sealed class SqlRuns(DashboardDb storage, TimeProvider time)
     {
         public const int ResultBytes = 512 * 1024;
         private static readonly TimeSpan Lifetime = TimeSpan.FromHours(1);
+        private const string Workspace = DashboardSql.SqlWorkspaces.Select
+            + " WHERE organization_id = @OrganizationId AND project_id = @ProjectId AND database_id = @DatabaseId AND user_id = @UserId";
+
+        private static string Json(string[] values) => JsonSerializer.Serialize(values, DataRowJson.Default.StringArray);
 
         public async Task<SqlRunReceipt> SaveAsync(AccountContext context, string databaseId, string sql, IReadOnlyList<string> history,
             DatabaseSqlResult? result, string error, int status, CancellationToken cancellationToken)
@@ -35,43 +40,41 @@ namespace TerraScale.Dashboard.Features.Data
             }
             var receipt = new SqlRunReceipt(AccountService.NewId(), kept, result?.Rows.Count ?? 0, error, status, time.GetUtcNow());
             var draft = Encoding.UTF8.GetByteCount(sql) <= SqlWorkspace.SqlBytes ? sql : "";
-            await using var db = await storage.CreateDbContextAsync(cancellationToken);
+            await using var connection = await storage.OpenAsync(cancellationToken);
+            var key = new { scope.OrganizationId, scope.ProjectId, DatabaseId = databaseId, context.UserId };
             for (var attempt = 0; ; attempt++)
             {
-                db.ChangeTracker.Clear();
-                var row = await db.SqlWorkspaces.SingleOrDefaultAsync(workspace => workspace.OrganizationId == scope.OrganizationId && workspace.ProjectId == scope.ProjectId &&
-                    workspace.DatabaseId == databaseId && workspace.UserId == context.UserId, cancellationToken);
-                if (row is null)
-                {
-                    db.SqlWorkspaces.Add(new SqlWorkspaceRow
-                    {
-                        Id = AccountService.NewId(),
-                        OrganizationId = scope.OrganizationId,
-                        ProjectId = scope.ProjectId,
-                        DatabaseId = databaseId,
-                        UserId = context.UserId,
-                        Draft = draft,
-                        History = [.. history],
-                        HistoryEpoch = "",
-                        Receipt = receipt,
-                        Version = AccountService.NewId(),
-                    });
-                }
-                else
-                {
-                    row.Draft = draft;
-                    row.History = [.. history];
-                    row.HistoryEpoch = "";
-                    row.Receipt = receipt;
-                    row.Version = AccountService.NewId();
-                }
-
+                var row = await connection.QuerySingleOrDefaultAsync<SqlWorkspaceRow>(Workspace, key);
                 try
                 {
-                    await db.SaveChangesAsync(cancellationToken);
+                    if (row is null)
+                    {
+                        await connection.ExecuteAsync(DashboardSql.SqlWorkspaces.Insert, new SqlWorkspaceRow
+                        {
+                            Id = AccountService.NewId(),
+                            OrganizationId = scope.OrganizationId,
+                            ProjectId = scope.ProjectId,
+                            DatabaseId = databaseId,
+                            UserId = context.UserId,
+                            Draft = draft,
+                            History = Json([.. history]),
+                            HistoryEpoch = "",
+                            RunReceipt = receipt,
+                            Version = AccountService.NewId(),
+                        });
+                        return receipt;
+                    }
+
+                    row.Draft = draft;
+                    row.HistoryItems = [.. history];
+                    row.HistoryEpoch = "";
+                    row.RunReceipt = receipt;
+                    row.OriginalVersion = row.Version;
+                    row.Version = AccountService.NewId();
+                    DashboardDb.Expect(await connection.ExecuteAsync(DashboardSql.SqlWorkspaces.Update, row));
                     return receipt;
                 }
-                catch (DbUpdateException) when (attempt < 3)
+                catch (Exception failure) when (attempt < 3 && (failure is DBConcurrencyException || DashboardDb.IsDuplicate(failure)))
                 {
                 }
             }
@@ -94,10 +97,10 @@ namespace TerraScale.Dashboard.Features.Data
             var scope = DatabaseService.Scope(context);
             try
             {
-                await using var db = await storage.CreateDbContextAsync(cancellationToken);
-                var row = await db.SqlWorkspaces.AsNoTracking().SingleOrDefaultAsync(workspace => workspace.OrganizationId == scope.OrganizationId &&
-                    workspace.ProjectId == scope.ProjectId && workspace.DatabaseId == databaseId && workspace.UserId == context.UserId, cancellationToken);
-                return row is null ? null : new(row.OrganizationId, row.ProjectId, row.DatabaseId, row.UserId, row.Draft, row.History, row.HistoryEpoch, row.Receipt);
+                await using var connection = await storage.OpenAsync(cancellationToken);
+                var row = await connection.QuerySingleOrDefaultAsync<SqlWorkspaceRow>(Workspace,
+                    new { scope.OrganizationId, scope.ProjectId, DatabaseId = databaseId, context.UserId });
+                return row is null ? null : new(row.OrganizationId, row.ProjectId, row.DatabaseId, row.UserId, row.Draft, row.HistoryItems, row.HistoryEpoch, row.RunReceipt);
             }
             catch (Exception error) when (SqlWorkspace.Unavailable(error) && !cancellationToken.IsCancellationRequested)
             {

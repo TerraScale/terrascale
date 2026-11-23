@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http.HttpResults;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Security.Claims;
@@ -22,60 +23,39 @@ using static OpenIddict.Abstractions.OpenIddictConstants;
 
 namespace TerraScale.Authentication.Features.Platform;
 
-/// <summary>
-/// The token endpoint grants of the platform contract (TS-598): an API key's client credentials, and a user's sign-in
-/// access token exchanged (RFC 8693), for a token that acts in one organization or project. The tokens are ES256
-/// <c>at+jwt</c> for the configured audiences, live at most 60 seconds (<see cref="Lifetime"/>) and carry <c>org_id</c>, <c>project_id</c>,
-/// <c>database</c> and <c>scope</c>; no refresh or identity token comes with them, and no token entry is stored.
-/// </summary>
 public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, TotpCredentials mfa, AttemptLimiter limiter, AuthOptions options, TimeProvider clock,
     AuthData data, GitHubActionsKeys gitHubActions, LiveAgents agents, ILogger<PlatformGrants> logger)
 {
-    /// <summary>The organization a token acts in.</summary>
     public const string OrganizationClaim = "org_id";
 
-    /// <summary>The project a token acts in.</summary>
     public const string ProjectClaim = "project_id";
 
-    /// <summary>The database an API key's token is narrowed to.</summary>
     public const string DatabaseClaim = "database";
 
-    /// <summary>The space-separated CIDRs an API key's token must be used from (absent: any address).</summary>
     public const string KeyCidrsClaim = "key_cidrs";
 
-    /// <summary>The space-separated CIDRs every API key token of the project must be used from (absent: any address).</summary>
     public const string ProjectCidrsClaim = "project_cidrs";
 
-    /// <summary>The API key an API key's token was issued for (equal to its <c>sub</c>).</summary>
     public const string KeyIdClaim = "key_id";
 
-    /// <summary>Which of the key's strings the token was issued for (<see cref="ApiKeys.Generation"/>), so a rotation retires it.</summary>
     public const string KeyGenerationClaim = "key_gen";
 
     public const string KeyExpiryClaim = "key_exp";
 
-    /// <summary>
-    /// The lifetime of organization and project tokens. TerraBase validates them offline; an API key's token is also checked
-    /// against the key's live status within seconds (docs/terrabase/key-revocation.md), others only expire.
-    /// </summary>
     public static readonly TimeSpan Lifetime = TimeSpan.FromSeconds(60);
 
     private static readonly TimeSpan AuthenticationTimeClockSkew = TimeSpan.FromSeconds(30);
 
-    /// <summary>Token requests per API key per minute.</summary>
     public const int KeyRequestsPerMinute = 1000;
 
     internal const string NameNarrowedKeyNotice = "This API key is narrowed to a database by name. Create a new key narrowed by the database ID and revoke this one.";
 
     internal const string InvalidApiKeyNotice = "The API key is invalid, revoked, expired, or superseded by a concurrent change in another region. Use the latest credential.";
 
-    /// <summary>The <c>client_credentials</c> grant of an API key OpenIddict has authenticated.</summary>
     public async Task<IResult> ApiKeyAsync(HttpContext context, OpenIddictRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(request);
-        // Read the key again and check the presented string against it: whatever OpenIddict saw, a key revoked or rotated
-        // since then, on any replica, issues nothing.
         if (await keys.FindAsync(request.ClientId!, cancellationToken) is not { } key
             || request.ClientSecret is not { } secret || !Matches(secret, keys.Digests(key))
             || await directory.OrganizationAsync(key.OrganizationId, cancellationToken) is null)
@@ -83,8 +63,6 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
             return OidcResults.Forbid(OidcErrors.InvalidClient, InvalidApiKeyNotice);
         }
 
-        // A key stored narrowed by database name (before narrowing by ULID) would follow the name to another database;
-        // it mints nothing, with a notice that says how to replace it, rather than a token TerraBase later refuses.
         if (key.Database is { } narrowed && !ApiKeys.IsDatabaseId(narrowed))
         {
             return OidcResults.Forbid(OidcErrors.InvalidClient, NameNarrowedKeyNotice);
@@ -93,7 +71,7 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
         if (!await limiter.TryAcquireAsync(PlatformDirectory.Instance, "api-key-token", key.Id, KeyRequestsPerMinute, cancellationToken))
         {
             context.Response.Headers.RetryAfter = "60";
-            return Results.Json(new OAuthErrorBody("rate_limited", "Too many token requests for this API key; retry later."), statusCode: StatusCodes.Status429TooManyRequests);
+            return TypedResults.Json(new OAuthErrorBody("rate_limited", "Too many token requests for this API key; retry later."), statusCode: StatusCodes.Status429TooManyRequests);
         }
 
         var project = Parameter(request, "project") ?? key.ProjectId;
@@ -103,10 +81,8 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
             return OidcResults.Forbid(OidcErrors.InvalidTarget, "The project is not one this key reaches.");
         }
 
-        // A closure is accepted before every region confirms it (an account deletion closes its sole organizations): from
-        // acceptance on, keys of the closing organization or project mint nothing, even while the closure is pending.
-        if (await directory.ClosureAsync("organization", key.OrganizationId, cancellationToken).ConfigureAwait(false) is not null
-            || project is not null && await directory.ClosureAsync("project", project, cancellationToken).ConfigureAwait(false) is not null)
+        if (await directory.ClosureAsync("organization", key.OrganizationId, cancellationToken) is not null
+            || project is not null && await directory.ClosureAsync("project", project, cancellationToken) is not null)
         {
             return OidcResults.Forbid(OidcErrors.InvalidClient, InvalidApiKeyNotice);
         }
@@ -118,12 +94,10 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
             return OidcResults.Forbid(OidcErrors.InvalidScope, "A requested scope exceeds the key's.");
         }
 
-        // Never past the key's own expiry; key_id and key_gen let TerraBase ask GET /v1/terrascale/api-keys/self whether the
-        // key, and the key string the token came from, still act (docs/terrabase/key-revocation.md).
         var now = clock.GetUtcNow();
         if (key.ExpiresAt is { } expired && expired <= now)
         {
-            return Results.Json(new OAuthErrorBody("key_expired", "The API key has expired."), statusCode: StatusCodes.Status401Unauthorized);
+            return TypedResults.Json(new OAuthErrorBody("key_expired", "The API key has expired."), statusCode: StatusCodes.Status401Unauthorized);
         }
 
         var lifetime = key.ExpiresAt is { } end && end - now < Lifetime ? end - now : Lifetime;
@@ -140,7 +114,6 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
             identity.SetClaim(DatabaseClaim, database);
         }
 
-        // TerraBase enforces both lists offline (docs/auth/api-key-ip-allowlists.md); a token outlives a change by 60 seconds at most.
         if (key.AllowedCidrs is { Count: > 0 } keyCidrs)
         {
             identity.SetClaim(KeyCidrsClaim, string.Join(' ', keyCidrs));
@@ -155,16 +128,12 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
         return SignIn(identity);
     }
 
-    /// <summary>The token-exchange grant: a sign-in access token of the same client for an organization or project token.</summary>
     public async Task<IResult> ExchangeAsync(HttpContext context, OpenIddictRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(request);
         var subject = (await context.AuthenticateAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme)).Principal;
         var issuer = OidcIssuer.Issuer(options).AbsoluteUri;
-        // Only a sign-in token (its audiences include the issuer) issued to this very client, for a user that still exists
-        // and has not signed out everywhere or reset its password since (the token's epoch is still the user's).
-        // Claims flatten arrays, so inspect the scalar payload of the subject JWT OpenIddict already validated.
         if (subject is null || !subject.GetAudiences().Contains(issuer, StringComparer.Ordinal)
             || request.ClientId is not { } clientId || !subject.GetPresenters().Contains(clientId, StringComparer.Ordinal)
             || subject.GetClaim(Claims.Subject) is not { } userId
@@ -205,7 +174,6 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
 
         if (allowed.Count == 0)
         {
-            // Unknown, unreachable and role-less (a collaborator's organization token) answer alike.
             return OidcResults.Forbid(OidcErrors.InvalidTarget, "The organization or project is not one this user reaches.");
         }
 
@@ -230,21 +198,14 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
         return SignIn(identity);
     }
 
-    /// <summary>
-    /// The GitHub Actions grant (<see cref="GitHubActionsGrant"/>): the bound workload's GitHub OIDC token, in
-    /// <c>subject_token</c>, for a project token of the bound e2e project. The token must be signed by GitHub's current
-    /// keys, name the platform issuer as its audience, be live, match every claim of the trust policy and carry a
-    /// <c>jti</c> never presented before. <paramref name="binding"/> is the client OpenIddict authenticated;
-    /// without its exact live binding and permissions nothing is issued.
-    /// </summary>
     public async Task<IResult> GitHubActionsAsync(OpenIddictRequest request, OidcApplication? binding, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (request.ClientId != GitHubActionsGrant.ClientId || binding is null || binding.ClientType != ClientTypes.Public
             || !GitHubActionsGrant.HasExactPermissions(binding.Permissions)
             || !GitHubActionsGrant.TryReadBinding(binding.Properties, clock.GetUtcNow(), out var organization, out var project, out var database, out var deadline)
-            || await directory.OrganizationAsync(organization, cancellationToken).ConfigureAwait(false) is null
-            || await directory.ProjectAsync(project, cancellationToken).ConfigureAwait(false) is not { } found
+            || await directory.OrganizationAsync(organization, cancellationToken) is null
+            || await directory.ProjectAsync(project, cancellationToken) is not { } found
             || found.Value.OrganizationId != organization)
         {
             return OidcResults.Forbid(OidcErrors.InvalidClient, "The GitHub Actions workload is not bound to a live approved target.");
@@ -268,17 +229,15 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
             ConfigurationManager = gitHubActions.Configuration,
             ValidIssuer = GitHubActionsGrant.Issuer,
             ValidAudience = GitHubActionsGrant.Audience,
-            // Exact audience, as every token ts-auth validates: no trailing-slash folding.
             IgnoreTrailingSlashWhenValidatingAudience = false,
             ValidAlgorithms = [SecurityAlgorithms.RsaSha256],
             RequireSignedTokens = true,
             RequireExpirationTime = true,
             ClockSkew = AuthenticationTimeClockSkew,
-        }).ConfigureAwait(false);
+        });
         var token = validated.IsValid ? validated.SecurityToken as JsonWebToken : null;
         using var payload = token is null ? null : JsonDocument.Parse(Base64UrlEncoder.DecodeBytes(token.EncodedPayload));
         var claims = payload?.RootElement ?? default;
-        // Only the name of the first claim that failed is logged, never the token.
         var refused = token is null ? "signature, issuer, audience or lifetime"
             : new (string Claim, string Expected)[]
             {
@@ -309,8 +268,7 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
 
         var runId = Claim(claims, "run_id")!;
         var tokenId = Claim(claims, "jti")!;
-        // Single use on every replica: the claim is created only if absent.
-        if (!await data.SaveAsync(Credentials.Claim(PlatformDirectory.Instance, GitHubActionsGrant.TokenIdKind, tokenId, runId), cancellationToken).ConfigureAwait(false))
+        if (!await data.SaveAsync(Credentials.Claim(PlatformDirectory.Instance, GitHubActionsGrant.TokenIdKind, tokenId, runId), cancellationToken))
         {
             logger.ZLogWarning($"GitHub Actions token refused: jti already used");
             return OidcResults.Forbid(OidcErrors.InvalidGrant, "The GitHub Actions token was already used.");
@@ -332,7 +290,6 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
         return SignIn(identity);
     }
 
-    // Numeric ids and other policy claims must remain scalar strings; typed JWT lookups can coerce other JSON forms.
     private static string? Claim(JsonElement claims, string name) =>
         claims.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
             && value.GetString() is { Length: > 0 } text ? text : null;
@@ -369,21 +326,15 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, To
         return identity;
     }
 
-    private static IResult SignIn(ClaimsIdentity identity)
+    private static SignInHttpResult SignIn(ClaimsIdentity identity)
     {
         identity.SetDestinations(_ => [Destinations.AccessToken]);
-        return Results.SignIn(new ClaimsPrincipal(identity), null, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
+        return TypedResults.SignIn(new ClaimsPrincipal(identity), null, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
     }
 }
 
-/// <summary>
-/// Stores no token entry for the 5-minute organization and project tokens and for service clients' tokens: they are
-/// validated offline and never revoked one by one (revoking the key or the role is the control), so an entry would only
-/// grow storage. Every other token keeps its entry.
-/// </summary>
 public sealed class SkipShortLivedTokenEntries : OpenIddict.Server.IOpenIddictServerHandler<OpenIddict.Server.OpenIddictServerEvents.GenerateTokenContext>
 {
-    /// <inheritdoc />
     public ValueTask HandleAsync(OpenIddict.Server.OpenIddictServerEvents.GenerateTokenContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -397,26 +348,20 @@ public sealed class SkipShortLivedTokenEntries : OpenIddict.Server.IOpenIddictSe
     }
 }
 
-/// <summary>Preserves API-key recovery guidance when OpenIddict rejects a filtered secret before grant handling.</summary>
 public sealed class ApiKeyFailureNotice(ApiKeys keys) : OpenIddict.Server.IOpenIddictServerHandler<OpenIddict.Server.OpenIddictServerEvents.ApplyTokenResponseContext>
 {
-    /// <inheritdoc />
     public async ValueTask HandleAsync(OpenIddict.Server.OpenIddictServerEvents.ApplyTokenResponseContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
         if (context.Response.Error == OidcErrors.InvalidClient && context.Request?.IsClientCredentialsGrantType() == true
             && context.Request.ClientId is { } clientId
-            && await keys.FindAsync(clientId, context.CancellationToken).ConfigureAwait(false) is not null)
+            && await keys.FindAsync(clientId, context.CancellationToken) is not null)
         {
             context.Response.ErrorDescription = PlatformGrants.InvalidApiKeyNotice;
         }
     }
 }
 
-/// <summary>
-/// API keys authenticate as OpenIddict clients whose stored secret is <c>tsk-sha256:</c> and the hex SHA-256 digests the
-/// key string may match. They are compared here in constant time; every other client keeps OpenIddict's PBKDF2.
-/// </summary>
 public sealed class ApiKeyApplicationManager(
     OpenIddict.Abstractions.IOpenIddictApplicationCache<OidcApplication> cache,
     ILogger<OpenIddict.Core.OpenIddictApplicationManager<OidcApplication>> logger,
@@ -426,17 +371,12 @@ public sealed class ApiKeyApplicationManager(
     AttemptLimiter limiter)
     : OpenIddict.Core.OpenIddictApplicationManager<OidcApplication>(cache, logger, options, store)
 {
-    /// <summary>The prefix of an API key client's stored secret.</summary>
     public const string DigestPrefix = "tsk-sha256:";
 
-    /// <summary>
-    /// An API key's client comes from the store on every lookup, never from OpenIddict's entity cache: rotation and
-    /// revocation change its digests, which must hold at once. Canonical ULIDs do not identify the client kind.
-    /// </summary>
     public override async ValueTask<OidcApplication?> FindByClientIdAsync(string identifier, CancellationToken cancellationToken = default)
     {
-        return await this.Store.FindByClientIdAsync(identifier, cancellationToken).ConfigureAwait(false) is { } application
-            && string.Equals(await this.Store.GetClientIdAsync(application, cancellationToken).ConfigureAwait(false), identifier, StringComparison.Ordinal)
+        return await this.Store.FindByClientIdAsync(identifier, cancellationToken) is { } application
+            && string.Equals(await this.Store.GetClientIdAsync(application, cancellationToken), identifier, StringComparison.Ordinal)
                 ? application
                 : null;
     }
@@ -446,7 +386,7 @@ public sealed class ApiKeyApplicationManager(
         ArgumentNullException.ThrowIfNull(application);
         return permission == Permissions.Prefixes.GrantType + AgentExchange.GrantType
             ? application.InstanceId == OidcIssuer.InstanceId && application.ClientId == OidcIssuer.DashboardClientId
-            : await base.HasPermissionAsync(application, permission, cancellationToken).ConfigureAwait(false);
+            : await base.HasPermissionAsync(application, permission, cancellationToken);
     }
 
     public override async ValueTask<bool> ValidateRedirectUriAsync(OidcApplication application, [StringSyntax(StringSyntaxAttribute.Uri)] string uri, CancellationToken cancellationToken = default)
@@ -454,31 +394,30 @@ public sealed class ApiKeyApplicationManager(
         ArgumentNullException.ThrowIfNull(application);
         return application.InstanceId == AgentIdIssuer.Slug && application.ClientType == ClientTypes.Public
             ? AgentIdIssuer.AllowsRedirect(application.ClientId!, uri)
-            : await base.ValidateRedirectUriAsync(application, uri, cancellationToken).ConfigureAwait(false);
+            : await base.ValidateRedirectUriAsync(application, uri, cancellationToken);
     }
 
     public override async ValueTask<bool> ValidateClientSecretAsync(OidcApplication application, string secret, CancellationToken cancellationToken = default)
     {
         var machine = MachineClients.Policy(application) is not null;
         if (machine && await limiter.CheckAsync(application.InstanceId!, "machine-client-failure", application.ClientId!,
-            10, TimeSpan.FromMinutes(15), cancellationToken).ConfigureAwait(false) is not null)
+            10, TimeSpan.FromMinutes(15), cancellationToken) is not null)
         {
             return false;
         }
 
-        var valid = await base.ValidateClientSecretAsync(application, secret, cancellationToken).ConfigureAwait(false)
+        var valid = await base.ValidateClientSecretAsync(application, secret, cancellationToken)
             || application.PreviousSecretHash is not null && application.PreviousSecretExpiresAt > clock.GetUtcNow()
-            && await ValidateClientSecretAsync(secret, application.PreviousSecretHash, cancellationToken).ConfigureAwait(false);
+            && await ValidateClientSecretAsync(secret, application.PreviousSecretHash, cancellationToken);
         if (!valid && machine)
         {
             await limiter.AcquireAsync(application.InstanceId!, "machine-client-failure", application.ClientId!,
-                10, TimeSpan.FromMinutes(15), cancellationToken).ConfigureAwait(false);
+                10, TimeSpan.FromMinutes(15), cancellationToken);
         }
 
         return valid;
     }
 
-    /// <inheritdoc />
     protected override ValueTask<bool> ValidateClientSecretAsync(string secret, string comparand, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(comparand);
@@ -498,13 +437,8 @@ public sealed class ApiKeyApplicationManager(
     }
 }
 
-/// <summary>The OpenIddict client an API key authenticates as.</summary>
 internal static class ApiKeyClients
 {
-    /// <summary>
-    /// A confidential client allowed only the token endpoint and client credentials. It holds every TerraBase scope
-    /// permission, so a scope beyond the key's reaches <see cref="PlatformGrants.ApiKeyAsync"/> and answers invalid_scope.
-    /// </summary>
     public static OidcApplication Describe(ApiKeyRecord key, IReadOnlyList<string> digests) => new()
     {
         Id = key.Id,

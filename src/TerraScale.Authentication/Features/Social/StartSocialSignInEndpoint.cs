@@ -5,10 +5,8 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.Social;
 
-/// <summary>Starts same-origin provider sign-in, with a fresh browser binding and PKCE verifier.</summary>
 public sealed class StartSocialSignInEndpoint(PlatformSocialSignIn social, HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/ui/{slug}/social/{provider}");
@@ -24,7 +22,6 @@ public sealed class StartSocialSignInEndpoint(PlatformSocialSignIn social, Hoste
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)

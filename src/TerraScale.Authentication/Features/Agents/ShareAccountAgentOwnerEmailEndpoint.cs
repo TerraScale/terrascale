@@ -35,7 +35,7 @@ public sealed class ShareAccountAgentOwnerEmailEndpoint(PlatformAuthentication a
 
         return await agents.ShareOwnerEmailAsync(owner.InstanceId, agentId, owner.Id, share, cancellationToken) switch
         {
-            AgentBody agent => Results.Json(agent, AgentJson.Default.AgentBody),
+            AgentBody agent => TypedResults.Json(agent, AgentJson.Default.AgentBody),
             NotFound notFound => ErrorResults.ToResult(notFound),
         };
     }

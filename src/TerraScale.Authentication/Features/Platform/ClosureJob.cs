@@ -19,6 +19,8 @@ public sealed record ClosureJob(
     DateTimeOffset? CommittedAt = null,
     int ProjectClosureVersion = 1)
 {
+    public string? Version { get; init; }
+
     private static readonly TimeSpan RequestAttempt = TimeSpan.FromSeconds(30);
 
     public bool Same(ClosureJob other) =>

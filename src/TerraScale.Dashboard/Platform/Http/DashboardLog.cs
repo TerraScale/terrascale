@@ -1,7 +1,6 @@
 
 namespace TerraScale.Dashboard.Platform.Http
 {
-
     internal static partial class DashboardLog
     {
         [LoggerMessage(EventId = 1, Level = LogLevel.Warning, Message = "Dashboard dependency failed on {Route} ({ErrorType} {Status})")]
@@ -19,7 +18,6 @@ namespace TerraScale.Dashboard.Platform.Http
         [LoggerMessage(EventId = 5, Message = "Upstream timing {Upstream} {Host} {Method} {Operation} {Status}: start {StartMs} ms, duration {DurationMs} ms")]
         internal static partial void UpstreamTimingStartMsDurationMs(this ILogger logger, LogLevel level, object? upstream, object? host, object? method, object? operation, object? status, object? startMs, object? durationMs);
 
-
         [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "Dashboard request on {Route} lost a concurrent write race; answered 409")]
         internal static partial void DashboardRequestConflicted(this ILogger logger, object? route);
 
@@ -28,7 +26,6 @@ namespace TerraScale.Dashboard.Platform.Http
 
         [LoggerMessage(EventId = 8, Level = LogLevel.Warning, Message = "Saving a refreshed ts-auth grant in {Table} failed ({ErrorType}); retrying")]
         internal static partial void SavingARefreshedTsAuthGrant(this ILogger logger, object? table, object? errorType);
-
 
         [LoggerMessage(EventId = 10, Level = LogLevel.Warning, Message = "MCP tool {Tool} failed upstream with {Status} ({ErrorType}, code {ErrorCode})")]
         internal static partial void MCPToolFailedUpstreamWithCode(this ILogger logger, object? tool, object? status, object? errorType, object? errorCode);
@@ -50,6 +47,9 @@ namespace TerraScale.Dashboard.Platform.Http
 
         [LoggerMessage(EventId = 15, Level = LogLevel.Warning, Message = "Dashboard state is not initialized after {Attempts} attempts ({ErrorType}); retrying.")]
         internal static partial void DashboardStateIsNotInitializedAfter(this ILogger logger, int attempts, string errorType);
+
+        [LoggerMessage(EventId = 101, Level = LogLevel.Information, Message = "Dashboard schema script {Script} applied on TerraBase strong mode.")]
+        internal static partial void DashboardSchemaScriptApplied(this ILogger logger, string script);
 
         [LoggerMessage(EventId = 16, Level = LogLevel.Warning, Message = "Readiness: ts-auth answered {StatusCode}")]
         internal static partial void ReadinessTsAuthAnswered(this ILogger logger, object? statusCode);

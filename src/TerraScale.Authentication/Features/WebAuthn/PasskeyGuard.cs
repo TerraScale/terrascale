@@ -11,7 +11,7 @@ internal static class PasskeyGuard
 
     internal static async Task<bool> LastFactorAsync(PlatformDirectory platform, TotpCredentials mfa, string userId, int remaining, CancellationToken cancellationToken)
     {
-        if (remaining > 0 || (await mfa.StatusAsync(PlatformDirectory.Instance, userId, cancellationToken).ConfigureAwait(false)).Enabled)
+        if (remaining > 0 || (await mfa.StatusAsync(PlatformDirectory.Instance, userId, cancellationToken)).Enabled)
         {
             return false;
         }
@@ -19,7 +19,7 @@ internal static class PasskeyGuard
         string? after = null;
         do
         {
-            var page = await platform.OrganizationsAsync(userId, 100, after, cancellationToken).ConfigureAwait(false);
+            var page = await platform.OrganizationsAsync(userId, 100, after, cancellationToken);
             if (page.Items.Any(item => item.Organization.RequireMfa))
             {
                 return true;

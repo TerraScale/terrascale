@@ -7,7 +7,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// PostgresRows streams one result row at a time instead of buffering the whole result.
 type PostgresRows struct {
 	client   *PostgresClient
 	ctx      context.Context
@@ -22,7 +21,6 @@ type PostgresRows struct {
 	onError  func(error)
 }
 
-// Next decodes and stages the next row; it returns false at the end or on error.
 func (r *PostgresRows) Next() bool {
 	if r.released || r.err != nil {
 		return false
@@ -53,22 +51,18 @@ func (r *PostgresRows) Next() bool {
 	return true
 }
 
-// Values returns the row staged by the last successful Next.
 func (r *PostgresRows) Values() []PostgresValue {
 	return r.current
 }
 
-// Err returns the error that ended the stream, or nil.
 func (r *PostgresRows) Err() error {
 	return r.err
 }
 
-// CommandTag returns the server's completion tag once Next returns false.
 func (r *PostgresRows) CommandTag() string {
 	return r.tag.String()
 }
 
-// Close stops the stream and returns the session; safe to call after exhaustion.
 func (r *PostgresRows) Close() error {
 	if !r.released && r.err == nil {
 		if err := r.rows.Err(); err != nil {
@@ -112,14 +106,20 @@ func (r *PostgresRows) releaseOnce() {
 	}
 	r.released = true
 	r.rows.Close()
+	if err := r.client.observe(); err != nil && r.err == nil {
+		r.err = err
+	}
 	if r.finish != nil {
 		r.finish()
 	}
 }
 
-// QueryRows streams the statement's rows without buffering, releasing the session on Close or exhaustion.
 func (client *PostgresClient) QueryRows(ctx context.Context, query PostgresQuery) (*PostgresRows, error) {
 	if err := client.acquire(ctx); err != nil {
+		return nil, err
+	}
+	if err := client.sync(ctx); err != nil {
+		<-client.gate
 		return nil, err
 	}
 	rows, columns, err := client.openRows(ctx, query)

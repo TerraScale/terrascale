@@ -1,7 +1,6 @@
+using System.Globalization;
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.Dashboard.Platform.Rpc;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Management;
+using TerraScale.Dashboard.Platform.Clients;
 
 namespace TerraScale.Dashboard.Features.Databases;
 
@@ -9,37 +8,41 @@ public sealed record DatabaseReplication(TerraBaseDatabaseRegions? Status, strin
 {
     public static async Task<DatabaseReplication> LoadAsync(HttpContext http, AccountContext context, DatabaseRecord database, DatabaseService databases, CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(database);
+        ArgumentNullException.ThrowIfNull(databases);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(5));
-        try
-        {
-            var token = await http.RequestServices.GetRequiredService<IProjectAccessTokens>()
-                .GetAsync(context.Session, context.Organization!.Id, database.ProjectId, ["databases:read"], deadline.Token);
-            var home = await databases.HomeAsync(context, database, deadline.Token);
-            var status = await http.RequestServices.GetRequiredService<TerraBaseRpcClient>()
-                .User<IManagementService>(token, home.Id).WithCancellationToken(deadline.Token)
-                .GetDatabaseRegionsAsync(database.ProjectId, database.Id);
-            if (status.DatabaseId != database.Id || status.HomeRegion != home.Id || status.Replicas.Count > 8
-                || status.Replicas.Any(row => row.Region == status.HomeRegion || string.IsNullOrWhiteSpace(row.Region)
-                    || row.LagMs is { } lag && (!double.IsFinite(lag) || lag < 0))
-                || status.Replicas.Select(row => row.Region).Distinct(StringComparer.Ordinal).Count() != status.Replicas.Count)
-            {
-                throw new InvalidDataException("Invalid database regions response.");
-            }
-
-            return new(status);
-        }
-        catch (Exception error) when (DatabaseResults.Status(error) is not (401 or 403 or 404) &&
-            (error is TerraBaseException or HttpRequestException or IOException or InvalidOperationException
-                || error is OperationCanceledException && !cancellationToken.IsCancellationRequested))
+        if (context.Organization is not { } organization)
         {
             return new(null, "Replication observations are unavailable.");
         }
+
+        var token = await http.RequestServices.GetRequiredService<IProjectAccessTokens>()
+            .GetAsync(context.Session, organization.Id, database.ProjectId, ["databases:read"], deadline.Token);
+        await databases.HomeAsync(context, database, deadline.Token);
+        var answer = await http.RequestServices.GetRequiredService<TerraBaseHttpClient>()
+            .GetDatabaseRegionsAsync(ServiceCaller.User(token), database.ProjectId, database.Id, deadline.Token);
+        return answer switch
+        {
+            TerraBaseDatabaseRegions status when Valid(status, database.Id) => new(status),
+            TerraBaseDatabaseRegions => new(null, "Replication observations are unavailable."),
+            TerraBaseRefusal { Status: 401 or 403 or 404 } refusal => throw refusal.Exception(),
+            TerraBaseRefusal => new(null, "Replication observations are unavailable."),
+        };
     }
 
-    public static IReadOnlyList<(string Region, TerraBaseReplicaStatus? Observation)> Rows(TerraBaseDatabaseRegions status) =>
-        [.. status.Replicas.Select(row => (row.Region, (TerraBaseReplicaStatus?)row)).Prepend((status.HomeRegion, null))
-            .OrderBy(row => Common.UI.Regions.Rank(row.Region)).ThenBy(row => row.Region, StringComparer.Ordinal)];
+    public static IReadOnlyList<TerraBaseRegionReplication> Rows(TerraBaseDatabaseRegions status)
+    {
+        ArgumentNullException.ThrowIfNull(status);
+        return [.. status.Regions.OrderBy(row => Common.UI.Regions.Rank(row.Region)).ThenBy(row => row.Region, StringComparer.Ordinal)];
+    }
 
-    public static string Timestamp(DateTimeOffset? value) => value?.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss 'UTC'", System.Globalization.CultureInfo.InvariantCulture) ?? "—";
+    public static string Timestamp(DateTimeOffset? value) => value?.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss 'UTC'", CultureInfo.InvariantCulture) ?? "—";
+
+    private static bool Valid(TerraBaseDatabaseRegions status, string databaseId) =>
+        status.DatabaseId == databaseId && status.Regions.Count <= 16
+        && status.Regions.All(row => !string.IsNullOrWhiteSpace(row.Region) && row.LagMs >= 0)
+        && status.Regions.Select(row => row.Region).Distinct(StringComparer.Ordinal).Count() == status.Regions.Count;
 }

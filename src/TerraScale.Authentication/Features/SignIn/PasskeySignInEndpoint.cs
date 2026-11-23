@@ -12,16 +12,10 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.SignIn;
 
-/// <summary>
-/// <c>POST /ui/{slug}/sign-in/passkey</c>: verifies the browser's WebAuthn assertion against the sealed challenge from
-/// <see cref="PasskeySignInOptionsEndpoint"/> and opens the session like a password sign-in. A user-verified passkey
-/// proves the second factor, so the session is marked multi-factor and no second-factor step follows.
-/// </summary>
 public sealed class PasskeySignInEndpoint(Sessions sessions, PasskeyCredentials passkeys, HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
     private const int MaxBody = 16384;
 
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/ui/{slug}/sign-in/passkey");
@@ -37,12 +31,11 @@ public sealed class PasskeySignInEndpoint(Sessions sessions, PasskeyCredentials 
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (SignInFlow.WrongSlug(this.HttpContext))
         {
-            return Results.NotFound();
+            return TypedResults.NotFound();
         }
 
         if (this.HttpContext.Request.Headers.Origin is not [{ } origin] || !SignInFlow.IsPublicOrigin(origin, options.PublicOrigin))

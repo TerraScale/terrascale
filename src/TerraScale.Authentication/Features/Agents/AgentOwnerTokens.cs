@@ -17,7 +17,7 @@ public sealed class ValidateAgentOwnerToken(LiveAgents agents) : IOpenIddictServ
             return;
         }
 
-        if (context.Principal.GetClaim(Claims.Subject) is not { } ownerId || await agents.ActiveAsync(agentId, ownerId, context.CancellationToken).ConfigureAwait(false) is null)
+        if (context.Principal.GetClaim(Claims.Subject) is not { } ownerId || await agents.ActiveAsync(agentId, ownerId, context.CancellationToken) is null)
         {
             context.Reject(OidcErrors.InvalidToken, "The agent was revoked or its owner signed out.");
         }

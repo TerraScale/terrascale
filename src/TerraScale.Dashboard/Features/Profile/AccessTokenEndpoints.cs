@@ -7,7 +7,6 @@ namespace TerraScale.Dashboard.Features.Profile
     {
         internal const string ReturnTo = "/profile?tab=access-tokens";
 
-        // The ts-auth callback for a token flow: the fresh grant must belong to the signed-in browser's user.
         public static async Task<IResult> IssueAsync(HttpContext http, OidcFlow flow, SessionRecord fresh, DateTimeOffset expiresAt)
         {
             var retained = false;
@@ -18,7 +17,7 @@ namespace TerraScale.Dashboard.Features.Profile
                 var browser = await sessions.ReadAsync(http);
                 if (flow.StepUp is not { } intent || browser?.UserId != intent.UserId || StepUpFlow.Browser(http) != intent.Browser)
                 {
-                    return Results.Problem(StepUpFlow.Required().Message, statusCode: 403);
+                    return TypedResults.Problem(StepUpFlow.Required().Message, statusCode: 403);
                 }
 
                 http.Request.QueryString = new(intent.Query);
@@ -32,7 +31,6 @@ namespace TerraScale.Dashboard.Features.Profile
                 {
                     StepUpFlow.Validate(http, context, intent, "create_pat");
                     var created = await tokens.CreateAsync(context, flow.TokenName, expiresAt, fresh, intent, http.RequestAborted);
-                    // The credential now owns the grant, even if preparing/rendering its view fails.
                     retained = true;
                     return ProfileView.Create(new(ShellModel.For(http, context, "Profile"), "access-tokens", Tokens: await tokens.ListAsync(context, http.RequestAborted), CreatedToken: created, Sessions: await sessions.ListAsync(http, context.Session)));
                 }
@@ -42,7 +40,6 @@ namespace TerraScale.Dashboard.Features.Profile
             {
                 if (!retained)
                 {
-                    // Includes browser/workspace validation and cancellation after code exchange.
                     using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
                     await http.RequestServices.GetRequiredService<IAuthGateway>().RevokeAsync(fresh, cleanup.Token);
                 }

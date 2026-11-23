@@ -30,7 +30,7 @@ public sealed class RedeemMagicLinkEndpoint(Passcodes passcodes, Sessions sessio
         context.Response.Headers["Referrer-Policy"] = "no-referrer";
         if (SignInFlow.WrongSlug(context) || !HostedTheme.Of(context).MagicLink)
         {
-            return Results.NotFound();
+            return TypedResults.NotFound();
         }
 
         if (MagicLinks.Open(options, tenant, context.Request.Query["token"], clock) is not { } proof)

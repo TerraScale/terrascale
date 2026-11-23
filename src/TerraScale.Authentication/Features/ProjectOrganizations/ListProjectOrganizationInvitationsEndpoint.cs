@@ -16,6 +16,6 @@ public sealed class ListProjectOrganizationInvitationsEndpoint(ProjectOrganizati
     {
         var project = await this.AccessAsync(caller, Roles.Viewer, cancellationToken);
         var (limit, after) = this.Paging();
-        return Results.Json(await organizations.InvitationsAsync(project, this.Org, limit, after, cancellationToken), ProjectOrganizationsJson.Default.ProjectOrganizationInvitationPage);
+        return TypedResults.Json(await organizations.InvitationsAsync(project, this.Org, limit, after, cancellationToken), ProjectOrganizationsJson.Default.ProjectOrganizationInvitationPage);
     }
 }

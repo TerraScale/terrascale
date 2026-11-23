@@ -145,8 +145,6 @@ A read in that region can lag behind writes ordered in another region of the set
 - **Arguments are parameters, not string interpolation.** Positional `?` values and named (`:name`) values are sent as typed JSON; blobs travel as base64. `query_as::<T>` maps rows by column name into your struct through serde.
 - **Refused statements are `Error::Sql`.** `Error::sql()` returns its `code`, `message`, zero-based `statement` and `sqlstate`, and `is_transient()` marks `serialization_conflict` and `tenant_busy`. A `serialization_conflict` is resent at most twice; nothing else is.
 
-A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
-
 ## Next steps
 
 - [SDK reference](/guides/sdks) — the five SDKs and their install commands

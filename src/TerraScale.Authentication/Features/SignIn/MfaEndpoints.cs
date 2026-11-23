@@ -16,14 +16,9 @@ using ZLogger;
 
 namespace TerraScale.Authentication.Features.SignIn;
 
-/// <summary>
-/// <c>POST /ui/{slug}/sign-in/mfa</c>: the second sign-in step of an account with an active authenticator app. Redeems a
-/// TOTP code or a recovery code against the sealed challenge the first step issued, then opens the session.
-/// </summary>
 public sealed class MfaSignInEndpoint(Sessions sessions, TotpCredentials mfa, PlatformDirectory platform, HostedAuth hosted, AuthOptions options, ILogger<MfaSignInEndpoint> logger)
     : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/ui/{slug}/sign-in/mfa");
@@ -31,7 +26,6 @@ public sealed class MfaSignInEndpoint(Sessions sessions, TotpCredentials mfa, Pl
         Summary("Sign in with a second factor");
         Description("Same-origin form post with challenge (from the code, password, sign-up or platform provider step), code and next. code is the authenticator app's current six-digit code or one unused 24-character recovery code; each works once. The challenge lasts 5 minutes, completes at most once and dies with a sign-out everywhere, reset or factor change; a spent or expired challenge answers 401 with sign-in from the start. Charges the IP call bucket of 120 refilling 30 per minute and 10 second-factor attempts per account per 15 minutes; exhaustion answers 429 with Retry-After and keeps a live challenge. A wrong code answers 401 with the step again. Success sets the tsauth_session cookie and continues to next.");
         Tags("Sign-in");
-        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<string>(StatusCodes.Status401Unauthorized, "text/html");
@@ -41,7 +35,6 @@ public sealed class MfaSignInEndpoint(Sessions sessions, TotpCredentials mfa, Pl
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)
@@ -52,7 +45,6 @@ public sealed class MfaSignInEndpoint(Sessions sessions, TotpCredentials mfa, Pl
         var tenant = SignInFlow.Tenant(this.HttpContext);
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
         var ipWait = await hosted.LimitIpAsync(SignInFlow.Ip(this.HttpContext), mails: false, cancellationToken);
-        // Resolving the challenge only reads: a refused request keeps a valid continuation and spends no proof.
         if (await mfa.ChallengedAsync(tenant, form.Challenge, "verification", cancellationToken) is not { } challenged
             || !Tenancy.IsProject(tenant)
                 && this.HttpContext.RequestServices.GetRequiredService<SsoSignIn>().FactorProofFor(this.HttpContext, challenged.User) != challenged.SsoProof)
@@ -91,7 +83,6 @@ public sealed class MfaSignInEndpoint(Sessions sessions, TotpCredentials mfa, Pl
             return SignInPageModel.Render(this.HttpContext, wrong, StatusCodes.Status401Unauthorized);
         }
 
-        // The challenge is spent; a session that loses to a newer sign-out or a competing completion starts over.
         if (await SignInFlow.OpenSessionAsync(sessions, user with { MultiFactor = true, MfaMethod = code.Length == 6 ? "totp" : "recovery" }, cancellationToken) is not { } session)
         {
             AuthMetrics.SignIn("hosted_mfa", "expired");
@@ -115,10 +106,8 @@ public sealed class MfaSignInEndpoint(Sessions sessions, TotpCredentials mfa, Pl
         }, StatusCodes.Status401Unauthorized);
 }
 
-/// <summary><c>GET /ui/{slug}/security</c>: the signed-in account's two-factor state, with enrolment or removal.</summary>
 public sealed class SecurityPageEndpoint(Sessions sessions, TotpCredentials mfa) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/ui/{slug}/security");
@@ -131,12 +120,11 @@ public sealed class SecurityPageEndpoint(Sessions sessions, TotpCredentials mfa)
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (SignInFlow.WrongSlug(this.HttpContext))
         {
-            return Results.NotFound();
+            return TypedResults.NotFound();
         }
 
         return await SecurityFlow.LiveAsync(this.HttpContext, sessions, cancellationToken) is { } live
@@ -146,13 +134,8 @@ public sealed class SecurityPageEndpoint(Sessions sessions, TotpCredentials mfa)
     }
 }
 
-/// <summary>
-/// <c>POST /ui/{slug}/security/totp</c>: starts (or restarts) authenticator enrolment and shows its QR code. Needs a
-/// sign-in from the last 15 minutes.
-/// </summary>
 public sealed class TotpBeginEndpoint(Sessions sessions, TotpCredentials mfa, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/ui/{slug}/security/totp");
@@ -169,7 +152,6 @@ public sealed class TotpBeginEndpoint(Sessions sessions, TotpCredentials mfa, Au
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)
@@ -206,10 +188,8 @@ public sealed class TotpBeginEndpoint(Sessions sessions, TotpCredentials mfa, Au
     }
 }
 
-/// <summary><c>POST /ui/{slug}/security/totp/confirm</c>: activates the pending authenticator and shows recovery codes once.</summary>
 public sealed class TotpConfirmEndpoint(Sessions sessions, TotpCredentials mfa, PlatformDirectory platform, AuthOptions options, ILogger<TotpConfirmEndpoint> logger) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/ui/{slug}/security/totp/confirm");
@@ -226,7 +206,6 @@ public sealed class TotpConfirmEndpoint(Sessions sessions, TotpCredentials mfa, 
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)
@@ -258,10 +237,8 @@ public sealed class TotpConfirmEndpoint(Sessions sessions, TotpCredentials mfa, 
     }
 }
 
-/// <summary><c>POST /ui/{slug}/security/totp/disable</c>: removes the authenticator after a TOTP or recovery code.</summary>
 public sealed class TotpDisableEndpoint(Sessions sessions, TotpCredentials mfa, PlatformDirectory platform, AuthOptions options, ILogger<TotpDisableEndpoint> logger) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/ui/{slug}/security/totp/disable");
@@ -278,7 +255,6 @@ public sealed class TotpDisableEndpoint(Sessions sessions, TotpCredentials mfa, 
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)
@@ -302,7 +278,6 @@ public sealed class TotpDisableEndpoint(Sessions sessions, TotpCredentials mfa, 
 
         logger.ZLogInformation($"Audit: user {live.User.Id:@UserId} turned off two-factor authentication");
         await SecurityFlow.AuditAsync(platform, tenant, live.User.Id, "member.mfa_disabled", cancellationToken);
-        // The replacement carries the authority this change committed: a sign-out everywhere since then refuses it.
         if (await SignInFlow.OpenSessionAsync(sessions, user, cancellationToken) is { } session)
         {
             BrowserSecurity.SetSessionCookie(this.HttpContext.Response, session.Token, tenant);
@@ -363,62 +338,42 @@ public sealed class RecoveryRegenerateEndpoint(Sessions sessions, TotpCredential
     }
 }
 
-/// <summary>Checks shared by the security pages.</summary>
 internal static class SecurityFlow
 {
-    /// <summary>How recent a sign-in must be to start enrolment.</summary>
     public static readonly TimeSpan ReauthenticationWindow = TimeSpan.FromMinutes(15);
 
-    /// <summary>How recent a sign-in must be to add a new authentication factor from the security page.</summary>
     public static readonly TimeSpan FactorEnrollmentWindow = TimeSpan.FromMinutes(10);
 
-    /// <summary>The browser's live session, its stored version and its user, or null.</summary>
     public static Task<(SessionRecord Session, string Version, UserRecord User)?> LiveAsync(HttpContext context, Sessions sessions, CancellationToken cancellationToken)
     {
         var tenant = SignInFlow.Tenant(context);
         return sessions.ResolveVersionedAsync(tenant, context.Request.Cookies[Tenancy.SessionCookie(tenant)], cancellationToken);
     }
 
-    /// <summary>
-    /// Binds enrolment to the caller's session. Immediately before submission the change is refused once the session's
-    /// expiry or the end of its reauthentication window has passed; the transaction itself asserts that the session is
-    /// still stored, unrevoked and at its authentication state, and was unexpired at the time this request sampled. A
-    /// commit the store acknowledges is kept even if it lands after a deadline; the pending secret expires by the earlier one.
-    /// </summary>
     public static MfaAuthorization Fresh(HttpContext context, SessionRecord session, string version)
     {
         var fresh = session.CreatedAt + ReauthenticationWindow;
         return new(Sessions.Live(session, version, context.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow()), fresh < session.ExpiresAt ? fresh : session.ExpiresAt);
     }
 
-    /// <summary>
-    /// Consumes the caller's session, at the version that authorized the request, in the factor change's commit: a
-    /// sign-out, rotation or revocation that lands first fails the change. Its expiry is checked immediately before
-    /// submission. The endpoint then opens the replacement from the committed user state.
-    /// </summary>
     public static MfaAuthorization Consumed(SessionRecord session, string version) =>
         new(Change.Delete(session, version), session.ExpiresAt);
 
-    /// <summary>The answer to a factor change that did not commit: sign in again once the caller's session is gone.</summary>
     public static async Task<IResult> RefusedAsync(HttpContext context, Sessions sessions, TotpCredentials mfa, UserRecord user, (string Title, string Message) error, int statusCode,
         CancellationToken cancellationToken) =>
         await LiveAsync(context, sessions, cancellationToken) is null ? SignIn(context) : await PageAsync(context, mfa, user, error, cancellationToken, statusCode);
 
-    /// <summary>Whether <paramref name="session"/> was opened recently enough for a credential change.</summary>
     public static bool Recent(HttpContext context, SessionRecord session) => Recent(context, session, ReauthenticationWindow);
 
-    /// <summary>Whether <paramref name="session"/> was opened within <paramref name="window"/>.</summary>
     public static bool Recent(HttpContext context, SessionRecord session, TimeSpan window) =>
         session.CreatedAt > context.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow() - window;
 
-    /// <summary>Sends a browser without a session to sign in, returning to the security page.</summary>
     public static IResult SignIn(HttpContext context)
     {
         var tenant = SignInFlow.Tenant(context);
-        return Results.Redirect($"/ui/{tenant}/sign-in?next={Uri.EscapeDataString(SignInFlow.SecurityPath(tenant))}");
+        return TypedResults.Redirect($"/ui/{tenant}/sign-in?next={Uri.EscapeDataString(SignInFlow.SecurityPath(tenant))}");
     }
 
-    /// <summary>The security page for <paramref name="user"/>.</summary>
     public static async Task<IResult> PageAsync(HttpContext context, TotpCredentials mfa, UserRecord user, (string Title, string Message)? error, CancellationToken cancellationToken,
         int statusCode = StatusCodes.Status200OK, string? notice = null, string? next = null)
     {
@@ -445,7 +400,6 @@ internal static class SecurityFlow
         }, statusCode);
     }
 
-    /// <summary>Records a factor change in the organizations of a platform account; project tenants have none.</summary>
     public static Task AuditAsync(PlatformDirectory platform, string tenant, string userId, string action, CancellationToken cancellationToken) =>
         Tenancy.IsProject(tenant) ? Task.CompletedTask : platform.AuditFactorAsync(userId, action, cancellationToken);
 }

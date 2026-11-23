@@ -1,10 +1,3 @@
-// Command ts is the TerraScale CLI: device sign-in, projects, databases,
-// SQL, functions and API keys against the production API, as the signed-in
-// user. Run ts help for every command.
-//
-// Project commands act in the user's only project; -project <name or id>
-// picks one when the user reaches several, and -org <name or id> restricts
-// project selection to one unambiguous organization.
 package main
 
 import (
@@ -29,7 +22,7 @@ import (
 	v1 "terrascale.tech/sdk/v1"
 )
 
-var version = "dev" // Set by release builds with -ldflags.
+var version = "dev"
 
 const usage = `usage: ts [-json] [-project <name or id>] [-org <name or id>] [-yes] <command>
 
@@ -83,7 +76,8 @@ Options go before or after the command and its operands; -- ends options.
                                           commits on its own; resume with -from n
   db placement <db> (-regions <a,b> | -all-regions)
                                           set the regions that hold the database
-  db regions <db>                         print each region's pull progress
+  db regions <db>                         print each peer region's replication
+                                          health, lag and applied bookmark
   backup list | create <db>               list or take a database's backups
   backup policy <db>                      read the snapshot schedule and retention
   backup policy-set <db> <cron|none> <days> set five-field UTC cron and 1..35 days
@@ -98,7 +92,8 @@ Options go before or after the command and its operands; -- ends options.
                                           restore the database in place to an RFC3339
                                           instant; later changes are lost; requires -yes
   shell <db>                              multiline SQL; .run submits one statement;
-                                          session history
+                                          session history; -consistency and
+                                          -bookmark apply to every statement
   functions deploy <db> <file.js | dir>   deploy or replace a JavaScript function
                                           (a dir deploys its index.js); the file
                                           is a plain script, not an ES module
@@ -116,7 +111,11 @@ Options go before or after the command and its operands; -- ends options.
                                           -window 1h|24h|7d, default 24h
   functions delete <db> <name>            delete a function and its logs
   sql <db> <statement>                    run one SQL statement in its own
-                                          transaction; rows print as JSON lines
+                                          transaction; rows print as JSON lines;
+                                          -consistency fast|strong picks the
+                                          commit mode, -bookmark <b> reads your
+                                          earlier writes in any region; the new
+                                          bookmark prints on stderr
   rules pull <db>                         write terrascale.rules.json and version state
   rules deploy <db>                       show diff and confirm deployment; -yes consents
   rules test <db>                         simulate --operation --table --auth --row --new;
@@ -170,9 +169,6 @@ func main() {
 
 var errUsage = errors.New("invalid arguments: run ts help")
 
-// parseOptions accepts the global options before, between and after the
-// command words and operands. After the command only defined option names are
-// options, so - (stdin) and other dash operands stay operands; -- ends options.
 func parseOptions(fs *flag.FlagSet, args []string) ([]string, error) {
 	var operands []string
 	for {
@@ -194,7 +190,6 @@ func parseOptions(fs *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
-// commands maps each command to its accepted operand counts.
 var commands = map[string][]int{
 	"agent enroll": {0}, "agent token": {0}, "agent list": {0}, "agent revoke": {0}, "agent policy get": {0}, "agent policy set": {0},
 	"auth login":         {0},
@@ -317,8 +312,6 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	expires := fs.String("expires", "", "keys create: 30d, 90d, 365d or never")
 	allowCIDR := fs.String("allow-cidr", "", "keys create: comma-separated CIDRs")
 	scope := fs.String("scope", "", "keys create: read or read-write")
-	homeRegion := fs.String("home-region", "", "db create: earlier placement flag; use -regions")
-	replicaRegions := fs.String("replica-regions", "", "db create, db placement: earlier placement flag; use -regions")
 	regions := fs.String("regions", "", "db create, db placement: comma-separated regions that hold the database")
 	allRegions := fs.Bool("all-regions", false, "db create, db placement: every serving region")
 	expectedID := fs.String("expected-id", "", "db branch/delete: require the server to match this immutable database ULID")
@@ -329,6 +322,8 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	exportFile := fs.String("o", "", "db export: write the SQL dump to a file")
 	force := fs.Bool("force", false, "db export: overwrite the output file")
 	allowDrop := fs.Bool("allow-drop", false, "schema apply: consent to DROP operations")
+	consistency := fs.String("consistency", "", "sql, shell: fast or strong")
+	bookmark := fs.String("bookmark", "", "sql, shell: TerraScale-Bookmark to read after")
 	args, err := parseOptions(fs, args)
 	if err != nil {
 		return err
@@ -383,7 +378,7 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			return err
 		}
 	}
-	var yesSet, scopeSet, keyOptionsSet, regionsSet, allRegionsSet, homeSet, replicasSet, expectedIDSet, langSet bool
+	var yesSet, scopeSet, keyOptionsSet, regionsSet, allRegionsSet, expectedIDSet, langSet, causalSet bool
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "expected-id":
@@ -392,10 +387,8 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			langSet = true
 		case "expires", "allow-cidr":
 			keyOptionsSet = true
-		case "home-region":
-			homeSet = true
-		case "replica-regions":
-			replicasSet = true
+		case "consistency", "bookmark":
+			causalSet = true
 		case "regions":
 			regionsSet = true
 		case "all-regions":
@@ -418,25 +411,14 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	if name == "db branch" && operands[0] == operands[1] {
 		return fmt.Errorf("branch source and target names must differ: %w", errUsage)
 	}
-	if homeSet && (name != "db create" || !validRegion(*homeRegion)) || replicasSet && name != "db create" && name != "db placement" || regionsSet && (homeSet || replicasSet) || replicasSet && allRegionsSet {
-		return fmt.Errorf("earlier placement flags require db create or db placement, separately from -regions and -all-regions: %w", errUsage)
-	}
-	var earlier []string
-	if replicasSet && *replicaRegions != "" {
-		earlier = strings.Split(*replicaRegions, ",")
-		for i, region := range earlier {
-			if !validRegion(region) || slices.Contains(earlier[:i], region) || region == *homeRegion {
-				return fmt.Errorf("-replica-regions needs distinct region ids other than -home-region: %w", errUsage)
-			}
-		}
-	}
-	placementName := name
-	if replicasSet {
-		placementName = "db create"
-	}
-	placement, err := placementOptions(placementName, regionsSet, *regions, allRegionsSet && *allRegions, allRegionsSet)
+	placement, err := placementOptions(name, regionsSet, *regions, allRegionsSet && *allRegions, allRegionsSet)
 	if err != nil {
 		return err
+	}
+	if causalSet {
+		if ctx, err = causalOptions(ctx, name, *consistency, *bookmark); err != nil {
+			return err
+		}
 	}
 	if scopeSet && name != "keys create" {
 		return fmt.Errorf("-scope is only accepted for keys create: %w", errUsage)
@@ -551,10 +533,6 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 			}, out)
 		}
 		switch {
-		case name == "db create" && (homeSet || replicasSet):
-			return createEarlierPlaced(ctx, s.tb, s.project, operands[0], *homeRegion, earlier, placement.AllRegions, out)
-		case name == "db placement" && replicasSet:
-			return setEarlierPlacement(ctx, s.tb, s.project, operands[0], earlier, out)
 		case name == "db create" && (regionsSet || allRegionsSet):
 			return createPlaced(ctx, s.tb, s.project, operands[0], placement, out)
 		case name == "db placement":
@@ -697,13 +675,12 @@ func runCommand(ctx context.Context, args []string, out io.Writer, in io.Reader,
 	return dispatch(s)
 }
 
-// dispatch runs a project command.
 func (s *session) dispatch(ctx context.Context, name string, fn functionFlags, operands []string, input commandInput, out io.Writer) error {
 	if name == "shell" {
 		return sqlShell(ctx, s.tb.Database(s.project, operands[0]), input, out)
 	}
 	if name == "sql" {
-		return runSQL(ctx, s.tb.Database(s.project, operands[0]), operands[1], input.in, out)
+		return runSQL(ctx, s.tb.Database(s.project, operands[0]), operands[1], input.in, out, input.prompt)
 	}
 	if name == "functions delete" {
 		if err := confirmResourceDelete("function", operands[0], operands[1], s.project, input.yes, input.in, input.prompt, input.tty); err != nil {
@@ -728,11 +705,8 @@ func (s *session) dispatch(ctx context.Context, name string, fn functionFlags, o
 	return s.run(ctx, name, operands, out)
 }
 
-// keyLifetimeDays maps the -expires values that set a key's lifetime.
 var keyLifetimeDays = map[string]int{"30d": 30, "90d": 90, "365d": 365}
 
-// newKeyRequest reads keys create's operands, <name> and an optional database ULID,
-// and its -expires and -allow-cidr flags. A key expires never unless asked.
 func newKeyRequest(operands []string, expires, allowCIDR string) (tsauth.APIKeyRequest, error) {
 	req := tsauth.APIKeyRequest{Name: operands[0], Scopes: []string{tsauth.ScopeDatabasesRead, tsauth.ScopeDatabasesWrite,
 		tsauth.ScopeSQLRead, tsauth.ScopeSQLWrite}}
@@ -761,15 +735,13 @@ func newKeyRequest(operands []string, expires, allowCIDR string) (tsauth.APIKeyR
 	return req, nil
 }
 
-// createKey creates a key and prints its secret once, with its expiry and
-// allowed networks on stderr.
 func createKey(ctx context.Context, s *session, req tsauth.APIKeyRequest, out io.Writer) error {
 	k, err := s.user.CreateAPIKey(ctx, s.org, s.project, req)
 	if err != nil {
 		return keyOperationError(err, "Creating API keys", s)
 	}
 	if jsonMode(out) {
-		return keyOutputError(emitJSON(out, k)) // This explicit create command reveals the secret once.
+		return keyOutputError(emitJSON(out, k))
 	}
 	expires := "never"
 	if k.APIKey.ExpiresAt != nil {
@@ -837,8 +809,6 @@ func logout(ctx context.Context, d *tsauth.Device, out io.Writer) error {
 	return nil
 }
 
-// accessToken returns a current access token, refreshing the stored sign-in
-// when it expires within a minute.
 func accessToken(ctx context.Context, d *tsauth.Device) (string, error) {
 	path, err := credentialsPath()
 	if err != nil {
@@ -861,14 +831,12 @@ func accessToken(ctx context.Context, d *tsauth.Device) (string, error) {
 		return "", &cliError{code: "sign_in_expired", message: "sign-in expired, run ts auth login", err: err}
 	}
 	if err != nil {
-		// The sign-in is kept: an outage or lost connection is not an expiry.
 		return "", fmt.Errorf("could not refresh the sign-in, try again: %w", err)
 	}
-	t.RefreshToken = cmp.Or(t.RefreshToken, c.RefreshToken) // ts-auth may keep the old one
+	t.RefreshToken = cmp.Or(t.RefreshToken, c.RefreshToken)
 	return t.AccessToken, save(t)
 }
 
-// projects yields every project the user reaches, in every organization.
 func projects(ctx context.Context, u *tsauth.User, organization string) iter.Seq2[tsauth.Project, error] {
 	return func(yield func(tsauth.Project, error) bool) {
 		if organization != "" {
@@ -924,8 +892,6 @@ func listProjects(ctx context.Context, u *tsauth.User, organization string, out 
 	return w.Flush()
 }
 
-// whoami prints the account the stored sign-in names, after ts-auth accepts
-// the token.
 func whoami(ctx context.Context, u *tsauth.User, token string, out io.Writer) error {
 	if _, err := u.Organizations(ctx, tsauth.PageOptions{Limit: 1}); err != nil {
 		return err
@@ -942,8 +908,6 @@ func whoami(ctx context.Context, u *tsauth.User, token string, out io.Writer) er
 	return err
 }
 
-// decodeClaims reads a JWT's payload into v without verifying it: callers
-// only label output or route requests with it; the server checks the token.
 func decodeClaims(token string, v any) {
 	if parts := strings.Split(token, "."); len(parts) == 3 {
 		if payload, err := base64.RawURLEncoding.DecodeString(parts[1]); err == nil {
@@ -952,8 +916,6 @@ func decodeClaims(token string, v any) {
 	}
 }
 
-// openKey opens the project an API key acts in: its own, or project for an
-// organization key.
 func openKey(ctx context.Context, key, project string) (*session, error) {
 	tokens, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Key: key, Project: project})
 	if err != nil {
@@ -977,7 +939,6 @@ func openKey(ctx context.Context, key, project string) (*session, error) {
 	return &session{tb: tb, project: project}, nil
 }
 
-// session is the signed-in user's TerraBase client for one project.
 type session struct {
 	tb       *v1.Client
 	user     *tsauth.User
@@ -1005,7 +966,6 @@ func open(ctx context.Context, u *tsauth.User, token, organization, project, dat
 		return nil, fmt.Errorf("%d projects match: pick one with -project <id> (ts projects lists them)", len(matches))
 	}
 	p := matches[0]
-	// Empty Scopes: ts-auth grants what the user's project role allows.
 	tokens, err := tsauth.NewExchangeSource(tsauth.ExchangeConfig{ClientID: tsauth.CLIClientID,
 		SubjectToken: func(context.Context) (string, error) { return token, nil }, Organization: p.OrganizationID, Project: p.ID})
 	if err != nil {
@@ -1018,7 +978,6 @@ func open(ctx context.Context, u *tsauth.User, token, organization, project, dat
 	return &session{tb, u, p.OrganizationID, p.ID, database}, nil
 }
 
-// pages yields every item of a paged list; list gets the previous Next.
 func pages[T any](list func(after string) (*v1.Page[T], error)) iter.Seq2[T, error] {
 	return func(yield func(T, error) bool) {
 		after := ""
@@ -1041,8 +1000,6 @@ func pages[T any](list func(after string) (*v1.Page[T], error)) iter.Seq2[T, err
 	}
 }
 
-// projectDatabases yields a project's databases page by page. TerraBase learns
-// a project at its first database, so an unknown database means none exist yet.
 func projectDatabases(ctx context.Context, tb *v1.Client, project string, limit int) iter.Seq2[v1.ManagedDatabase, error] {
 	return func(yield func(v1.ManagedDatabase, error) bool) {
 		var empty bool
@@ -1140,25 +1097,13 @@ func (s *session) run(ctx context.Context, name string, args []string, out io.Wr
 			return emitJSON(out, r)
 		}
 		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "REGION\tROLE\tLAG MS\tLAST PULL\tLAST VERIFIED\tREVISION")
+		fmt.Fprintln(w, "REGION\tHEALTHY\tLAG MS\tAPPLIED BOOKMARK")
 		for _, rep := range r.Regions {
-			lag, pull, verified, revision, role := "-", "-", "-", "-", rep.Role
+			lag := "-"
 			if rep.LagMs != nil {
 				lag = fmt.Sprintf("%.0f", *rep.LagMs)
 			}
-			if rep.LastPulledAt != nil {
-				pull = rep.LastPulledAt.Format(time.RFC3339)
-			}
-			if rep.LastVerified != nil {
-				verified = rep.LastVerified.Format(time.RFC3339)
-			}
-			if rep.Revision != nil {
-				revision = *rep.Revision
-			}
-			if role == "" {
-				role = "-"
-			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", rep.Region, role, lag, pull, verified, revision)
+			fmt.Fprintf(w, "%s\t%t\t%s\t%s\n", rep.Region, rep.Healthy, lag, cmp.Or(rep.AppliedBookmark, "-"))
 		}
 		return w.Flush()
 	case "db rename", "databases rename":

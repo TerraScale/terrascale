@@ -15,6 +15,6 @@ public sealed class RevokeUserApiKeyEndpoint(TenantDirectory tenants, PlatformAu
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         await keys.RevokeAsync(project, this.RouteId("user"), this.RouteId("key"), caller.Id, cancellationToken);
-        return Results.NoContent();
+        return TypedResults.NoContent();
     }
 }

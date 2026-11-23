@@ -1,5 +1,5 @@
+using Dapper;
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Storage;
@@ -40,6 +40,14 @@ public sealed class Credentials(AuthData data)
     public static Change Claim(string instanceId, string kind, string key, string ownerId) =>
         Change.Insert(new CredentialClaimRecord(instanceId, kind, key, ownerId));
 
+    private async Task<IReadOnlyList<Versioned<CredentialClaimRecord>>> ClaimsAsync(string instanceId, string[] kinds, string[] keys, CancellationToken cancellationToken) =>
+        Versioned.All(await data.ReadAsync(connection => connection.QueryAsync<CredentialClaimRecord>(
+            "SELECT * FROM credential_claims WHERE instance_id = @instanceId AND kind IN @kinds AND \"key\" IN @keys", new { instanceId, kinds, keys }), cancellationToken));
+
+    private async Task<IReadOnlyList<Versioned<ProviderLinkRecord>>> LinksAsync(string instanceId, string[] subjects, CancellationToken cancellationToken) =>
+        Versioned.All(await data.ReadAsync(connection => connection.QueryAsync<ProviderLinkRecord>(
+            "SELECT * FROM provider_links WHERE instance_id = @instanceId AND subject IN @subjects", new { instanceId, subjects }), cancellationToken));
+
     public Task<bool> IsClaimedAsync(string instanceId, CredentialBinding binding, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(binding);
@@ -47,13 +55,15 @@ public sealed class Credentials(AuthData data)
     }
 
     public Task<bool> IsClaimedAsync(string instanceId, string kind, string key, CancellationToken cancellationToken) =>
-        data.ReadAsync((db, token) => db.CredentialClaims.AnyAsync(claim => claim.InstanceId == instanceId && claim.Kind == kind && claim.Key == key, token), cancellationToken);
+        data.ReadAsync(connection => connection.ExecuteScalarAsync<bool>(
+            "SELECT EXISTS (SELECT 1 FROM credential_claims WHERE instance_id = @instanceId AND kind = @kind AND \"key\" = @key)", new { instanceId, kind, key }),
+            cancellationToken);
 
     public async Task<bool> AreCurrentAsync(string instanceId, IReadOnlyList<CredentialBinding> bindings, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(bindings);
         return bindings.Count <= MaxLineage && bindings.All(Wellformed)
-            && await this.RequireAsync(instanceId, bindings, cancellationToken).ConfigureAwait(false) is not null;
+            && await this.RequireAsync(instanceId, bindings, cancellationToken) is not null;
     }
 
     public async Task<IReadOnlyList<Change>?> RequireAsync(string instanceId, IReadOnlyList<CredentialBinding> bindings, CancellationToken cancellationToken)
@@ -91,24 +101,25 @@ public sealed class Credentials(AuthData data)
             identities.Add((binding, identity));
         }
 
-        var usersRead = userIds.Length == 0 ? Task.FromResult<List<UserRecord>>([])
-            : data.ReadAsync((db, token) => db.Users.Where(user => user.InstanceId == instanceId && userIds.Contains(user.Id)).ToListAsync(token), cancellationToken);
-        var authorizationsRead = authorizationIds.Length == 0 ? Task.FromResult<List<OidcAuthorization>>([])
-            : data.ReadAsync((db, token) => db.Set<OidcAuthorization>().Where(item => item.InstanceId == instanceId && authorizationIds.Contains(item.Id!)).ToListAsync(token), cancellationToken);
+        var usersRead = userIds.Length == 0 ? Task.FromResult<IEnumerable<UserRecord>>([])
+            : data.ReadAsync(connection => connection.QueryAsync<UserRecord>("SELECT * FROM users WHERE instance_id = @instanceId AND id IN @userIds", new { instanceId, userIds }),
+                cancellationToken);
+        var authorizationsRead = authorizationIds.Length == 0 ? Task.FromResult<IEnumerable<OidcAuthorization>>([])
+            : data.ReadAsync(connection => connection.QueryAsync<OidcAuthorization>(
+                "SELECT * FROM oidc_authorizations WHERE instance_id = @instanceId AND id IN @authorizationIds", new { instanceId, authorizationIds }), cancellationToken);
         var kinds = claimed.Select(binding => binding.Kind).Distinct(StringComparer.Ordinal).ToArray();
         var keys = claimed.Select(binding => binding.Key).Distinct(StringComparer.Ordinal).ToArray();
-        var claimsRead = claimed.Length == 0 ? Task.FromResult<List<Versioned<CredentialClaimRecord>>>([])
-            : data.ReadAsync((db, token) => db.CredentialClaims.Where(claim => claim.InstanceId == instanceId && kinds.Contains(claim.Kind) && keys.Contains(claim.Key))
-                .WithVersion().ToListAsync(token), cancellationToken);
+        var claimsRead = claimed.Length == 0 ? Task.FromResult<IReadOnlyList<Versioned<CredentialClaimRecord>>>([])
+            : this.ClaimsAsync(instanceId, kinds, keys, cancellationToken);
         var subjects = identities.Select(item => item.Identity.Subject).Distinct(StringComparer.Ordinal).ToArray();
-        var linksRead = identities.Count == 0 ? Task.FromResult<List<Versioned<ProviderLinkRecord>>>([])
-            : data.ReadAsync((db, token) => db.ProviderLinks.Where(link => link.InstanceId == instanceId && subjects.Contains(link.Subject)).WithVersion().ToListAsync(token), cancellationToken);
-        await Task.WhenAll(usersRead, authorizationsRead, claimsRead, linksRead).ConfigureAwait(false);
+        var linksRead = identities.Count == 0 ? Task.FromResult<IReadOnlyList<Versioned<ProviderLinkRecord>>>([])
+            : this.LinksAsync(instanceId, subjects, cancellationToken);
+        await Task.WhenAll(usersRead, authorizationsRead, claimsRead, linksRead);
 
-        var users = (await usersRead.ConfigureAwait(false)).ToDictionary(user => user.Id, StringComparer.Ordinal);
-        var authorizations = (await authorizationsRead.ConfigureAwait(false)).ToDictionary(item => item.Id!, StringComparer.Ordinal);
-        var claims = await claimsRead.ConfigureAwait(false);
-        var links = await linksRead.ConfigureAwait(false);
+        var users = (await usersRead).ToDictionary(user => user.Id, StringComparer.Ordinal);
+        var authorizations = (await authorizationsRead).ToDictionary(item => item.Id!, StringComparer.Ordinal);
+        var claims = await claimsRead;
+        var links = await linksRead;
         var changes = new List<Change>();
         foreach (var binding in distinct)
         {

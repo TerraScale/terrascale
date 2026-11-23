@@ -10,10 +10,8 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.Platform;
 
-/// <summary>Durable acknowledgement after dashboard verified its own scoped cleanup.</summary>
 public sealed class AcknowledgeDeletionEndpoint(AuthData data, AuthOptions options, TimeProvider clock) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/v1/{slug}/deletions/{id}/acknowledge");
@@ -31,7 +29,6 @@ public sealed class AcknowledgeDeletionEndpoint(AuthData data, AuthOptions optio
         Metadata(new RequiresSecurity(SecuritySchemes.ClientBasic));
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (DashboardClientAuthentication.Refuse(this.HttpContext, options) is { } refused)

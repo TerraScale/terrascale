@@ -15,20 +15,20 @@ namespace TerraScale.Dashboard.Features.Profile
             var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, "/profile?tab=sessions", Results.BadRequest("Invalid form token."));
+                return RequestError.FormExpired(http, "/profile?tab=sessions", TypedResults.BadRequest("Invalid form token."));
             }
 
             await sessions.RevokeAsync(http, context.Session, http.Request.RouteValues["id"]?.ToString() ?? "");
             if (http.Request.IsDatastarRequest)
             {
                 await DatastarEvents.PatchElementsAsync(http, ProfilePatch.Create(new(ShellModel.For(http, context, "Profile"), "sessions", Status: "Session revoked.", Sessions: await sessions.ListAsync(http, context.Session))));
-                return Results.Empty;
+                return TypedResults.Empty;
             }
             return HttpRedirects.SeeOther("/profile?tab=sessions&status=session-revoked");
         }

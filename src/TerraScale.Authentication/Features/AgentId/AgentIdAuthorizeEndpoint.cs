@@ -36,17 +36,17 @@ public abstract class AgentIdAuthorizeEndpoint(AgentIdTransactions transactions,
     {
         if (this.HttpContext.GetOpenIddictServerRequest() is not { ClientId: { } clientId } request)
         {
-            return Results.NotFound();
+            return TypedResults.NotFound();
         }
 
         if (!request.HasScope(Scopes.OpenId))
         {
-            return Results.Forbid(OidcResults.Error(OidcErrors.InvalidScope, "Sign in as agent requires the openid scope."), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
+            return TypedResults.Forbid(OidcResults.Error(OidcErrors.InvalidScope, "Sign in as agent requires the openid scope."), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
         }
 
         if (request.HasScope(AgentIdIssuer.OwnerEmailScope) && AgentIdIssuer.IsOpenClient(clientId))
         {
-            return Results.Forbid(OidcResults.Error(OidcErrors.InvalidScope, "Only a registered client can request the owner_email scope."), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
+            return TypedResults.Forbid(OidcResults.Error(OidcErrors.InvalidScope, "Only a registered client can request the owner_email scope."), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
         }
 
         List<KeyValuePair<string, StringValues>> parameters = HttpMethods.IsPost(this.HttpContext.Request.Method)
@@ -75,7 +75,7 @@ public abstract class AgentIdAuthorizeEndpoint(AgentIdTransactions transactions,
         {
             return browser
                 ? AgentIdPageModel.Render(this.HttpContext, new(AgentIdStep.Expired, clientName), StatusCodes.Status400BadRequest)
-                : Results.Json(new OAuthErrorBody("expired_transaction", AgentIdTransactions.Expired), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status400BadRequest);
+                : TypedResults.Json(new OAuthErrorBody("expired_transaction", AgentIdTransactions.Expired), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status400BadRequest);
         }
 
         if (transaction.ProvedAt is null)
@@ -88,11 +88,11 @@ public abstract class AgentIdAuthorizeEndpoint(AgentIdTransactions transactions,
                 return AgentIdPageModel.Render(this.HttpContext, new(AgentIdStep.Waiting, clientName, proofUrl));
             }
 
-            return Results.Json(new AgentIdPendingBody("pending", transaction.Id, proofUrl, clientId, clientName, transaction.ExpiresAt), AgentIdJson.Default.AgentIdPendingBody);
+            return TypedResults.Json(new AgentIdPendingBody("pending", transaction.Id, proofUrl, clientId, clientName, transaction.ExpiresAt), AgentIdJson.Default.AgentIdPendingBody);
         }
 
         return await transactions.CompleteAsync(transaction, cancellationToken) is { } signIn
-            ? Results.SignIn(AgentIdIssuer.Principal(options, clientId, signIn, request.GetScopes(), redemption: false), null, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme)
-            : Results.Forbid(OidcResults.Error(OidcErrors.AccessDenied, "The agent can no longer sign in."), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
+            ? TypedResults.SignIn(AgentIdIssuer.Principal(options, clientId, signIn, request.GetScopes(), redemption: false), null, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme)
+            : TypedResults.Forbid(OidcResults.Error(OidcErrors.AccessDenied, "The agent can no longer sign in."), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
     }
 }

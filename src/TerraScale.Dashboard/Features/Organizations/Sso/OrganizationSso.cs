@@ -15,7 +15,6 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
         string Protocol, string DefaultRole, SsoOidc? Oidc, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
     public sealed record SsoVerification(string Type, string Name, string Value);
     public sealed record SsoOidc(string Issuer, string ClientId, bool ClientSecretSet, string RedirectUri);
-    // OIDC only: ts-auth refuses a saml member until its SAML support ships.
     public sealed record SsoUpdate(string Domain, string Protocol, string DefaultRole, SsoOidcInput Oidc);
     public sealed record SsoOidcInput(string Issuer, string ClientId, string? ClientSecret)
     {
@@ -24,7 +23,6 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
             return $"OIDC {Issuer} {ClientId} [REDACTED]";
         }
     }
-    // The page's view: the connection (null when the organization has none) or why it could not be read.
     public sealed record OrganizationSsoView(SsoConnection? Connection, bool PlanIncludesSso, string Unavailable = "");
 
     [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
@@ -32,13 +30,8 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
     [JsonSerializable(typeof(SsoUpdate))]
     internal sealed partial class SsoJson : JsonSerializerContext;
 
-    // ts-auth owns SSO connections. ts-dotnet 0.0.6 has no SSO wrappers yet, so these call ts-auth's
-    // /v1/terrascale/organizations/{org}/sso routes with the signed-in user's own access token, as the
-    // SDK's platform calls do. ts-auth rechecks the caller's role; the dashboard adds the plan gate.
     public sealed class OrganizationSsoService(IHttpClientFactory http)
     {
-        // Single sign-on is a Team and Enterprise feature. An internal billing policy copies a paid plan's
-        // contract, so it counts by that base plan. An organization without an active plan has none.
         public static bool PlanIncludesSso(OrganizationRecord organization)
         {
             return organization.BillingStatus != "billing_required" && PlanCatalog.For(organization) is { } plan &&
@@ -66,7 +59,6 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
             await SendAsync(context, HttpMethod.Post, "/verify", null, cancellationToken);
         }
 
-        // Removal is open on every plan, so a downgraded organization can still take its connection down.
         public async Task DeleteAsync(AccountContext context, CancellationToken cancellationToken)
         {
             Change(context, planned: false);
@@ -146,7 +138,6 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
             var code = Text("code");
             var message = code switch
             {
-                // ts-auth names the field it refused; the text is escaped when rendered.
                 "invalid_request" when Text("message") is { Length: > 0 and <= 300 } field => "ts-auth refused the settings: " + field,
                 "domain_unverified" => "The TXT record was not found yet. DNS changes can take a while to spread; try again in a few minutes.",
                 "conflict" => "Another organization has verified this domain, or this organization's connection uses a different domain. Remove the existing connection first.",
@@ -162,7 +153,6 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
             return new(message, status == HttpStatusCode.BadRequest ? StatusCodes.Status422UnprocessableEntity : (int)status, code);
         }
 
-        // Reads the configure form. The client secret is write-only: left blank, ts-auth keeps the stored one.
         public static Valid<SsoUpdate> Parse(IFormCollection form)
         {
             Valid<string> Field(string name, int max = 2048) =>
@@ -262,13 +252,13 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, "/organization?tab=sso", Results.BadRequest("Invalid form token."));
+                return RequestError.FormExpired(http, "/organization?tab=sso", TypedResults.BadRequest("Invalid form token."));
             }
 
             try
@@ -289,7 +279,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
                             if (http.Request.IsDatastarRequest)
                             {
                                 await OrganizationEndpoints.PatchAsync(http, context, placement, error.Message, "sso");
-                                return Results.Empty;
+                                return TypedResults.Empty;
                             }
                             return await OrganizationEndpoints.PageAsync(http, context, placement, error.Message, 422, "sso");
                         case SsoUpdate update:
@@ -302,7 +292,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
                 {
                     context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, reload: true);
                     await DatastarEvents.PatchElementsAsync(http, OrganizationPageView.Create(await OrganizationEndpoints.PageModelAsync(http, context, placement, tabOverride: "sso")));
-                    return Results.Empty;
+                    return TypedResults.Empty;
                 }
                 return HttpRedirects.SeeOther("/organization?tab=sso");
             }
@@ -311,7 +301,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
                 if (http.Request.IsDatastarRequest)
                 {
                     await OrganizationEndpoints.PatchAsync(http, context, placement, error.Message, "sso");
-                    return Results.Empty;
+                    return TypedResults.Empty;
                 }
                 return await OrganizationEndpoints.PageAsync(http, context, placement, error.Message, error.StatusCode, "sso");
             }
@@ -320,7 +310,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Sso
                 if (http.Request.IsDatastarRequest)
                 {
                     await OrganizationEndpoints.PatchAsync(http, context, placement, "Single sign-on is unavailable right now. Try again shortly.", "sso");
-                    return Results.Empty;
+                    return TypedResults.Empty;
                 }
                 return await OrganizationEndpoints.PageAsync(http, context, placement, "Single sign-on is unavailable right now. Try again shortly.", 503, "sso");
             }

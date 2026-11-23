@@ -47,7 +47,7 @@ public sealed class CreateAgentIdClientEndpoint(PlatformAuthentication authentic
 
         return await clients.CreateAsync(proof, name, redirects, cancellationToken) switch
         {
-            AgentIdClientBody client => Results.Json(client, AgentIdClientJson.Default.AgentIdClientBody, statusCode: StatusCodes.Status201Created)
+            AgentIdClientBody client => TypedResults.Json(client, AgentIdClientJson.Default.AgentIdClientBody, statusCode: StatusCodes.Status201Created)
                 .WithLocation(Root + "/" + client.ClientId),
             NotFound notFound => ErrorResults.ToResult(notFound),
             Conflict conflict => ErrorResults.ToResult(conflict),

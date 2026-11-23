@@ -3,10 +3,8 @@ using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Features.ProjectTenants;
 
-/// <summary><c>POST /v1/{project}/users/{user}/enable</c>.</summary>
 public sealed class EnableProjectUserEndpoint(TenantDirectory tenants, PlatformAuthentication authentication) : ProjectTenantEndpoint(tenants, authentication)
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post(Root + "/users/{user}/enable");
@@ -16,6 +14,6 @@ public sealed class EnableProjectUserEndpoint(TenantDirectory tenants, PlatformA
     protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
-        return Results.Json(Map(await this.Tenants.SetDisabledAsync(projectId, this.RouteId("user"), false, cancellationToken)), ProjectTenantJson.Default.ProjectUserBody);
+        return TypedResults.Json(Map(await this.Tenants.SetDisabledAsync(projectId, this.RouteId("user"), false, cancellationToken)), ProjectTenantJson.Default.ProjectUserBody);
     }
 }

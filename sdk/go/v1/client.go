@@ -1,17 +1,3 @@
-// Package v1 is the name-based TerraBase v1 client (terrascale.tech/sdk/v1).
-//
-// It talks to the C# TerraBase server: databases and SQL under
-// /v1/projects/{project}/databases/{database} with a ts-auth project access
-// token. The Management API (/v1/management) acts as a ts-auth user.
-//
-// Numbers are never decoded through float64: JSON decoding uses
-// json.Decoder.UseNumber, so numbers keep their exact decimal text.
-//
-// A public client is created with New and a project token or TokenSource; the Management API
-// uses NewManagement and a user's ts-auth access token:
-//
-//	c, err := v1.New(v1.Config{Token: projectAccessToken})
-//	rows, err := c.Database(projectID, "main").Query(ctx, "SELECT id, name FROM users WHERE id = ?", id)
 package v1
 
 import (
@@ -39,47 +25,25 @@ import (
 	"terrascale.tech/sdk/tsauth"
 )
 
-// Protocol limits and client defaults.
 const (
-	// DefaultBaseURL is the fixed global TerraBase API origin.
-	DefaultBaseURL = "https://api.terrascale.tech"
-	// MaxRequestBytes is the server's request body limit (api-v1.md).
-	MaxRequestBytes = 4 << 20
-	// DefaultMaxResponseBytes bounds how much of one response body is read.
+	DefaultBaseURL                = "https://api.terrascale.tech"
+	MaxRequestBytes               = 4 << 20
 	DefaultMaxResponseBytes int64 = 64 << 20
-	// DefaultMaxRetries is the retry budget for 429 and retryable 503s.
-	DefaultMaxRetries = 3
-	// OperationTimeout bounds ordinary requests, including auth, resolution and retries.
-	OperationTimeout = 30 * time.Second
+	DefaultMaxRetries             = 3
+	OperationTimeout              = 30 * time.Second
 )
 
-// Config configures a Client or a Management client.
 type Config struct {
-	// Set this, Token or TokenSource exclusively.
-	APIKey string
-	// BaseURL is the TerraBase origin; empty uses DefaultBaseURL.
-	BaseURL string
-	// Resolver supplies the endpoint for each call. Set either Resolver or
-	// BaseURL; BaseURL uses a StaticResolver. Resolver must be safe for
-	// concurrent use. Resolved URLs follow the same rules as BaseURL.
-	Resolver Resolver
-	// Token is the tb_ API key for Client, or a ts-auth project access token
-	// for the project-management routes (unique keys). For Management it is
-	// empty, or the peer credential (internal listener only, see As).
-	Token string
-	// TokenSource supplies a current project access token, for example a
-	// tsauth API key or token exchange source. Set either Token or TokenSource.
-	// A Client represents one principal; its source must not switch principals.
-	TokenSource TokenSource
-	// HTTPClient is used for every request. Nil uses a client that requires
-	// TLS 1.3. The client is copied and its redirect policy replaced, so the
-	// bearer token is never forwarded to a redirect target.
+	APIKey        string
+	BaseURL       string
+	Resolver      Resolver
+	Token         string
+	TokenSource   TokenSource
 	HTTPClient    *http.Client
 	RegionPin     string
 	TSAuthBaseURL string
 }
 
-// Client is a data-plane client for one API key. It is safe for concurrent use.
 type Client struct {
 	apiKey      string
 	authOrigin  string
@@ -91,23 +55,17 @@ type Client struct {
 	maxRetries  int
 	maxResponse int64
 	regionPin   string
+	bookmarks   *sync.Map
 }
 
-// TokenSource supplies access tokens; TerraBase validates their claims.
-// Sources also implementing Invalidate(string) refresh once on a non-permanent 401.
-// Key refusals call Reject(string, error), when supported, and never refresh.
 type TokenSource interface {
 	Token(context.Context) (string, error)
 }
 
-// Resolver resolves a TerraBase endpoint. Resolution errors stop the call;
-// the client never falls back to another endpoint. A retry keeps the endpoint
-// resolved for the original call.
 type Resolver interface {
 	Resolve(context.Context) (string, error)
 }
 
-// StaticResolver always resolves to the configured base URL.
 type StaticResolver string
 
 func (r StaticResolver) Resolve(ctx context.Context) (string, error) {
@@ -116,11 +74,9 @@ func (r StaticResolver) Resolve(ctx context.Context) (string, error) {
 
 var (
 	tokenPattern = regexp.MustCompile(`^tb_[A-Za-z0-9_-]{43}$`)
-	// jwtPattern is the shape of a ts-auth access token; TerraBase verifies its signature and claims.
-	jwtPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$`)
+	jwtPattern   = regexp.MustCompile(`^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$`)
 )
 
-// New returns a data-plane client.
 func New(cfg Config) (*Client, error) {
 	if cfg.APIKey == "" && cfg.TokenSource == nil && !tokenPattern.MatchString(cfg.Token) && !jwtPattern.MatchString(cfg.Token) {
 		return nil, errors.New("terrabase: Token must be a tb_ API key or a ts-auth project access token")
@@ -182,7 +138,7 @@ func newClient(cfg Config) (*Client, error) {
 		hc = &copied
 	}
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	c := &Client{resolver: cfg.Resolver, token: cfg.Token, tokenSource: cfg.TokenSource, hc: hc, maxRetries: DefaultMaxRetries, maxResponse: DefaultMaxResponseBytes, regionPin: strings.TrimSpace(cfg.RegionPin)}
+	c := &Client{resolver: cfg.Resolver, token: cfg.Token, tokenSource: cfg.TokenSource, hc: hc, maxRetries: DefaultMaxRetries, maxResponse: DefaultMaxResponseBytes, regionPin: strings.TrimSpace(cfg.RegionPin), bookmarks: new(sync.Map)}
 	if cfg.APIKey != "" {
 		source, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Issuer: authOrigin + "/terrascale", Key: cfg.APIKey, HTTPClient: hc})
 		if err != nil {
@@ -259,20 +215,15 @@ func parseBaseURL(raw string) (*url.URL, error) {
 
 type request struct {
 	method      string
-	path        []string // unescaped path segments after BaseURL
+	path        []string
 	query       url.Values
 	body        []byte
 	contentType string
 	header      http.Header
-	// token replaces the client's bearer token for this request.
-	token string
-	// replaySafe permits retries after 429 or a known transient rejection:
-	// reads, read-only POSTs and If-Match writes.
-	replaySafe bool
-	// readOnly marks a read-only POST. GET is implicitly read-only. Only
-	// reads may retry potentially committed outcomes or transport failures.
-	readOnly bool
-	timeout  time.Duration
+	token       string
+	replaySafe  bool
+	readOnly    bool
+	timeout     time.Duration
 }
 
 type response struct {
@@ -281,7 +232,6 @@ type response struct {
 	body   []byte
 }
 
-// url escapes protocol path segments.
 func (c *Client) url(ctx context.Context, segments []string, query url.Values) (string, error) {
 	for _, s := range segments {
 		if s == "" || s == "." || s == ".." || strings.Contains(s, "/") {
@@ -306,8 +256,6 @@ func (c *Client) url(ctx context.Context, segments []string, query url.Values) (
 	return u.String(), nil
 }
 
-// do sends req with the client's retry policy and returns a 2xx response or
-// an error. Non-2xx statuses become *APIError.
 func (c *Client) do(ctx context.Context, req request) (*response, error) {
 	ctx, cancel := context.WithTimeout(ctx, cmp.Or(req.timeout, OperationTimeout))
 	defer cancel()
@@ -354,7 +302,6 @@ func (c *Client) do(ctx context.Context, req request) (*response, error) {
 		if resp.status >= 200 && resp.status < 300 {
 			return resp, nil
 		}
-		// Authentication refuses the request before an operation can execute.
 		if resp.status == http.StatusUnauthorized && req.token == "" && c.invalidateToken(outbound.token, parseAPIError(resp.status, resp.header, resp.body), refreshed) {
 			refreshed = true
 			continue
@@ -395,8 +342,6 @@ func isTransient503(e *APIError) bool {
 	return false
 }
 
-// isGatewayFailure reports a 502 or 504: the proxy in front of TerraBase
-// failed to obtain an answer.
 func isGatewayFailure(e *APIError) bool {
 	return e.Status == http.StatusBadGateway || e.Status == http.StatusGatewayTimeout
 }
@@ -426,7 +371,6 @@ func sleep(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// send performs one HTTP exchange and reads the whole body (bounded).
 func (c *Client) send(ctx context.Context, req request, target string) (*response, error) {
 	method := req.method
 	var rd io.Reader
@@ -467,7 +411,6 @@ func (c *Client) send(ctx context.Context, req request, target string) (*respons
 	return resp, nil
 }
 
-// call sends a JSON request and decodes a JSON response into out (if non-nil).
 func (c *Client) call(ctx context.Context, req request, in, out any) (*response, error) {
 	if in != nil {
 		body, err := json.Marshal(in)
@@ -494,7 +437,6 @@ func (c *Client) call(ctx context.Context, req request, in, out any) (*response,
 	return resp, nil
 }
 
-// decodeExact decodes JSON with UseNumber so numbers stay exact.
 func decodeExact(data []byte, v any) error {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()

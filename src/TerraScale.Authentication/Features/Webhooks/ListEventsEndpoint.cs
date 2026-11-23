@@ -20,7 +20,7 @@ public sealed class ListEventsEndpoint(TenantDirectory tenants, PlatformAuthenti
         var (limit, after) = this.Paging(50);
         return await history.EventsAsync(projectId, after, limit, cancellationToken) switch
         {
-            WebhookEventPage page => Results.Json(page, WebhooksJson.Default.WebhookEventPage),
+            WebhookEventPage page => TypedResults.Json(page, WebhooksJson.Default.WebhookEventPage),
             Validation error => ErrorResults.ToResult(error),
         };
     }

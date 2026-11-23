@@ -31,14 +31,14 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             try
             {
                 var (limit, after) = CursorPaging.Read(http.Request);
                 var page = await keys.ListPageAsync(context, after.Length == 0 ? null : after, limit, http.RequestAborted);
-                return Results.Json(new CursorPage<ProjectCredentialMetadata>([.. page.Items.Select(ApiKeyService.CredentialMetadata)], page.NextCursor, limit),
+                return TypedResults.Json(new CursorPage<ProjectCredentialMetadata>([.. page.Items.Select(ApiKeyService.CredentialMetadata)], page.NextCursor, limit),
                     ApiKeyContractJson.Default.CursorPageProjectCredentialMetadata);
             }
             catch (Exception error) when (DatabaseEndpoints.KnownFailure(error) || error is HttpRequestException or IOException or System.Text.Json.JsonException) { return DatabaseEndpoints.Failure(error); }

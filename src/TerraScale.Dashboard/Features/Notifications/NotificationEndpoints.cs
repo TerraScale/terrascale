@@ -37,26 +37,26 @@ namespace TerraScale.Dashboard.Features.Notifications
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, "/notifications", Results.BadRequest("Invalid form token."));
+                return RequestError.FormExpired(http, "/notifications", TypedResults.BadRequest("Invalid form token."));
             }
 
             try
             {
                 await NotificationCommands.MarkAsync(accounts, context, id, http.RequestAborted);
             }
-            catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
+            catch (AccountAccessException error) { return TypedResults.Problem(error.Message, statusCode: error.StatusCode); }
             context = await NotificationCommands.RefreshAsync(accounts, context, http.RequestAborted, reload: true);
             var page = NotificationPage.For(ShellModel.For(http, context, "Notifications"), form["status"], form["page"], form["dialog"] == "1");
             if (http.Request.IsDatastarRequest)
             {
                 await DatastarEvents.PatchElementsAsync(http, NotificationPatch.Create(page));
-                return Results.Empty;
+                return TypedResults.Empty;
             }
             return HttpRedirects.SeeOther(page.Href(page.Page));
         }

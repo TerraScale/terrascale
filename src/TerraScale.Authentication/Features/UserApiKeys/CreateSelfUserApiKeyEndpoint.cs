@@ -24,6 +24,6 @@ public sealed class CreateSelfUserApiKeyEndpoint(PlatformAuthentication authenti
         }
 
         request = request with { ExpiresAt = request.ExpiresAt ?? now.AddDays(90) };
-        return Results.Json(await keys.CreateAsync(this.RouteId("project"), caller.Id, caller.Id, request, this.CreationAuthorization, cancellationToken), UserApiKeyJson.Default.UserApiKeyBody, statusCode: 201);
+        return TypedResults.Json(await keys.CreateAsync(this.RouteId("project"), caller.Id, caller.Id, request, this.CreationAuthorization, cancellationToken), UserApiKeyJson.Default.UserApiKeyBody, statusCode: 201);
     }
 }

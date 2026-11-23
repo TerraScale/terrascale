@@ -27,65 +27,36 @@ using static OpenIddict.Server.OpenIddictServerEvents;
 
 namespace TerraScale.Authentication.Features.Oidc;
 
-/// <summary>
-/// The hosted OpenID Connect issuers: one per tenant, <c>{TS_AUTH_PUBLIC_ORIGIN}/{tenant}</c>, with every protocol route
-/// under <c>/{tenant}/</c>. The <c>terrascale</c> tenant serves the platform; each project is a tenant whose discovery
-/// users sign in to the customer's own applications with the authorization code flow, under its own key ring.
-/// </summary>
 public static class OidcIssuer
 {
-    /// <summary>The issuer's path segment.</summary>
     public const string Slug = "terrascale";
 
-    /// <summary>The instance that owns the issuer's users, sessions, keys, clients and tokens.</summary>
     public const string InstanceId = "terrascale";
 
-    /// <summary>The client id of the ts-dashboard client registered from <c>TS_AUTH_DASHBOARD_*</c>.</summary>
     public const string DashboardClientId = "01M4EQ2FRJ8S8B29E8TQVWNW4J";
 
-    /// <summary>The public authorization-code client for the status administration UI.</summary>
     public const string StatusClientId = "00000000000000000000000006";
 
-    /// <summary>The status client's only registered authorization callback.</summary>
     public const string StatusRedirectUri = "https://status.terrascale.tech/admin/callback";
 
-    /// <summary>
-    /// The public device-flow (RFC 8628) client of the ts CLI. Client ids are TerraScale ids, so the contract's
-    /// <c>ts-cli</c> is this reserved id with that display name.
-    /// </summary>
     public const string CliClientId = "00000000000000000000000007";
 
-    /// <summary>
-    /// The user's authentication epoch, in codes, refresh tokens and sign-in access tokens: a grant or a management call
-    /// whose epoch is not the user's current one (after sign-out everywhere or a password reset) is refused.
-    /// </summary>
     public const string EpochClaim = "ts_auth_epoch";
 
-    /// <summary>The winning authentication-state identity, independent of concurrent equal numeric epochs.</summary>
     public const string StateClaim = "ts_auth_state";
 
-    /// <summary>
-    /// Present (value <c>totp</c> or <c>passkey</c>) in codes, refresh tokens and sign-in access tokens whose sign-in
-    /// proved the user's second factor. An account with an active factor accepts only these; activating or removing a
-    /// factor advances the epoch.
-    /// </summary>
     public const string MfaClaim = "ts_auth_mfa";
 
     public const string OrganizationPickerClaim = "ts_org_picker";
 
-    /// <summary>The discovery document's path under a tenant's issuer.</summary>
     public const string ConfigurationPath = ".well-known/openid-configuration";
 
-    /// <summary>The JWKS path under a tenant's issuer.</summary>
     public const string JwksPath = ".well-known/jwks.json";
 
-    /// <summary>Lifetime of access and identity tokens; within the key ring's <c>Jwt.MaxLifetime</c>.</summary>
     public static readonly TimeSpan TokenLifetime = TimeSpan.FromMinutes(5);
 
-    /// <summary>The platform issuer, derived only from the configured public origin.</summary>
     public static Uri Issuer(AuthOptions options) => Issuer(options, Slug);
 
-    /// <summary>A tenant's issuer, derived only from the configured public origin.</summary>
     public static Uri Issuer(AuthOptions options, string tenant)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -93,18 +64,8 @@ public static class OidcIssuer
         return new Uri(options.PublicOrigin, tenant);
     }
 
-    /// <summary>
-    /// The audiences of a user's sign-in access token: the issuer, so the platform management API (TS-598) accepts it,
-    /// and every <c>TS_AUTH_ACCESS_TOKEN_AUDIENCES</c> value.
-    /// </summary>
     public static IReadOnlyList<string> SignInAudiences(AuthOptions options) => [Issuer(options).AbsoluteUri, .. options.AccessTokenAudiences];
 
-    /// <summary>
-    /// Registers OpenIddict on the TerraBase stores: authorization code with S256 PKCE and rotating refresh tokens,
-    /// discovery, JWKS, userinfo and end-session. Access and identity tokens are ES256 JWTs signed by the instance's key
-    /// ring. Authorization codes and refresh tokens are reference tokens, signed and encrypted under keys derived from
-    /// the master key, so a key-ring rotation never invalidates them.
-    /// </summary>
     public static IServiceCollection AddOidc(this IServiceCollection services, AuthOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -113,7 +74,6 @@ public static class OidcIssuer
         services.AddOpenIddict()
             .AddCore(core =>
             {
-                // Replicated payload and revocation winners must be read from the current regional store.
                 core.DisableEntityCaching();
                 core.SetDefaultApplicationEntity<OidcApplication>()
                     .SetDefaultAuthorizationEntity<OidcAuthorization>()
@@ -129,8 +89,6 @@ public static class OidcIssuer
             })
             .AddServer(server =>
             {
-                // No fixed issuer: TrustPublicOrigin sets each request's base URI to its tenant's issuer, which OpenIddict
-                // then uses as the issuer, and these relative endpoints resolve under it.
                 server.SetConfigurationEndpointUris(ConfigurationPath)
                     .SetJsonWebKeySetEndpointUris(JwksPath)
                     .SetAuthorizationEndpointUris("oauth/authorize")
@@ -138,29 +96,22 @@ public static class OidcIssuer
                     .SetUserInfoEndpointUris("oauth/userinfo")
                     .SetEndSessionEndpointUris("oauth/logout")
                     .SetRevocationEndpointUris("oauth/revoke")
-                    // RFC 8628 for the ts CLI: the user approves on ts-auth's own hosted page, outside the issuer path.
                     .SetDeviceAuthorizationEndpointUris("oauth/device")
                     .SetEndUserVerificationEndpointUris(new Uri(options.PublicOrigin, DeviceFlow.PagePath.TrimStart('/')))
                     .AllowDeviceAuthorizationFlow()
                     .AllowAuthorizationCodeFlow()
                     .AllowRefreshTokenFlow()
                     .AllowClientCredentialsFlow()
-                    // Organization and project tokens for signed-in users (TS-598).
                     .AllowTokenExchangeFlow()
-                    // The bound GitHub Actions workload only (GitHubActionsBinding creates its client).
                     .AllowCustomFlow(GitHubActionsGrant.GrantType)
                     .AllowCustomFlow(GuestSignIn.GrantType)
                     .AllowCustomFlow(AgentExchange.GrantType)
                     .RequireProofKeyForCodeExchange()
                     .RegisterScopes(Scopes.Email, Scopes.Profile, Scopes.OfflineAccess)
-                    // Each client's scope permissions still bound what it may request; there is no scope store.
                     .DisableScopeValidation()
-                    // The sign-in tokens always carry email, email_verified and auth_time (OidcEndpoints.SignIn);
-                    // discovery must advertise what tokens actually contain (TS-1256).
                     .RegisterClaims(Claims.Email, Claims.EmailVerified, Claims.AuthenticationTime)
                     .UseReferenceRefreshTokens()
                     .DisableAccessTokenEncryption()
-                    // A refresh token family expires 14 days after its code is redeemed; rotation never extends it.
                     .DisableSlidingRefreshTokenExpiration()
                     .SetRefreshTokenReuseLeeway(null)
                     .SetAuthorizationCodeLifetime(TimeSpan.FromMinutes(1))
@@ -175,7 +126,6 @@ public static class OidcIssuer
                     .Configure(server =>
                     {
                         server.CodeChallengeMethods.Remove(CodeChallengeMethods.Plain);
-                        // There is no consent or account picker page: neither prompt is advertised, and OpenIddict refuses them.
                         server.PromptValues.Remove(PromptValues.Consent);
                         server.PromptValues.Remove(PromptValues.SelectAccount);
                     })
@@ -294,7 +244,6 @@ public static class OidcIssuer
                     .EnableUserInfoEndpointPassthrough()
                     .EnableEndSessionEndpointPassthrough()
                     .EnableEndUserVerificationEndpointPassthrough()
-                    // TLS terminates in front of the service; AuthOptions requires an HTTPS public origin in production.
                     .DisableTransportSecurityRequirement();
             });
         return services;
@@ -303,9 +252,6 @@ public static class OidcIssuer
     internal static byte[] Derive(AuthOptions options, string purpose) =>
         HKDF.DeriveKey(HashAlgorithmName.SHA256, options.MasterKey, 32, info: System.Text.Encoding.UTF8.GetBytes(purpose));
 
-    // OpenIddict requires an asymmetric signing key at startup and derives the id_token hash algorithm from it. The real
-    // keys come from the key ring per request (SignWithKeyRing). This one has no private part, so if it were ever
-    // chosen to sign, signing would fail rather than produce a token that no published key verifies.
     private static ECDsaSecurityKey KeyRingPlaceholder()
     {
         using var generated = ECDsa.Create(ECCurve.NamedCurves.nistP256);
@@ -313,19 +259,10 @@ public static class OidcIssuer
     }
 }
 
-/// <summary>
-/// Resolves OpenIddict's base and request URIs against the configured public origin instead of the request's Host
-/// header and scheme, so discovery, issuer checks and endpoint matching never trust request headers. The base URI is the
-/// tenant's issuer, as <see cref="Tenancy"/> resolved it: <c>terrascale</c> for every endpoint, an existing project for
-/// its discovery document, JWKS and authorization-code endpoints. Any other request names no tenant, so it is skipped
-/// and falls through to routing, which answers 404: the bare origin is no tenant's issuer.
-/// </summary>
 public sealed class TrustPublicOrigin(AuthOptions options) : IOpenIddictServerHandler<ProcessRequestContext>
 {
-    /// <summary>The transaction property holding the request's tenant.</summary>
     public const string TenantProperty = "ts-auth:tenant";
 
-    /// <inheritdoc />
     public ValueTask HandleAsync(ProcessRequestContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -347,8 +284,6 @@ public sealed class TrustPublicOrigin(AuthOptions options) : IOpenIddictServerHa
 
     private static string? TenantOf(HttpRequest request)
     {
-        // The hosted device page is the platform issuer's end-user verification endpoint: the device codes it approves
-        // carry the issuer the token endpoint validates. No other hosted page is a protocol endpoint.
         if (request.Path.StartsWithSegments("/ui", StringComparison.OrdinalIgnoreCase))
         {
             return string.Equals(request.Path.Value?.TrimEnd('/'), DeviceFlow.PagePath, StringComparison.OrdinalIgnoreCase) ? OidcIssuer.Slug : null;
@@ -358,14 +293,8 @@ public sealed class TrustPublicOrigin(AuthOptions options) : IOpenIddictServerHa
     }
 }
 
-/// <summary>
-/// Answers a refresh whose requested scopes are not a subset of the original grant with RFC 6749 §5.2
-/// <c>invalid_scope</c>, before OpenIddict's own checks answer <c>invalid_request</c> or <c>invalid_grant</c> and
-/// before any redemption, so the refused request never consumes the refresh token.
-/// </summary>
 public sealed class RefuseScopeExpansion : IOpenIddictServerHandler<ValidateTokenRequestContext>
 {
-    /// <inheritdoc />
     public ValueTask HandleAsync(ValidateTokenRequestContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -385,28 +314,21 @@ public sealed class RefuseScopeExpansion : IOpenIddictServerHandler<ValidateToke
     }
 }
 
-/// <summary>Signs access and identity tokens with the instance's current key-ring key.</summary>
 public sealed class SignWithKeyRing(KeyRing ring) : IOpenIddictServerHandler<GenerateTokenContext>
 {
-    /// <inheritdoc />
     public async ValueTask HandleAsync(GenerateTokenContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
         if (context.TokenType is TokenTypeIdentifiers.AccessToken or TokenTypeIdentifiers.IdentityToken)
         {
-            var keys = await KeyRingKeys.LoadAsync(ring, context.Transaction, publicOnly: false, context.CancellationToken).ConfigureAwait(false);
+            var keys = await KeyRingKeys.LoadAsync(ring, context.Transaction, publicOnly: false, context.CancellationToken);
             context.SigningCredentials = new SigningCredentials(keys[0].SecurityKey, SecurityAlgorithms.EcdsaSha256);
         }
     }
 }
 
-/// <summary>
-/// Validates access and identity tokens against every key in the instance's ring, read on each request so every
-/// replica sees replicated rotations. The startup placeholder never validates anything.
-/// </summary>
 public sealed class ValidateWithKeyRing(KeyRing ring) : IOpenIddictServerHandler<ValidateTokenContext>
 {
-    /// <inheritdoc />
     public async ValueTask HandleAsync(ValidateTokenContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -417,21 +339,18 @@ public sealed class ValidateWithKeyRing(KeyRing ring) : IOpenIddictServerHandler
             return;
         }
 
-        var keys = await KeyRingKeys.LoadAsync(ring, context.Transaction, publicOnly: true, context.CancellationToken, Jwt.KeyId(context.Token)).ConfigureAwait(false);
+        var keys = await KeyRingKeys.LoadAsync(ring, context.Transaction, publicOnly: true, context.CancellationToken, Jwt.KeyId(context.Token));
         context.TokenValidationParameters.IssuerSigningKeys = [.. internalKeys, .. keys.Select(key => key.SecurityKey)];
     }
 }
 
-/// <summary>Publishes the public half of every key in the instance's ring as the JWKS.</summary>
 public sealed class PublishKeyRing(KeyRing ring) : IOpenIddictServerHandler<HandleJsonWebKeySetRequestContext>
 {
-    /// <inheritdoc />
     public async ValueTask HandleAsync(HandleJsonWebKeySetRequestContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
         var tenant = context.Transaction.GetProperty<string>(TrustPublicOrigin.TenantProperty) ?? throw new InvalidOperationException("The request has no tenant.");
-        // This region's copy, read apart from the keys signature checks use (KeyRing.GetPublishedAsync).
-        foreach (var key in await ring.GetPublishedAsync(tenant, context.CancellationToken).ConfigureAwait(false))
+        foreach (var key in await ring.GetPublishedAsync(tenant, context.CancellationToken))
         {
             using (key)
             {
@@ -441,19 +360,12 @@ public sealed class PublishKeyRing(KeyRing ring) : IOpenIddictServerHandler<Hand
     }
 }
 
-/// <summary>
-/// Replaces OpenIddict's redemption step, which ignores a lost redemption for refresh tokens. Here a code, device code,
-/// device user code or refresh token is redeemed by a conditional write on the version this request validated, so of any number of concurrent
-/// redemptions one succeeds locally. Replicated winner claims reject unused losing descendants without ending the
-/// winning grant. Replaying a consumed refresh token ends that grant, including when its ancestry lost.
-/// </summary>
 public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, IOpenIddictAuthorizationStore<OidcAuthorization> authorizations, AuthData data, Credentials credentials, TimeProvider clock) : IOpenIddictServerHandler<ProcessSignInContext>
 {
     internal const string DeviceAuthorizationClaim = "ts_auth_device_authorization";
 
     internal const string DeviceApprovalKind = "oidc-device-approval";
 
-    /// <inheritdoc />
     public async ValueTask HandleAsync(ProcessSignInContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -475,10 +387,10 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
             return;
         }
 
-        var token = await tokens.FindByIdAsync(identifier, context.CancellationToken).ConfigureAwait(false);
+        var token = await tokens.FindByIdAsync(identifier, context.CancellationToken);
         if (token is not { Status: Statuses.Valid, Version: not null })
         {
-            await this.RejectAsync(context, principal, token).ConfigureAwait(false);
+            await this.RejectAsync(context, principal, token);
             return;
         }
 
@@ -486,7 +398,7 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
         var inherited = token.Bindings.Concat(CredentialLineage.Read(context.Principal!)).Distinct().ToArray();
         if (FixedRefreshTokens.Presented(context))
         {
-            if (!await credentials.AreCurrentAsync(tenant, inherited, context.CancellationToken).ConfigureAwait(false))
+            if (!await credentials.AreCurrentAsync(tenant, inherited, context.CancellationToken))
             {
                 context.Reject(OidcErrors.InvalidGrant, CredentialLineage.ConflictNotice);
             }
@@ -505,7 +417,7 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
         if (!addsBinding)
         {
             if (principal.GetAuthorizationId() is not { Length: > 0 } parentId
-                || await authorizations.FindByIdAsync(parentId, context.CancellationToken).ConfigureAwait(false) is not { Status: Statuses.Valid } parent
+                || await authorizations.FindByIdAsync(parentId, context.CancellationToken) is not { Status: Statuses.Valid } parent
                 || context.Principal!.GetClaim(Claims.Subject) is not { Length: > 0 } subject)
             {
                 context.Reject(OidcErrors.InvalidGrant, CredentialLineage.ConflictNotice);
@@ -533,7 +445,7 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
         else if (context.Request.IsDeviceCodeGrantType())
         {
             if (principal.GetClaim(DeviceAuthorizationClaim) is not { Length: > 0 } approvalId
-                || await authorizations.FindByIdAsync(approvalId, context.CancellationToken).ConfigureAwait(false) is not { Status: Statuses.Valid } approval
+                || await authorizations.FindByIdAsync(approvalId, context.CancellationToken) is not { Status: Statuses.Valid } approval
                 || approval.Subject != context.Principal!.GetClaim(Claims.Subject) || approval.ApplicationId != token.ApplicationId)
             {
                 context.Reject(OidcErrors.InvalidGrant, CredentialLineage.ConflictNotice);
@@ -560,17 +472,14 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
             return;
         }
 
-        if (await credentials.AreCurrentAsync(tenant, inherited, context.CancellationToken).ConfigureAwait(false)
-            && await data.SaveAsync(operations, context.CancellationToken).ConfigureAwait(false))
+        if (await credentials.AreCurrentAsync(tenant, inherited, context.CancellationToken)
+            && await data.SaveAsync(operations, context.CancellationToken))
         {
-            // Approval rewrites the existing device-code record; its conditional SQL update selects the approver.
-            // Only redemption that creates distinct successor credentials needs the additional branch binding.
             var bindings = addsBinding ? [.. inherited, binding] : inherited;
             CredentialLineage.Attach(context.Principal!, bindings);
             context.Transaction.SetProperty(CredentialLineage.BindingsProperty, (IReadOnlyList<CredentialBinding>)bindings);
             if (!addsBinding)
             {
-                // The encrypted payload selects its own subject-bound authorization; the shared parent stays unchanged.
                 context.Principal!.SetClaim(DeviceAuthorizationClaim, approvedAuthorizationId);
             }
             else if (approvedAuthorizationId is not null)
@@ -581,8 +490,7 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
             return;
         }
 
-        // Redeemed() mutates our local object before the CAS. Only a fresh stored read can prove another use won.
-        await this.RejectAsync(context, principal, await tokens.FindByIdAsync(identifier, context.CancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
+        await this.RejectAsync(context, principal, await tokens.FindByIdAsync(identifier, context.CancellationToken));
     }
 
     private async ValueTask RejectAsync(ProcessSignInContext context, ClaimsPrincipal principal, OidcToken? token)
@@ -590,7 +498,7 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
         var replay = context.EndpointType is OpenIddictServerEndpointType.Token
             && (context.Request.IsRefreshTokenGrantType() || context.Request.IsAuthorizationCodeGrantType())
             && await CredentialLineage.RevokeReplayAsync(tokens, token, principal, context.Request.ClientId,
-                context.CancellationToken).ConfigureAwait(false);
+                context.CancellationToken);
         context.Reject(OidcErrors.InvalidGrant, replay ? CredentialLineage.ReplayNotice : CredentialLineage.ConflictNotice);
     }
 
@@ -602,33 +510,20 @@ public sealed class RedeemExactlyOnce(IOpenIddictTokenStore<OidcToken> tokens, I
     }
 }
 
-/// <summary>
-/// Makes revocation (RFC 7009) end the whole sign-in, as §2.1 recommends: revoking a refresh or access token revokes
-/// its authorization, so every refresh token of that sign-in is refused and ts-auth stops accepting its access tokens.
-/// Access tokens validated offline, as TerraBase does, stay valid until they expire (at most 5 minutes).
-/// </summary>
 public sealed class RevokeTheSignIn(IOpenIddictTokenManager tokens) : IOpenIddictServerHandler<HandleRevocationRequestContext>
 {
-    /// <inheritdoc />
     public async ValueTask HandleAsync(HandleRevocationRequestContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
         if (context.GenericTokenPrincipal?.GetAuthorizationId() is { Length: > 0 } authorizationId)
         {
-            await tokens.RevokeByAuthorizationIdAsync(authorizationId, context.CancellationToken).ConfigureAwait(false);
+            await tokens.RevokeByAuthorizationIdAsync(authorizationId, context.CancellationToken);
         }
     }
 }
 
-/// <summary>
-/// Registers or updates the public ts-status and ts-cli clients, the ts-dashboard client (<c>TS_AUTH_DASHBOARD_*</c>) and the service clients
-/// (<c>TS_AUTH_SERVICE_CLIENTS</c>). The storage bootstrap (<see cref="SigningKeys.SigningKeyRotation"/>) runs it and retries
-/// until storage answers, so ts-auth starts without TerraBase and stays not ready until they are registered. Concurrent
-/// replicas converge through conditional writes. Clients removed from configuration stay registered.
-/// </summary>
 public sealed class ClientRegistration(IServiceScopeFactory scopes, AuthOptions options)
 {
-    /// <summary>Registers the status client and every configured client; storage failures are retried by bootstrap.</summary>
     public async Task RegisterAllAsync(CancellationToken cancellationToken)
     {
         var descriptors = options.ServiceClients.Select(Service).ToList();
@@ -641,7 +536,7 @@ public sealed class ClientRegistration(IServiceScopeFactory scopes, AuthOptions 
 
         foreach (var descriptor in descriptors)
         {
-            await this.RegisterAsync(descriptor, cancellationToken).ConfigureAwait(false);
+            await this.RegisterAsync(descriptor, cancellationToken);
         }
     }
 
@@ -662,7 +557,6 @@ public sealed class ClientRegistration(IServiceScopeFactory scopes, AuthOptions 
         Requirements = { Requirements.Features.ProofKeyForCodeExchange },
     };
 
-    // The ts CLI: a public device-flow client. Its sign-in tokens are exchanged for organization and project tokens (TS-598).
     private static OpenIddictApplicationDescriptor Cli()
     {
         var descriptor = new OpenIddictApplicationDescriptor
@@ -697,7 +591,6 @@ public sealed class ClientRegistration(IServiceScopeFactory scopes, AuthOptions 
             {
                 Permissions.Endpoints.Authorization, Permissions.Endpoints.Token, Permissions.Endpoints.EndSession, Permissions.Endpoints.Revocation,
                 Permissions.GrantTypes.AuthorizationCode, Permissions.GrantTypes.RefreshToken, Permissions.ResponseTypes.Code,
-                // Organization and project tokens for its signed-in users (TS-598).
                 Permissions.GrantTypes.TokenExchange,
                 Permissions.Scopes.Email, Permissions.Scopes.Profile,
             },
@@ -709,7 +602,6 @@ public sealed class ClientRegistration(IServiceScopeFactory scopes, AuthOptions 
         return descriptor;
     }
 
-    // Only the token endpoint and the client-credentials grant: no scopes, so no identity or refresh tokens.
     private static OpenIddictApplicationDescriptor Service(ServiceClientOptions client) => new()
     {
         ClientId = client.ClientId,
@@ -725,28 +617,24 @@ public sealed class ClientRegistration(IServiceScopeFactory scopes, AuthOptions 
     {
         for (var attempt = 0; attempt < 3; attempt++)
         {
-            // A fresh scope per attempt: the manager's scoped cache would otherwise keep answering the first lookup.
             await using var scope = scopes.CreateAsyncScope();
             var applications = scope.ServiceProvider.GetRequiredService<IOpenIddictApplicationManager>();
             try
             {
-                if (await applications.FindByClientIdAsync(descriptor.ClientId!, cancellationToken).ConfigureAwait(false) is { } existing)
+                if (await applications.FindByClientIdAsync(descriptor.ClientId!, cancellationToken) is { } existing)
                 {
-                    await applications.UpdateAsync(existing, descriptor, cancellationToken).ConfigureAwait(false);
+                    await applications.UpdateAsync(existing, descriptor, cancellationToken);
                 }
                 else
                 {
-                    await applications.CreateAsync(descriptor, cancellationToken).ConfigureAwait(false);
+                    await applications.CreateAsync(descriptor, cancellationToken);
                 }
 
                 return;
             }
             catch (Exception error) when (error is OpenIddictExceptions.ConcurrencyException
-                // OpenIddict's own duplicate-client check fires when another replica created the client in between;
-                // a descriptor that is invalid for any other reason fails again on the last attempt and propagates.
                 || error is OpenIddictExceptions.ValidationException && attempt < 2)
             {
-                // Another replica registered or updated the client first: reread it and apply this configuration.
             }
         }
 
@@ -754,7 +642,6 @@ public sealed class ClientRegistration(IServiceScopeFactory scopes, AuthOptions 
     }
 }
 
-/// <summary>Loads public and signing material separately per request; keys are disposed with the response.</summary>
 internal static class KeyRingKeys
 {
     public static async Task<IReadOnlyList<Es256Key>> LoadAsync(KeyRing ring, OpenIddictServerTransaction transaction, bool publicOnly, CancellationToken cancellationToken, string? keyId = null)
@@ -767,8 +654,8 @@ internal static class KeyRingKeys
 
         var tenant = transaction.GetProperty<string>(TrustPublicOrigin.TenantProperty) ?? throw new InvalidOperationException("The request has no tenant.");
         var keys = publicOnly
-            ? await ring.GetPublicAsync(tenant, keyId, cancellationToken).ConfigureAwait(false)
-            : await ring.GetActiveAsync(tenant, cancellationToken).ConfigureAwait(false);
+            ? await ring.GetPublicAsync(tenant, keyId, cancellationToken)
+            : await ring.GetActiveAsync(tenant, cancellationToken);
         var response = transaction.GetHttpRequest()?.HttpContext.Response ?? throw new InvalidOperationException("OpenIddict ran outside an HTTP request.");
         foreach (var key in keys)
         {

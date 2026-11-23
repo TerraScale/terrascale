@@ -8,10 +8,8 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.Sso;
 
-/// <summary><c>GET /ui/terrascale/sso/callback</c>: the identity provider's redirect; opens a session and resumes.</summary>
 public sealed class SsoCallbackEndpoint(SsoSignIn sso, Sessions sessions, TotpCredentials mfa, HostedAuth hosted) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(SsoSignIn.CallbackPath);
@@ -27,7 +25,6 @@ public sealed class SsoCallbackEndpoint(SsoSignIn sso, Sessions sessions, TotpCr
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var query = this.HttpContext.Request.Query;

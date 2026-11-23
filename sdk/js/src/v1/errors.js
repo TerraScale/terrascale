@@ -65,7 +65,8 @@ export const V1ErrorCode = Object.freeze({
   mustRefetch: "must_refetch", payloadTooLarge: "payload_too_large",
   unsupportedMediaType: "unsupported_media_type", uriTooLong: "uri_too_long", shapeBusy: "shape_busy",
   internalError: "internal_error", capacity: "capacity",
-  replicaNotReady: "replica_not_ready", moveInProgress: "move_in_progress", moveUnresolved: "move_unresolved", wrongRegion: "wrong_region",
+  replicaNotReady: "replica_not_ready", moveInProgress: "move_in_progress", moveUnresolved: "move_unresolved",
+  serializationConflict: "serialization_conflict", schemaMismatch: "schema_mismatch", invalidBookmark: "invalid_bookmark",
 });
 
 /** `401 invalid_key`: the API key is unknown or revoked. */
@@ -113,15 +114,17 @@ export const SqlErrorCode = Object.freeze({
   duplicateObject: "duplicate_object", primaryKeyViolation: "primary_key_violation", uniqueViolation: "unique_violation",
   notNullViolation: "not_null_violation", checkViolation: "check_violation", foreignKeyViolation: "foreign_key_violation",
   constraintViolation: "constraint_violation", forbiddenScope: "forbidden_scope", sqlSandbox: "sql_sandbox", serializationConflict: "serialization_conflict",
-  rowConflict: "row_conflict",
+  schemaMismatch: "schema_mismatch", rowConflict: "row_conflict", invalidBookmark: "invalid_bookmark", storageBusy: "storage_busy",
+  requestTimeout: "request_timeout", writeOutcomeUnknown: "write_outcome_unknown",
   tooLarge: "too_large", queryCanceled: "query_canceled", transactionRolledBack: "transaction_rolled_back",
   transactionAborted: "transaction_aborted", readOnlyTransaction: "read_only_transaction", transactionState: "transaction_state",
   invalidRequest: "invalid_request", quotaExceeded: "quota_exceeded", tenantBusy: "tenant_busy",
-  unauthorized: "unauthorized", unavailable: "unavailable", wrongRegion: "wrong_region", internalError: "internal_error",
+  unauthorized: "unauthorized", unavailable: "unavailable", internalError: "internal_error",
   sqlError: "sql_error",
 });
 
-const retryableSqlCodes = new Set(["serialization_conflict", "tenant_busy", "unavailable"]);
+const retryableSqlCodes = new Set(["serialization_conflict", "schema_mismatch", "tenant_busy", "unavailable", "storage_busy"]);
+const conflictSqlstates = new Map([["serialization_conflict", "40001"], ["schema_mismatch", "40001"]]);
 
 /**
  * A refused SQL statement. `code` is a TerraScale code (see SqlErrorCode) and `sqlstate` its PostgreSQL SQLSTATE.
@@ -132,7 +135,7 @@ export class SqlError extends TerraBaseV1Error {
   statement;
   /** @type {string} The PostgreSQL SQLSTATE, such as `23505`. */
   sqlstate;
-  /** @type {boolean} True for serialization_conflict, tenant_busy and unavailable: the whole request may be sent again. */
+  /** @type {boolean} True for serialization_conflict, schema_mismatch, tenant_busy, unavailable and storage_busy: the whole request may be sent again. */
   retryable;
 
   /** @param {TerraBaseV1ErrorInit & { statement: number; sqlstate: string }} init */
@@ -150,10 +153,9 @@ export class SqlError extends TerraBaseV1Error {
  * @returns {TerraBaseV1Error}
  */
 function typedError(init) {
-  // Only the SQL execute route reports a statement index.
-  const statement = init.details?.statement;
+  const statement = init.details?.statement ?? (conflictSqlstates.has(init.code) ? 0 : undefined);
   if (typeof statement === "number" && Number.isInteger(statement) && statement >= 0) {
-    const sqlstate = init.details?.sqlstate;
+    const sqlstate = init.details?.sqlState ?? conflictSqlstates.get(init.code);
     if (typeof sqlstate === "string" && /^[0-9A-Z]{5}$/u.test(sqlstate)) return new SqlError({ ...init, statement, sqlstate });
   }
   switch (init.code) {

@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+using Dapper;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Email;
@@ -50,29 +50,29 @@ public sealed class ProjectInvitations(AuthData data, ProjectAuthSettings settin
             changes.Add(Change.Update(waitlist, waitlist.Value with { Status = "approved" }));
         }
 
-        try
+        var refusal = await data.TransactAsync(async scope =>
         {
-            await data.TransactAsync(async (db, probe) =>
+            if (waitlist is not null && await scope.Connection.ExecuteScalarAsync<bool>(
+                "SELECT EXISTS (SELECT 1 FROM users WHERE instance_id = @projectId AND email = @normalized)", new { projectId, normalized }, scope.Transaction))
             {
-                if (waitlist is not null && await db.Users.AnyAsync(row => row.InstanceId == projectId && row.Email == normalized, probe))
-                {
-                    throw new ApiException(409, "conflict", "The waitlist address already has an account.");
-                }
+                return "The waitlist address already has an account.";
+            }
 
-                foreach (var change in changes)
-                {
-                    if (!change.Apply(db))
-                    {
-                        throw new ApiException(409, "conflict", "The project settings or waitlist entry changed.");
-                    }
-                }
+            foreach (var change in changes)
+            {
+                scope.Stage(change);
+            }
 
-                return true;
-            }, cancellationToken);
-        }
-        catch (DbUpdateException error) when (AuthData.IsConflict(error))
+            return null;
+        }, cancellationToken) switch
         {
-            throw new ApiException(409, "conflict", "The project settings or waitlist entry changed.");
+            string refused => refused,
+            null => null,
+            Conflict => "The project settings or waitlist entry changed.",
+        };
+        if (refusal is not null)
+        {
+            throw new ApiException(409, "conflict", refusal);
         }
 
         await reservation.EnqueueEmailAsync(AuthEmailKind.Invitation, new AuthEmailValues(normalized)
@@ -88,15 +88,18 @@ public sealed class ProjectInvitations(AuthData data, ProjectAuthSettings settin
 
     public async Task<ProjectInvitationPageBody> ListAsync(string projectId, int limit, string? after, CancellationToken cancellationToken)
     {
-        var rows = await data.ReadAsync((db, token) => db.ProjectInvitations.Where(row => row.ProjectId == projectId && (after == null || row.Id.CompareTo(after) > 0))
-            .OrderBy(row => row.Id).Take(limit + 1).ToListAsync(token), cancellationToken);
+        var take = limit + 1;
+        var rows = (await data.ReadAsync(connection => connection.QueryAsync<ProjectInvitationRecord>(
+            "SELECT * FROM project_invitations WHERE project_id = @projectId AND (@after IS NULL OR id > @after) ORDER BY id LIMIT @take", new { projectId, after, take }),
+            cancellationToken)).AsList();
         return new([.. rows.Take(limit).Select(this.Map)], rows.Count > limit ? rows[limit - 1].Id : null);
     }
 
     public async Task RevokeAsync(string projectId, string id, CancellationToken cancellationToken)
     {
-        var row = await data.ReadAsync((db, token) => db.ProjectInvitations.Where(row => row.ProjectId == projectId && row.Id == id)
-            .WithVersion().SingleOrDefaultAsync(token), cancellationToken) ?? throw new ApiException(404, "not_found", "Invitation not found.");
+        var row = Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<ProjectInvitationRecord>(
+            "SELECT * FROM project_invitations WHERE project_id = @projectId AND id = @id", new { projectId, id }), cancellationToken))
+            ?? throw new ApiException(404, "not_found", "Invitation not found.");
         if (row.Value.Status == "pending" && !await data.SaveAsync(Change.Update(row, row.Value with { Status = "revoked" }), cancellationToken))
         {
             throw new ApiException(409, "conflict", "The invitation changed.");
@@ -112,21 +115,25 @@ public sealed class ProjectInvitations(AuthData data, ProjectAuthSettings settin
 
         var digest = Tokens.Sha256Hex(token);
         var now = clock.GetUtcNow();
-        return await data.ReadAsync((db, probe) => db.ProjectInvitations.SingleOrDefaultAsync(row =>
-            row.ProjectId == projectId && row.TokenHash == digest && row.Status == "pending" && row.ExpiresAt > now, probe), cancellationToken);
+        return await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<ProjectInvitationRecord>(
+            "SELECT * FROM project_invitations WHERE project_id = @projectId AND token_hash = @digest AND status = 'pending' AND expires_at > @now",
+            new { projectId, digest, now }), cancellationToken);
     }
 
     public async Task<WaitlistPageBody> WaitlistAsync(string projectId, int limit, string? after, CancellationToken cancellationToken)
     {
-        var rows = await data.ReadAsync((db, token) => db.Waitlist.Where(row => row.ProjectId == projectId && (after == null || row.Id.CompareTo(after) > 0))
-            .OrderBy(row => row.Id).Take(limit + 1).ToListAsync(token), cancellationToken);
+        var take = limit + 1;
+        var rows = (await data.ReadAsync(connection => connection.QueryAsync<WaitlistRecord>(
+            "SELECT * FROM project_waitlist WHERE project_id = @projectId AND (@after IS NULL OR id > @after) ORDER BY id LIMIT @take", new { projectId, after, take }),
+            cancellationToken)).AsList();
         return new([.. rows.Take(limit)], rows.Count > limit ? rows[limit - 1].Id : null);
     }
 
     public async Task DecideAsync(string projectId, string id, bool approve, string inviter, string locale, CancellationToken cancellationToken)
     {
-        var row = await data.ReadAsync((db, token) => db.Waitlist.Where(entry => entry.ProjectId == projectId && entry.Id == id)
-            .WithVersion().SingleOrDefaultAsync(token), cancellationToken) ?? throw new ApiException(404, "not_found", "Waitlist entry not found.");
+        var row = Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<WaitlistRecord>(
+            "SELECT * FROM project_waitlist WHERE project_id = @projectId AND id = @id", new { projectId, id }), cancellationToken))
+            ?? throw new ApiException(404, "not_found", "Waitlist entry not found.");
         if (row.Value.Status != "pending")
         {
             throw new ApiException(409, "conflict", "The waitlist entry was already decided.");

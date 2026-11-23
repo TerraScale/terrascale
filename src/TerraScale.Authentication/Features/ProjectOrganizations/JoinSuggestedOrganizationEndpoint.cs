@@ -24,14 +24,14 @@ public sealed class JoinSuggestedOrganizationEndpoint(ProjectOrganizationDirecto
         if (!this.HttpContext.Request.HasFormContentType || this.HttpContext.Request.Headers.Origin is not [{ } origin]
             || !SignInFlow.IsPublicOrigin(origin, options.PublicOrigin))
         {
-            return Results.StatusCode(403);
+            return TypedResults.StatusCode(403);
         }
 
         var tenant = Tenancy.Resolved(this.HttpContext);
         if (tenant is null || !Tenancy.IsProject(tenant)
             || await sessions.ResolveAsync(tenant, this.HttpContext.Request.Cookies[Tenancy.SessionCookie(tenant)], cancellationToken) is not { } live)
         {
-            return Results.Unauthorized();
+            return TypedResults.Unauthorized();
         }
 
         var form = await this.HttpContext.Request.ReadFormAsync(cancellationToken);
@@ -45,6 +45,6 @@ public sealed class JoinSuggestedOrganizationEndpoint(ProjectOrganizationDirecto
         {
             await organizations.JoinSuggestedAsync(live.User, org, cancellationToken);
         }
-        return Results.Redirect(next ?? $"/ui/{tenant}/sign-in");
+        return TypedResults.Redirect(next ?? $"/ui/{tenant}/sign-in");
     }
 }

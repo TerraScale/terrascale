@@ -1,6 +1,6 @@
+using Dapper;
 using System.Collections.Frozen;
 using System.IO.Compression;
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
@@ -13,9 +13,15 @@ public sealed record RestrictionsBody(IReadOnlyList<string> Allowlist, IReadOnly
     public static readonly RestrictionsBody Default = new([], []);
 }
 
-public sealed record ProjectInvitationRecord(string Id, string ProjectId, string Email, string TokenHash, string? RedirectUrl, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, string Status = "pending");
+public sealed record ProjectInvitationRecord(string Id, string ProjectId, string Email, string TokenHash, string? RedirectUrl, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, string Status = "pending")
+{
+    public string? Version { get; init; }
+}
 
-public sealed record WaitlistRecord(string Id, string ProjectId, string Email, DateTimeOffset CreatedAt, string Status = "pending");
+public sealed record WaitlistRecord(string Id, string ProjectId, string Email, DateTimeOffset CreatedAt, string Status = "pending")
+{
+    public string? Version { get; init; }
+}
 
 public sealed class SignUpRestrictions(AuthData data, ProjectAuthSettings settings, TimeProvider clock)
 {
@@ -87,32 +93,40 @@ public sealed class SignUpRestrictions(AuthData data, ProjectAuthSettings settin
             return false;
         }
 
-        return await data.TransactAsync(async (db, token) =>
+        return await data.TransactAsync(async scope =>
         {
-            var current = await db.ProjectAuthSettings.SingleOrDefaultAsync(row => row.InstanceId == projectId, token)
-                ?? new ProjectAuthSettingsRecord(projectId);
+            var current = await scope.Connection.QuerySingleOrDefaultAsync<ProjectAuthSettingsRecord>(
+                "SELECT * FROM project_auth_settings WHERE instance_id = @projectId", new { projectId }, scope.Transaction) ?? new ProjectAuthSettingsRecord(projectId);
             if (current.SignUpMode != "waitlist" || Blocked(current.Restrictions ?? RestrictionsBody.Default, normalized))
             {
                 return false;
             }
 
-            if (await db.Users.AnyAsync(row => row.InstanceId == projectId && row.Email == normalized, token)
-                || await db.Waitlist.AnyAsync(row => row.ProjectId == projectId && row.Email == normalized, token)
-                || await db.Waitlist.CountAsync(row => row.ProjectId == projectId && row.Status == "pending", token) >= PendingWaitlistLimit)
+            if (await scope.Connection.ExecuteScalarAsync<bool>(
+                """
+                SELECT EXISTS (SELECT 1 FROM users WHERE instance_id = @projectId AND email = @normalized)
+                    OR EXISTS (SELECT 1 FROM project_waitlist WHERE project_id = @projectId AND email = @normalized)
+                    OR (SELECT COUNT(*) FROM project_waitlist WHERE project_id = @projectId AND status = 'pending') >= @PendingWaitlistLimit
+                """, new { projectId, normalized, PendingWaitlistLimit }, scope.Transaction))
             {
                 return true;
             }
 
-            Change.Insert(new WaitlistRecord(AuthIds.New(), projectId, normalized, clock.GetUtcNow())).Apply(db);
+            scope.Stage(Change.Insert(new WaitlistRecord(AuthIds.New(), projectId, normalized, clock.GetUtcNow())));
             return true;
-        }, cancellationToken);
+        }, cancellationToken) switch
+        {
+            bool joined => joined,
+            Conflict => throw new ApiException(409, "conflict", "The waitlist changed; retry."),
+        };
     }
 
-    private Task<Versioned<ProjectInvitationRecord>?> PendingAsync(string projectId, string email, CancellationToken cancellationToken)
+    private async Task<Versioned<ProjectInvitationRecord>?> PendingAsync(string projectId, string email, CancellationToken cancellationToken)
     {
         var now = clock.GetUtcNow();
-        return data.ReadAsync((db, token) => db.ProjectInvitations.Where(row => row.ProjectId == projectId && row.Email == email
-            && row.Status == "pending" && row.ExpiresAt > now).OrderBy(row => row.Id).WithVersion().FirstOrDefaultAsync(token), cancellationToken);
+        return Versioned.Of(await data.ReadAsync(connection => connection.QueryFirstOrDefaultAsync<ProjectInvitationRecord>(
+            "SELECT * FROM project_invitations WHERE project_id = @projectId AND email = @email AND status = 'pending' AND expires_at > @now ORDER BY id LIMIT 1",
+            new { projectId, email, now }), cancellationToken));
     }
 
     private static bool Matches(IReadOnlyList<string> entries, string email, string domain, bool parents = false) =>

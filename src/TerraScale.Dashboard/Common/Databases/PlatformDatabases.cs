@@ -1,42 +1,37 @@
-using TerraScale.Dashboard.Platform.Rpc;
-using TerraScale.TerraBase.Contracts.Platform;
+using TerraScale.Dashboard.Platform.Clients;
 using System.Net;
 using System.Text.Json;
-using TerraScale.TerraBase.Contracts;
 
 namespace TerraScale.Dashboard.Common.Databases
 {
-    // TerraScale's own databases, as TerraBase seeds them (terrascale docs/terrabase/platform-databases.md). Platform admins
-    // browse them in the same pages customers use, read-only, through TerraBase's redacted and audited explore API with
-    // their own ts-auth access token. TerraBase checks platform_role=admin on every call; nothing here writes.
     public static class PlatformDatabases
     {
         public const string OrganizationId = "00000000000000000000000001";
         public const string AuthProjectId = "00000000000000000000000002";
 
-        // Fixed database id to its name and owning project.
         public static readonly IReadOnlyDictionary<string, (string Name, string ProjectId)> Databases = new Dictionary<string, (string, string)>(StringComparer.Ordinal)
         {
             ["00000000000000000000000003"] = ("ts-auth", AuthProjectId),
             ["00000000000000000000000004"] = ("ts-dashboard", "00000000000000000000000005"),
         };
 
-
         public static bool IsPlatform(string? organizationId)
         {
             return organizationId == OrganizationId;
         }
 
-        // Everything explore does not serve, writes included, stops here.
         public static DatabaseProviderException ReadOnly()
         {
             return new(HttpStatusCode.Forbidden, "Platform databases are read-only here.");
         }
 
-        // The platform organization's projects get their databases from TerraBase; the dashboard stores none for them.
-        public static async Task HydrateAsync(OrganizationRecord org, TerraBaseRpcClient rpc, SessionRecord session, CancellationToken cancellationToken)
+        public static async Task HydrateAsync(OrganizationRecord org, ControlPlaneClient control, SessionRecord session, CancellationToken cancellationToken)
         {
-            using var json = await ReadAsync(() => rpc.User<IPlatformService>(session.AccessToken).WithCancellationToken(cancellationToken).ListDatabasesAsync().ResponseAsync) ?? throw new DatabaseProviderException(HttpStatusCode.NotFound);
+            using var json = await control.ListPlatformDatabasesAsync(ServiceCaller.User(session.AccessToken), cancellationToken) switch
+            {
+                JsonElement listed => JsonDocument.Parse(listed.GetRawText()),
+                TerraBaseRefusal refusal => throw new DatabaseProviderException((HttpStatusCode)refusal.Status),
+            };
             foreach (var item in Items(json))
             {
                 var id = item.GetProperty("id").GetString()!;
@@ -69,12 +64,5 @@ namespace TerraScale.Dashboard.Common.Databases
             return json.RootElement.GetProperty("items").EnumerateArray();
         }
 
-        // null on 404; 401 and 403 mean the caller is not (or no longer) a platform admin.
-        private static async Task<JsonDocument?> ReadAsync(Func<Task<JsonElement>> read)
-        {
-            try { return JsonDocument.Parse((await read()).GetRawText()); }
-            catch (TerraBaseNotFoundException) { return null; }
-            catch (TerraBaseException error) { throw new DatabaseProviderException((HttpStatusCode)error.Status); }
-        }
     }
 }

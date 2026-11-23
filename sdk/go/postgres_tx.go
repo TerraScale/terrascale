@@ -4,16 +4,15 @@ import (
 	"context"
 	"errors"
 	"sync"
+
+	"terrascale.tech/sdk/internal/causal"
 )
 
 var (
-	// ErrTxDone is returned by every PostgresTx method after Commit or Rollback.
 	ErrTxDone = errors.New("terrascale PostgreSQL transaction already completed")
-	// ErrTxBusy is returned when two goroutines use one PostgresTx at the same time.
 	ErrTxBusy = errors.New("terrascale PostgreSQL transaction already in use")
 )
 
-// PostgresTx owns one transaction on its client's single connection.
 type PostgresTx struct {
 	client *PostgresClient
 	mu     sync.Mutex
@@ -22,8 +21,11 @@ type PostgresTx struct {
 	failed error
 }
 
-// Begin holds the client's connection exclusively until Commit or Rollback.
 func (client *PostgresClient) Begin(ctx context.Context) (*PostgresTx, error) {
+	mode, err := causal.ConsistencyFrom(ctx)
+	if err != nil {
+		return nil, &PostgresError{Kind: "query", cause: err}
+	}
 	if err := client.acquire(ctx); err != nil {
 		return nil, err
 	}
@@ -31,11 +33,26 @@ func (client *PostgresClient) Begin(ctx context.Context) (*PostgresTx, error) {
 		<-client.gate
 		return nil, &PostgresError{Kind: "connection"}
 	}
-	if _, err := client.run(ctx, PostgresQuery{Statement: "BEGIN"}); err != nil {
+	if err := client.sync(ctx); err != nil {
 		<-client.gate
-		return nil, postgresFailure(err)
+		return nil, err
+	}
+	statement := "BEGIN"
+	switch mode {
+	case ConsistencyStrong:
+		statement = "BEGIN ISOLATION LEVEL SERIALIZABLE"
+	case ConsistencyFast:
+		statement = "BEGIN ISOLATION LEVEL READ COMMITTED"
+	}
+	if _, err := client.run(ctx, PostgresQuery{Statement: statement}); err != nil {
+		<-client.gate
+		return nil, err
 	}
 	return &PostgresTx{client: client}, nil
+}
+
+func (client *PostgresClient) BeginStrong(ctx context.Context) (*PostgresTx, error) {
+	return client.Begin(WithConsistency(ctx, ConsistencyStrong))
 }
 
 func (tx *PostgresTx) enter(statement bool) error {
@@ -79,7 +96,6 @@ func (tx *PostgresTx) failWith(err error) {
 	tx.mu.Unlock()
 }
 
-// Query sends the SQL and typed values separately through PostgreSQL binding.
 func (tx *PostgresTx) Query(ctx context.Context, query PostgresQuery) (PostgresResult, error) {
 	if err := tx.enter(true); err != nil {
 		return PostgresResult{}, err
@@ -93,7 +109,6 @@ func (tx *PostgresTx) Query(ctx context.Context, query PostgresQuery) (PostgresR
 	return result, nil
 }
 
-// QueryRows streams the statement's rows inside the transaction without buffering.
 func (tx *PostgresTx) QueryRows(ctx context.Context, query PostgresQuery) (*PostgresRows, error) {
 	if err := tx.enter(true); err != nil {
 		return nil, err
@@ -110,12 +125,10 @@ func (tx *PostgresTx) QueryRows(ctx context.Context, query PostgresQuery) (*Post
 	}, nil
 }
 
-// Exec runs one statement inside the transaction and returns its command tag.
 func (tx *PostgresTx) Exec(ctx context.Context, query PostgresQuery) (PostgresResult, error) {
 	return tx.Query(ctx, query)
 }
 
-// QueryRow returns the first row of the statement's result, or nil when none.
 func (tx *PostgresTx) QueryRow(ctx context.Context, query PostgresQuery) ([]PostgresValue, error) {
 	result, err := tx.Query(ctx, query)
 	if err != nil {
@@ -127,7 +140,6 @@ func (tx *PostgresTx) QueryRow(ctx context.Context, query PostgresQuery) ([]Post
 	return result.Rows[0], nil
 }
 
-// Commit finalizes the transaction; after a failed statement it rolls back and returns that error.
 func (tx *PostgresTx) Commit(ctx context.Context) error {
 	if err := tx.enter(false); err != nil {
 		return err
@@ -146,7 +158,6 @@ func (tx *PostgresTx) Commit(ctx context.Context) error {
 	return nil
 }
 
-// Rollback discards the transaction and returns the connection to the client.
 func (tx *PostgresTx) Rollback(ctx context.Context) error {
 	if err := tx.enter(false); err != nil {
 		return err

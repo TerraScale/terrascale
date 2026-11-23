@@ -23,7 +23,7 @@ public sealed class EndHostedImpersonationEndpoint(Impersonations impersonations
         if (!Uri.TryCreate(this.HttpContext.Request.Headers.Origin, UriKind.Absolute, out var origin)
             || origin.GetLeftPart(UriPartial.Authority) != options.PublicOrigin.GetLeftPart(UriPartial.Authority))
         {
-            return Results.StatusCode(403);
+            return TypedResults.StatusCode(403);
         }
 
         var tenant = Tenancy.Current(this.HttpContext);
@@ -33,6 +33,6 @@ public sealed class EndHostedImpersonationEndpoint(Impersonations impersonations
         }
 
         this.HttpContext.Response.Cookies.Delete(Impersonations.Cookie(tenant), ImpersonationBrowser.CookieOptions(null));
-        return Results.Redirect($"/ui/{tenant}/sign-in");
+        return TypedResults.Redirect($"/ui/{tenant}/sign-in");
     }
 }

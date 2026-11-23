@@ -1,28 +1,18 @@
 using System.Text.Json;
-using TerraScale.Dashboard.Platform.Rpc;
-using TerraScale.TerraBase.Contracts.Logs;
-using TerraScale.TerraBase.Contracts;
+using TerraScale.Dashboard.Platform.Clients;
 
 namespace TerraScale.Dashboard.Features.Logs
 {
-    // The same response as the public database logs route, read over the dashboard's private TerraBase listener.
-    public sealed class LogDrainSource(TerraBaseRpcClient rpc) : ILogDrainSource
+    public sealed class LogDrainSource(TerraBaseHttpClient terraBase) : ILogDrainSource
     {
         public async Task<DatabaseLogBatch> ReadAsync(string projectId, string databaseId, string after, CancellationToken cancellationToken)
         {
-            TerraBaseRequestLogPage result;
-            try
+            var result = await terraBase.ReadLogsAsync(ServiceCaller.Operator, projectId, databaseId, after, cancellationToken) switch
             {
-                result = await rpc.Platform<ILogsService>().WithCancellationToken(cancellationToken).ReadDrainAsync(projectId, databaseId, after);
-            }
-            catch (TerraBaseNotFoundException)
-            {
-                return new(databaseId, [], false, false, after);
-            }
-            catch (TerraBaseException error)
-            {
-                throw new IOException("Database request logs are unavailable.", error);
-            }
+                TerraBaseRequestLogPage page => page,
+                TerraBaseRefusal { Status: StatusCodes.Status404NotFound } => new TerraBaseRequestLogPage(databaseId, [], false, false, after),
+                TerraBaseRefusal refusal => throw new IOException("Database request logs are unavailable.", refusal.Exception()),
+            };
 
             var batch = DatabaseLogBackend.Batch(result);
             DatabaseLogBackend.Validate(batch, databaseId, "", cursor: true);

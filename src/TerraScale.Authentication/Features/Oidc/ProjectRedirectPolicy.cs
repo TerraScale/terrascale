@@ -5,25 +5,22 @@ using static OpenIddict.Server.OpenIddictServerEvents;
 
 namespace TerraScale.Authentication.Features.Oidc;
 
-/// <summary>Prevents protocol errors, including errors before endpoint passthrough, from reaching a disallowed URI.</summary>
 public sealed class ProjectRedirectPolicy(ProjectAuthSettings settings) :
     IOpenIddictServerHandler<ApplyAuthorizationResponseContext>, IOpenIddictServerHandler<ApplyEndSessionResponseContext>
 {
-    /// <inheritdoc />
     public async ValueTask HandleAsync(ApplyAuthorizationResponseContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
-        if (await this.RefuseAsync(context, context.RedirectUri).ConfigureAwait(false))
+        if (await this.RefuseAsync(context, context.RedirectUri))
         {
             context.HandleRequest();
         }
     }
 
-    /// <inheritdoc />
     public async ValueTask HandleAsync(ApplyEndSessionResponseContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
-        if (await this.RefuseAsync(context, context.PostLogoutRedirectUri).ConfigureAwait(false))
+        if (await this.RefuseAsync(context, context.PostLogoutRedirectUri))
         {
             context.HandleRequest();
         }
@@ -32,13 +29,13 @@ public sealed class ProjectRedirectPolicy(ProjectAuthSettings settings) :
     private async Task<bool> RefuseAsync(BaseRequestContext context, string? uri)
     {
         if (context.Transaction.GetHttpRequest()?.HttpContext is not { } http
-            || await OidcResults.AllowsRedirectAsync(settings, Tenancy.Current(http), uri, context.CancellationToken).ConfigureAwait(false))
+            || await OidcResults.AllowsRedirectAsync(settings, Tenancy.Current(http), uri, context.CancellationToken))
         {
             return false;
         }
 
         http.Response.Headers.CacheControl = "no-store";
-        await OidcResults.DisallowedRedirect().ExecuteAsync(http).ConfigureAwait(false);
+        await OidcResults.DisallowedRedirect().ExecuteAsync(http);
         return true;
     }
 }

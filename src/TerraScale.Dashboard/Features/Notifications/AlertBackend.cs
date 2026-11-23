@@ -1,25 +1,27 @@
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.Dashboard.Platform.Clients;
 using TerraScale.Dashboard.Platform.TsAuth;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Usage;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 
 namespace TerraScale.Dashboard.Features.Notifications
 {
-    public sealed class AlertSource(IHttpClientFactory http, IDashboardIdentity identity, IAllowanceNotificationBackend allowances, TerraBaseRpcClient rpc) : IAlertSource
+    public sealed class AlertSource(IHttpClientFactory http, IDashboardIdentity identity, IAllowanceNotificationBackend allowances, TerraBaseHttpClient terraBase) : IAlertSource
     {
         private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-        // The same response as the public /v1/projects/{project}/analytics, read over the dashboard's private TerraBase listener.
         public async Task<AlertAnalytics> ReadAnalyticsAsync(string projectId, CancellationToken cancellationToken)
         {
-            JsonElement root;
-            try { root = await rpc.Platform<IUsageService>().WithCancellationToken(cancellationToken).GetOperatorAnalyticsAsync(projectId); }
-            catch (TerraBaseNotFoundException) { return new(DateTimeOffset.UnixEpoch, []); }
-            catch (TerraBaseException) { throw new IOException("Project analytics are unavailable."); }
+            var answer = await terraBase.GetOperatorAnalyticsAsync(projectId, cancellationToken);
+            if (answer is not JsonElement root || root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("bucketSeconds", out _))
+            {
+                return answer switch
+                {
+                    JsonElement or TerraBaseRefusal { Status: StatusCodes.Status404NotFound } => new(DateTimeOffset.UnixEpoch, []),
+                    TerraBaseRefusal => throw new IOException("Project analytics are unavailable."),
+                };
+            }
             if (root.GetProperty("projectId").GetString() != projectId || root.GetProperty("bucketSeconds").GetInt32() != 60)
             {
                 throw new JsonException("Analytics returned a different project or window.");
@@ -33,7 +35,6 @@ namespace TerraScale.Dashboard.Features.Notifications
                     series.GetProperty("storageBytes") is { ValueKind: JsonValueKind.Number } storage ? storage.GetInt64() : null))]))]);
         }
 
-        // The allowance snapshot is the authoritative month-to-date operation units per organization.
         public async Task<IReadOnlyDictionary<string, long>> ReadOperationUnitsAsync(CancellationToken cancellationToken)
         {
             var units = new Dictionary<string, long>(StringComparer.Ordinal);

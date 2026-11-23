@@ -12,7 +12,7 @@ namespace TerraScale.Dashboard.Features.Backups
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             try
@@ -38,16 +38,16 @@ namespace TerraScale.Dashboard.Features.Backups
                     var state = BackupListState.Read(http.Request) with
                     { Through = count > 0 ? listing.Backups[count - 1].Id : null };
                     await DatastarEvents.PatchElementsAsync(http, BackupRestorePointsView.Create(state.Page(http, context, database, listing)));
-                    return Results.Empty;
+                    return TypedResults.Empty;
                 }
 
                 if (before.Length > 0)
                 {
-                    return Results.BadRequest("Use the restore points list to page.");
+                    return TypedResults.BadRequest("Use the restore points list to page.");
                 }
 
                 var slice = await backups.ListPageAsync(context, id, after.Length == 0 ? null : after, limit, http.RequestAborted);
-                return Results.Json(new BackupRestList(slice.Policy, slice.Items, slice.NextCursor, slice.HasMore, limit));
+                return TypedResults.Json(new BackupRestList(slice.Policy, slice.Items, slice.NextCursor, slice.HasMore, limit));
             }
             catch (Exception error) when (BackupEndpoints.KnownFailure(error) &&
                 (error is not OperationCanceledException || !http.RequestAborted.IsCancellationRequested))

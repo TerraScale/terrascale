@@ -1,25 +1,30 @@
+using Dapper;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.WebUtilities;
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Auth;
 
-public sealed class AccessTokens(IDbContextFactory<DashboardDbContext> storage, DashboardSessions sessions, IAuthGateway auth, AccountService accounts,
+public sealed class AccessTokens(DashboardDb storage, DashboardSessions sessions, IAuthGateway auth, AccountService accounts,
     TimeProvider time, IAuthStepUpGateway stepUp) : IProfileTokens
 {
+    private const string Live = DashboardSql.AccessTokens.Select + " WHERE user_id = @UserId AND revoked_at IS NULL AND expires_at > @Now ORDER BY created_at DESC";
+    private const string LiveCount = "SELECT count(*) FROM access_tokens WHERE user_id = @UserId AND revoked_at IS NULL AND expires_at > @Now";
+    private const string Owned = DashboardSql.AccessTokens.Select + " WHERE id = @Id AND user_id = @UserId";
+    private const string Revoke = "UPDATE access_tokens SET revoked_at = @RevokedAt WHERE id = @Id AND revoked_at IS NULL";
+    private const string Forget = "DELETE FROM access_tokens WHERE user_id = @UserId; DELETE FROM sessions WHERE user_id = @UserId AND kind = @Credential";
+    private const string BySecret = DashboardSql.AccessTokens.Select + " WHERE secret_hash = @Hash AND revoked_at IS NULL AND expires_at > @Now";
+    private const string ClientTokens = "SELECT id FROM access_tokens WHERE user_id = @UserId AND mcp_client_id = @McpClientId AND revoked_at IS NULL";
+
     private const int MaxLiveTokens = 25;
 
     public async Task<IReadOnlyList<ProfileToken>> ListAsync(AccountContext context, CancellationToken cancellationToken)
     {
         var now = time.GetUtcNow().UtcDateTime;
-        await using var db = await storage.CreateDbContextAsync(cancellationToken);
-        var rows = await db.AccessTokens.AsNoTracking()
-            .Where(row => row.UserId == context.UserId && row.RevokedAt == null && row.ExpiresAt > now)
-            .OrderByDescending(row => row.CreatedAt)
-            .ToListAsync(cancellationToken);
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        var rows = await connection.QueryAsync<AccessTokenRow>(Live, new { context.UserId, Now = now });
         return [.. rows.Select(Token)];
     }
 
@@ -126,16 +131,14 @@ public sealed class AccessTokens(IDbContextFactory<DashboardDbContext> storage, 
             CreatedAt = now.UtcDateTime,
             ExpiresAt = expiresAt.UtcDateTime,
         };
-        await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+        await using (var connection = await storage.OpenAsync(cancellationToken))
         {
-            var at = now.UtcDateTime;
-            if (await db.AccessTokens.CountAsync(token => token.UserId == userId && token.RevokedAt == null && token.ExpiresAt > at, cancellationToken) >= MaxLiveTokens)
+            if (await connection.ExecuteScalarAsync<long>(LiveCount, new { UserId = userId, Now = now.UtcDateTime }) >= MaxLiveTokens)
             {
                 throw new AccountAccessException("You can have up to 25 live personal access tokens.", 409);
             }
 
-            db.AccessTokens.Add(row);
-            await db.SaveChangesAsync(cancellationToken);
+            await connection.ExecuteAsync(DashboardSql.AccessTokens.Insert, row);
         }
 
         await AccountEnrollment.ThrowIfErasedAsync(storage, userId, cancellationToken);
@@ -150,15 +153,14 @@ public sealed class AccessTokens(IDbContextFactory<DashboardDbContext> storage, 
     private async Task RevokeAsync(string userId, string id, CancellationToken cancellationToken)
     {
         string credential;
-        await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+        await using (var connection = await storage.OpenAsync(cancellationToken))
         {
-            var row = await db.AccessTokens.SingleOrDefaultAsync(token => token.Id == id && token.UserId == userId, cancellationToken)
+            var row = await connection.QuerySingleOrDefaultAsync<AccessTokenRow>(Owned, new { Id = id, UserId = userId })
                 ?? throw new AccountAccessException("Access token was not found.", 404);
             credential = row.CredentialId;
             if (row.RevokedAt is null)
             {
-                row.RevokedAt = time.GetUtcNow().UtcDateTime;
-                await db.SaveChangesAsync(cancellationToken);
+                await connection.ExecuteAsync(Revoke, new { Id = id, RevokedAt = time.GetUtcNow().UtcDateTime });
             }
         }
 
@@ -172,9 +174,8 @@ public sealed class AccessTokens(IDbContextFactory<DashboardDbContext> storage, 
 
     public async Task ForgetAllAsync(string userId, CancellationToken cancellationToken)
     {
-        await using var db = await storage.CreateDbContextAsync(cancellationToken);
-        await db.AccessTokens.Where(row => row.UserId == userId).ExecuteDeleteAsync(cancellationToken);
-        await db.Sessions.Where(row => row.UserId == userId && row.Kind == SessionRow.Credential).ExecuteDeleteAsync(cancellationToken);
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        await connection.ExecuteAsync(Forget, new { UserId = userId, SessionRow.Credential });
     }
 
     public async Task<AccountContext?> ResolveAsync(string secret, CancellationToken cancellationToken)
@@ -187,9 +188,9 @@ public sealed class AccessTokens(IDbContextFactory<DashboardDbContext> storage, 
         var hash = Hash(secret);
         var now = time.GetUtcNow().UtcDateTime;
         AccessTokenRow? token;
-        await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+        await using (var connection = await storage.OpenAsync(cancellationToken))
         {
-            token = await db.AccessTokens.AsNoTracking().SingleOrDefaultAsync(row => row.SecretHash == hash && row.RevokedAt == null && row.ExpiresAt > now, cancellationToken);
+            token = await connection.QuerySingleOrDefaultAsync<AccessTokenRow>(BySecret, new { Hash = hash, Now = now });
         }
 
         if (token is null)
@@ -216,10 +217,9 @@ public sealed class AccessTokens(IDbContextFactory<DashboardDbContext> storage, 
     private async Task RevokeClientAsync(string userId, string mcpClientId, CancellationToken cancellationToken)
     {
         List<string> live;
-        await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+        await using (var connection = await storage.OpenAsync(cancellationToken))
         {
-            live = await db.AccessTokens.Where(row => row.UserId == userId && row.McpClientId == mcpClientId && row.RevokedAt == null)
-                .Select(row => row.Id).ToListAsync(cancellationToken);
+            live = (await connection.QueryAsync<string>(ClientTokens, new { UserId = userId, McpClientId = mcpClientId })).AsList();
         }
 
         foreach (var id in live)

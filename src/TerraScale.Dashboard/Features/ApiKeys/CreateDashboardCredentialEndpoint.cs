@@ -36,13 +36,13 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, "/api-keys", Results.BadRequest("Invalid form token."));
+                return RequestError.FormExpired(http, "/api-keys", TypedResults.BadRequest("Invalid form token."));
             }
 
             try
@@ -53,7 +53,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                     return DatabaseEndpoints.WantsHtml(http)
                         ? await ApiKeyPages.PageAsync(http, context, keys, databases, denied, kind, form["name"].ToString(), status: StatusCodes.Status403Forbidden,
                             draftScopes: form["scopes"].ToString(), draftDatabaseId: form["databaseId"].ToString(), draftExpiresInDays: form["expiresInDays"].ToString(), draftAllowedCidrs: form["allowedCidrs"].ToString())
-                        : Results.Problem(denied, statusCode: StatusCodes.Status403Forbidden);
+                        : TypedResults.Problem(denied, statusCode: StatusCodes.Status403Forbidden);
                 }
 
                 if (kind is not ("key" or "api-key"))
@@ -62,7 +62,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                     return DatabaseEndpoints.WantsHtml(http)
                         ? await ApiKeyPages.PageAsync(http, context, keys, databases, refused, kind, form["name"].ToString(), status: StatusCodes.Status422UnprocessableEntity,
                             draftScopes: form["scopes"].ToString(), draftDatabaseId: form["databaseId"].ToString(), draftExpiresInDays: form["expiresInDays"].ToString(), draftAllowedCidrs: form["allowedCidrs"].ToString())
-                        : Results.Problem(refused, statusCode: StatusCodes.Status422UnprocessableEntity);
+                        : TypedResults.Problem(refused, statusCode: StatusCodes.Status422UnprocessableEntity);
                 }
 
                 var expires = form["expiresInDays"].ToString();
@@ -73,12 +73,12 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                     return DatabaseEndpoints.WantsHtml(http)
                         ? await ApiKeyPages.PageAsync(http, context, keys, databases, refused, kind, form["name"].ToString(), status: StatusCodes.Status422UnprocessableEntity,
                             draftScopes: form["scopes"].ToString(), draftDatabaseId: form["databaseId"].ToString(), draftExpiresInDays: form["expiresInDays"].ToString(), draftAllowedCidrs: form["allowedCidrs"].ToString())
-                        : Results.Problem(refused, statusCode: StatusCodes.Status422UnprocessableEntity);
+                        : TypedResults.Problem(refused, statusCode: StatusCodes.Status422UnprocessableEntity);
                 }
 
                 var credential = await keys.CreateAsync(context, kind, form["name"].ToString(), form["databaseId"].ToString(), form["scope"].Concat(form["scopes"]).SelectMany(value => (value ?? "").Split([',', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)), expiresInDays, ApiKeyService.ParseCidrs(form["allowedCidrs"].ToString()), http.RequestAborted);
                 await keys.RecordAsync(accounts, context, credential.Key.Id, true, http.RequestAborted);
-                return DatabaseEndpoints.WantsHtml(http) ? await ApiKeyPages.PageAsync(http, context, keys, databases, revealed: credential) : Results.Json(new ProjectApiKeySecret(ApiKeyService.Metadata(credential.Key), credential.Secret), ApiKeyContractJson.Default.ProjectApiKeySecret, statusCode: 201);
+                return DatabaseEndpoints.WantsHtml(http) ? await ApiKeyPages.PageAsync(http, context, keys, databases, revealed: credential) : TypedResults.Json(new ProjectApiKeySecret(ApiKeyService.Metadata(credential.Key), credential.Secret), ApiKeyContractJson.Default.ProjectApiKeySecret, statusCode: 201);
             }
             catch (Exception error) when (DatabaseResults.KnownFailure(error) || error is HttpRequestException)
             {

@@ -7,20 +7,20 @@ public sealed partial class ProjectOrganizationDomainWorker(AuthSchema schema, P
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await schema.Ready.WaitAsync(stoppingToken).ConfigureAwait(false);
+        await schema.Ready.WaitAsync(stoppingToken);
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1), clock);
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                await organizations.RecheckDomainsAsync(stoppingToken).ConfigureAwait(false);
+                await organizations.RecheckDomainsAsync(stoppingToken);
             }
             catch (Exception failure) when (!stoppingToken.IsCancellationRequested)
             {
                 RecheckFailed(logger, failure);
             }
 
-            await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false);
+            await timer.WaitForNextTickAsync(stoppingToken);
         }
     }
 

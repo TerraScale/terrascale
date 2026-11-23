@@ -1,7 +1,7 @@
+using Dapper;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
-using Microsoft.EntityFrameworkCore;
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
@@ -30,8 +30,11 @@ public readonly union EmailChangeRequestResult(EmailChangeBody, Validation, Conf
 
 public readonly union EmailChangeConfirmResult(Done, Forbidden, Conflict);
 
-internal sealed record EmailChangeRecord(string InstanceId, string UserId, long AuthEpoch, string? AuthStamp, string NewEmail,
-    string CodeHash, string CancelHash, DateTimeOffset ExpiresAt, int FailedAttempts, IReadOnlyList<CredentialBinding> Bindings);
+public sealed record EmailChangeRecord(string InstanceId, string UserId, long AuthEpoch, string? AuthStamp, string NewEmail,
+    string CodeHash, string CancelHash, DateTimeOffset ExpiresAt, int FailedAttempts, IReadOnlyList<CredentialBinding> Bindings)
+{
+    public string? Version { get; init; }
+}
 
 public sealed class EmailChanges(AuthData data, Credentials credentials, Users users, Sessions sessions, AttemptLimiter limiter, SignInMail mail, AuthOptions options, TimeProvider clock)
 {
@@ -54,14 +57,14 @@ public sealed class EmailChanges(AuthData data, Credentials credentials, Users u
             return new Validation("new_email must be a valid address other than the current one.");
         }
 
-        if (await users.FindByEmailAsync(caller.InstanceId, normalized, cancellationToken).ConfigureAwait(false) is not null)
+        if (await users.FindByEmailAsync(caller.InstanceId, normalized, cancellationToken) is not null)
         {
             return EmailTaken();
         }
 
-        if (!await limiter.TryAcquireAsync(caller.InstanceId, "email-change", caller.Id, MaxRequests, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false)
-            || !await limiter.TryAcquireAsync(caller.InstanceId, "email-change-target", normalized, MaxRequests, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false)
-            || !await limiter.TryAcquireAsync(caller.InstanceId, "email-change-global", caller.InstanceId, MaxGlobalRequests, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false))
+        if (!await limiter.TryAcquireAsync(caller.InstanceId, "email-change", caller.Id, MaxRequests, TimeSpan.FromHours(1), cancellationToken)
+            || !await limiter.TryAcquireAsync(caller.InstanceId, "email-change-target", normalized, MaxRequests, TimeSpan.FromHours(1), cancellationToken)
+            || !await limiter.TryAcquireAsync(caller.InstanceId, "email-change-global", caller.InstanceId, MaxGlobalRequests, TimeSpan.FromHours(1), cancellationToken))
         {
             return new QuotaExceeded("Too many email change requests; retry later.", "rate_limited");
         }
@@ -69,9 +72,9 @@ public sealed class EmailChanges(AuthData data, Credentials credentials, Users u
         using var codeSlot = mail.Reserve();
         using var noticeSlot = mail.Reserve();
         return await proofs.ConsumeAsync(caller, StepUpProofs.Proof(request),
-            "change_email", "ts-auth", null, cancellationToken).ConfigureAwait(false) switch
+            "change_email", "ts-auth", null, cancellationToken) switch
         {
-            StepUpConsumption consumption => await this.IssueAsync(caller, consumption.Caller, normalized, proofs, codeSlot, noticeSlot, cancellationToken).ConfigureAwait(false),
+            StepUpConsumption consumption => await this.IssueAsync(caller, consumption.Caller, normalized, proofs, codeSlot, noticeSlot, cancellationToken),
             Forbidden failure => failure,
         };
     }
@@ -82,9 +85,9 @@ public sealed class EmailChanges(AuthData data, Credentials credentials, Users u
         var cancel = Tokens.RandomToken(43);
         var record = new EmailChangeRecord(caller.InstanceId, caller.Id, caller.AuthEpoch, caller.AuthStamp, normalized,
             this.Digest(caller, normalized, code), Tokens.Sha256Hex(cancel), clock.GetUtcNow() + Lifetime, 0, verified.StepUpBindings);
-        var existing = await this.ReadStoredAsync(caller.Id, cancellationToken).ConfigureAwait(false);
-        if (await proofs.RequirementsAsync(verified, cancellationToken).ConfigureAwait(false) is not { } requirements
-            || !await data.SaveAsync([.. requirements, existing is null ? Change.Insert(record) : Change.Update(existing, record)], cancellationToken).ConfigureAwait(false))
+        var existing = await this.ReadStoredAsync(caller.Id, cancellationToken);
+        if (await proofs.RequirementsAsync(verified, cancellationToken) is not { } requirements
+            || !await data.SaveAsync([.. requirements, existing is null ? Change.Insert(record) : Change.Update(existing, record)], cancellationToken))
         {
             throw ApiException.Unavailable();
         }
@@ -111,7 +114,7 @@ public sealed class EmailChanges(AuthData data, Credentials credentials, Users u
         ArgumentNullException.ThrowIfNull(caller);
         for (var round = 0; round < MaxAttempts + 2; round++)
         {
-            if (await this.ReadAsync(caller.InstanceId, caller.Id, cancellationToken).ConfigureAwait(false) is not { } current
+            if (await this.ReadAsync(caller.InstanceId, caller.Id, cancellationToken) is not { } current
                 || current.Record.AuthEpoch != caller.AuthEpoch || current.Record.AuthStamp != caller.AuthStamp
                 || current.Record.FailedAttempts >= MaxAttempts)
             {
@@ -121,7 +124,7 @@ public sealed class EmailChanges(AuthData data, Credentials credentials, Users u
             var record = current.Record;
             if (!Passcodes.WellFormed(code) || !Tokens.FixedTimeEquals(record.CodeHash, this.Digest(caller, record.NewEmail, code.Trim())))
             {
-                if (await data.SaveAsync(Change.Update(record with { FailedAttempts = record.FailedAttempts + 1 }, current.Version), cancellationToken).ConfigureAwait(false))
+                if (await data.SaveAsync(Change.Update(record with { FailedAttempts = record.FailedAttempts + 1 }, current.Version), cancellationToken))
                 {
                     return Denied();
                 }
@@ -130,17 +133,15 @@ public sealed class EmailChanges(AuthData data, Credentials credentials, Users u
             }
 
             var lineage = record.Bindings.Where(binding => binding != Credentials.UserState(caller.Id, record.AuthStamp ?? string.Empty)).ToArray();
-            if (record.Bindings.Count == 0 || !await credentials.AreCurrentAsync(caller.InstanceId, record.Bindings, cancellationToken).ConfigureAwait(false)
-                || await credentials.RequireAsync(caller.InstanceId, lineage, cancellationToken).ConfigureAwait(false) is not { } requirements)
+            if (record.Bindings.Count == 0 || !await credentials.AreCurrentAsync(caller.InstanceId, record.Bindings, cancellationToken)
+                || await credentials.RequireAsync(caller.InstanceId, lineage, cancellationToken) is not { } requirements)
             {
                 return Denied();
             }
 
-            // Consuming the row, reserving the address and advancing the epoch commit together; a replay finds no row.
-            // The user write itself is versioned, so its own state binding is not asserted separately.
             var changed = await users.ChangeEmailAsync(caller.InstanceId, caller.Id, caller.AuthEpoch, caller.AuthStamp, record.NewEmail,
                 [Change.Delete(record, current.Version), .. requirements],
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken);
             if (changed == true)
             {
                 return new Done();
@@ -156,32 +157,32 @@ public sealed class EmailChanges(AuthData data, Credentials credentials, Users u
     {
         const string Instance = Oidc.OidcIssuer.InstanceId;
         if (!PlatformDirectory.IsId(userId) || token is not { Length: 43 }
-            || await this.ReadAsync(Instance, userId, cancellationToken).ConfigureAwait(false) is not { } current
+            || await this.ReadAsync(Instance, userId, cancellationToken) is not { } current
             || !Tokens.FixedTimeEquals(current.Record.CancelHash, Tokens.Sha256Hex(token)))
         {
             return false;
         }
 
-        // The epoch advance alone voids the change; removing the row is cleanup.
-        if (!await sessions.RevokeAllAsync(Instance, userId, cancellationToken).ConfigureAwait(false))
+        if (!await sessions.RevokeAllAsync(Instance, userId, cancellationToken))
         {
             return false;
         }
 
-        await data.SaveAsync(Change.Delete(current.Record, current.Version), cancellationToken).ConfigureAwait(false);
+        await data.SaveAsync(Change.Delete(current.Record, current.Version), cancellationToken);
         return true;
     }
 
     private async Task<(EmailChangeRecord Record, string Version)?> ReadAsync(string instanceId, string userId, CancellationToken cancellationToken)
     {
-        var rowData = await this.ReadStoredAsync(userId, cancellationToken).ConfigureAwait(false);
+        var rowData = await this.ReadStoredAsync(userId, cancellationToken);
         return rowData?.Value is { } record
             && record.InstanceId == instanceId && record.UserId == userId && record.ExpiresAt > clock.GetUtcNow()
                 ? (record, rowData.Version) : null;
     }
 
-    private Task<Versioned<EmailChangeRecord>?> ReadStoredAsync(string userId, CancellationToken cancellationToken) =>
-        data.ReadAsync((db, token) => db.EmailChanges.Where(row => row.UserId == userId).WithVersion().SingleOrDefaultAsync(token), cancellationToken);
+    private async Task<Versioned<EmailChangeRecord>?> ReadStoredAsync(string userId, CancellationToken cancellationToken) =>
+        Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<EmailChangeRecord>(
+            "SELECT * FROM email_changes WHERE user_id = @userId", new { userId }), cancellationToken));
 
     private string Digest(UserRecord caller, string newEmail, string code) =>
         Convert.ToHexStringLower(HMACSHA256.HashData(this.digestKey, Encoding.UTF8.GetBytes(string.Create(CultureInfo.InvariantCulture,

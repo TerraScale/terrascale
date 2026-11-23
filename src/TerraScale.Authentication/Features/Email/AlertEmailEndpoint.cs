@@ -42,7 +42,7 @@ public sealed partial class AlertEmailEndpoint(PlatformDirectory directory, Owne
         {
             return refused;
         }
-        return (await EmailApi.ReadAsync<EmailAlertRequest>(this.HttpContext, cancellationToken).ConfigureAwait(false) switch
+        return (await EmailApi.ReadAsync<EmailAlertRequest>(this.HttpContext, cancellationToken) switch
         {
             EmailAlertRequest request => await SendAsync(request, cancellationToken),
             Validation error => ErrorResults.ToResult(error),
@@ -63,14 +63,14 @@ public sealed partial class AlertEmailEndpoint(PlatformDirectory directory, Owne
                 "organizationId, projectId and alertId must be ULIDs; state firing or resolved; ruleName 1 to 100 characters; a known metric; databaseName null or a database name; threshold and value finite numbers."));
         }
         var organization = request.OrganizationId!;
-        if (await directory.OrganizationAsync(organization, cancellationToken).ConfigureAwait(false) is null ||
-            await directory.ProjectAsync(request.ProjectId!, cancellationToken).ConfigureAwait(false) is not { Value: var project } || project.OrganizationId != organization)
+        if (await directory.OrganizationAsync(organization, cancellationToken) is null ||
+            await directory.ProjectAsync(request.ProjectId!, cancellationToken) is not { Value: var project } || project.OrganizationId != organization)
         {
             throw PlatformDirectory.NotFound();
         }
 
         var result = await deliveries.SendAsync("alert", $"{organization}/{request.AlertId}/{request.State}", organization, Message(request, name, project.Name, threshold, value),
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken);
         return TypedResults.Json(new AllowanceEmailResponse(result), AlertEmailJson.Default.AllowanceEmailResponse);
     }
 
@@ -90,7 +90,6 @@ public sealed partial class AlertEmailEndpoint(PlatformDirectory directory, Owne
         return new($"[TerraScale] Alert {(firing ? "firing" : "resolved")}: {name}", text) { FromName = "TerraScale", Purpose = EmailPurpose.Alert, Tenant = request.OrganizationId! };
     }
 
-    // TerraBase database names.
     [GeneratedRegex(@"\A[a-z][a-z0-9_-]{0,62}\z", RegexOptions.CultureInvariant)]
     private static partial Regex DatabaseName();
 }

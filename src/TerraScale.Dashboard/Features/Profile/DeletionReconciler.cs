@@ -1,22 +1,31 @@
+using Dapper;
+using System.Data;
 using System.Linq;
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
 using Stripe;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Observability;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.TsAuth;
-using TerraScale.TerraBase.Contracts;
+using TerraScale.Dashboard.Platform.Clients;
 using TerraBaseStorageException = TerraScale.DotNet.TerraBase.TerraBaseException;
 
 namespace TerraScale.Dashboard.Features.Profile
 {
-    // Local fences guard CAS writers; immutable authorization and enrollment references
-    // replay after ACK to repair delayed regional writes.
-    public sealed class DeletionReconciler(ITsAuthDeletions deletions, IDbContextFactory<DashboardDbContext> storage, DashboardStateInitializer initializer, AccountStore accounts, OrganizationStore organizations, DashboardSessions sessions,
+    public sealed class DeletionReconciler(ITsAuthDeletions deletions, DashboardDb storage, DashboardDbUpRunner initializer, AccountStore accounts, OrganizationStore organizations, DashboardSessions sessions,
         AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity, TimeProvider clock, ServiceSloTelemetry telemetry, ILogger<DeletionReconciler> logger, BackgroundJobs jobs, BillingSchemaGate gate) : BackgroundService
     {
+        private const string RemoveSavedQueries = "DELETE FROM saved_queries WHERE organization_id = @OrganizationId";
+        private const string ObservedProjects = """
+            SELECT project_id FROM alert_rules WHERE organization_id = @OrganizationId
+            UNION SELECT project_id FROM log_drains WHERE organization_id = @OrganizationId
+            """;
+        private const string RemoveStripe = """
+            DELETE FROM stripe_checkouts WHERE organization_id = @OrganizationId;
+            DELETE FROM stripe_customers WHERE organization_id = @OrganizationId
+            """;
+
         private readonly Dictionary<string, string> failing = new(StringComparer.Ordinal);
         private readonly DeletionCleanupJournal journal = new(storage, organizations, clock);
         private readonly DeletionProjectRecords projectRecords = new(storage);
@@ -181,10 +190,10 @@ namespace TerraScale.Dashboard.Features.Profile
                         await billing.EndCustomersForDeletionAsync(proof.SubjectId, entry.CustomerIds, cancellationToken);
                     }
 
-                    await Features.Data.SqlWorkspace.EraseAsync(storage, row => row.OrganizationId == proof.SubjectId, cancellationToken);
-                    await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+                    await Features.Data.SqlWorkspace.EraseOrganizationAsync(storage, proof.SubjectId, cancellationToken);
+                    await using (var connection = await storage.OpenAsync(cancellationToken))
                     {
-                        await db.SavedQueries.Where(row => row.OrganizationId == proof.SubjectId).ExecuteDeleteAsync(cancellationToken);
+                        await connection.ExecuteAsync(RemoveSavedQueries, new { OrganizationId = proof.SubjectId });
                     }
 
                     var projects = new HashSet<string>(entry.ProjectIds, StringComparer.Ordinal);
@@ -194,10 +203,9 @@ namespace TerraScale.Dashboard.Features.Profile
                         projects.UnionWith(org.Projects.Keys);
                         projects.UnionWith(org.DeletedProjectIds);
                     }
-                    await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+                    await using (var connection = await storage.OpenAsync(cancellationToken))
                     {
-                        projects.UnionWith(await db.AlertRules.Where(row => row.OrganizationId == proof.SubjectId).Select(row => row.ProjectId).ToListAsync(cancellationToken));
-                        projects.UnionWith(await db.LogDrains.Where(row => row.OrganizationId == proof.SubjectId).Select(row => row.ProjectId).ToListAsync(cancellationToken));
+                        projects.UnionWith(await connection.QueryAsync<string>(ObservedProjects, new { OrganizationId = proof.SubjectId }));
                     }
 
                     foreach (var projectId in projects)
@@ -206,10 +214,9 @@ namespace TerraScale.Dashboard.Features.Profile
                     }
 
                     await related.CleanOrganizationAsync(proof.SubjectId, cancellationToken);
-                    await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+                    await using (var connection = await storage.OpenAsync(cancellationToken))
                     {
-                        await db.StripeCheckouts.Where(row => row.OrganizationId == proof.SubjectId).ExecuteDeleteAsync(cancellationToken);
-                        await db.StripeCustomers.Where(row => row.OrganizationId == proof.SubjectId).ExecuteDeleteAsync(cancellationToken);
+                        await connection.ExecuteAsync(RemoveStripe, new { OrganizationId = proof.SubjectId });
                     }
 
                     await organizations.FenceAsync(proof.SubjectId, proof.Id, cancellationToken);
@@ -282,13 +289,13 @@ namespace TerraScale.Dashboard.Features.Profile
                     await (stored is null ? organizations.CreateAsync(org, cancellationToken) : organizations.ReplaceAsync(stored, cancellationToken));
                     return;
                 }
-                catch (DbUpdateConcurrencyException) when (attempt < 3) { }
+                catch (DBConcurrencyException) when (attempt < 3) { }
             }
         }
 
         private static bool Retryable(Exception error, CancellationToken cancellationToken)
         {
-            return error is IOException or HttpRequestException or DbUpdateException or TerraScale.TerraBase.Contracts.TerraBaseException or JsonException or AccountAccessException or Stripe.StripeException or TimeoutException or InvalidOperationException or FormatException or ArgumentException or System.Security.Cryptography.CryptographicException ||
+            return error is IOException or HttpRequestException or DBConcurrencyException or TerraScale.Dashboard.Platform.Clients.TerraBaseException or JsonException or AccountAccessException or Stripe.StripeException or TimeoutException or InvalidOperationException or FormatException or ArgumentException or System.Security.Cryptography.CryptographicException ||
             error is OperationCanceledException && !cancellationToken.IsCancellationRequested;
         }
 

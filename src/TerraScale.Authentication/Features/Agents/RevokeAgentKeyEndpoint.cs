@@ -15,6 +15,6 @@ public sealed class RevokeAgentKeyEndpoint(TenantDirectory tenants, PlatformAuth
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         await agents.RevokeKeyAsync(project, this.RouteId("agent"), this.RouteId("kid"), caller.Id, cancellationToken);
-        return Results.NoContent();
+        return TypedResults.NoContent();
     }
 }

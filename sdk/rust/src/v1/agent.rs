@@ -20,6 +20,9 @@ pub struct CreateDatabaseOptions {
     pub all_regions: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ttl_seconds: Option<u64>,
+    /// The consistency mode SQL uses when a request names none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_consistency: Option<crate::consistency::ConsistencyMode>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]

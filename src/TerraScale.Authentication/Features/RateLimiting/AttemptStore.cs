@@ -1,10 +1,13 @@
-using Microsoft.EntityFrameworkCore;
+using Dapper;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Storage;
 
 namespace TerraScale.Authentication.Features.RateLimiting;
 
-public sealed record RateLimitRecord(string InstanceId, string Key, long Window, int Used);
+public sealed record RateLimitRecord(string InstanceId, string Key, long Window, int Used)
+{
+    public string? Version { get; init; }
+}
 
 public interface IAttemptStore
 {
@@ -22,8 +25,8 @@ public sealed class TerraBaseAttemptStore(AuthData data) : IAttemptStore
     public Task<IReadOnlyList<Versioned<AttemptBucket>?>> GetManyAsync(string instanceId, IReadOnlyList<string> keys, CancellationToken cancellationToken) =>
         Guard(async () =>
         {
-            var rows = await data.ReadAsync((db, token) => db.RateLimits.Where(row => row.InstanceId == instanceId && keys.Contains(row.Key)).WithVersion().ToListAsync(token),
-                cancellationToken).ConfigureAwait(false);
+            var rows = Versioned.All(await data.ReadAsync(connection => connection.QueryAsync<RateLimitRecord>(
+                "SELECT * FROM rate_limits WHERE instance_id = @instanceId AND \"key\" IN @keys", new { instanceId, keys }), cancellationToken));
             return (IReadOnlyList<Versioned<AttemptBucket>?>)[.. keys.Select(key => rows.FirstOrDefault(row => row.Value.Key == key) is { } row
                 ? new Versioned<AttemptBucket>(new AttemptBucket(row.Value.Window, row.Value.Used), row.Version)
                 : null)];
@@ -36,14 +39,17 @@ public sealed class TerraBaseAttemptStore(AuthData data) : IAttemptStore
         Guard(() => data.SaveAsync(Change.Update(Record(instanceId, key, bucket), version), cancellationToken), cancellationToken);
 
     public Task<bool> TryChargeAsync(string instanceId, string key, IReadOnlyList<string> others, long window, int maximum, CancellationToken cancellationToken) =>
-        Guard(async () => await data.ReadAsync((db, token) => db.RateLimits
-            .Where(row => row.InstanceId == instanceId && row.Key == key && row.Window <= window
-                && (row.Window == window ? row.Used : 0)
-                    + db.RateLimits.Where(other => other.InstanceId == instanceId && others.Contains(other.Key) && other.Window == window).Sum(other => other.Used) < maximum)
-            .ExecuteUpdateAsync(row => row
-                .SetProperty(bucket => bucket.Used, bucket => bucket.Window == window ? bucket.Used + 1 : 1)
-                .SetProperty(bucket => bucket.Window, window)
-                .SetProperty(bucket => EF.Property<string>(bucket, AuthDbContext.VersionProperty), AuthIds.New()), token), cancellationToken).ConfigureAwait(false) == 1, cancellationToken);
+        Guard(async () =>
+        {
+            var version = AuthIds.New();
+            return await data.ReadAsync(connection => connection.ExecuteAsync(
+                """
+                UPDATE rate_limits SET used = CASE WHEN "window" = @window THEN used + 1 ELSE 1 END, "window" = @window, version = @version
+                WHERE instance_id = @instanceId AND "key" = @key AND "window" <= @window
+                    AND (CASE WHEN "window" = @window THEN used ELSE 0 END)
+                        + (SELECT COALESCE(SUM(o.used), 0) FROM rate_limits o WHERE o.instance_id = @instanceId AND o."key" IN @others AND o."window" = @window) < @maximum
+                """, new { window, version, instanceId, key, others, maximum }), cancellationToken) == 1;
+        }, cancellationToken);
 
     private static RateLimitRecord Record(string instanceId, string key, AttemptBucket bucket)
     {
@@ -55,7 +61,7 @@ public sealed class TerraBaseAttemptStore(AuthData data) : IAttemptStore
     {
         try
         {
-            return await operation().ConfigureAwait(false);
+            return await operation();
         }
         catch (Exception failure) when (failure is not (ApiException { Status: 503 } or OutOfMemoryException)
             && !(failure is OperationCanceledException && cancellationToken.IsCancellationRequested))

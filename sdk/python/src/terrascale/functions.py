@@ -95,7 +95,6 @@ class FunctionStats:
 
 
 class _FunctionCall(Call):
-    # The shared object decoder cannot represent direct arrays or arbitrary invocation JSON.
     def decode(self, response: httpx.Response) -> Any:
         return self.parse(response)
 
@@ -110,7 +109,8 @@ class _FunctionCall(Call):
 
 class _Requests:
     def __init__(self, project: str, database: str):
-        self._path = ["v1", "projects", validate_id(project, "project"), "databases", name(database, "database"), "functions"]
+        self._database = name(database, "database")
+        self._path = ["v1", "projects", validate_id(project, "project"), "databases", self._database, "functions"]
 
     def _call(self, method: str, function: str | None, parse: Callable[[Any], Any], *, suffix: str | None = None,
               body: Any = None, params: dict[str, str] | None = None) -> Call:
@@ -137,7 +137,8 @@ class _Requests:
                             "invalid function response; reconcile mutations before retrying") from exc
 
         return _FunctionCall(method, [*path, *([suffix] if suffix else [])], decode,
-                             body=body, params=params or {}, replay_safe=method == "GET")
+                             body=body, params=params or {}, replay_safe=method == "GET",
+                             causal=self._database if suffix == "invoke" else None)
 
     def _deploy(self, function: str, deployment: FunctionDeployment) -> Call:
         if not isinstance(deployment.source, str) or not deployment.source or len(deployment.source.encode()) > 256 * 1024:

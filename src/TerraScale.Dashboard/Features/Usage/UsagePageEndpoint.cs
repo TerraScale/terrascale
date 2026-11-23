@@ -31,19 +31,19 @@ namespace TerraScale.Dashboard.Features.Usage
                 return UsageSelection.TryFor(context, http.Request.Query["project"].ToString(), http.Request.Query["database"].ToString(), http.Request.Query["range"].ToString()) switch
                 {
                     UsageSelection selection => await PageAsync(http, usage, selection, tab),
-                    NotFound failure => Results.Text(failure.Message ?? "Not found.", statusCode: 404),
-                    Forbidden failure => Results.Text(failure.Message, statusCode: 403),
+                    NotFound failure => TypedResults.Text(failure.Message ?? "Not found.", statusCode: 404),
+                    Forbidden failure => TypedResults.Text(failure.Message, statusCode: 403),
                 };
             }
-            catch (AccountAccessException error) { return Results.Text(error.Message, statusCode: error.StatusCode); }
-            catch (IOException) { return Results.Text("Could not load usage.", statusCode: 503); }
+            catch (AccountAccessException error) { return TypedResults.Text(error.Message, statusCode: error.StatusCode); }
+            catch (IOException) { return TypedResults.Text("Could not load usage.", statusCode: 503); }
         }
 
         private static async Task<IResult> PageAsync(HttpContext http, UsageService usage, UsageSelection selection, string tab)
         {
             if (!selection.Member && tab == "settings")
             {
-                return Results.Text("Organization membership is required.", statusCode: 403);
+                return TypedResults.Text("Organization membership is required.", statusCode: 403);
             }
             if (selection.Context.Project is null && tab == "overview")
             {
@@ -54,7 +54,7 @@ namespace TerraScale.Dashboard.Features.Usage
             if (http.Request.IsDatastarRequest)
             {
                 await DatastarEvents.PatchElementsAsync(http, UsagePageView.Create(page));
-                return Results.Empty;
+                return TypedResults.Empty;
             }
 
             return UsageView.Create(page);

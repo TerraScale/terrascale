@@ -17,8 +17,8 @@ public sealed class PasskeyListEndpoint(PasskeyCredentials passkeys, PlatformAut
 
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        var entries = await passkeys.ListAsync(caller, cancellationToken).ConfigureAwait(false);
-        return Results.Json(new PasskeyListBody([.. entries.Select(entry => new PasskeyItemBody(entry.CredentialId, entry.Name, entry.Aaguid, entry.CreatedAt, entry.LastUsedAt))]),
+        var entries = await passkeys.ListAsync(caller, cancellationToken);
+        return TypedResults.Json(new PasskeyListBody([.. entries.Select(entry => new PasskeyItemBody(entry.CredentialId, entry.Name, entry.Aaguid, entry.CreatedAt, entry.LastUsedAt))]),
             WebAuthnJson.Default.PasskeyListBody);
     }
 }

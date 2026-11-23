@@ -23,14 +23,14 @@ public sealed class AcceptOrganizationInvitationEndpoint(ProjectOrganizationDire
     {
         if (!this.HttpContext.Request.HasFormContentType || this.HttpContext.Request.Headers.Origin is not [{ } origin] || !SignInFlow.IsPublicOrigin(origin, options.PublicOrigin))
         {
-            return Results.StatusCode(403);
+            return TypedResults.StatusCode(403);
         }
 
         var tenant = Tenancy.Resolved(this.HttpContext);
         if (tenant is null || !Tenancy.IsProject(tenant)
             || await sessions.ResolveAsync(tenant, this.HttpContext.Request.Cookies[Tenancy.SessionCookie(tenant)], cancellationToken) is not { } live)
         {
-            return Results.Unauthorized();
+            return TypedResults.Unauthorized();
         }
 
         var org = await organizations.AcceptAsync(live.User, (await this.HttpContext.Request.ReadFormAsync(cancellationToken))["token"].ToString(), cancellationToken);

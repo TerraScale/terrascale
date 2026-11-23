@@ -51,7 +51,7 @@ public sealed class CreateProjectClientEndpoint(TenantDirectory tenants, IOpenId
         person = await proofs.ConsumeHeaderAsync(person, this.HttpContext.Request, "create_oauth_client", null, cancellationToken);
         var (client, secret) = await this.Tenants.CreateClientAsync(this.HttpContext, person, projectId,
             new(name, type, redirects, policy, origins, request.AllowAnonymous == true), applications, cancellationToken);
-        return Results.Json(Map(client, secret), ProjectTenantJson.Default.ClientBody, statusCode: StatusCodes.Status201Created)
+        return TypedResults.Json(Map(client, secret), ProjectTenantJson.Default.ClientBody, statusCode: StatusCodes.Status201Created)
             .WithLocation($"/v1/{projectId}/clients/{client.ClientId}");
     }
 }

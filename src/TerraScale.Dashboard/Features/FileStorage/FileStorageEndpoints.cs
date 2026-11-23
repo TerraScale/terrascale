@@ -3,8 +3,7 @@ using System.Text.Json;
 using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Platform.Datastar;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.FileStorage;
+using TerraScale.Dashboard.Platform.Clients;
 
 namespace TerraScale.Dashboard.Features.FileStorage
 {
@@ -53,13 +52,13 @@ namespace TerraScale.Dashboard.Features.FileStorage
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, "/storage", Results.BadRequest("Invalid form token."));
+                return RequestError.FormExpired(http, "/storage", TypedResults.BadRequest("Invalid form token."));
             }
 
             var bucket = form["bucket"].ToString();
@@ -120,7 +119,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
                                 return await Refused(StatusCodes.Status403Forbidden, Message(403, operation));
                             }
 
-                            return Results.Json(upload, FileStorageJson.Default.TerraBaseFileUrl);
+                            return TypedResults.Json(upload, ClientJson.Default.TerraBaseFileUrl);
                         }
                     case "complete":
                         if (await files.CompleteAsync(context, bucket, file, http.RequestAborted) is not Done)
@@ -128,7 +127,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
                             return await Refused(StatusCodes.Status403Forbidden, Message(403, operation));
                         }
 
-                        return Results.NoContent();
+                        return TypedResults.NoContent();
                     case "delete":
                         if (await files.DeleteAsync(context, bucket, file, http.RequestAborted) is not Done)
                         {
@@ -145,7 +144,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
                         http.Response.StatusCode = StatusCodes.Status303SeeOther;
                         http.Response.Headers.Location = signed.Url;
                         http.Response.Headers.CacheControl = "no-store";
-                        return Results.Empty;
+                        return TypedResults.Empty;
                 }
                 return HttpRedirects.SeeOther(bucket.Length == 0 ? "/storage" : BucketPath(bucket));
             }
@@ -158,7 +157,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
             {
                 if (operation is "upload" or "complete")
                 {
-                    return Results.Problem(message, statusCode: status);
+                    return TypedResults.Problem(message, statusCode: status);
                 }
 
                 http.Response.StatusCode = status;
@@ -219,7 +218,7 @@ namespace TerraScale.Dashboard.Features.FileStorage
             {
                 http.Response.StatusCode = StatusCodes.Status200OK;
                 await DatastarEvents.PatchElementsAsync(http, FileStorageBody.Create(page));
-                return Results.Empty;
+                return TypedResults.Empty;
             }
             var view = FileStorageView.Create(page);
             view.StatusCode = http.Response.StatusCode;

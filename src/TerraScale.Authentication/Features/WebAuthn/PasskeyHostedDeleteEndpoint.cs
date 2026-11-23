@@ -45,24 +45,24 @@ public sealed class PasskeyHostedDeleteEndpoint(Sessions sessions, PasskeyCreden
         }
 
         var id = this.HttpContext.Request.Form["id"].ToString();
-        var entries = await passkeys.ListAsync(live.User, cancellationToken).ConfigureAwait(false);
+        var entries = await passkeys.ListAsync(live.User, cancellationToken);
         if (entries.All(entry => entry.CredentialId != id))
         {
             return await SecurityFlow.RefusedAsync(this.HttpContext, sessions, mfa, live.User, ("Passkey not removed", "Reload the page and try again."), StatusCodes.Status409Conflict, cancellationToken);
         }
 
-        if (await PasskeyGuard.LastFactorAsync(platform, mfa, live.User.Id, entries.Count - 1, cancellationToken).ConfigureAwait(false))
+        if (await PasskeyGuard.LastFactorAsync(platform, mfa, live.User.Id, entries.Count - 1, cancellationToken))
         {
             return await SecurityFlow.RefusedAsync(this.HttpContext, sessions, mfa, live.User, ("Last passkey", "An organization you belong to requires two-factor authentication; add another passkey or an authenticator app first."), StatusCodes.Status409Conflict, cancellationToken);
         }
 
         var code = (form.Code ?? string.Empty).Replace(" ", string.Empty, StringComparison.Ordinal).Trim();
-        if (!await mfa.VerifyAsync(live.User, code, cancellationToken).ConfigureAwait(false))
+        if (!await mfa.VerifyAsync(live.User, code, cancellationToken))
         {
             return await SecurityFlow.RefusedAsync(this.HttpContext, sessions, mfa, live.User, ("That code is wrong or already used", "Enter the current code from your authenticator app, or an unused recovery code."), StatusCodes.Status401Unauthorized, cancellationToken);
         }
 
-        var removed = await passkeys.DeleteAsync(live.User, id, cancellationToken).ConfigureAwait(false);
+        var removed = await passkeys.DeleteAsync(live.User, id, cancellationToken);
         switch (removed)
         {
             case PasskeyCredentialEntry:

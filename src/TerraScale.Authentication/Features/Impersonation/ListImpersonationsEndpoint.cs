@@ -18,6 +18,6 @@ public sealed class ListImpersonationsEndpoint(TenantDirectory tenants, Platform
     {
         _ = caller.RequirePerson();
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
-        return Results.Json(new ImpersonationPage(await impersonations.ListAsync(project, cancellationToken)), ImpersonationJson.Default.ImpersonationPage);
+        return TypedResults.Json(new ImpersonationPage(await impersonations.ListAsync(project, cancellationToken)), ImpersonationJson.Default.ImpersonationPage);
     }
 }

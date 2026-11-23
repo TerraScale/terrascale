@@ -6,7 +6,6 @@ using TerraScale.Authentication.Features.Oidc;
 
 namespace TerraScale.Authentication.Hosting;
 
-/// <summary>Authentication shared by private APIs for the configured ts-dashboard confidential client.</summary>
 internal static class DashboardClientAuthentication
 {
     public static IResult? Refuse(HttpContext context, AuthOptions options)
@@ -47,8 +46,6 @@ internal static class DashboardClientAuthentication
             return false;
         }
 
-        // Both parts are form-urlencoded before encoding (RFC 6749 section 2.3.1). Hashing first keeps the comparison
-        // constant-time whatever the lengths.
         var id = System.Net.WebUtility.UrlDecode(credentials[..separator]);
         var secret = System.Net.WebUtility.UrlDecode(credentials[(separator + 1)..]);
         var match = CryptographicOperations.FixedTimeEquals(SHA256.HashData(Encoding.UTF8.GetBytes(secret)), SHA256.HashData(Encoding.UTF8.GetBytes(dashboard.Secret)));

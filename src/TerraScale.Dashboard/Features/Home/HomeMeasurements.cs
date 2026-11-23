@@ -1,7 +1,5 @@
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.Dashboard.Platform.Rpc;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Usage;
+using TerraScale.Dashboard.Platform.Clients;
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Analytics;
 using TerraScale.Dashboard.Features.Usage;
@@ -45,8 +43,7 @@ namespace TerraScale.Dashboard.Features.Home
         }
     }
 
-    // TerraBase owns usage and analytics; ts-status owns regional latency observations.
-    public sealed partial class TerraBaseHomeMeasurements(IHttpClientFactory http, TerraBaseRpcClient rpc, TimeProvider time,
+    public sealed partial class TerraBaseHomeMeasurements(IHttpClientFactory http, TerraBaseHttpClient terraBase, TimeProvider time,
         TerraScale.Dashboard.Features.ApiKeys.ApiKeyService keys, IAnalyticsBackend analyticsBackend,
         TerraScale.Dashboard.Features.Auth.IProjectAccessTokens tokens) : IHomeMeasurements
     {
@@ -87,7 +84,6 @@ namespace TerraScale.Dashboard.Features.Home
             {
                 return;
             }
-            // TerraBase registers a project with its first database, so an empty project has no activity (and is 404 there).
             if (context.Project.Databases.Count == 0)
             {
                 result.ActivityMeasured = true;
@@ -98,19 +94,20 @@ namespace TerraScale.Dashboard.Features.Home
                 var now = time.GetUtcNow().UtcDateTime;
                 var hour = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0, DateTimeKind.Utc);
                 var start = range switch { "1h" => hour, "24h" => hour.AddHours(-23), "30d" => now.Date.AddDays(-29), _ => hour.AddHours(-167) };
-                // The project usage route with a project token, as the Usage page reads it (UsageBackend).
                 var token = await tokens.GetAsync(context.Session, context.Organization.Id, context.Project.Id, ["databases:read"], cancellationToken);
-                TerraBaseProjectUsage usage;
-                try
+                var answer = await terraBase.GetProjectUsageAsync(ServiceCaller.User(token), context.Project.Id, new DateTimeOffset(start), time.GetUtcNow(), cancellationToken);
+                var usage = answer switch
                 {
-                    usage = await rpc.User<IUsageService>(token).WithCancellationToken(cancellationToken)
-                        .GetProjectUsageAsync(context.Project.Id, range == "30d" ? "day" : "hour", new DateTimeOffset(start), null);
-                }
-                catch (TerraBaseNotFoundException)
+                    TerraBaseProjectUsage answered => answered,
+                    TerraBaseRefusal { Status: StatusCodes.Status404NotFound } => null,
+                    TerraBaseRefusal refusal => throw refusal.Exception(),
+                };
+                if (usage is null)
                 {
                     return;
                 }
-                using var data = JsonSerializer.SerializeToDocument(usage, UsageJson.Default.TerraBaseProjectUsage);
+
+                using var data = JsonSerializer.SerializeToDocument(usage, ClientJson.Default.TerraBaseProjectUsage);
                 if (!data.RootElement.TryGetProperty("period", out var period) || period.ValueKind != JsonValueKind.Object)
                 {
                     return;
@@ -125,7 +122,6 @@ namespace TerraScale.Dashboard.Features.Home
                 var from = period.GetProperty("from").GetDateTimeOffset();
                 var to = period.GetProperty("to").GetDateTimeOffset();
                 var granularity = range == "30d" ? "day" : "hour";
-                // TerraBase rounds the period's end up to the end of the bucket holding now.
                 if (from != new DateTimeOffset(start) || to <= from || to > time.GetUtcNow() + (range == "30d" ? TimeSpan.FromDays(1) : TimeSpan.FromHours(1)) ||
                     period.GetProperty("granularity").GetString() != granularity)
                 {

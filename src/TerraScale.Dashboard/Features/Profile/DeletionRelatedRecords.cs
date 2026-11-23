@@ -1,38 +1,39 @@
-using Microsoft.EntityFrameworkCore;
+using Dapper;
 using TerraScale.Dashboard.Platform.Persistence;
 
-namespace TerraScale.Dashboard.Features.Profile
+namespace TerraScale.Dashboard.Features.Profile;
+
+public sealed class DeletionRelatedRecords(DashboardDb storage, AccountStore accounts)
 {
-    public sealed class DeletionRelatedRecords(IDbContextFactory<DashboardDbContext> storage, AccountStore accounts)
+    private const string EraseOrganization = """
+        DELETE FROM internal_billing WHERE organization_id = @OrganizationId;
+        DELETE FROM billing_changes WHERE organization_id = @OrganizationId;
+        DELETE FROM background_jobs WHERE id = @Plan OR id IN (SELECT 'allowance/' || id FROM allowance_alerts WHERE organization_id = @OrganizationId);
+        DELETE FROM allowance_alerts WHERE organization_id = @OrganizationId
+        """;
+
+    private const string EraseProject = "DELETE FROM background_jobs WHERE id LIKE @Prefix || '%' OR id = @Alerts";
+
+    public Task CleanAccountAsync(string subject, CancellationToken cancellationToken) =>
+        Data.SqlWorkspace.EraseUserAsync(storage, subject, cancellationToken);
+
+    public async Task CleanOrganizationAsync(string organizationId, CancellationToken cancellationToken)
     {
-        public async Task CleanAccountAsync(string subject, CancellationToken cancellationToken)
+        await using (var connection = await storage.OpenAsync(cancellationToken))
         {
-            await Features.Data.SqlWorkspace.EraseAsync(storage, row => row.UserId == subject, cancellationToken);
+            await connection.ExecuteAsync(EraseOrganization, new { OrganizationId = organizationId, Plan = "plan/" + organizationId });
         }
 
-        public async Task CleanOrganizationAsync(string organizationId, CancellationToken cancellationToken)
-        {
-            await using (var db = await storage.CreateDbContextAsync(cancellationToken))
-            {
-                await db.InternalBilling.Where(row => row.OrganizationId == organizationId).ExecuteDeleteAsync(cancellationToken);
-                await db.BillingChanges.Where(row => row.OrganizationId == organizationId).ExecuteDeleteAsync(cancellationToken);
-                var allowances = await db.AllowanceAlerts.AsNoTracking().Where(row => row.OrganizationId == organizationId)
-                    .Select(row => "allowance/" + row.Id).ToListAsync(cancellationToken);
-                var plan = "plan/" + organizationId;
-                await db.BackgroundJobs.Where(row => row.Id == plan || allowances.Contains(row.Id)).ExecuteDeleteAsync(cancellationToken);
-                await db.AllowanceAlerts.Where(row => row.OrganizationId == organizationId).ExecuteDeleteAsync(cancellationToken);
-            }
+        await accounts.RemoveNotificationsAsync(organizationId, null, cancellationToken);
+    }
 
-            await accounts.RemoveNotificationsAsync(organizationId, null, cancellationToken);
+    public async Task CleanProjectAsync(string organizationId, string projectId, CancellationToken cancellationToken)
+    {
+        await using (var connection = await storage.OpenAsync(cancellationToken))
+        {
+            await connection.ExecuteAsync(EraseProject, new { Prefix = "log-drain/" + projectId + "/", Alerts = "alerts/" + projectId });
         }
 
-        public async Task CleanProjectAsync(string organizationId, string projectId, CancellationToken cancellationToken)
-        {
-            await using var db = await storage.CreateDbContextAsync(cancellationToken);
-            var prefix = "log-drain/" + projectId + "/";
-            var alerts = "alerts/" + projectId;
-            await db.BackgroundJobs.Where(row => row.Id.StartsWith(prefix) || row.Id == alerts).ExecuteDeleteAsync(cancellationToken);
-            await accounts.RemoveNotificationsAsync(organizationId, projectId, cancellationToken);
-        }
+        await accounts.RemoveNotificationsAsync(organizationId, projectId, cancellationToken);
     }
 }

@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+using Dapper;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Storage;
@@ -17,14 +17,13 @@ public sealed class PlatformBootstrap(AuthData data, Users users, PlatformDirect
 
     public async Task EnsureAsync(CancellationToken cancellationToken)
     {
-        using var home = HomeReads.Begin();
         var instance = PlatformDirectory.Instance;
-        var owner = await users.FindByEmailAsync(instance, ownerEmail, cancellationToken).ConfigureAwait(false)
-            ?? await users.CreateAsync(instance, ownerEmail, cancellationToken).ConfigureAwait(false)
-            ?? await users.FindByEmailAsync(instance, ownerEmail, cancellationToken).ConfigureAwait(false)
+        var owner = await users.FindByEmailAsync(instance, ownerEmail, cancellationToken)
+            ?? await users.CreateAsync(instance, ownerEmail, cancellationToken)
+            ?? await users.FindByEmailAsync(instance, ownerEmail, cancellationToken)
             ?? throw new InvalidOperationException("Platform bootstrap owner could not be read after creation.");
-        await this.EnsureOrganizationAsync(owner, cancellationToken).ConfigureAwait(false);
-        await this.EnsureTenantAsync(owner, cancellationToken).ConfigureAwait(false);
+        await this.EnsureOrganizationAsync(owner, cancellationToken);
+        await this.EnsureTenantAsync(owner, cancellationToken);
     }
 
     private async Task EnsureOrganizationAsync(UserRecord owner, CancellationToken cancellationToken)
@@ -32,11 +31,11 @@ public sealed class PlatformBootstrap(AuthData data, Users users, PlatformDirect
         var instance = PlatformDirectory.Instance;
         for (var attempt = 0; attempt < 4; attempt++)
         {
-            var existing = await directory.OrganizationAsync(OrganizationId, cancellationToken).ConfigureAwait(false);
+            var existing = await directory.OrganizationAsync(OrganizationId, cancellationToken);
             if (existing is not null)
             {
-                var auth = await directory.ProjectAsync(AuthProjectId, cancellationToken).ConfigureAwait(false);
-                var dashboard = await directory.ProjectAsync(DashboardProjectId, cancellationToken).ConfigureAwait(false);
+                var auth = await directory.ProjectAsync(AuthProjectId, cancellationToken);
+                var dashboard = await directory.ProjectAsync(DashboardProjectId, cancellationToken);
                 if (existing.Value.CreatedBy != owner.Id
                     || auth?.Value.OrganizationId != OrganizationId || auth.Value.CreatedBy != owner.Id
                     || dashboard?.Value.OrganizationId != OrganizationId || dashboard.Value.CreatedBy != owner.Id)
@@ -60,7 +59,7 @@ public sealed class PlatformBootstrap(AuthData data, Users users, PlatformDirect
             }
 
             operations.Add(directory.Audit(OrganizationId, owner.Id, "platform.bootstrapped"));
-            if (await data.SaveAsync(operations, cancellationToken).ConfigureAwait(false))
+            if (await data.SaveAsync(operations, cancellationToken))
             {
                 return;
             }
@@ -71,7 +70,7 @@ public sealed class PlatformBootstrap(AuthData data, Users users, PlatformDirect
 
     private async Task EnsureTenantAsync(UserRecord owner, CancellationToken cancellationToken)
     {
-        if (await this.TenantExistsAsync(cancellationToken).ConfigureAwait(false))
+        if (await this.TenantExistsAsync(cancellationToken))
         {
             return;
         }
@@ -79,16 +78,16 @@ public sealed class PlatformBootstrap(AuthData data, Users users, PlatformDirect
         var now = clock.GetUtcNow();
         var organization = new OrganizationRecord(PlatformTenant.Id, PlatformDirectory.Instance, PlatformTenant.Name, owner.Id, now, Owners: 0, Projects: 1);
         var project = new ProjectRecord(PlatformTenant.Id, PlatformDirectory.Instance, PlatformTenant.Id, PlatformTenant.Name, owner.Id, now);
-        if (!await data.SaveAsync([Change.Insert(organization), Change.Insert(project)], cancellationToken).ConfigureAwait(false)
-            && !await this.TenantExistsAsync(cancellationToken).ConfigureAwait(false))
+        if (!await data.SaveAsync([Change.Insert(organization), Change.Insert(project)], cancellationToken)
+            && !await this.TenantExistsAsync(cancellationToken))
         {
             throw new InvalidOperationException("Platform bootstrap could not commit the platform tenant row.");
         }
     }
 
     private async Task<bool> TenantExistsAsync(CancellationToken cancellationToken) =>
-        await data.ReadAsync((db, token) => db.Projects.IgnoreQueryFilters().Where(project => project.Id == PlatformTenant.Id)
-            .Select(project => project.OrganizationId).SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false) switch
+        await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<string>(
+            "SELECT organization_id FROM projects WHERE id = @tenant", new { tenant = PlatformTenant.Id }), cancellationToken) switch
         {
             null => false,
             PlatformTenant.Id => true,

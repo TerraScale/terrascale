@@ -9,15 +9,10 @@ import (
 	"strings"
 )
 
-// Regions is the ordered live serving-region catalog, used for database placement.
-// Region ids are lowercase and may include regions unknown when this SDK shipped.
 type Regions struct {
 	Regions []string `json:"regions"`
 }
 
-// ListRegions reads anonymous GET /v1/regions at the fixed global API origin
-// (or explicit test origin). It sends once, with no credentials, cache, regional
-// discovery or failover. The server permits HTTP caching for five seconds.
 func (c *Client) ListRegions(ctx context.Context) (*Regions, error) {
 	if ctx == nil {
 		return nil, &ValidationError{Field: "context", Message: "cannot be nil"}
@@ -63,7 +58,6 @@ func (r *Regions) decodeHTTPResponse(status int, body []byte) error {
 	return nil
 }
 
-// Mirrors TerraBaseOptions.IsRegion at the pinned producer; not a serving list.
 func isRegionID(region string) bool {
 	if len(region) == 0 || len(region) > 63 || region[0] < 'a' || region[0] > 'z' || region[len(region)-1] == '-' {
 		return false
@@ -76,7 +70,6 @@ func isRegionID(region string) bool {
 	return true
 }
 
-// Reject non-ASCII characters before Unicode case normalization can change them.
 func normalizeRegionCode(input string) (RegionCode, bool) {
 	input = strings.TrimSpace(input)
 	for _, ch := range input {

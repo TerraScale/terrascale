@@ -21,6 +21,8 @@ public sealed record DeletionJob(
     string? ClosureGeneration = null,
     DateTimeOffset? DashboardVerifiedAt = null)
 {
+    public string? Version { get; init; }
+
     public static readonly TimeSpan CredentialBound = TimeSpan.FromDays(15);
 
     public static string Key(string instanceId, string scope, string subjectId) => AuthIds.Derived(instanceId, "deletion-" + scope, subjectId);

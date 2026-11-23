@@ -1,10 +1,10 @@
+using System.Data;
 using TerraScale.Endpoints;
 using RequestIdentity = TerraScale.Dashboard.Platform.Http.RequestIdentity;
 using ExceptionFrames = TerraScale.Dashboard.Platform.Http.ExceptionFrames;
 using TerraScale.Dashboard.Platform.Observability;
 using System.Security.Cryptography;
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Routing;
 using TerraScale.Dashboard.Features.Auth;
@@ -40,7 +40,7 @@ using TerraScale.Dashboard.Platform.Assets;
 using TerraScale.Dashboard.Platform.Development;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.Mcp;
-using TerraScale.Dashboard.Platform.Rpc;
+using TerraScale.Dashboard.Platform.Clients;
 using TerraScale.Dashboard.Platform.TsAuth;
 using TerraScale.Dashboard.Common.UI;
 
@@ -50,7 +50,6 @@ namespace TerraScale.Dashboard
     {
         private const string ConflictRetry = "This changed in another tab or request at the same time. Try again.";
 
-        // The service override is for isolated test hosts; production has one service graph.
         public static WebApplication Build(string[] args, Action<WebApplicationBuilder>? configureTestHost = null)
         {
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -58,26 +57,21 @@ namespace TerraScale.Dashboard
                 Args = args,
                 WebRootPath = "web/static"
             });
-            // The console formatter's fixed setting retains sanitized request/trace scopes in structured timings.
-            // UTC timestamps place each line against ts-auth and TerraBase logs and ts-orch rollouts.
             builder.Logging.AddJsonConsole(options =>
             {
                 options.IncludeScopes = true;
                 options.UseUtcTimestamp = true;
                 options.TimestampFormat = "yyyy-MM-ddTHH:mm:ss.fffZ";
             });
-            // A stalled stdout drops log lines instead of blocking every request on the full console queue.
             builder.Services.Configure<Microsoft.Extensions.Logging.Console.ConsoleLoggerOptions>(options =>
                 options.QueueFullMode = Microsoft.Extensions.Logging.Console.ConsoleLoggerQueueFullMode.DropWrite);
             builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
             builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
-            builder.Logging.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.Warning);
             builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 64 * 1024);
             builder.Services.AddSafeHttpLogging();
             builder.Services.AddSingleton<AssetUrls>();
             builder.Services.AddResponseCompression(options =>
             {
-                // ASP.NET's required third-party setting: the loopback TLS edge forwards HTTPS requests.
                 options.EnableForHttps = true;
             });
             builder.Services.AddProblemDetails(options => options.CustomizeProblemDetails = problem =>
@@ -87,8 +81,8 @@ namespace TerraScale.Dashboard
             builder.Services.AddSingleton<IDashboardIdentity, DashboardIdentity>();
             builder.Services.AddDashboardStorage();
             builder.Services.AddSingleton<TerraBasePlanSync>();
-            builder.Services.AddSingleton<DashboardStateInitializer>();
-            builder.Services.AddHostedService(services => services.GetRequiredService<DashboardStateInitializer>());
+            builder.Services.AddSingleton<DashboardDbUpRunner>();
+            builder.Services.AddHostedService(services => services.GetRequiredService<DashboardDbUpRunner>());
             builder.Services.AddSingleton<DependencyReadiness>();
             builder.Services.AddSingleton<DashboardSessions>();
             builder.Services.AddAccountFeatures();
@@ -114,6 +108,7 @@ namespace TerraScale.Dashboard
             builder.Services.AddTerraScaleEndpoints(
             [
                 EndpointRegistration.Create<DatabaseTtlEndpoint>(),
+                EndpointRegistration.Create<WholeDatabaseRecoveryEndpoint>(),
                 EndpointRegistration.Create<HealthzEndpoint>(),
                 EndpointRegistration.Create<ReadyzEndpoint>(),
                 EndpointRegistration.Create<HealthReadyEndpoint>(),
@@ -297,15 +292,12 @@ namespace TerraScale.Dashboard
             builder.Services.AddTransient<ServerTiming.Handler>();
             builder.Services.AddTransient<RequestIdentity.Handler>();
             builder.Services.AddTransient<PlatformTransport.PreferHttp2>();
-            // The pool itself recycles connections for DNS (PlatformTransport), so the factory keeps one handler and its warm pool.
             builder.Services.AddHttpClient("platform", client => client.Timeout = TimeSpan.FromSeconds(30))
                 .ConfigurePrimaryHttpMessageHandler(PlatformTransport.CreateHandler)
                 .SetHandlerLifetime(Timeout.InfiniteTimeSpan)
                 .AddHttpMessageHandler<ServerTiming.Handler>()
                 .AddHttpMessageHandler<RequestIdentity.Handler>()
                 .AddHttpMessageHandler<PlatformTransport.PreferHttp2>();
-            // TerraBase is reached only over MagicOnion on its private listener (Platform/Rpc).
-            builder.Services.AddSingleton<TerraBaseRpcClient>();
             builder.Services.AddSingleton(services => new TsAuthClient(services.GetRequiredService<IHttpClientFactory>().CreateClient("platform")));
             configureTestHost?.Invoke(builder);
             var app = builder.Build();
@@ -323,8 +315,6 @@ namespace TerraScale.Dashboard
                 return slo.ObserveAsync(context, next);
             });
 
-            // ts-orch's TLS edge on the same host proxies over loopback. Only loopback peers (the default known
-            // proxies) may set the scheme and client IP; a browser's own forwarding headers never reach past the edge.
             app.UseForwardedHeaders(new ForwardedHeadersOptions { ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto });
             var timingLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("ServerTiming");
             app.Use((context, next) => RequestIdentity.MiddlewareAsync(context, next, timingLogger));
@@ -346,8 +336,6 @@ namespace TerraScale.Dashboard
                 var fileOrigins = fileStorage ? " https://*.r2.cloudflarestorage.com" : "";
                 var styles = reference ? $"style-src 'self' 'nonce-{nonce}'; style-src-attr 'unsafe-inline'" :
                     editorStyles ? $"style-src 'self' 'nonce-{nonce}'; style-src-attr 'unsafe-inline'; worker-src 'self'" : "style-src 'self'";
-                // form-action covers the redirects that follow forms: sign-out to ts-auth, checkout and portal to Stripe,
-                // and an MCP consent's return to the client's registered redirect URI.
                 string Policy()
                 {
                     return $"default-src 'none'; script-src 'self' 'nonce-{nonce}'; {(context.Items.ContainsKey("auth-branding") ? $"style-src 'self' 'nonce-{nonce}'" : styles)}; " +
@@ -357,7 +345,6 @@ namespace TerraScale.Dashboard
 
                 context.Response.OnStarting(() =>
                 {
-                    // Error handling can clear headers; preserve endpoint policies and restore the baseline before writing.
                     var headers = context.Response.Headers;
                     if (headers.Location is { Count: 1 } && headers.Location[0] is { } location)
                     {
@@ -393,12 +380,11 @@ namespace TerraScale.Dashboard
                 catch (Exception error) when (!context.Response.HasStarted &&
                                               (error is OrganizationMfaRequiredException || error is AccountAccessException { Code: TsAuthGateway.MfaRequiredCode }))
                 {
-                    // An organization that requires two-factor blocks a member without it with a page, never a failure.
                     var blocked = error as OrganizationMfaRequiredException;
                     var message = blocked?.Message ?? "This organization requires two-factor authentication.";
                     if (AcceptsJson(context))
                     {
-                        await Results.Problem(message, statusCode: StatusCodes.Status403Forbidden, extensions: new Dictionary<string, object?>
+                        await TypedResults.Problem(message, statusCode: StatusCodes.Status403Forbidden, extensions: new Dictionary<string, object?>
                         { ["code"] = TsAuthGateway.MfaRequiredCode, ["manageUrl"] = TsAuthGateway.ManageMfaUrl }).ExecuteAsync(context);
                         return;
                     }
@@ -419,7 +405,6 @@ namespace TerraScale.Dashboard
                 catch (Exception error) when (error is HttpRequestException or IOException or JsonException or TimeoutException or Stripe.StripeException ||
                                               error is OperationCanceledException && !context.RequestAborted.IsCancellationRequested)
                 {
-                    // Platform failures never select a demo store or leak response bodies/secrets.
                     app.Logger.DashboardDependencyFailedOn((context.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText ?? "[unmatched]",
                         error.GetType().Name, (int?)(error as HttpRequestException)?.StatusCode);
                     if (context.Response.HasStarted)
@@ -429,14 +414,14 @@ namespace TerraScale.Dashboard
 
                     if (AcceptsJson(context))
                     {
-                        await Results.Problem("A TerraScale service is temporarily unavailable. Try again shortly.", statusCode: StatusCodes.Status503ServiceUnavailable).ExecuteAsync(context);
+                        await TypedResults.Problem("A TerraScale service is temporarily unavailable. Try again shortly.", statusCode: StatusCodes.Status503ServiceUnavailable).ExecuteAsync(context);
                         return;
                     }
                     var view = Common.UI.Slices.ServiceUnavailable.Create(new DocumentModel("Service unavailable", nonce));
                     view.StatusCode = StatusCodes.Status503ServiceUnavailable;
                     await ((IResult)view).ExecuteAsync(context);
                 }
-                catch (DbUpdateConcurrencyException) when (!context.Response.HasStarted && !context.RequestAborted.IsCancellationRequested)
+                catch (DBConcurrencyException) when (!context.Response.HasStarted && !context.RequestAborted.IsCancellationRequested)
                 {
                     app.Logger.DashboardRequestConflicted((context.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText ?? "[unmatched]");
                     context.Response.Clear();
@@ -453,10 +438,8 @@ namespace TerraScale.Dashboard
             app.Use((context, next) => context.Request.Path.StartsWithSegments("/metrics")
                 ? slo.ScrapeAsync(context, context.Request.Path == "/metrics" && HttpMethods.IsGet(context.Request.Method) && context.Items[privateScrapeKey] is true)
                 : next(context));
-            // Browser forms and API clients both get an actionable body for otherwise empty failures.
             app.UseStatusCodePages(status => RequestError.Response(status.HttpContext,
                 status.HttpContext.Response.StatusCode).ExecuteAsync(status.HttpContext));
-            // Compress public assets only; signed-in HTML, secrets and streaming responses keep their own delivery.
             app.UseWhen(context => context.Request.Path.StartsWithSegments("/css") || context.Request.Path.StartsWithSegments("/js") ||
                 context.Request.Path.StartsWithSegments("/brand") || context.Request.Path.StartsWithSegments("/flags"),
                 assets => assets.UseResponseCompression());
@@ -472,9 +455,7 @@ namespace TerraScale.Dashboard
                             : "public,max-age=0,must-revalidate";
                 }
             });
-            // Until the state schema is initialized only health probes and assets answer; every other request is the
-            // dependency 503 above, so nothing is admitted against a store that is not there yet.
-            var stateInitializer = app.Services.GetService<DashboardStateInitializer>();
+            var stateInitializer = app.Services.GetService<DashboardDbUpRunner>();
             app.Use((context, next) => stateInitializer is null or { Initialized: true } || context.Request.Path.StartsWithSegments("/healthz") ||
                 context.Request.Path.StartsWithSegments("/readyz") || context.Request.Path.StartsWithSegments("/health")
                 ? next(context) : throw new IOException("Dashboard state is initializing."));
@@ -486,17 +467,20 @@ namespace TerraScale.Dashboard
             }
             app.MapDashboardContracts();
             app.MapTerraScaleEndpoints();
-            app.MapFallback(async (HttpContext context, DashboardSessions sessions, AccountService accounts) =>
+            app.MapFallback(async context =>
             {
                 context.Response.StatusCode = StatusCodes.Status404NotFound;
                 if (context.Request.Method != "GET" || context.Request.Path.StartsWithSegments("/api") ||
                     context.Request.Headers.Accept.Any(value => value is not null && (value.Contains("application/json") || value.Contains("text/event-stream"))) ||
                     context.Request.Headers.ContainsKey("Datastar-Request"))
                 {
-                    return (IResult)Results.NotFound();
+                    await TypedResults.NotFound().ExecuteAsync(context);
+                    return;
                 }
 
-                return await Features.NotFound.NotFoundEndpoints.PageAsync(context, sessions, accounts);
+                var page = await Features.NotFound.NotFoundEndpoints.PageAsync(context, context.RequestServices.GetRequiredService<DashboardSessions>(),
+                    context.RequestServices.GetRequiredService<AccountService>());
+                await page.ExecuteAsync(context);
             });
             return app;
         }

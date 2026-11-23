@@ -1,4 +1,4 @@
-using TerraScale.TerraBase.Contracts;
+using TerraScale.Dashboard.Platform.Clients;
 using System.Globalization;
 using TerraScale.Dashboard.Common.Formatting;
 

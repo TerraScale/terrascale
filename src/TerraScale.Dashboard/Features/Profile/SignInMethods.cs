@@ -10,18 +10,18 @@ namespace TerraScale.Dashboard.Features.Profile
             var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, "/profile", Results.StatusCode(403));
+                return RequestError.FormExpired(http, "/profile", TypedResults.StatusCode(403));
             }
 
             if (!TsAuthGateway.IsSignInProvider(provider))
             {
-                return Results.NotFound();
+                return TypedResults.NotFound();
             }
 
             try
@@ -41,8 +41,6 @@ namespace TerraScale.Dashboard.Features.Profile
             {
                 return await FailureAsync("Sign-in methods are unavailable right now. Refresh the page before trying again.", 503);
             }
-            // ts-auth has already invalidated every previous grant, including its hosted cookie.
-            // Remove local sessions without trying to revoke the now-invalid bearer again.
             await sessions.RevokeUserAsync(context.UserId, http.RequestAborted);
             await sessions.EndAsync(http);
             return HttpRedirects.SeeOther("/login?returnTo=%2Fprofile");
@@ -65,18 +63,18 @@ namespace TerraScale.Dashboard.Features.Profile
             var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, "/profile", Results.StatusCode(403));
+                return RequestError.FormExpired(http, "/profile", TypedResults.StatusCode(403));
             }
 
             if (!TsAuthGateway.IsSignInProvider(provider))
             {
-                return Results.NotFound();
+                return TypedResults.NotFound();
             }
 
             try

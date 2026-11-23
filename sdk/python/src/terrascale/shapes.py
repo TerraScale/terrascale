@@ -84,13 +84,16 @@ class AsyncShape:
                 raise ValueError("columns must be a non-empty sequence of distinct column names")
             self._filter["columns"] = ",".join(columns)
         self._client = client
+        self._database = database
         self._call = _spec.read_table_shape(client.project, database, table)
         self._hints_call = _spec.connect_shape_hints(client.project, database, table)
 
     async def _headers(self) -> dict[str, str]:
         bearer = self._client._bearer()
         token = await bearer if isinstance(bearer, Awaitable) else bearer
-        return {**self._client._headers, "Authorization": f"Bearer {token}"}
+        known = self._client._bookmarks.get(self._database)
+        causal = {_spec.BOOKMARK: known} if known else {}
+        return {**self._client._headers, **causal, "Authorization": f"Bearer {token}"}
 
     async def _read(self, query: dict[str, str]) -> httpx.Response:
         result = self._client._http.request("GET", self._call.url(self._client.base_url), params=query,

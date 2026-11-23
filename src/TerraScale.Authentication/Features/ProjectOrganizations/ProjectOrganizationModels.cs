@@ -4,16 +4,32 @@ using System.Text.Json.Serialization;
 namespace TerraScale.Authentication.Features.ProjectOrganizations;
 
 public sealed record ProjectOrganizationRecord(string ProjectId, string Id, string Name, string Slug, string? ImageUrl,
-    JsonElement PublicMetadata, JsonElement PrivateMetadata, int? MaxMembers, string DomainJoin, int Members, int Admins, DateTimeOffset CreatedAt);
+    JsonElement PublicMetadata, JsonElement PrivateMetadata, int? MaxMembers, string DomainJoin, int Members, int Admins, DateTimeOffset CreatedAt)
+{
+    public string? Version { get; init; }
+}
 
-public sealed record ProjectOrganizationMembership(string ProjectId, string OrganizationId, string UserId, string Role, DateTimeOffset CreatedAt);
+public sealed record ProjectOrganizationMembership(string ProjectId, string OrganizationId, string UserId, string Role, DateTimeOffset CreatedAt)
+{
+    [JsonIgnore]
+    public string? Version { get; init; }
+}
 
 public sealed record ProjectOrganizationInvitation(string ProjectId, string OrganizationId, string Id, string Email, string Role,
-    string TokenHash, string Status, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt);
+    string TokenHash, string Status, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt)
+{
+    public string? Version { get; init; }
+}
 
-public sealed record ProjectOrganizationDomain(string ProjectId, string OrganizationId, string Domain, string VerificationToken, DateTimeOffset? VerifiedAt, DateTimeOffset? CheckedAt = null, int FailedChecks = 0, DateTimeOffset? LeaseUntil = null);
+public sealed record ProjectOrganizationDomain(string ProjectId, string OrganizationId, string Domain, string VerificationToken, DateTimeOffset? VerifiedAt, DateTimeOffset? CheckedAt = null, int FailedChecks = 0, DateTimeOffset? LeaseUntil = null)
+{
+    public string? Version { get; init; }
+}
 
-public sealed record ProjectOrganizationDismissal(string ProjectId, string OrganizationId, string UserId);
+public sealed record ProjectOrganizationDismissal(string ProjectId, string OrganizationId, string UserId)
+{
+    public string? Version { get; init; }
+}
 
 public sealed record ProjectOrganizationBody(string Id, string Name, string Slug, string? ImageUrl, JsonElement PublicMetadata,
     JsonElement PrivateMetadata, int? MaxMembers, string DomainJoin, DateTimeOffset CreatedAt);

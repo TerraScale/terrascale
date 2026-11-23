@@ -90,7 +90,7 @@ internal static class MachineClients
         var principal = new ClaimsPrincipal(identity).SetScopes(scopes).SetResources(resources)
             .SetAccessTokenLifetime(TimeSpan.FromMinutes(policy.TokenLifetimeMinutes));
         principal.SetDestinations(_ => [Destinations.AccessToken]);
-        return Results.SignIn(principal, null, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
+        return TypedResults.SignIn(principal, null, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
     }
 }
 

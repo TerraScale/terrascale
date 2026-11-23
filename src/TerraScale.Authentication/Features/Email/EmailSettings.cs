@@ -1,20 +1,13 @@
+using Dapper;
 using System.Net.Mail;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using TerraScale.Authentication.Contracts;
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Storage;
 
 namespace TerraScale.Authentication.Features.Email;
 
-/// <summary>The editable copy of one email kind in one locale. In an override, <see langword="null"/> keeps the default.</summary>
-/// <param name="Subject">Subject line.</param>
-/// <param name="Preheader">Inbox preview line.</param>
-/// <param name="Heading">Heading.</param>
-/// <param name="Body">Body text: a blank line starts a paragraph, a newline breaks a line.</param>
-/// <param name="Button">Button label (link kinds only).</param>
-/// <param name="Footnote">The security note at the end of the card.</param>
 public sealed record EmailTemplateFields(
     [property: JsonPropertyName("subject")] string? Subject = null,
     [property: JsonPropertyName("preheader")] string? Preheader = null,
@@ -23,101 +16,66 @@ public sealed record EmailTemplateFields(
     [property: JsonPropertyName("button")] string? Button = null,
     [property: JsonPropertyName("footnote")] string? Footnote = null);
 
-/// <summary>An instance's email branding. Every field is optional: <see langword="null"/> keeps the default.</summary>
 public sealed record EmailBranding
 {
-    /// <summary>Product name, shown as <c>{{ app_name }}</c> and as the logo's alt text.</summary>
     [JsonPropertyName("brand_name")]
     public string? BrandName { get; init; }
 
-    /// <summary>HTTPS URL of a PNG, JPEG or GIF logo for light backgrounds. Needs <see cref="LogoWidth"/> and <see cref="LogoHeight"/>.</summary>
     [JsonPropertyName("logo_url")]
     public string? LogoUrl { get; init; }
 
-    /// <summary>HTTPS URL of the logo for dark backgrounds; the light logo is used when unset.</summary>
     [JsonPropertyName("logo_dark_url")]
     public string? LogoDarkUrl { get; init; }
 
-    /// <summary>Logo width in CSS pixels, 16 to 400.</summary>
     [JsonPropertyName("logo_width")]
     public int? LogoWidth { get; init; }
 
-    /// <summary>Logo height in CSS pixels, 16 to 120.</summary>
     [JsonPropertyName("logo_height")]
     public int? LogoHeight { get; init; }
 
-    /// <summary>HTTPS URL of a square icon, shown with the brand name when there is no logo.</summary>
     [JsonPropertyName("icon_url")]
     public string? IconUrl { get; init; }
 
-    /// <summary>Button colour, <c>#rrggbb</c>; the button text is black or white, whichever contrasts more.</summary>
     [JsonPropertyName("primary_color")]
     public string? PrimaryColor { get; init; }
 
-    /// <summary>Link and code-box colour, <c>#rrggbb</c>; links are darkened or lightened until they reach 4.5:1.</summary>
     [JsonPropertyName("accent_color")]
     public string? AccentColor { get; init; }
 
-    /// <summary><c>auto</c> (follow the reader's mode), <c>light</c> or <c>dark</c>.</summary>
     [JsonPropertyName("theme")]
     public string? Theme { get; init; }
 
-    /// <summary><c>rounded</c>, <c>pill</c> or <c>square</c>.</summary>
     [JsonPropertyName("button_style")]
     public string? ButtonStyle { get; init; }
 
-    /// <summary>Footer text, for example the company name and postal address; newlines are kept.</summary>
     [JsonPropertyName("footer_text")]
     public string? FooterText { get; init; }
 
-    /// <summary>Support address, shown in the footer and as <c>{{ support_email }}</c>.</summary>
     [JsonPropertyName("support_email")]
     public string? SupportEmail { get; init; }
 
-    /// <summary>HTTPS help page, shown in the footer when there is no support address.</summary>
     [JsonPropertyName("support_url")]
     public string? SupportUrl { get; init; }
 
-    /// <summary>HTTPS website, linked in the footer.</summary>
     [JsonPropertyName("website_url")]
     public string? WebsiteUrl { get; init; }
 
-    /// <summary>Display name of the From address.</summary>
     [JsonPropertyName("sender_name")]
     public string? SenderName { get; init; }
 
-    /// <summary>Reply-To address.</summary>
     [JsonPropertyName("reply_to")]
     public string? ReplyTo { get; init; }
 }
 
-/// <summary>Who made a change, as the calling dashboard reports it.</summary>
-/// <param name="Id">The dashboard's user id.</param>
-/// <param name="Email">The user's email, if known.</param>
 public sealed record EmailActor(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("email")] string? Email = null);
 
-/// <summary>One kind and locale's overridden copy.</summary>
-/// <param name="Kind">The email kind, e.g. <c>sign_in_code</c>.</param>
-/// <param name="Locale"><c>en</c> or <c>pt-BR</c>.</param>
-/// <param name="Fields">The overridden fields.</param>
 public sealed record EmailTemplateOverride(
     [property: JsonPropertyName("kind")] string Kind,
     [property: JsonPropertyName("locale")] string Locale,
     [property: JsonPropertyName("fields")] EmailTemplateFields Fields);
 
-/// <summary>
-/// One version of an instance's email configuration (tables <c>email_configs</c>, the current one, and
-/// <c>email_config_versions</c>, every one). Version 0 is the defaults and is never stored.
-/// </summary>
-/// <param name="InstanceId">The owning instance.</param>
-/// <param name="Version">1, 2, 3… in save order.</param>
-/// <param name="CreatedAt">When it was saved; <see langword="null"/> for version 0.</param>
-/// <param name="Actor">Who saved it.</param>
-/// <param name="Change"><c>branding</c>, <c>template:{kind}/{locale}</c> or <c>rollback:{version}</c>.</param>
-/// <param name="Branding">The branding.</param>
-/// <param name="Templates">The overridden copy.</param>
 public sealed record EmailConfig(
     [property: JsonPropertyName("instance_id")] string InstanceId,
     [property: JsonPropertyName("version")] long Version,
@@ -127,24 +85,18 @@ public sealed record EmailConfig(
     [property: JsonPropertyName("branding")] EmailBranding Branding,
     [property: JsonPropertyName("templates")] IReadOnlyList<EmailTemplateOverride> Templates)
 {
-    /// <summary>The defaults: version 0, nothing overridden.</summary>
     public static EmailConfig Defaults(string instanceId) => new(instanceId, 0, null, null, null, new EmailBranding(), []);
 
-    /// <summary>The override of <paramref name="kind"/> in <paramref name="locale"/>, if any.</summary>
     public EmailTemplateFields? Override(string kind, string locale) =>
         this.Templates.FirstOrDefault(entry => entry.Kind == kind && entry.Locale == locale)?.Fields;
 }
 
-/// <summary>
-/// Stores email configurations in TerraBase. A save checks the version the caller last read and writes the new current
-/// configuration and its immutable history entry in one transaction, so concurrent saves have one winner and the
-/// history never holds a version that did not become current. Reads are never cached.
-/// </summary>
 public sealed class EmailSettings(AuthData data, TimeProvider clock)
 {
     public async Task<EmailConfig> GetAsync(string instanceId, CancellationToken cancellationToken = default) =>
-        await data.ReadAsync((db, token) => db.EmailConfigs.Where(config => config.InstanceId == instanceId).OrderByDescending(config => config.Version).FirstOrDefaultAsync(token),
-            cancellationToken).ConfigureAwait(false) is { } stored ? Valid(stored, instanceId) : EmailConfig.Defaults(instanceId);
+        await data.ReadAsync(connection => connection.QueryFirstOrDefaultAsync<EmailConfig>(
+            "SELECT * FROM email_configs WHERE instance_id = @instanceId ORDER BY version DESC LIMIT 1", new { instanceId }), cancellationToken) is { } stored
+            ? Valid(stored, instanceId) : EmailConfig.Defaults(instanceId);
 
     public async Task<EmailConfig?> GetVersionAsync(string instanceId, long version, CancellationToken cancellationToken = default)
     {
@@ -153,18 +105,20 @@ public sealed class EmailSettings(AuthData data, TimeProvider clock)
             return EmailConfig.Defaults(instanceId);
         }
 
-        return await data.ReadAsync((db, token) => db.EmailConfigs.SingleOrDefaultAsync(config => config.InstanceId == instanceId && config.Version == version, token),
-            cancellationToken).ConfigureAwait(false) is { } stored ? Valid(stored, instanceId) : null;
+        return await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<EmailConfig>(
+            "SELECT * FROM email_configs WHERE instance_id = @instanceId AND version = @version", new { instanceId, version }), cancellationToken) is { } stored
+            ? Valid(stored, instanceId) : null;
     }
 
     public async Task<IReadOnlyList<EmailConfig>> ListVersionsAsync(string instanceId, int limit, CancellationToken cancellationToken = default) =>
-        [.. (await data.ReadAsync((db, token) => db.EmailConfigs.Where(config => config.InstanceId == instanceId).OrderByDescending(config => config.Version).Take(limit)
-            .ToListAsync(token), cancellationToken).ConfigureAwait(false)).Select(config => Valid(config, instanceId))];
+        [.. (await data.ReadAsync(connection => connection.QueryAsync<EmailConfig>(
+            "SELECT * FROM email_configs WHERE instance_id = @instanceId ORDER BY version DESC LIMIT @limit", new { instanceId, limit }), cancellationToken))
+            .Select(config => Valid(config, instanceId))];
 
     public async Task<EmailConfig?> SaveAsync(string instanceId, long expectedVersion, EmailActor actor, string change, Func<EmailConfig, EmailConfig> update, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(update);
-        var current = await this.GetAsync(instanceId, cancellationToken).ConfigureAwait(false);
+        var current = await this.GetAsync(instanceId, cancellationToken);
         if (current.Version != expectedVersion)
         {
             return null;
@@ -178,7 +132,7 @@ public sealed class EmailSettings(AuthData data, TimeProvider clock)
             Actor = actor,
             Change = change,
         };
-        return await data.SaveAsync(Change.Insert(next), cancellationToken).ConfigureAwait(false) ? next : null;
+        return await data.SaveAsync(Change.Insert(next), cancellationToken) ? next : null;
     }
 
     private static EmailConfig Valid(EmailConfig config, string instanceId)
@@ -205,7 +159,6 @@ public sealed class EmailSettings(AuthData data, TimeProvider clock)
 
 public static partial class EmailValidation
 {
-    /// <summary>Longest field values, in characters.</summary>
     public static readonly IReadOnlyDictionary<string, int> FieldLimits = new Dictionary<string, int>(StringComparer.Ordinal)
     {
         ["subject"] = 200,
@@ -216,7 +169,6 @@ public static partial class EmailValidation
         ["footnote"] = 500,
     };
 
-    /// <summary>Returns <paramref name="branding"/> with blank values removed, or throws 422.</summary>
     public static EmailBranding Branding(EmailBranding? branding)
     {
         branding ??= new EmailBranding();
@@ -257,7 +209,6 @@ public static partial class EmailValidation
         return checkedBranding;
     }
 
-    /// <summary>Returns <paramref name="fields"/> with blank values removed, or throws 422.</summary>
     public static EmailTemplateFields Fields(AuthEmailKind kind, EmailTemplateFields? fields)
     {
         fields ??= new EmailTemplateFields();
@@ -295,13 +246,11 @@ public static partial class EmailValidation
             Check("body", fields.Body), button, Check("footnote", fields.Footnote));
     }
 
-    /// <summary>The caller's actor, or throws 422.</summary>
     public static EmailActor Actor(EmailActor? actor) =>
         actor is null || Text("actor.id", actor.Id, 128, multiline: false) is not { } id
             ? throw Invalid("actor.id is required.")
             : new EmailActor(id, Address("actor.email", actor.Email));
 
-    /// <summary>A recipient or support address: one plain address, at most 254 characters.</summary>
     public static string? Address(string field, string? value)
     {
         if (string.IsNullOrWhiteSpace(value))

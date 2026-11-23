@@ -108,20 +108,18 @@ namespace TerraScale.Dashboard.Platform.Contracts
                     .WithTitle("TerraScale API reference")
                     .WithFavicon(assets.Url("brand/logo-icon-blue.svg"))
                     .WithBundleUrl("/reference/terrascale.js")
-                    // Fixed product design; these are Scalar's vendor APIs, not runtime switches.
                     .ForceDarkMode().HideDarkModeToggle().WithTheme(ScalarTheme.None)
-                    .DisableDefaultFonts() // Use the dashboard's self-hosted Geist faces under font-src self.
+                    .DisableDefaultFonts()
                     .WithCustomCss(ReferenceCss)
                     .AddHeadContent($"<meta property=\"csp-nonce\" content=\"{nonce}\">" +
                         $"<link rel=\"stylesheet\" href=\"{assets.Url("css/terrascale.css")}\">")
                     .WithNonce((string)http.Items["nonce"]!);
             });
-            // Scalar 2.18.0 has no page-language setting. Fix the actual HTTP page as well as the DOM.
             reference.AddEndpointFilter(async (context, next) =>
             {
                 var result = await next(context);
                 return result is ContentHttpResult { ContentType: "text/html", ResponseContent: { } html }
-                    ? Results.Content(html.Replace("<html>", "<html lang=\"en\">", StringComparison.Ordinal), "text/html")
+                    ? TypedResults.Content(html.Replace("<html>", "<html lang=\"en\">", StringComparison.Ordinal), "text/html")
                     : result;
             });
             return endpoints;
@@ -138,18 +136,17 @@ namespace TerraScale.Dashboard.Platform.Contracts
             context.Response.Headers.Vary = "Accept-Encoding";
             if (!gzip && identity?.Quality == 0)
             {
-                return Results.StatusCode(StatusCodes.Status406NotAcceptable);
+                return TypedResults.StatusCode(StatusCodes.Status406NotAcceptable);
             }
 
             var asset = gzip ? ScalarBundle.Value.Gzip : ScalarBundle.Value.Identity;
-            // The script reads the current HTML nonce; its bytes contain no per-request data.
             context.Response.Headers.CacheControl = "public, no-cache";
             if (gzip)
             {
                 context.Response.Headers.ContentEncoding = "gzip";
             }
 
-            return Results.Bytes(asset.Bytes, "text/javascript", entityTag: asset.Tag);
+            return TypedResults.Bytes(asset.Bytes, "text/javascript", entityTag: asset.Tag);
         }
 
         private sealed record ReferenceAsset(byte[] Bytes)
@@ -159,9 +156,6 @@ namespace TerraScale.Dashboard.Platform.Contracts
 
         private static readonly Lazy<(ReferenceAsset Identity, ReferenceAsset Gzip)> ScalarBundle = new(() =>
         {
-            // Scalar's official csp-nonce meta supports its main CSS only. Its bundled Sonner,
-            // CodeMirror and Vue theme style producers need the same nonce before insertion.
-            // Adapt only the pinned package asset, never DOM prototypes or untrusted markup.
             using var resource = typeof(ScalarOptions).Assembly.GetManifestResourceStream("ScalarStaticAssets.scalar.js")
                 ?? throw new InvalidOperationException("Scalar bundle missing");
             var first = resource.ReadByte();
@@ -174,9 +168,7 @@ namespace TerraScale.Dashboard.Platform.Contracts
             const string nonce = "document.head.querySelector('meta[property=csp-nonce]').content";
             var producers = new Regex(@"\b(?:document|[a-zA-Z_$][\w$]*)\.createElement\(`style`\)", RegexOptions.CultureInvariant);
             const string theme = "P(Mr(`style`),{innerHTML:";
-            // Select Zod's existing interpreter without its forbidden Function() capability probe.
             const string evalProbe = "try{return Function(``),!0}catch{return!1}";
-            // Desktop and mobile SearchButton instances both listen on window. Handle one shortcut once.
             const string searchShortcut = "t.key===e.searchHotKey&&(t.preventDefault(),t.stopPropagation(),n.open?n.hide():n.show())";
             if (producers.Count(script) != 4 || script.Split(theme, StringSplitOptions.None).Length != 2 ||
                 script.Split(evalProbe, StringSplitOptions.None).Length != 2 ||

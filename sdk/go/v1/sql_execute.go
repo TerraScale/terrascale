@@ -2,6 +2,7 @@ package v1
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"database/sql"
 	"database/sql/driver"
@@ -19,6 +20,8 @@ const (
 	MaxSQLStatements   = 256
 	MaxSQLRequestBytes = 1 << 20
 	maxSQLResends      = 2
+
+	serializationFailureState = "40001"
 )
 
 const (
@@ -33,8 +36,11 @@ const (
 	ErrCheckViolation        ErrorCode = "check_violation"
 	ErrForeignKeyViolation   ErrorCode = "foreign_key_violation"
 	ErrConstraintViolation   ErrorCode = "constraint_violation"
-	ErrSQLSandbox            ErrorCode = "sql_sandbox" // 403: the statement leaves the SQL sandbox (ATTACH, VACUUM, file functions, …)
+	ErrSQLSandbox            ErrorCode = "sql_sandbox"
 	ErrSerializationConflict ErrorCode = "serialization_conflict"
+	ErrSchemaMismatch        ErrorCode = "schema_mismatch"
+	ErrInvalidBookmark       ErrorCode = "invalid_bookmark"
+	ErrInvalidConsistency    ErrorCode = "invalid_consistency"
 	ErrRowConflict           ErrorCode = "row_conflict"
 	ErrTooLarge              ErrorCode = "too_large"
 	ErrQueryCanceled         ErrorCode = "query_canceled"
@@ -55,6 +61,12 @@ type Statement struct {
 type Column struct {
 	Name     string  `json:"name"`
 	DeclType *string `json:"decltype"`
+}
+
+type wireColumn struct {
+	Name     string  `json:"name"`
+	DeclType *string `json:"decltype"`
+	Type     *string `json:"type"`
 }
 
 type Result struct {
@@ -100,14 +112,18 @@ func (e *SQLError) Unwrap() error {
 	return e.API
 }
 
-// Is matches the error's code constant, also for session errors that carry no *APIError.
 func (e *SQLError) Is(target error) bool {
-	return target == e.Code || target == ErrCommitUncertain && e.Code == ErrWriteOutcomeUnknown
+	return target == e.Code || target == ErrCommitUncertain && e.Code == ErrWriteOutcomeUnknown ||
+		target == ErrSerializationConflict && e.SQLState == serializationFailureState
 }
 
 func (e *SQLError) IsTransient() bool {
-	return e.Code == ErrSerializationConflict || e.Code == ErrTenantBusy
+	return errors.Is(e, ErrSerializationConflict) || e.Code == ErrSchemaMismatch || e.Code == ErrTenantBusy
 }
+
+func (e *SQLError) IsSerializationConflict() bool { return errors.Is(e, ErrSerializationConflict) }
+
+func (e *SQLError) IsSchemaMismatch() bool { return e.Code == ErrSchemaMismatch }
 
 type SQLProtocolError struct{}
 
@@ -129,7 +145,6 @@ func (d *Database) ExecuteStatement(ctx context.Context, statement Statement) (*
 	return &out[0], nil
 }
 
-// statementOf binds sql.NamedArg values by name and every other value by position.
 func statementOf(query string, args []any) Statement {
 	st := Statement{SQL: query}
 	for _, a := range args {
@@ -153,7 +168,6 @@ func (d *Database) Query(ctx context.Context, query string, args ...any) ([]Row,
 	return res.Rows, nil
 }
 
-// SQLQuerier runs one SQL statement and returns its rows: a *Database or a *SQLSession.
 type SQLQuerier interface {
 	Query(ctx context.Context, query string, args ...any) ([]Row, error)
 }
@@ -196,10 +210,14 @@ func (d *Database) Batch(ctx context.Context, statements []Statement) ([]Result,
 	if err != nil {
 		return nil, err
 	}
+	header, err := causalHeader(ctx, d.causal)
+	if err != nil {
+		return nil, err
+	}
 	for attempt := 0; ; attempt++ {
-		out, err := d.batchOnce(ctx, p, body, len(statements))
+		out, err := d.batchOnce(ctx, p, body, header, len(statements))
 		var sqlErr *SQLError
-		if errors.As(err, &sqlErr) && sqlErr.Code == ErrSerializationConflict && attempt < maxSQLResends {
+		if errors.As(err, &sqlErr) && (sqlErr.IsSerializationConflict() || sqlErr.IsSchemaMismatch()) && attempt < maxSQLResends {
 			if err := sleep(ctx, backoff(attempt)); err != nil {
 				return nil, err
 			}
@@ -209,7 +227,6 @@ func (d *Database) Batch(ctx context.Context, statements []Statement) ([]Result,
 	}
 }
 
-// wireStatements validates statements and encodes their arguments for the wire.
 func wireStatements(statements []Statement) ([]Statement, error) {
 	if len(statements) == 0 || len(statements) > MaxSQLStatements {
 		return nil, fmt.Errorf("terrabase: SQL batch needs 1 to %d statements, got %d", MaxSQLStatements, len(statements))
@@ -239,8 +256,8 @@ func wireStatements(statements []Statement) ([]Statement, error) {
 	return wire, nil
 }
 
-func (d *Database) batchOnce(ctx context.Context, p []string, body []byte, expected int) ([]Result, error) {
-	resp, err := d.c.do(ctx, request{method: http.MethodPost, path: p, body: body, replaySafe: true})
+func (d *Database) batchOnce(ctx context.Context, p []string, body []byte, header http.Header, expected int) ([]Result, error) {
+	resp, err := d.c.do(ctx, request{method: http.MethodPost, path: p, body: body, header: header.Clone(), replaySafe: true})
 	if apiErr := (*APIError)(nil); errors.As(err, &apiErr) {
 		return nil, sqlErrorFrom(apiErr)
 	}
@@ -248,9 +265,14 @@ func (d *Database) batchOnce(ctx context.Context, p []string, body []byte, expec
 		return nil, err
 	}
 	var out struct {
-		Results []Result `json:"results"`
+		Results     []Result    `json:"results"`
+		Bookmark    string      `json:"bookmark"`
+		Consistency Consistency `json:"consistency"`
 	}
 	if decodeExact(resp.body, &out) != nil || len(out.Results) != expected {
+		return nil, &SQLProtocolError{}
+	}
+	if d.causal.Observe(resp.header.Get(BookmarkHeader)) != nil || d.causal.Observe(out.Bookmark) != nil {
 		return nil, &SQLProtocolError{}
 	}
 	return out.Results, nil
@@ -308,13 +330,26 @@ func (b blob) MarshalJSON() ([]byte, error) {
 
 func (r *Result) UnmarshalJSON(data []byte) error {
 	var wire struct {
-		Columns         []Column            `json:"columns"`
-		Rows            [][]json.RawMessage `json:"rows"`
-		RowsAffected    *int64              `json:"rows_affected"`
-		LastInsertRowID *int64              `json:"last_insert_rowid"`
+		Columns           []wireColumn        `json:"columns"`
+		Rows              [][]json.RawMessage `json:"rows"`
+		RowsAffected      *int64              `json:"rows_affected"`
+		LastInsertRowID   *int64              `json:"last_insert_rowid"`
+		RowsAffectedV2    *int64              `json:"rowsAffected"`
+		LastInsertRowIDV2 *int64              `json:"lastInsertRowId"`
 	}
-	if err := json.Unmarshal(data, &wire); err != nil || wire.Columns == nil || wire.Rows == nil || wire.RowsAffected == nil {
+	if err := json.Unmarshal(data, &wire); err != nil || wire.Columns == nil || wire.Rows == nil {
 		return &SQLProtocolError{}
+	}
+	rowsAffected, lastInsertRowID := wire.RowsAffected, wire.LastInsertRowID
+	if wire.RowsAffectedV2 != nil {
+		rowsAffected, lastInsertRowID = wire.RowsAffectedV2, wire.LastInsertRowIDV2
+	}
+	if rowsAffected == nil {
+		return &SQLProtocolError{}
+	}
+	columns := make([]Column, len(wire.Columns))
+	for i, column := range wire.Columns {
+		columns[i] = Column{Name: column.Name, DeclType: cmp.Or(column.DeclType, column.Type)}
 	}
 	rows := make([]Row, len(wire.Rows))
 	for i, raw := range wire.Rows {
@@ -329,9 +364,9 @@ func (r *Result) UnmarshalJSON(data []byte) error {
 			}
 			values[j] = v
 		}
-		rows[i] = Row{columns: wire.Columns, values: values}
+		rows[i] = Row{columns: columns, values: values}
 	}
-	*r = Result{Columns: wire.Columns, Rows: rows, RowsAffected: *wire.RowsAffected, LastInsertRowID: wire.LastInsertRowID}
+	*r = Result{Columns: columns, Rows: rows, RowsAffected: *rowsAffected, LastInsertRowID: lastInsertRowID}
 	return nil
 }
 

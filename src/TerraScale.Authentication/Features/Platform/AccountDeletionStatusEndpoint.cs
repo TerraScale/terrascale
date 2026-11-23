@@ -7,10 +7,8 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.Platform;
 
-/// <summary>Status-only proof after the account's sign-in credentials stop working.</summary>
 public sealed class AccountDeletionStatusEndpoint(AccountDeletion accounts) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/v1/terrascale/account/deletion");
@@ -28,7 +26,6 @@ public sealed class AccountDeletionStatusEndpoint(AccountDeletion accounts) : En
         Metadata(new RequiresSecurity(SecuritySchemes.AccountDeletionReceipt));
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         this.HttpContext.Response.Headers.CacheControl = "no-store";
@@ -62,8 +59,8 @@ public sealed class AccountDeletionStatusEndpoint(AccountDeletion accounts) : En
 
         return await accounts.StatusAsync(hash, organization, cancellationToken) switch
         {
-            true => Results.NoContent(),
-            false => Results.Accepted(),
+            true => TypedResults.NoContent(),
+            false => TypedResults.Accepted(default(string)),
             NotFound failure => ErrorResults.ToResult(failure),
             Conflict failure => ErrorResults.ToResult(failure),
         };

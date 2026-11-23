@@ -9,21 +9,14 @@ using ZLogger;
 
 namespace TerraScale.Authentication.Features.RateLimiting;
 
-/// <summary>A refused attempt's persisted deadline and remaining delay, rounded up to whole seconds.</summary>
-/// <param name="Until">The stored window's end, shared by all replicas even when their clocks differ.</param>
-/// <param name="RetryAfter">How long this replica must wait before retrying.</param>
 public readonly record struct AttemptRejection(DateTimeOffset Until, TimeSpan RetryAfter);
 
 public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, AuthOptions options, string region = "gru", ILogger<AttemptLimiter>? logger = null)
 {
-    /// <summary>The TerraBase table holding up to three regional <see cref="AttemptBucket"/> records per limited subject, plus notice claims.</summary>
     private static readonly TimeSpan DefaultWindow = TimeSpan.FromMinutes(1);
 
-    // More rounds than any realistic number of replicas racing on one subject, so only storage
-    // that keeps rejecting writes (or a stampede beyond it) reaches the ceiling and fails closed.
     private const int MaxRounds = 64;
 
-    // Milliseconds a token bucket's stored write time may lead this replica's clock before it counts as corrupt.
     private const long MaxClockSkew = 24 * 60 * 60 * 1000;
 
     private static readonly string[] Regions = ["gru", "sjc", "fra"];
@@ -39,19 +32,12 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
 
     private static readonly Counter<long> Refusals = Meter.CreateCounter<long>("ts_auth.rate_limit_refused", description: "Attempts refused because their budget was used up.");
 
-    // Fallback warnings are sampled to one a minute; the counter records every one.
     private long warnedAt = long.MinValue;
 
-    // Bucket ids are keyed, so storage never reveals (or lets anyone test guesses of) the subject.
     private readonly byte[] idKey = HKDF.DeriveKey(HashAlgorithmName.SHA256, options.MasterKey, 32, info: "ts-auth rate-limit bucket ids"u8.ToArray());
 
     private readonly byte[] foldKey = HKDF.DeriveKey(HashAlgorithmName.SHA256, options.MasterKey, 32, info: "ts-auth rate-limit folds"u8.ToArray());
 
-    /// <summary>
-    /// Folds attacker-chosen text (an email address, an IP address) into one of 65,536 keyed subjects, so storage keeps
-    /// a bounded number of buckets per purpose, and nobody can choose text that shares a known victim's bucket. A
-    /// collision conservatively shares the budget.
-    /// </summary>
     public string Fold(string text)
     {
         ArgumentNullException.ThrowIfNull(text);
@@ -59,52 +45,24 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
         return $"fold-{System.Buffers.Binary.BinaryPrimitives.ReadUInt16BigEndian(digest)}";
     }
 
-    /// <summary>Charges one attempt in a one-minute window; see the overload.</summary>
     public Task<bool> TryAcquireAsync(string instanceId, string purpose, string subject, int maximum, CancellationToken cancellationToken) =>
         this.TryAcquireAsync(instanceId, purpose, subject, maximum, DefaultWindow, cancellationToken);
 
-    /// <summary>Charges one attempt; returns whether it was admitted. See <see cref="AcquireAsync(string, string, string, int, TimeSpan, CancellationToken)"/>.</summary>
     public async Task<bool> TryAcquireAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, CancellationToken cancellationToken) =>
         await this.AcquireAsync(instanceId, purpose, subject, maximum, window, cancellationToken) is null;
 
-    /// <summary>
-    /// Charges one attempt to <paramref name="subject"/> for <paramref name="purpose"/> in the
-    /// instance. Returns <see langword="null"/> when admitted; once <paramref name="maximum"/>
-    /// attempts were admitted, returns the delay to the persisted window's end, rounded up to whole
-    /// seconds (at least one), even when another replica's clock is ahead. Each distinct subject keeps
-    /// at most three regional bucket records, so the subject must be an identifier the service already holds (user, client); a caller that
-    /// limits by attacker-chosen text must first <see cref="Fold"/> it. Windows are fixed
-    /// multiples of <paramref name="window"/> (whole seconds); one purpose must always use the same window.
-    /// </summary>
     public async Task<TimeSpan?> AcquireAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, CancellationToken cancellationToken) =>
         (await this.AcquireWithDeadlineAsync(instanceId, purpose, subject, maximum, window, cancellationToken))?.RetryAfter;
 
-    /// <summary>Charges a fixed-window attempt, retaining the exact stored deadline for a lockout notice claim.</summary>
     public Task<AttemptRejection?> AcquireWithDeadlineAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, CancellationToken cancellationToken) =>
         this.AcquireAsync(instanceId, purpose, subject, maximum, window, cooldown: false, cancellationToken);
 
-    /// <summary>Admits one cooldown attempt; returns whether it was admitted. See <see cref="AcquireCooldownAsync"/>.</summary>
     public async Task<bool> TryAcquireCooldownAsync(string instanceId, string purpose, string subject, TimeSpan interval, CancellationToken cancellationToken) =>
         await this.AcquireCooldownAsync(instanceId, purpose, subject, interval, cancellationToken) is null;
 
-    /// <summary>
-    /// Admits one attempt per elapsed <paramref name="interval"/>, measured from the last admission rather than fixed
-    /// clock boundaries. Returns <see langword="null"/> when admitted or the remaining delay rounded up to whole seconds (at least one).
-    /// Uses a separate purpose from fixed windows; attacker-chosen subjects must be folded.
-    /// </summary>
     public async Task<TimeSpan?> AcquireCooldownAsync(string instanceId, string purpose, string subject, TimeSpan interval, CancellationToken cancellationToken) =>
         (await this.AcquireAsync(instanceId, purpose, subject, 1, interval, cooldown: true, cancellationToken))?.RetryAfter;
 
-    /// <summary>
-    /// Admits one request from a token bucket holding <paramref name="burst"/> tokens that regains one token per
-    /// <paramref name="interval"/>. Each region stores its own outstanding debt (one interval per admission) and when
-    /// it wrote it, by its own clock; a reader drains that debt only by the time it has itself seen elapse since then,
-    /// so a replica whose clock is behind never inflates another region's debt. A request is admitted while the summed
-    /// debt leaves room for one more interval. Refused requests change nothing, so retrying while limited never extends
-    /// the wait. Returns <see langword="null"/> when admitted, otherwise the delay after which the debt has drained
-    /// enough (an upper bound, rounded up to whole seconds, at least one). Uses its own purposes, never shared with
-    /// fixed windows or cooldowns; attacker-chosen subjects must be folded.
-    /// </summary>
     public Task<TimeSpan?> AcquireTokenAsync(string instanceId, string purpose, string subject, int burst, TimeSpan interval, CancellationToken cancellationToken) =>
         this.WithFallbackAsync(source => this.AcquireTokenAsync(source, instanceId, purpose, subject, burst, interval, cancellationToken), purpose, cancellationToken);
 
@@ -123,7 +81,6 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
         {
             var now = clock.GetUtcNow().ToUnixTimeMilliseconds();
             var components = await source.GetManyAsync(instanceId, keys, cancellationToken);
-            // Window: the writer's clock at the write, in Unix milliseconds. Used: its debt then, in milliseconds.
             if (components.Any(component => component is not null && (component.Value is not { Window: >= 0, Used: >= 0 }
                 || component.Value.Used > capacity || component.Value.Window > now + MaxClockSkew)))
             {
@@ -140,7 +97,6 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
             }
 
             var current = components[this.regionIndex];
-            // Stamped with this replica's clock: a faster reader drains it early (admitting up to the skew), never locks out.
             var bucket = new AttemptBucket(now, (int)(debts[this.regionIndex] + step));
             if (current is null
                 ? await source.TryCreateAsync(instanceId, keys[this.regionIndex], bucket, cancellationToken)
@@ -153,12 +109,6 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
         throw ApiException.Unavailable();
     }
 
-    /// <summary>
-    /// Claims one notice attempt for an actual account and authentication purpose at the persisted lockout deadline.
-    /// Uses the existing table and conditional writes; newer deadlines supersede older ones, so a slower replica
-    /// cannot claim an old episode again. Call on the mail worker after account lookup, never with a folded account id.
-    /// The claim prevents duplicate send attempts, not delivery loss if a sender or process fails after claiming.
-    /// </summary>
     public async Task<bool> ClaimLockoutNoticeAsync(string instanceId, string purpose, string userId, DateTimeOffset until, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(instanceId);
@@ -183,7 +133,6 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
             {
                 if (await store.TryCreateAsync(instanceId, key, notice, cancellationToken))
                 {
-                    // An expired claim may remain persisted, but must never authorize a send.
                     return until > clock.GetUtcNow();
                 }
 
@@ -290,12 +239,11 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
     private async Task<AttemptRejection?> AcquireAsync(string instanceId, string purpose, string subject, int maximum, TimeSpan window, bool cooldown, CancellationToken cancellationToken) =>
         (await this.WithFallbackAsync(source => this.AcquireAsync(source, instanceId, purpose, subject, maximum, window, cooldown, true, cancellationToken), purpose, cancellationToken)).Rejection;
 
-    // Runs a check on TerraBase; when that storage fails (not when the caller gave up), runs it on this replica's memory.
     private async Task<T> WithFallbackAsync<T>(Func<IAttemptStore, Task<T>> check, string purpose, CancellationToken cancellationToken)
     {
         try
         {
-            return await check(store).ConfigureAwait(false);
+            return await check(store);
         }
         catch (ApiException failure) when (failure.Status == StatusCodes.Status503ServiceUnavailable && !cancellationToken.IsCancellationRequested
             && Transient(failure.InnerException))
@@ -309,12 +257,10 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
                 logger?.ZLogWarning(failure.InnerException ?? failure, $"Rate-limit storage failed; {purpose:@Purpose} and other budgets run on this replica's memory");
             }
 
-            return await check(this.local).ConfigureAwait(false);
+            return await check(this.local);
         }
     }
 
-    // Storage that is down, slow or overloaded. A rejected credential, a missing table, persistent contention or a
-    // damaged bucket still fails closed: those are faults to fix, not outages to ride out.
     private static bool Transient(Exception? failure) => failure switch
     {
         TimeoutException => true,
@@ -336,23 +282,15 @@ public sealed class AttemptLimiter(IAttemptStore store, TimeProvider clock, Auth
             ? (DateTimeOffset.MaxValue.UtcTicks - DateTimeOffset.UnixEpoch.UtcTicks - window.Ticks) / TimeSpan.TicksPerMillisecond
             : DateTimeOffset.MaxValue.ToUnixTimeSeconds() / windowSeconds - 1;
 
-        // shortcut: one TerraBase writer per region; use per-writer components before adding independent same-region writers.
-        // The address is instance-scoped; service-chosen purposes never contain ':', and the subject comes last.
-        // A fixed window stores its window number, which only means something at one window size: the size is part
-        // of the address, so changing a budget's window starts fresh buckets instead of reading old numbers as far-future windows.
         var address = cooldown ? purpose : $"{purpose}/{windowSeconds}s";
         var keys = Regions.Select(component => this.BucketKey(address, component + ":" + subject)).ToArray();
         var key = keys[this.regionIndex];
         string[] others = [.. keys.Where((_, component) => component != this.regionIndex)];
 
-        // Every lost conditional write means another attempt was admitted (or the window rolled
-        // over, or the bucket was created), so maximum + 2 rounds always reach a decision unless
-        // storage itself keeps failing. MaxRounds bounds the work a large maximum would allow.
         for (var attempt = 0; attempt < Math.Min(maximum + 2L, MaxRounds); attempt++)
         {
             var now = clock.GetUtcNow();
             var number = cooldown ? now.ToUnixTimeMilliseconds() : now.ToUnixTimeSeconds() / windowSeconds;
-            // Each serving region owns one component, so concurrent regional increments retain their own counts.
             var components = await source.GetManyAsync(instanceId, keys, cancellationToken);
             foreach (var component in components)
             {

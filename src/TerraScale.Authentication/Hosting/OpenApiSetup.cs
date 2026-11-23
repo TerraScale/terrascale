@@ -13,64 +13,40 @@ using TerraScale.Authentication.Features.ProjectOrganizations;
 
 namespace TerraScale.Authentication.Hosting;
 
-/// <summary>Security schemes shared by the ts-auth API surface.</summary>
 public static class SecuritySchemes
 {
-    /// <summary>Instance management key (<c>Authorization: Bearer sk_…</c>) for <c>/v1/{slug}/*</c>.</summary>
     public const string ManagementBearer = "ManagementBearer";
 
-    /// <summary>Hosted session cookie for <c>/ui/{slug}/*</c> pages.</summary>
     public const string SessionCookie = "SessionCookie";
 
-    /// <summary>OAuth access token issued by the instance.</summary>
     public const string OAuthAccessBearer = "OAuthAccessBearer";
 
-    /// <summary>Operator bootstrap key for <c>/v1/instances</c>.</summary>
     public const string OperatorBearer = "OperatorBearer";
 
-    /// <summary>ts-alerts noncritical email admission credential.</summary>
     public const string MailAdmission = "mailAdmission";
 
-    /// <summary>OAuth client authentication with HTTP Basic.</summary>
     public const string ClientBasic = "clientBasic";
 
-    /// <summary>Directory or organization bearer token (SCIM, organizations).</summary>
     public const string BearerAuth = "bearerAuth";
 
-    /// <summary>A platform user's own sign-in access token, for the platform management API (TS-598).</summary>
     public const string PlatformUser = "platformUser";
 
-    /// <summary>A whole project API key, restricted to server-to-server end-user token minting.</summary>
     public const string ProjectApiKey = "projectApiKey";
     public const string ApiKeyToken = "apiKeyToken";
     public const string ProjectManagement = "projectManagement";
     public const string UserKeyVerifier = "userKeyVerifier";
 
-    /// <summary>Status-only account deletion capability, independent of sign-in credentials.</summary>
     public const string AccountDeletionReceipt = "accountDeletionReceipt";
 
-    /// <summary>Session cookie name used by every hosted UI route.</summary>
     public const string SessionCookieName = "tsauth_session";
 }
 
-/// <summary>Declares an endpoint's security scheme in the OpenAPI document. It must match the server-side check.</summary>
-/// <param name="Scheme">One of the <see cref="SecuritySchemes"/> names.</param>
-/// <param name="PublicClientAlternative">The scheme is one alternative; a registered public client identified by <c>client_id</c> in the form (RFC 7009 §2.1) is the other.</param>
 public sealed record RequiresSecurity(string Scheme, bool PublicClientAlternative = false);
 
-/// <summary>
-/// Completes the generated OpenAPI document:
-/// security schemes, per-route security that matches enforcement, and a default response
-/// for operations that declare none.
-/// </summary>
 public static partial class OpenApiSetup
 {
     private static readonly string[] UnlockParameters = ["user", "token"];
 
-    /// <summary>
-    /// Adds ts-auth's transformers to the <c>v1</c> schema registered by TerraScale.Endpoints,
-    /// and keeps Scalar self-hosted (no third-party font requests).
-    /// </summary>
     public static IServiceCollection AddAuthOpenApi(this IServiceCollection services) =>
         services
             .Configure<ScalarOptions>(scalar => scalar.DisableDefaultFonts().WithNonce())
@@ -83,13 +59,9 @@ public static partial class OpenApiSetup
             });
             options.AddOperationTransformer((operation, context, _) =>
             {
-                // Same precedence as ASP.NET authorization: AllowAnonymous anywhere wins;
-                // otherwise the most specific (last) declaration, the endpoint's own over its
-                // group's, decides.
                 var metadata = context.Description.ActionDescriptor.EndpointMetadata;
                 if (metadata.OfType<Microsoft.AspNetCore.Authorization.IAllowAnonymous>().Any())
                 {
-                    // Explicitly anonymous: an empty list, never replaced by a path default.
                     operation.Security = [];
                 }
                 else if (metadata.OfType<RequiresSecurity>().LastOrDefault() is { } declared)
@@ -284,8 +256,6 @@ public static partial class OpenApiSetup
                     }
                 }
 
-                // OpenAPI 11 describes every reference-typed response body as oneOf [null, $ref]. No response body
-                // is null, so the plain $ref that the contract has always served is restored.
                 foreach (var response in operation.Responses?.Values ?? Enumerable.Empty<IOpenApiResponse>())
                 {
                     foreach (var media in response.Content?.Values ?? Enumerable.Empty<IOpenApiMediaType>())
@@ -306,9 +276,6 @@ public static partial class OpenApiSetup
             });
         });
 
-    // These endpoints use explicit snake_case contexts instead of the global HTTP JSON options.
-    // Transform children first: ASP.NET looks them up by their original names after our callback,
-    // so renaming a parent property first would hide its entire subtree from that traversal.
     private static void MatchProjectWireSchema(IOpenApiSchema input, JsonTypeInfo type)
     {
         var wire = ProjectOrganizationsJson.Default.GetTypeInfo(type.Type) ?? ProjectTenantJson.Default.GetTypeInfo(type.Type) ?? UserProfileJson.Default.GetTypeInfo(type.Type) ?? DirectoryExportJson.Default.GetTypeInfo(type.Type) ?? ImpersonationJson.Default.GetTypeInfo(type.Type) ?? UserApiKeyJson.Default.GetTypeInfo(type.Type) ?? AgentJson.Default.GetTypeInfo(type.Type);
@@ -353,7 +320,6 @@ public static partial class OpenApiSetup
         }
     }
 
-    // Descriptions for every tag the API uses; add an entry with each new feature tag.
     private static readonly Dictionary<string, string> TagDescriptions = new(StringComparer.Ordinal)
     {
         ["Impersonation"] = "Project-admin support sessions, single-use client-bound tickets and hosted session termination.",
@@ -421,7 +387,6 @@ public static partial class OpenApiSetup
 
     private static void Complete(OpenApiDocument schema, Uri publicOrigin)
     {
-        // The configured public origin, never the request's Host header.
         schema.Servers = [new OpenApiServer { Url = publicOrigin.GetLeftPart(UriPartial.Path).TrimEnd('/') }];
 
         var used = new SortedSet<string>(StringComparer.Ordinal);
@@ -434,7 +399,6 @@ public static partial class OpenApiSetup
 
             foreach (var operation in item.Operations.Values)
             {
-                // Endpoints that read a route value from the request (rather than binding it) still take it in the path.
                 foreach (var name in RouteParameter().Matches(path).Select(match => match.Groups["name"].Value))
                 {
                     if (operation.Parameters?.Any(parameter => parameter.In == ParameterLocation.Path && parameter.Name == name) != true)
@@ -451,12 +415,10 @@ public static partial class OpenApiSetup
 
                 if (operation.Security is null)
                 {
-                    // Unspecified: the credential the route's prefix requires, or anonymous.
                     operation.Security = DefaultScheme(path) is { } scheme ? [Requirement(scheme, schema)] : [new OpenApiSecurityRequirement()];
                 }
                 else if (operation.Security.Count == 0)
                 {
-                    // Declared anonymous; serialized as an explicit empty requirement.
                     operation.Security = [new OpenApiSecurityRequirement()];
                 }
 
@@ -518,8 +480,6 @@ public static partial class OpenApiSetup
     private static OpenApiSecurityRequirement Requirement(string scheme, OpenApiDocument? schema) =>
         new() { [new OpenApiSecuritySchemeReference(scheme, schema)] = [] };
 
-    // Instance-scoped API routes, hosted admin pages and userinfo each have a distinct
-    // credential; nothing else inherits one implicitly.
     private static string? DefaultScheme(string path) =>
         path.StartsWith("/v1/{slug}/", StringComparison.Ordinal) ? SecuritySchemes.ManagementBearer
         : path.StartsWith("/ui/{slug}/admin", StringComparison.Ordinal) ? SecuritySchemes.SessionCookie

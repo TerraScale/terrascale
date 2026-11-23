@@ -17,18 +17,18 @@ namespace TerraScale.Dashboard.Features.Usage
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, "/usage?tab=settings", Results.BadRequest("Invalid form token."));
+                return RequestError.FormExpired(http, "/usage?tab=settings", TypedResults.BadRequest("Invalid form token."));
             }
 
             if (!context.CanManage)
             {
-                return Results.Text("Organization management is required.", statusCode: 403);
+                return TypedResults.Text("Organization management is required.", statusCode: 403);
             }
 
             if (!SpendingForm.TryParse(form, out var capCents))
@@ -37,7 +37,7 @@ namespace TerraScale.Dashboard.Features.Usage
             }
 
             try { await spending.SetCapAsync(context, capCents, http.RequestAborted); }
-            catch (AccountAccessException error) { return Results.Text(error.Message, statusCode: error.StatusCode); }
+            catch (AccountAccessException error) { return TypedResults.Text(error.Message, statusCode: error.StatusCode); }
             return await SavedAsync(http, sessions, accounts, usage, "ok");
         }
 
@@ -62,7 +62,7 @@ namespace TerraScale.Dashboard.Features.Usage
         {
             var page = await usage.LoadAsync(ShellModel.For(http, selection.Context, "Usage"), selection, tab, saved, http.RequestAborted);
             await DatastarEvents.PatchElementsAsync(http, UsagePageView.Create(page));
-            return Results.Empty;
+            return TypedResults.Empty;
         }
     }
 }

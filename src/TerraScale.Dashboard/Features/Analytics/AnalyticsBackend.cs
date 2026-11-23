@@ -1,12 +1,10 @@
-using TerraScale.Dashboard.Platform.Rpc;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Usage;
+using TerraScale.Dashboard.Platform.Clients;
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Auth;
 
 namespace TerraScale.Dashboard.Features.Analytics
 {
-    public sealed class AnalyticsBackend(TerraBaseRpcClient rpc, IProjectAccessTokens projectTokens, IDatabaseBackend databases) : IAnalyticsBackend
+    public sealed class AnalyticsBackend(TerraBaseHttpClient terraBase, IProjectAccessTokens projectTokens, IDatabaseBackend databases) : IAnalyticsBackend
     {
         public async Task<AnalyticsBatch> ReadAsync(AnalyticsSelection selection, CancellationToken cancellationToken)
         {
@@ -21,14 +19,16 @@ namespace TerraScale.Dashboard.Features.Analytics
             var requestedRegion = selection.Region.Length == 0 ? "" :
                 DatabaseRegion.Resolve(regions, selection.Region)?.Id ?? throw new HttpRequestException("The selected region is unavailable.");
             var scopedToken = await projectTokens.GetAsync(context.Session, organization.Id, project.Id, ["databases:read"], token);
-            JsonElement root;
-            try
+            var answer = await terraBase.GetAnalyticsAsync(ServiceCaller.User(scopedToken), project.Id,
+                selection.DatabaseId.Length == 0 ? null : selection.DatabaseId, token);
+            if (answer is not JsonElement root || root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("bucketSeconds", out _))
             {
-                root = await rpc.User<IUsageService>(scopedToken).WithCancellationToken(token)
-                    .GetAnalyticsAsync(project.Id, selection.Range, selection.DatabaseId.Length == 0 ? null : selection.DatabaseId,
-                        requestedRegion.Length == 0 ? null : requestedRegion);
+                return answer switch
+                {
+                    JsonElement or TerraBaseRefusal { Status: StatusCodes.Status404NotFound } => new(AnalyticsSourceState.NotMetered, []),
+                    TerraBaseRefusal refusal => throw refusal.Exception(),
+                };
             }
-            catch (TerraBaseNotFoundException) { return new(AnalyticsSourceState.NotMetered, []); }
             var bucketSeconds = selection.Range switch { "1h" => 60, "24h" => 3600, "7d" => 21600, "30d" => 86400, _ => throw new JsonException("Unknown analytics range.") };
             if (root.GetProperty("projectId").GetString() != project.Id || root.GetProperty("range").GetString() != selection.Range ||
                 root.GetProperty("bucketSeconds").GetInt32() != bucketSeconds)
@@ -51,7 +51,6 @@ namespace TerraScale.Dashboard.Features.Analytics
             {
                 var databaseId = database.GetProperty("databaseId").GetString() ?? "";
                 var region = database.GetProperty("region").GetString() ?? "";
-                // A database TerraBase knows but this project record does not (just created, or deleted) is left out rather than failing the page.
                 if (selection.DatabaseId.Length == 0 && databaseId.Length > 0 && !project.Databases.ContainsKey(databaseId))
                 {
                     continue;
@@ -65,7 +64,6 @@ namespace TerraScale.Dashboard.Features.Analytics
                 }
 
                 var displayRegion = regionCodes.GetValueOrDefault(region) ?? DatabaseRegion.FromId(region)?.Code ?? region;
-                // TerraBase keeps a region's observations after the database leaves it, so a region outside the current placement is valid history.
                 if (!seen.Add((databaseId, region)))
                 {
                     throw new JsonException("Analytics returned duplicate measurements.");

@@ -15,10 +15,10 @@ public sealed class SmtpEmailSender(SmtpEmailOptions email, ILogger<SmtpEmailSen
     private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(30);
 
     public async Task SendAsync(string recipient, EmailMessage message, CancellationToken cancellationToken) =>
-        _ = await this.DeliverAsync(recipient, message, cancellationToken).ConfigureAwait(false);
+        _ = await this.DeliverAsync(recipient, message, cancellationToken);
 
     public async Task<EmailDeliveryOutcome> DeliverAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
-        => (await this.DeliverResultAsync(recipient, message, cancellationToken).ConfigureAwait(false)).Outcome;
+        => (await this.DeliverResultAsync(recipient, message, cancellationToken)).Outcome;
 
     public async Task<EmailProviderResult> DeliverResultAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
     {
@@ -31,16 +31,16 @@ public sealed class SmtpEmailSender(SmtpEmailOptions email, ILogger<SmtpEmailSen
             client.CheckCertificateRevocation = false;
             client.Timeout = (int)ConnectTimeout.TotalMilliseconds;
             using var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
-            await socket.ConnectAsync(email.Host, email.Port, timeout.Token).ConfigureAwait(false);
-            await client.ConnectAsync(socket, email.Host, email.Port, email.RequireTls ? SecureSocketOptions.StartTls : SecureSocketOptions.None, timeout.Token).ConfigureAwait(false);
+            await socket.ConnectAsync(email.Host, email.Port, timeout.Token);
+            await client.ConnectAsync(socket, email.Host, email.Port, email.RequireTls ? SecureSocketOptions.StartTls : SecureSocketOptions.None, timeout.Token);
             try
             {
-                await client.AuthenticateAsync(email.Username, email.Password, timeout.Token).ConfigureAwait(false);
-                await client.SendAsync(new SendRequest(Format(recipient, message)), timeout.Token).ConfigureAwait(false);
+                await client.AuthenticateAsync(email.Username, email.Password, timeout.Token);
+                await client.SendAsync(new SendRequest(Format(recipient, message)), timeout.Token);
             }
             finally
             {
-                await client.DisconnectAsync(true, CancellationToken.None).ConfigureAwait(false);
+                await client.DisconnectAsync(true, CancellationToken.None);
             }
 
             AuthMetrics.Email("sent");

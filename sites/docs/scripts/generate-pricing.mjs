@@ -13,7 +13,7 @@ if (!metering.storage.definition.includes(storageHome) || !metering.storage.defi
   throw new Error("pricing catalog storage definition no longer contains the sentences this page rewrites");
 }
 const storageDefinition = metering.storage.definition
-  .replace(storageHome, "in the region that orders the database's writes")
+  .replace(storageHome, "of one copy of the database")
   .replace(storageReplica, "Copies in the database's other regions are not billed separately");
 // Scan budgets are not in the catalog: TerraBase sets them per plan in
 // src/TerraBase/Features/Qos/QosPolicy.cs (ScanRows, ScanBytes).
@@ -43,15 +43,13 @@ Overage rates on paid plans: $${rates.operationUnitsPerMillionUsd} per million o
 
 When a plan's write cap or SQL read fair use is reached, the statement answers \`429 quota_exceeded\` (Postgres SQLSTATE \`53100\`) until the next UTC month or an upgrade. A function invocation past the write cap answers \`429 quota_exceeded\` the same way.
 
-A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
-
 ## Regions per database
 
 | Plan | Metered regions per database |
 | --- | --- |
 ${plans.map((plan) => `| ${plan.name} | ${count(plan.entitlements.regionsPerDatabase)} |`).join('\n')}
 
-A database lives in a set of regions, at least one, and every region of the set accepts reads and writes. One region of the set orders the writes; TerraBase picks it. The default TerraScale-Durability is local.
+A database lives in a set of regions, at least one. Every region of the set is an equal peer that accepts reads and writes; there is no home region.
 The catalog's regionsPerDatabase counts the regions in which a database's writes and stored bytes are metered: one per database on every plan. Copies in the database's other regions are not billed separately. See [regions](/concepts/regions) and [replication](/concepts/replication).
 
 ## Spending caps
@@ -83,7 +81,7 @@ A query that stays inside result limits but scans or works past the plan's scan 
 
 | Surface | Transaction limit |
 | --- | --- |
-| HTTP | One request is one atomic batch, all or nothing. \`BEGIN\`, \`COMMIT\` and \`ROLLBACK\` are refused. |
+| HTTP | One request is one atomic batch, all or nothing. \`BEGIN STRONG\` … \`COMMIT\` may wrap the whole batch; other \`BEGIN\`, \`COMMIT\` and \`ROLLBACK\` are refused. |
 | WebSocket | \`begin\`/\`commit\`/\`rollback\` frames. At most 5 seconds, then it rolls back. |
 | Postgres wire | \`BEGIN\`/\`COMMIT\`/\`ROLLBACK\` and savepoints. At most 5 seconds, then it rolls back. |
 
@@ -97,7 +95,7 @@ A transaction left open past the limit rolls back and answers \`transaction_roll
 | Message size | 1 MiB per protocol message | connection closed (\`08P01\`) |
 | Prepared statements | 256 per session | \`54000\` |
 | Portals | 256 per session | \`54000\` |
-| Catalog queries and \`LISTEN\`/\`NOTIFY\`, extensions | not supported | \`0A000\` |
+| Extensions, \`NOTIFY\`, \`CREATE SEQUENCE\`, two-phase commit | not supported | \`0A000\` |
 
 ## Requests per organization
 
@@ -122,8 +120,6 @@ Beyond the request, burst or concurrency limit, HTTP answers \`429 tenant_busy\`
 ${plans.map((plan) => `| ${plan.name} | ${count(plan.limits.operationUnitsPerMonth)} | ${count(plan.limits.operationUnitCapPerMonth)} | ${count(plan.limits.sqlReadUnitsPerMonth)} |`).join('\n')}
 
 One unit is each started 4 KiB. At the cap (the allowance on Free) new writes, and at fair use new SQL reads, answer \`429 quota_exceeded\` (SQLSTATE \`53100\`) until the next UTC month or an upgrade. Shape reads stay available. See [pricing](/pricing) for billing and overage.
-
-A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 `,
 };
 for (const [path, text] of Object.entries(outputs)) {

@@ -3,7 +3,7 @@ using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
+using Dapper;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Storage;
@@ -15,8 +15,8 @@ public sealed partial class WebhookDeliveryWorker(AuthData data, AuthSchema sche
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await schema.Ready.WaitAsync(stoppingToken).ConfigureAwait(false);
-        await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => this.RunLaneAsync(stoppingToken))).ConfigureAwait(false);
+        await schema.Ready.WaitAsync(stoppingToken);
+        await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => this.RunLaneAsync(stoppingToken)));
     }
 
     private async Task RunLaneAsync(CancellationToken cancellationToken)
@@ -27,16 +27,17 @@ public sealed partial class WebhookDeliveryWorker(AuthData data, AuthSchema sche
             try
             {
                 var now = clock.GetUtcNow();
-                var endpoints = await data.ReadAsync((db, token) => db.WebhookEndpointStates
-                    .Where(endpoint => endpoint.DisabledAt == null && endpoint.LeaseUntil <= now
-                        && db.WebhookDeliveries.Any(row => row.EndpointId == endpoint.EndpointId
-                            && (row.Status == "pending" || row.Status == "sending") && row.NextAttemptAt <= now))
-                    .OrderBy(endpoint => db.WebhookEndpointStates.Where(row => row.ProjectId == endpoint.ProjectId).Max(row => row.LastServedAt))
-                    .ThenBy(endpoint => endpoint.ProjectId).ThenBy(endpoint => endpoint.LastServedAt).ThenBy(endpoint => endpoint.EndpointId)
-                    .Take(1).Select(endpoint => endpoint.EndpointId).ToListAsync(token), cancellationToken).ConfigureAwait(false);
+                var endpoints = (await data.ReadAsync(connection => connection.QueryAsync<string>(
+                    """
+                    SELECT s.endpoint_id FROM webhook_endpoint_states s
+                    WHERE s.disabled_at IS NULL AND s.lease_until <= @now
+                        AND EXISTS (SELECT 1 FROM webhook_deliveries d WHERE d.endpoint_id = s.endpoint_id AND d.status IN ('pending', 'sending') AND d.next_attempt_at <= @now)
+                    ORDER BY (SELECT max(p.last_served_at) FROM webhook_endpoint_states p WHERE p.project_id = s.project_id), s.project_id, s.last_served_at, s.endpoint_id
+                    LIMIT 1
+                    """, new { now }), cancellationToken)).AsList();
                 if (endpoints.Count == 0)
                 {
-                    await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false);
+                    await timer.WaitForNextTickAsync(cancellationToken);
                     continue;
                 }
 
@@ -46,10 +47,12 @@ public sealed partial class WebhookDeliveryWorker(AuthData data, AuthSchema sche
                     for (var count = 0; count < 10 && !budget.IsCancellationRequested; count++)
                     {
                         now = clock.GetUtcNow();
-                        var current = await data.ReadAsync((db, token) => db.WebhookDeliveries
-                            .Where(row => row.EndpointId == endpointId && (row.Status == "pending" || row.Status == "sending") && row.NextAttemptAt <= now)
-                            .OrderBy(row => row.EventId).ThenBy(row => row.Id).WithVersion().FirstOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
-                        if (current is null || !await this.DeliverAsync(current, budget.Token, cancellationToken).ConfigureAwait(false))
+                        var current = Versioned.Of(await data.ReadAsync(connection => connection.QueryFirstOrDefaultAsync<WebhookDeliveryRecord>(
+                            """
+                            SELECT * FROM webhook_deliveries WHERE endpoint_id = @endpointId AND status IN ('pending', 'sending') AND next_attempt_at <= @now
+                            ORDER BY event_id, id LIMIT 1
+                            """, new { endpointId, now }), cancellationToken));
+                        if (current is null || !await this.DeliverAsync(current, budget.Token, cancellationToken))
                         {
                             break;
                         }
@@ -62,37 +65,28 @@ public sealed partial class WebhookDeliveryWorker(AuthData data, AuthSchema sche
             {
                 DeliveryPassFailed(logger, failure.GetType().Name);
             }
-            await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false);
+            await timer.WaitForNextTickAsync(cancellationToken);
         }
     }
 
     private async Task<bool> DeliverAsync(Versioned<WebhookDeliveryRecord> current, CancellationToken budgetToken, CancellationToken cancellationToken)
     {
         var delivery = current.Value;
-        var target = await data.ReadAsync((db, token) =>
-            (from state in db.WebhookEndpointStates
-             join endpoint in db.WebhookEndpoints on state.EndpointId equals endpoint.Id
-             join evt in db.WebhookOutbox on delivery.EventId equals evt.EventId
-             where state.EndpointId == delivery.EndpointId && state.ProjectId == delivery.ProjectId
-                 && endpoint.ProjectId == delivery.ProjectId && evt.ProjectId == delivery.ProjectId
-             select new
-             {
-                 State = new Versioned<WebhookEndpointStateRecord>(state, EF.Property<string>(state, AuthDbContext.VersionProperty)),
-                 Endpoint = endpoint,
-                 Event = evt,
-             }).SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
+        var (endpointId, projectId, eventId) = (delivery.EndpointId, delivery.ProjectId, delivery.EventId);
+        var state = Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<WebhookEndpointStateRecord>(
+            "SELECT * FROM webhook_endpoint_states WHERE endpoint_id = @endpointId AND project_id = @projectId", new { endpointId, projectId }), cancellationToken));
+        var endpoint = state is null ? null : await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<WebhookEndpointRecord>(
+            "SELECT * FROM webhook_endpoints WHERE id = @endpointId AND project_id = @projectId", new { endpointId, projectId }), cancellationToken);
+        var evt = endpoint is null ? null : await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<WebhookOutboxRecord>(
+            "SELECT * FROM webhook_outbox WHERE event_id = @eventId AND project_id = @projectId", new { eventId, projectId }), cancellationToken);
         var now = clock.GetUtcNow();
-        if (target is null || target.State.Value.LeaseUntil > now)
+        if (state is null || endpoint is null || evt is null || state.Value.LeaseUntil > now)
         {
             return false;
         }
-
-        var state = target.State;
-        var endpoint = target.Endpoint;
-        var evt = target.Event;
         if (state.Value.DisabledAt is not null)
         {
-            await data.SaveAsync(Change.Update(current, delivery with { Status = "disabled" }), cancellationToken).ConfigureAwait(false);
+            await data.SaveAsync(Change.Update(current, delivery with { Status = "disabled" }), cancellationToken);
             return false;
         }
 
@@ -107,32 +101,35 @@ public sealed partial class WebhookDeliveryWorker(AuthData data, AuthSchema sche
         List<Change> claims = [claim, stateClaim, attemptClaim];
         if (delivery.Status == "sending")
         {
-            var interrupted = await data.ReadAsync((db, token) => db.WebhookAttempts.Where(row => row.DeliveryId == delivery.Id && row.Status == "sending")
-                .WithVersion().ToListAsync(token), cancellationToken).ConfigureAwait(false);
+            var deliveryId = delivery.Id;
+            var interrupted = Versioned.All(await data.ReadAsync(connection => connection.QueryAsync<WebhookAttemptRecord>(
+                "SELECT * FROM webhook_attempts WHERE delivery_id = @deliveryId AND status = 'sending'", new { deliveryId }), cancellationToken));
             claims.AddRange(interrupted.Select(row => Change.Update(row, row.Value with { Status = "interrupted" })));
         }
-        if (!await data.SaveAsync(claims, cancellationToken).ConfigureAwait(false))
+        if (!await data.SaveAsync(claims, cancellationToken))
         {
             return false;
         }
 
         var started = clock.GetTimestamp();
-        var result = await this.SendAsync(endpoint, evt, budgetToken, cancellationToken).ConfigureAwait(false);
+        var result = await this.SendAsync(endpoint, evt, budgetToken, cancellationToken);
         var finishedAt = clock.GetUtcNow();
         var latencyMs = (int)clock.GetElapsedTime(started).TotalMilliseconds;
         WebhookAttemptRecord? previousAttempt = null;
         if (!result.Success)
         {
-            previousAttempt = await data.ReadAsync((db, token) => db.WebhookAttempts.FromSql($"""
-            SELECT a.* FROM webhook_deliveries AS d
-            JOIN webhook_attempts AS a ON a.delivery_id = d.id
-            WHERE d.endpoint_id = {delivery.EndpointId} AND d.project_id = {delivery.ProjectId}
-              AND a.id = (
-                SELECT max(previous.id) FROM webhook_attempts AS previous
-                WHERE previous.delivery_id = d.id AND previous.id <> {attempt.Id})
-            ORDER BY a.id DESC
-            LIMIT 1
-            """).OrderByDescending(row => row.Id).FirstOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
+            var attemptId = attempt.Id;
+            previousAttempt = await data.ReadAsync(connection => connection.QueryFirstOrDefaultAsync<WebhookAttemptRecord>(
+                """
+                SELECT a.* FROM webhook_deliveries AS d
+                JOIN webhook_attempts AS a ON a.delivery_id = d.id
+                WHERE d.endpoint_id = @endpointId AND d.project_id = @projectId
+                  AND a.id = (
+                    SELECT max(previous.id) FROM webhook_attempts AS previous
+                    WHERE previous.delivery_id = d.id AND previous.id <> @attemptId)
+                ORDER BY a.id DESC
+                LIMIT 1
+                """, new { endpointId, projectId, attemptId }), cancellationToken);
         }
 
         DateTimeOffset? failedSince = result.Success ? null : (previousAttempt is { Status: "failed" } && previousAttempt.CreatedAt >= now.AddHours(-10) ? leased.FirstFailureAt : null) ?? now;
@@ -155,10 +152,10 @@ public sealed partial class WebhookDeliveryWorker(AuthData data, AuthSchema sche
 
         if (disabledAt is not null && leased.DisabledAt is null)
         {
-            changes.AddRange(await notifications.ReserveAsync(delivery.ProjectId, endpoint.Id, cancellationToken).ConfigureAwait(false));
+            changes.AddRange(await notifications.ReserveAsync(delivery.ProjectId, endpoint.Id, cancellationToken));
         }
 
-        if (!await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false))
+        if (!await data.SaveAsync(changes, cancellationToken))
         {
             DeliveryCompletionConflict(logger, delivery.Id);
             return false;
@@ -185,11 +182,11 @@ public sealed partial class WebhookDeliveryWorker(AuthData data, AuthSchema sche
         try
         {
             using var client = clients.CreateClient(WebhookHttp.HttpClientName);
-            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
             responseCode = (int)response.StatusCode;
-            await using var stream = await response.Content.ReadAsStreamAsync(deadline.Token).ConfigureAwait(false);
+            await using var stream = await response.Content.ReadAsStreamAsync(deadline.Token);
             var bytes = new byte[1024];
-            var count = await stream.ReadAtLeastAsync(bytes, bytes.Length, throwOnEndOfStream: false, deadline.Token).ConfigureAwait(false);
+            var count = await stream.ReadAtLeastAsync(bytes, bytes.Length, throwOnEndOfStream: false, deadline.Token);
             var snippet = Encoding.UTF8.GetString(bytes, 0, count).Replace(secret, "[redacted]", StringComparison.Ordinal);
             if (previous is not null)
             {

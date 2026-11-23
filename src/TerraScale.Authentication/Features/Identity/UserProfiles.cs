@@ -21,9 +21,9 @@ public sealed class UserProfiles(AuthData data, Users users, PasswordHasher pass
             throw Invalid(PasswordPolicy.Message(problem));
         }
 
-        var hash = request.Password is { } value ? await passwords.HashAsync(project, value, cancellationToken).ConfigureAwait(false) : null;
+        var hash = request.Password is { } value ? await passwords.HashAsync(project, value, cancellationToken) : null;
         return await this.InsertAsync(project, email, hash, false, request.FirstName, request.LastName, request.ImageUrl, request.ExternalId,
-            request.PublicMetadata, request.PrivateMetadata, request.UnsafeMetadata, cancellationToken).ConfigureAwait(false);
+            request.PublicMetadata, request.PrivateMetadata, request.UnsafeMetadata, cancellationToken);
     }
 
     public Task<UserRecord> ImportAsync(string project, ImportProjectUserRequest request, CancellationToken cancellationToken)
@@ -42,8 +42,8 @@ public sealed class UserProfiles(AuthData data, Users users, PasswordHasher pass
     public async Task<UserRecord> UpdateAsync(string project, string id, UserProfilePatch patch, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(patch);
-        var current = await users.GetAsync(project, id, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound();
-        return await this.SaveProfileAsync(current, patch, null, cancellationToken).ConfigureAwait(false);
+        var current = await users.GetAsync(project, id, cancellationToken) ?? throw PlatformDirectory.NotFound();
+        return await this.SaveProfileAsync(current, patch, null, cancellationToken);
     }
 
     public Task<UserRecord> UpdateSelfAsync(UserRecord current, SelfProfilePatch patch, Change session, CancellationToken cancellationToken)
@@ -77,7 +77,7 @@ public sealed class UserProfiles(AuthData data, Users users, PasswordHasher pass
             changes.Add(authorization);
         }
 
-        if (!await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false))
+        if (!await data.SaveAsync(changes, cancellationToken))
         {
             throw new ApiException(409, "user_conflict", "User changed concurrently or external_id is already assigned.");
         }
@@ -88,13 +88,13 @@ public sealed class UserProfiles(AuthData data, Users users, PasswordHasher pass
     public async Task<UserRecord?> UpgradePasswordAsync(UserRecord current, string password, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(current);
-        var hash = await passwords.HashAsync(current.InstanceId, password, cancellationToken).ConfigureAwait(false);
+        var hash = await passwords.HashAsync(current.InstanceId, password, cancellationToken);
         var updated = current with { PasswordHash = hash };
-        if (!await data.SaveAsync(Change.Update(updated), cancellationToken).ConfigureAwait(false))
+        if (!await data.SaveAsync(Change.Update(updated), cancellationToken))
         {
-            var latest = await users.GetAsync(current.InstanceId, current.Id, cancellationToken).ConfigureAwait(false);
+            var latest = await users.GetAsync(current.InstanceId, current.Id, cancellationToken);
             return latest is { Disabled: false } && latest.AuthStamp == current.AuthStamp && latest.AuthEpoch == current.AuthEpoch
-                && await passwords.VerifyAsync(current.InstanceId, password, latest.PasswordHash, cancellationToken).ConfigureAwait(false)
+                && await passwords.VerifyAsync(current.InstanceId, password, latest.PasswordHash, cancellationToken)
                 ? latest : null;
         }
 
@@ -116,7 +116,7 @@ public sealed class UserProfiles(AuthData data, Users users, PasswordHasher pass
             PrivateMetadata = Metadata("{}", privateMetadata),
             UnsafeMetadata = Metadata("{}", unsafeMetadata),
         };
-        if (!await data.SaveAsync([Change.Insert(user), Change.Insert(outbox.NewEvent(project, "user.created", user.Id, email))], cancellationToken).ConfigureAwait(false))
+        if (!await data.SaveAsync([Change.Insert(user), Change.Insert(outbox.NewEvent(project, "user.created", user.Id, email))], cancellationToken))
         {
             throw new ApiException(409, "user_conflict", "email or external_id is already assigned in this project.");
         }

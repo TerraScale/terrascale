@@ -1,6 +1,9 @@
+using System.Text.Json.Serialization;
+using System.Text.Json;
+using Dapper;
+using System.Data;
 using TerraScale.Dashboard.Platform.Datastar;
 using System.Net;
-using Microsoft.EntityFrameworkCore;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.WebUtilities;
@@ -63,6 +66,15 @@ internal sealed class OrganizationCheckoutRefusedException(string message) : IOE
 
 public sealed partial class StripeBilling
 {
+    private const string Drafts = DashboardSql.PendingOrganizationCheckouts.Select + " WHERE user_id = @UserId";
+    private const string DraftsOrdered = Drafts + " ORDER BY state = @RefundPending, created_at";
+    private const string DraftCount = "SELECT count(*) FROM pending_organization_checkouts WHERE user_id = @UserId";
+    private const string DraftForReturn = Drafts + " AND checkout_id = @CheckoutId";
+    private const string DraftById = DashboardSql.PendingOrganizationCheckouts.Select + " WHERE draft_id = @DraftId";
+    private const string CheckoutByRequest = DashboardSql.StripeCheckouts.Select + " WHERE request_id = @RequestId";
+    private const string OwnedBindings = DashboardSql.Billing.Select
+        + " WHERE organization_id IN (SELECT value FROM json_each(@Ids)) AND kind = 'stripe' AND erasure_id IS NULL AND state = 'active' AND length(request_id) = 26";
+
     internal Task<OrganizationCheckoutCompletion> ResumeOrganizationAsync(SessionRecord session, HttpContext http)
     {
         if (http.Items.TryGetValue(typeof(OrganizationCheckoutCompletion), out var existing))
@@ -93,9 +105,12 @@ public sealed partial class StripeBilling
     private async Task<OrganizationCheckoutCompletion> ResumeOrganizationAttemptsAsync(SessionRecord session, HttpContext http, CancellationToken cancellationToken)
     {
         var result = new OrganizationCheckoutCompletion();
-        await using var db = await storage.CreateDbContextAsync(cancellationToken);
-        var drafts = await db.PendingOrganizationCheckouts.AsNoTracking()
-            .Where(row => row.UserId == session.UserId).OrderBy(row => row.State == OrganizationCheckoutStates.RefundPending).ThenBy(row => row.CreatedAt).ToListAsync(cancellationToken);
+        List<PendingOrganizationCheckout> drafts;
+        await using (var connection = await storage.OpenAsync(cancellationToken))
+        {
+            drafts = (await connection.QueryAsync<PendingOrganizationCheckout>(DraftsOrdered, new { session.UserId, OrganizationCheckoutStates.RefundPending })).AsList();
+        }
+
         foreach (var draft in drafts)
         {
             if (http.Request.Path == "/billing/checkout/return" && http.Request.Query["session_id"] != draft.CheckoutId)
@@ -126,8 +141,12 @@ public sealed partial class StripeBilling
         {
             var context = await accounts.GetContextAsync(session, cancellationToken);
             var owned = context.Organizations.Where(org => org.Kind == "business" && org.OwnerUserId == session.UserId).Select(org => org.Id).ToArray();
-            var bindings = await db.Billing.AsNoTracking().Where(row => owned.Contains(row.OrganizationId) && row.Kind == "stripe"
-                && row.ErasureId == null && row.State == "active" && row.RequestId.Length == 26).ToListAsync(cancellationToken);
+            List<BillingBinding> bindings;
+            await using (var connection = await storage.OpenAsync(cancellationToken))
+            {
+                bindings = (await connection.QueryAsync<BillingBinding>(OwnedBindings, new { Ids = JsonSerializer.Serialize(owned, CheckoutNavigationJson.Default.StringArray) })).AsList();
+            }
+
             foreach (var binding in bindings)
             {
                 await OptionalPanel.RunAsync(http, "organization checkout metadata", async () =>
@@ -206,20 +225,20 @@ public sealed partial class StripeBilling
 
     internal async Task<PendingOrganizationCheckout?> OrganizationDraftForReturnAsync(string userId, string checkoutId, CancellationToken cancellationToken)
     {
-        await using var db = await storage.CreateDbContextAsync(cancellationToken);
-        return await db.PendingOrganizationCheckouts.AsNoTracking()
-            .SingleOrDefaultAsync(row => row.UserId == userId && row.CheckoutId == checkoutId, cancellationToken);
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        return await connection.QuerySingleOrDefaultAsync<PendingOrganizationCheckout>(DraftForReturn, new { UserId = userId, CheckoutId = checkoutId });
     }
 
     internal async Task PrepareOrganizationAccountDeletionAsync(SessionRecord session, HttpContext http, CancellationToken cancellationToken)
     {
-        await using var db = await storage.CreateDbContextAsync(cancellationToken);
-        var drafts = await db.PendingOrganizationCheckouts.AsNoTracking().Where(row => row.UserId == session.UserId).ToListAsync(cancellationToken);
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        var drafts = (await connection.QueryAsync<PendingOrganizationCheckout>(Drafts, new { session.UserId })).AsList();
         foreach (var draft in drafts)
         {
             await CancelPendingOrganizationAsync(session, http, draft.DraftId, "Organization checkout canceled.", cancellationToken);
         }
-        if (await db.PendingOrganizationCheckouts.AnyAsync(row => row.UserId == session.UserId, cancellationToken))
+
+        if (await connection.ExecuteScalarAsync<long>(DraftCount, new { session.UserId }) > 0)
         {
             throw new IOException("Organization checkout cleanup is pending.");
         }
@@ -227,8 +246,8 @@ public sealed partial class StripeBilling
 
     private async Task<PendingOrganizationCheckout?> ReadPendingOrganizationAsync(string draftId, CancellationToken cancellationToken)
     {
-        await using var db = await storage.CreateDbContextAsync(cancellationToken);
-        return await db.PendingOrganizationCheckouts.AsNoTracking().SingleOrDefaultAsync(row => row.DraftId == draftId, cancellationToken);
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        return await connection.QuerySingleOrDefaultAsync<PendingOrganizationCheckout>(DraftById, new { DraftId = draftId });
     }
 
     private async Task<PendingOrganizationCheckout> RecordPaidDraftAsync(PendingOrganizationCheckout draft, CancellationToken cancellationToken)
@@ -254,8 +273,12 @@ public sealed partial class StripeBilling
             var draft = await ReadPendingOrganizationAsync(draftId, cancellationToken);
             if (draft is null)
             {
-                await using var cancelDb = await storage.CreateDbContextAsync(cancellationToken);
-                var checkout = await cancelDb.StripeCheckouts.AsNoTracking().SingleOrDefaultAsync(row => row.RequestId == draftId, cancellationToken);
+                StripeCheckoutRow? checkout;
+                await using (var connection = await storage.OpenAsync(cancellationToken))
+                {
+                    checkout = await connection.QuerySingleOrDefaultAsync<StripeCheckoutRow>(CheckoutByRequest, new { RequestId = draftId });
+                }
+
                 var context = await accounts.GetContextAsync(session, cancellationToken);
                 if (checkout is not null && context.Organizations.Any(org => org.Id == checkout.OrganizationId && org.OwnerUserId == session.UserId))
                 {
@@ -300,8 +323,7 @@ public sealed partial class StripeBilling
 
             var refunded = refund switch { bool canceled => canceled, OrganizationRefundPending => false };
             var message = draft.RefusalReason + (refunded ? " Your payment was refunded." : "");
-            await using var db = await storage.CreateDbContextAsync(cancellationToken);
-            var current = await db.PendingOrganizationCheckouts.SingleOrDefaultAsync(row => row.DraftId == draftId, cancellationToken);
+            var current = await ReadPendingOrganizationAsync(draftId, cancellationToken);
             if (current is null)
             {
                 return new OrganizationCheckoutCompletion();
@@ -310,12 +332,7 @@ public sealed partial class StripeBilling
             {
                 continue;
             }
-            db.Remove(current);
-            try
-            {
-                await db.SaveChangesAsync(cancellationToken);
-            }
-            catch (DbUpdateConcurrencyException)
+            if (!await storage.RemoveAsync(current, cancellationToken))
             {
                 continue;
             }
@@ -349,3 +366,6 @@ public sealed partial class StripeBilling
         return false;
     }
 }
+
+[JsonSerializable(typeof(string[]))]
+internal sealed partial class CheckoutNavigationJson : JsonSerializerContext;

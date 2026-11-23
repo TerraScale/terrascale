@@ -46,7 +46,7 @@ public sealed class AgentIdTokenEndpoint(AgentIdTransactions transactions, Attem
         catch (Exception error) when (AuthData.IsUnavailable(error) && !this.HttpContext.RequestAborted.IsCancellationRequested)
         {
             var unavailable = error as ApiException ?? ApiException.Unavailable(error);
-            return Results.Json(new OAuthErrorBody(OidcErrors.TemporarilyUnavailable, unavailable.Message), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status503ServiceUnavailable);
+            return TypedResults.Json(new OAuthErrorBody(OidcErrors.TemporarilyUnavailable, unavailable.Message), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status503ServiceUnavailable);
         }
     }
 
@@ -54,7 +54,7 @@ public sealed class AgentIdTokenEndpoint(AgentIdTransactions transactions, Attem
     {
         if (this.HttpContext.GetOpenIddictServerRequest() is not { ClientId: { } clientId } request)
         {
-            return Results.NotFound();
+            return TypedResults.NotFound();
         }
 
         if (!request.IsAuthorizationCodeGrantType())
@@ -89,6 +89,6 @@ public sealed class AgentIdTokenEndpoint(AgentIdTransactions transactions, Attem
         }
 
         this.HttpContext.Items[AgentIdFence.Item] = live with { Registration = registration };
-        return Results.SignIn(AgentIdIssuer.Principal(options, clientId, live.SignIn, principal.GetScopes(), redemption: true), null, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
+        return TypedResults.SignIn(AgentIdIssuer.Principal(options, clientId, live.SignIn, principal.GetScopes(), redemption: true), null, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
     }
 }

@@ -1,6 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using TerraScale.TerraBase.Contracts;
+using TerraScale.Dashboard.Platform.Clients;
 using TerraScale.Dashboard.Errors;
 using ValidationCase = TerraScale.Dashboard.Errors.Validation;
 
@@ -18,7 +18,6 @@ namespace TerraScale.Dashboard.Common.Databases
 
         public static DatabaseRecord Database(AccountContext context, string id)
         {
-            // Caller mistakes are 422; an unresolvable ID is a 404 naming it. Never blame the id format for a miss.
             return context.Project?.Databases.GetValueOrDefault(id) is { } database && database.ProjectId == context.Project.Id
                 ? database : PlatformDatabases.Databases.ContainsKey(id) ? throw new AccountAccessException("Platform admin access is required.")
                 : throw new AccountAccessException(TerraScaleIds.IsValid(id) ? "Database " + id + " was not found in this project." : DatabaseIdRule, TerraScaleIds.IsValid(id) ? 404 : 422, DatabaseIdCode);
@@ -42,7 +41,6 @@ namespace TerraScale.Dashboard.Common.Databases
             var placement = new List<DatabaseRegion>();
             foreach (var code in codes.Where(code => !string.IsNullOrWhiteSpace(code)))
             {
-                // Stored regions keep their own region when the catalog does not list them.
                 var region = DatabaseRegion.Resolve(catalog, code.Trim()) ?? ResolveRegion(catalog, code);
                 if (!placement.Any(selected => selected.Id == region.Id && selected.Code == region.Code))
                 {
@@ -476,9 +474,6 @@ namespace TerraScale.Dashboard.Common.Databases
             }
         }
 
-        // TerraBase owns databases; the project's records follow its listings. A database created outside the dashboard (the
-        // CLI, an SDK) gets a record, so it is listed and counts toward the plan, and a record whose database its home region
-        // no longer lists is dropped. A region that does not answer leaves its records as they are; the list still renders.
         public async Task SyncAsync(AccountContext context, CancellationToken cancellationToken)
         {
             if (context.Project is not { } project || PlatformDatabases.IsPlatform(context.Organization?.Id))
@@ -491,12 +486,8 @@ namespace TerraScale.Dashboard.Common.Databases
                 var scope = Scope(context);
                 var catalog = await backend.RegionsAsync(cancellationToken);
                 var seen = project.Databases.Values.ToArray();
-                // Copy placement before awaiting the provider; mutable record references are not a concurrency snapshot.
                 var observed = seen.ToDictionary(record => record.Id, record =>
                     (record.Name, record.ProjectId, record.PreviousName, record.ConflictOf, record.ExpiresAt, record.Region, Regions: Regions(record).ToArray(), record.AllRegions, record.PlacementRevision));
-                // TerraBase homes a database in whichever region accepted its creation, whatever created it: a project's
-                // preferred region is only a preference, and a project made outside the dashboard has none. Listing every
-                // serving region is the complete catalog; the regions answer in parallel and converge on the same list.
                 var homes = catalog;
 
                 var listings = await Task.WhenAll(homes.Select(async home =>
@@ -505,7 +496,6 @@ namespace TerraScale.Dashboard.Common.Databases
                     catch (Exception error) when (!cancellationToken.IsCancellationRequested && (error is TerraBaseException or HttpRequestException or JsonException || DatabaseResults.KnownFailure(error)))
                     { return (home, Listed: (IReadOnlyList<ManagedDatabase>?)null); }
                 }));
-                // Replica catalogs can lag a move; prefer the record returned by its own home when that region answers.
                 var remote = listings.SelectMany(listing => (listing.Listed ?? []).Select(database => (Database: database, Home: listing.home.Id)))
                     .Where(item => item.Database.ProjectId == project.Id).GroupBy(item => item.Database.Id)
                     .Select(group => group.OrderByDescending(item => item.Database.HomeRegion == item.Home).First().Database).ToArray();
@@ -523,7 +513,6 @@ namespace TerraScale.Dashboard.Common.Databases
                         {
                             imported.Add(record);
                         }
-                        // Identity must match; the home and replica regions follow the producer placement.
                         else if (record.Name == before.Name && record.ProjectId == before.ProjectId &&
                             (!record.Region.Equals(before.Region, StringComparison.OrdinalIgnoreCase) || record.ExpiresAt != before.ExpiresAt || record.AllRegions != before.AllRegions || !Regions(record).SequenceEqual(before.Regions, StringComparer.OrdinalIgnoreCase)))
                         {
@@ -548,7 +537,6 @@ namespace TerraScale.Dashboard.Common.Databases
 
                 void Apply(ProjectRecord target)
                 {
-                    // Rechecked on every storage CAS attempt: a newer dashboard placement must survive an older listing.
                     foreach (var id in gone)
                     {
                         if (target.Databases.TryGetValue(id, out var current) && Unchanged(current))
@@ -596,7 +584,6 @@ namespace TerraScale.Dashboard.Common.Databases
                 {
                     if (org.Projects.GetValueOrDefault(project.Id) is { } stored) { Apply(stored); saved = stored; }
                 }, cancellationToken);
-                // The response follows the successful CAS too, including mutations that made this sync skip a stale update.
                 if (saved is not null)
                 {
                     project.Databases = saved.Databases;

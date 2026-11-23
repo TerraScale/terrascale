@@ -1,40 +1,86 @@
-using Microsoft.EntityFrameworkCore;
+using System.Data;
+using System.Data.Common;
+using Dapper;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Platform.Persistence;
 
-public sealed partial class BackgroundJobs(IDbContextFactory<DashboardDbContext> storage, TimeProvider clock, ILogger<BackgroundJobs> logger)
+public sealed partial class BackgroundJobs(DashboardDb storage, TimeProvider clock, ILogger<BackgroundJobs> logger)
 {
     private static readonly TimeSpan Lease = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan Renewal = TimeSpan.FromSeconds(20);
 
-    public async Task<bool> RunAsync(string id, TimeSpan interval, Func<Claim, CancellationToken, Task> work, CancellationToken cancellationToken, string? target = null, string? fence = null, string? databaseId = null)
+    private const string Busy = """
+        SELECT count(*) FROM background_jobs
+        WHERE id = @Id AND ((@Fence IS NOT NULL AND checkpoint <> @Fence) OR lease_until > @Now
+            OR (available_at > @Now AND (@Target IS NULL OR cursor = @Target OR cursor = @Target || '/projects')))
+        """;
+
+    private const string Acquire = """
+        INSERT INTO background_jobs (id, owner, checkpoint, available_at, lease_until, failures)
+        SELECT @Id, @Owner, @Checkpoint, '0001-01-01 00:00:00', strftime('%Y-%m-%d %H:%M:%f', 'now', '+120 seconds'), 0
+        WHERE (@Fence IS NULL OR COALESCE((SELECT checkpoint FROM background_jobs WHERE id = @Id), '') = @Fence)
+          AND (@DatabaseId IS NULL OR EXISTS (SELECT 1 FROM project_databases WHERE id = @DatabaseId))
+        ON CONFLICT(id) DO UPDATE SET owner = excluded.owner, checkpoint = excluded.checkpoint, lease_until = excluded.lease_until
+        WHERE (@Fence IS NULL OR background_jobs.checkpoint = @Fence)
+          AND background_jobs.lease_until <= strftime('%Y-%m-%d %H:%M:%f', 'now')
+          AND (background_jobs.available_at <= strftime('%Y-%m-%d %H:%M:%f', 'now')
+               OR (@Target IS NOT NULL AND (background_jobs.cursor IS NULL OR background_jobs.cursor NOT IN (@Target, @Target || '/projects'))))
+        RETURNING id, owner, checkpoint, available_at, lease_until, failures, attempted_at, succeeded_at, cursor, next_cursor, delivery_id, payload
+        """;
+
+    private const string Complete = """
+        UPDATE background_jobs
+        SET lease_until = '0001-01-01 00:00:00',
+            available_at = CASE WHEN @Periodic AND @Delay > 0
+                THEN strftime('%Y-%m-%d %H:%M:%f', (CAST(unixepoch('subsec') / @Delay AS INTEGER) + 1) * @Delay, 'unixepoch')
+                ELSE strftime('%Y-%m-%d %H:%M:%f', 'now', printf('+%f seconds', @Delay)) END
+        WHERE id = @Id AND owner = @Owner AND checkpoint = @Checkpoint
+          AND lease_until > strftime('%Y-%m-%d %H:%M:%f', 'now')
+        """;
+
+    private const string Release = "UPDATE background_jobs SET lease_until = '0001-01-01 00:00:00' WHERE id = @Id AND owner = @Owner AND checkpoint = @Checkpoint";
+
+    private const string Renew = """
+        UPDATE background_jobs
+        SET lease_until = strftime('%Y-%m-%d %H:%M:%f', 'now', '+120 seconds')
+        WHERE id = @Id AND owner = @Owner AND lease_until > strftime('%Y-%m-%d %H:%M:%f', 'now')
+        """;
+
+    private const string Save = """
+        UPDATE background_jobs
+        SET checkpoint = @Checkpoint, available_at = @AvailableAt, failures = @Failures, attempted_at = @AttemptedAt, succeeded_at = @SucceededAt,
+            cursor = @Cursor, next_cursor = @NextCursor, delivery_id = @DeliveryId, payload = unhex(@PayloadHex)
+        WHERE id = @Id AND owner = @OriginalOwner AND checkpoint = @OriginalCheckpoint
+        """;
+
+    private const string Forget = "DELETE FROM background_jobs WHERE id = @Id AND owner = @OriginalOwner AND checkpoint = @OriginalCheckpoint";
+
+    public async Task<bool> RunAsync(string id, TimeSpan interval, Func<Claim, CancellationToken, Task> work, CancellationToken cancellationToken, string? target = null,
+        string? fence = null, string? databaseId = null)
     {
         ArgumentNullException.ThrowIfNull(work);
-        await using var db = await storage.CreateDbContextAsync(cancellationToken);
-        if (await db.BackgroundJobs.AsNoTracking().AnyAsync(row => row.Id == id &&
-            (fence != null && row.Checkpoint != fence || row.LeaseUntil > DateTime.UtcNow || row.AvailableAt > DateTime.UtcNow &&
-                (target == null || row.Cursor == target || row.Cursor == target + "/projects")), cancellationToken)) { return false; }
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        var now = clock.GetUtcNow().UtcDateTime;
+        if (await connection.ExecuteScalarAsync<long>(Busy, new { Id = id, Fence = fence, Now = now, Target = target }) > 0)
+        {
+            return false;
+        }
+
         var owner = AccountService.NewId();
         var checkpoint = AccountService.NewId();
         var started = clock.GetTimestamp();
-        var rows = await db.BackgroundJobs.FromSqlInterpolated($"""
-            INSERT INTO background_jobs (id, owner, checkpoint, available_at, lease_until, failures)
-            SELECT {id}, {owner}, {checkpoint}, '0001-01-01 00:00:00', strftime('%Y-%m-%d %H:%M:%f', 'now', '+120 seconds'), 0
-            WHERE ({fence} IS NULL OR COALESCE((SELECT checkpoint FROM background_jobs WHERE id = {id}), '') = {fence})
-              AND ({databaseId} IS NULL OR EXISTS (SELECT 1 FROM project_databases WHERE id = {databaseId}))
-            ON CONFLICT(id) DO UPDATE SET owner = excluded.owner, checkpoint = excluded.checkpoint, lease_until = excluded.lease_until
-            WHERE ({fence} IS NULL OR background_jobs.checkpoint = {fence})
-              AND background_jobs.lease_until <= strftime('%Y-%m-%d %H:%M:%f', 'now')
-              AND (background_jobs.available_at <= strftime('%Y-%m-%d %H:%M:%f', 'now')
-                   OR ({target} IS NOT NULL AND (background_jobs.cursor IS NULL OR background_jobs.cursor NOT IN ({target}, {target} || '/projects'))))
-            RETURNING *
-            """).ToListAsync(cancellationToken);
-        if (rows.Count == 0) { return false; }
-        var row = rows.Single();
+        var rows = (await connection.QueryAsync<BackgroundJobRow>(Acquire,
+            new { Id = id, Owner = owner, Checkpoint = checkpoint, Fence = fence, DatabaseId = databaseId, Target = target })).AsList();
+        if (rows is not [var row])
+        {
+            return false;
+        }
+
         using var stop = new CancellationTokenSource();
         using var active = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var renewing = RenewAsync(id, owner, started, active, stop.Token);
-        var claim = new Claim(db, row, row.LeaseUntil - Lease);
+        var claim = new Claim(connection, row, DateTime.SpecifyKind(row.LeaseUntil, DateTimeKind.Utc) - Lease);
         var completed = false;
         var held = true;
         try
@@ -46,37 +92,29 @@ public sealed partial class BackgroundJobs(IDbContextFactory<DashboardDbContext>
         finally
         {
             await stop.CancelAsync();
-            try { await renewing; }
+            try
+            {
+                await renewing;
+            }
             finally
             {
-                if (db.Entry(row).State != EntityState.Detached)
+                if (!claim.Forgotten)
                 {
-                    await using var release = await storage.CreateDbContextAsync(CancellationToken.None);
+                    await using var release = await storage.OpenAsync(CancellationToken.None);
                     var periodic = claim.Delay is null && interval > TimeSpan.Zero;
                     var delay = Math.Clamp((claim.Delay ?? interval).TotalSeconds, 0, TimeSpan.FromDays(1).TotalSeconds);
-                    if (completed)
-                    {
-                        held = await release.Database.ExecuteSqlInterpolatedAsync($"""
-                            UPDATE background_jobs
-                            SET lease_until = '0001-01-01 00:00:00',
-                                available_at = CASE WHEN {periodic} AND {delay} > 0
-                                    THEN strftime('%Y-%m-%d %H:%M:%f', (CAST(unixepoch('subsec') / {delay} AS INTEGER) + 1) * {delay}, 'unixepoch')
-                                    ELSE strftime('%Y-%m-%d %H:%M:%f', 'now', printf('+%f seconds', {delay})) END
-                            WHERE id = {id} AND owner = {owner} AND checkpoint = {row.Checkpoint}
-                              AND lease_until > strftime('%Y-%m-%d %H:%M:%f', 'now')
-                            """, CancellationToken.None) == 1;
-                    }
-                    else
-                    {
-                        await release.Database.ExecuteSqlInterpolatedAsync($"""
-                            UPDATE background_jobs SET lease_until = '0001-01-01 00:00:00'
-                            WHERE id = {id} AND owner = {owner} AND checkpoint = {row.Checkpoint}
-                            """, CancellationToken.None);
-                    }
+                    held = completed
+                        ? await release.ExecuteAsync(Complete, new { Id = id, Owner = owner, row.Checkpoint, Periodic = periodic, Delay = delay }) == 1
+                        : await release.ExecuteAsync(Release, new { Id = id, Owner = owner, row.Checkpoint }) >= 0;
                 }
             }
         }
-        if (!held) { throw new DbUpdateConcurrencyException("The background job claim expired or changed owner."); }
+
+        if (!held)
+        {
+            throw new DBConcurrencyException("The background job claim expired or changed owner.");
+        }
+
         return true;
     }
 
@@ -91,63 +129,86 @@ public sealed partial class BackgroundJobs(IDbContextFactory<DashboardDbContext>
                 if (remaining <= TimeSpan.Zero)
                 {
                     await active.CancelAsync();
-                    throw new DbUpdateConcurrencyException("The background job lease can no longer be proven.");
+                    throw new DBConcurrencyException("The background job lease can no longer be proven.");
                 }
+
                 using var budget = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
                 budget.CancelAfter(remaining);
                 var started = clock.GetTimestamp();
                 try
                 {
-                    await using var db = await storage.CreateDbContextAsync(budget.Token);
-                    if (await db.Database.ExecuteSqlInterpolatedAsync($"""
-                        UPDATE background_jobs
-                        SET lease_until = strftime('%Y-%m-%d %H:%M:%f', 'now', '+120 seconds')
-                        WHERE id = {id} AND owner = {owner}
-                          AND lease_until > strftime('%Y-%m-%d %H:%M:%f', 'now')
-                        """, budget.Token) != 1)
+                    await using var connection = await storage.OpenAsync(budget.Token);
+                    if (await connection.ExecuteAsync(Renew, new { Id = id, Owner = owner }) != 1)
                     {
                         await active.CancelAsync();
-                        throw new DbUpdateConcurrencyException("The background job claim expired or changed owner.");
+                        throw new DBConcurrencyException("The background job claim expired or changed owner.");
                     }
+
                     proven = started;
                 }
-                catch (Exception error) when (!stoppingToken.IsCancellationRequested &&
-                    error is HttpRequestException or IOException or TimeoutException or OperationCanceledException or DbUpdateException && error is not DbUpdateConcurrencyException)
+                catch (Exception error) when (!stoppingToken.IsCancellationRequested
+                    && error is HttpRequestException or IOException or TimeoutException or OperationCanceledException or TerraBaseSqlException)
                 {
                     RenewalUnavailable(logger, id, error.GetType().Name);
                     if (Lease - clock.GetElapsedTime(proven) <= Renewal)
                     {
                         await active.CancelAsync();
-                        throw new DbUpdateConcurrencyException("The background job lease can no longer be proven.", error);
+                        throw new DBConcurrencyException("The background job lease can no longer be proven.", error);
                     }
                 }
             }
         }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+        }
         finally
         {
-            if (!stoppingToken.IsCancellationRequested) { await active.CancelAsync(); }
+            if (!stoppingToken.IsCancellationRequested)
+            {
+                await active.CancelAsync();
+            }
         }
     }
 
     [LoggerMessage(71, LogLevel.Warning, "Background job {JobId} lease renewal is unavailable ({ErrorType}); retaining the last proven lease.")]
     private static partial void RenewalUnavailable(ILogger logger, string jobId, string errorType);
 
-    public sealed class Claim(DashboardDbContext database, BackgroundJobRow state, DateTime now)
+    public sealed class Claim(TerraBaseDbConnection connection, BackgroundJobRow state, DateTime now)
     {
-        public DashboardDbContext Database { get; } = database;
+        public TerraBaseDbConnection Connection { get; } = connection;
         public BackgroundJobRow State { get; } = state;
         public DateTime Now { get; } = now;
         public TimeSpan? Delay { get; set; }
+        internal bool Forgotten { get; private set; }
 
-        public async Task SaveAsync(CancellationToken cancellationToken)
+        public Task SaveAsync(CancellationToken cancellationToken) => SaveAsync((DbTransaction?)null, cancellationToken);
+
+        public async Task SaveAsync(DbTransaction? transaction, CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             State.AvailableAt = Now + TimeSpan.FromSeconds(Math.Clamp((Delay ?? TimeSpan.Zero).TotalSeconds, 0, TimeSpan.FromDays(1).TotalSeconds));
-            var lease = Database.Entry(State).Property(row => row.LeaseUntil);
-            lease.CurrentValue = lease.OriginalValue;
-            lease.IsModified = false;
+            State.OriginalOwner = State.Owner;
+            State.OriginalCheckpoint = State.Checkpoint;
             State.Checkpoint = AccountService.NewId();
-            await Database.SaveChangesAsync(cancellationToken);
+            DashboardDb.Expect(await Connection.ExecuteAsync(Save, State, transaction));
+        }
+
+        public async Task SaveAsync(Func<TerraBaseDbConnection, DbTransaction, Task> stage, CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(stage);
+            await using var transaction = await Connection.BeginTransactionAsync(cancellationToken);
+            await stage(Connection, transaction);
+            await SaveAsync(transaction, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+
+        public async Task ForgetAsync(DbTransaction? transaction, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            State.OriginalOwner = State.Owner;
+            State.OriginalCheckpoint = State.Checkpoint;
+            DashboardDb.Expect(await Connection.ExecuteAsync(Forget, State, transaction));
+            Forgotten = true;
         }
     }
 }

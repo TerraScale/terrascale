@@ -44,7 +44,7 @@ public sealed class PasswordHasher : IDisposable
         var remaining = this.failureFloor - this.clock.GetElapsedTime(started);
         if (remaining > TimeSpan.Zero)
         {
-            await Task.Delay(remaining, this.clock, cancellationToken).ConfigureAwait(false);
+            await Task.Delay(remaining, this.clock, cancellationToken);
         }
     }
 
@@ -60,16 +60,16 @@ public sealed class PasswordHasher : IDisposable
         deadline.CancelAfter(Wait);
         try
         {
-            using var share = await this.tenants.AcquireAsync(tenant, cancellationToken: deadline.Token).ConfigureAwait(false);
+            using var share = await this.tenants.AcquireAsync(tenant, cancellationToken: deadline.Token);
             if (!share.IsAcquired)
             {
                 throw Busy();
             }
 
-            await this.slots.WaitAsync(deadline.Token).ConfigureAwait(false);
+            await this.slots.WaitAsync(deadline.Token);
             try
             {
-                return await Task.Run(work, cancellationToken).ConfigureAwait(false);
+                return await Task.Run(work, cancellationToken);
             }
             finally
             {

@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+using Dapper;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
@@ -22,7 +22,7 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
 
     public async Task<TimeSpan> GetLifetimeAsync(string instanceId, CancellationToken cancellationToken = default) =>
         Tenancy.IsProject(instanceId)
-            ? TimeSpan.FromSeconds((await settings.GetAsync(instanceId, cancellationToken).ConfigureAwait(false)).Configuration?.SessionLifetimeSeconds
+            ? TimeSpan.FromSeconds((await settings.GetAsync(instanceId, cancellationToken)).Configuration?.SessionLifetimeSeconds
                 ?? ConfigurationBody.Default.SessionLifetimeSeconds)
             : Lifetime;
 
@@ -30,18 +30,18 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
     {
         ArgumentNullException.ThrowIfNull(user);
         var project = Tenancy.IsProject(user.InstanceId)
-            ? await settings.GetAsync(user.InstanceId, cancellationToken).ConfigureAwait(false)
+            ? await settings.GetAsync(user.InstanceId, cancellationToken)
             : null;
         var lifetime = project is null ? Lifetime
             : TimeSpan.FromSeconds(project.Configuration?.SessionLifetimeSeconds ?? ConfigurationBody.Default.SessionLifetimeSeconds);
         var createdAt = clock.GetUtcNow();
-        var signedIn = await outbox.CreateAsync(user.InstanceId, "user.signed_in", user.Id, user.Email, null, cancellationToken).ConfigureAwait(false);
-        return await this.IssueAsync(user, createdAt, createdAt + lifetime, cancellationToken, signedIn, project?.Configuration?.SingleSession == true).ConfigureAwait(false)
+        var signedIn = await outbox.CreateAsync(user.InstanceId, "user.signed_in", user.Id, user.Email, null, cancellationToken);
+        return await this.IssueAsync(user, createdAt, createdAt + lifetime, cancellationToken, signedIn, project?.Configuration?.SingleSession == true)
             ?? throw new ApiException(401, "invalid_credentials", "Authentication could not be completed.");
     }
 
     public async Task<(SessionRecord Session, UserRecord User)?> ResolveAsync(string instanceId, string? token, CancellationToken cancellationToken = default) =>
-        await this.ReadLiveAsync(instanceId, token, cancellationToken).ConfigureAwait(false) is { } live ? (live.Session, live.User) : null;
+        await this.ReadLiveAsync(instanceId, token, cancellationToken) is { } live ? (live.Session, live.User) : null;
 
     public async Task<(SessionRecord Session, UserRecord User)?> ResolveIdAsync(string instanceId, string userId, string? id, CancellationToken cancellationToken)
     {
@@ -50,9 +50,9 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
             return null;
         }
 
-        var hash = await data.ReadAsync((db, token) => db.Sessions.Where(session => session.InstanceId == instanceId && session.UserId == userId && session.Id == id)
-            .Select(session => session.TokenHash).SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
-        return hash is not null && await this.ReadLiveAsync(instanceId, hash, cancellationToken, hashed: true).ConfigureAwait(false) is { } live
+        var hash = await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<string>(
+            "SELECT token_hash FROM sessions WHERE instance_id = @instanceId AND user_id = @userId AND id = @id", new { instanceId, userId, id }), cancellationToken);
+        return hash is not null && await this.ReadLiveAsync(instanceId, hash, cancellationToken, hashed: true) is { } live
             ? (live.Session, live.User) : null;
     }
 
@@ -68,18 +68,18 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
     }
 
     public async Task<bool> RevokeAsync(string instanceId, string? token, CancellationToken cancellationToken = default) =>
-        token is { Length: > 0 and <= MaxTokenLength } && await this.RevokeStoredAsync(instanceId, Tokens.Sha256Hex(token), cancellationToken).ConfigureAwait(false);
+        token is { Length: > 0 and <= MaxTokenLength } && await this.RevokeStoredAsync(instanceId, Tokens.Sha256Hex(token), cancellationToken);
 
     public async Task<bool> RevokeStoredAsync(string instanceId, string tokenHash, CancellationToken cancellationToken = default)
     {
         for (var round = 0; round < 2; round++)
         {
-            if (await this.ReadAsync(instanceId, tokenHash, cancellationToken).ConfigureAwait(false) is not { } current)
+            if (await this.ReadAsync(instanceId, tokenHash, cancellationToken) is not { } current)
             {
                 return false;
             }
 
-            if (current.Value.Revoked || await this.TryRevokeAsync(current.Value, current.Version, Credentials.New("session", current.Value.TokenHash), cancellationToken).ConfigureAwait(false))
+            if (current.Value.Revoked || await this.TryRevokeAsync(current.Value, current.Version, Credentials.New("session", current.Value.TokenHash), cancellationToken))
             {
                 return true;
             }
@@ -93,7 +93,7 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
         long? initial = null;
         for (var round = 0; round < 8; round++)
         {
-            if (await users.GetAsync(instanceId, userId, cancellationToken).ConfigureAwait(false) is not { } current)
+            if (await users.GetAsync(instanceId, userId, cancellationToken) is not { } current)
             {
                 return false;
             }
@@ -108,12 +108,14 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
             if (Tenancy.IsProject(instanceId))
             {
                 var now = clock.GetUtcNow();
-                var revoked = await data.ReadAsync((db, token) => db.Sessions.Where(session => session.InstanceId == instanceId && session.UserId == userId
-                    && !session.Revoked && session.AuthEpoch == current.AuthEpoch && session.ExpiresAt > now).ToListAsync(token), cancellationToken).ConfigureAwait(false);
-                changes.AddRange(revoked.Select(session => Change.Insert(outbox.NewEvent(instanceId, "session.revoked", userId, current.Email, sessionId: session.Id))));
+                var epoch = current.AuthEpoch;
+                var revoked = await data.ReadAsync(connection => connection.QueryAsync<string>(
+                    "SELECT id FROM sessions WHERE instance_id = @instanceId AND user_id = @userId AND revoked = 0 AND auth_epoch = @epoch AND expires_at > @now",
+                    new { instanceId, userId, epoch, now }), cancellationToken);
+                changes.AddRange(revoked.Select(sessionId => Change.Insert(outbox.NewEvent(instanceId, "session.revoked", userId, current.Email, sessionId: sessionId))));
             }
 
-            if (await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false))
+            if (await data.SaveAsync(changes, cancellationToken))
             {
                 return true;
             }
@@ -125,24 +127,25 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
     public async Task<int> PruneAsync(int batchSize, CancellationToken cancellationToken = default)
     {
         var now = clock.GetUtcNow();
-        return await data.InBatchesAsync(batchSize, (db, token) => db.Sessions.Where(session => session.Revoked).OrderBy(session => session.ExpiresAt)
-            .Take(batchSize).ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false)
-            + await data.InBatchesAsync(batchSize, (db, token) => db.Sessions.Where(session => session.ExpiresAt <= now).OrderBy(session => session.ExpiresAt)
-                .Take(batchSize).ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false);
+        return await data.InBatchesAsync(batchSize, connection => connection.ExecuteAsync(
+                "DELETE FROM sessions WHERE id IN (SELECT id FROM sessions WHERE revoked = 1 ORDER BY expires_at LIMIT @batchSize)", new { batchSize }), cancellationToken)
+            + await data.InBatchesAsync(batchSize, connection => connection.ExecuteAsync(
+                "DELETE FROM sessions WHERE id IN (SELECT id FROM sessions WHERE expires_at <= @now ORDER BY expires_at LIMIT @batchSize)", new { now, batchSize }),
+                cancellationToken);
     }
 
     internal async Task<bool> CanStartSignInAsync(UserRecord user, CancellationToken cancellationToken) =>
         !user.Disabled
-        && await users.GetAsync(user.InstanceId, user.Id, cancellationToken).ConfigureAwait(false) is { Disabled: false } current
+        && await users.GetAsync(user.InstanceId, user.Id, cancellationToken) is { Disabled: false } current
         && current.AuthEpoch == user.AuthEpoch && current.AuthStamp == user.AuthStamp
-        && await credentials.RequireAsync(user.InstanceId, user.AuthenticationBindings, cancellationToken).ConfigureAwait(false) is not null
-        && !await this.ClosingAsync(user, cancellationToken).ConfigureAwait(false);
+        && await credentials.RequireAsync(user.InstanceId, user.AuthenticationBindings, cancellationToken) is not null
+        && !await this.ClosingAsync(user, cancellationToken);
 
     private async Task<IssuedSession?> IssueAsync(UserRecord user, DateTimeOffset createdAt, DateTimeOffset expiresAt, CancellationToken cancellationToken, Change? extra = null, bool singleSession = false)
     {
-        if (user.Disabled || await credentials.RequireAsync(user.InstanceId, user.AuthenticationBindings, cancellationToken).ConfigureAwait(false) is not { } lineage
-            || !await totp.AllowsPrimaryAuthenticationAsync(user, cancellationToken).ConfigureAwait(false)
-            || await this.ClosingAsync(user, cancellationToken).ConfigureAwait(false))
+        if (user.Disabled || await credentials.RequireAsync(user.InstanceId, user.AuthenticationBindings, cancellationToken) is not { } lineage
+            || !await totp.AllowsPrimaryAuthenticationAsync(user, cancellationToken)
+            || await this.ClosingAsync(user, cancellationToken))
         {
             return null;
         }
@@ -169,17 +172,22 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
             changes.Add(extra);
         }
 
-        return await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false) ? new IssuedSession(token, session) : null;
+        return await data.SaveAsync(changes, cancellationToken) ? new IssuedSession(token, session) : null;
     }
 
-    private Task<bool> ClosingAsync(UserRecord user, CancellationToken cancellationToken) =>
-        user.InstanceId == OidcIssuer.InstanceId
-            ? data.ReadAsync((db, token) => db.ClosureJobs.AnyAsync(job => job.InstanceId == user.InstanceId && job.Scope == "account" && job.SubjectId == user.Id, token), cancellationToken)
+    private Task<bool> ClosingAsync(UserRecord user, CancellationToken cancellationToken)
+    {
+        var (instance, userId) = (user.InstanceId, user.Id);
+        return instance == OidcIssuer.InstanceId
+            ? data.ReadAsync(connection => connection.ExecuteScalarAsync<bool>(
+                "SELECT EXISTS (SELECT 1 FROM closure_jobs WHERE instance_id = @instance AND scope = 'account' AND subject_id = @userId)", new { instance, userId }),
+                cancellationToken)
             : Task.FromResult(false);
+    }
 
-    private Task<Versioned<SessionRecord>?> ReadAsync(string instanceId, string tokenHash, CancellationToken cancellationToken) =>
-        data.ReadAsync((db, token) => db.Sessions.Where(session => session.TokenHash == tokenHash && session.InstanceId == instanceId).WithVersion()
-            .SingleOrDefaultAsync(token), cancellationToken);
+    private async Task<Versioned<SessionRecord>?> ReadAsync(string instanceId, string tokenHash, CancellationToken cancellationToken) =>
+        Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<SessionRecord>(
+            "SELECT * FROM sessions WHERE token_hash = @tokenHash AND instance_id = @instanceId", new { tokenHash, instanceId }), cancellationToken));
 
     private async Task<(SessionRecord Session, string Version, UserRecord User)?> ReadLiveAsync(string instanceId, string? token, CancellationToken cancellationToken, bool hashed = false)
     {
@@ -189,11 +197,11 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
         }
 
         var hash = hashed ? token : Tokens.Sha256Hex(token);
-        var project = Tenancy.IsProject(instanceId) ? (await settings.GetAsync(instanceId, cancellationToken).ConfigureAwait(false)).Configuration ?? ConfigurationBody.Default : null;
+        var project = Tenancy.IsProject(instanceId) ? (await settings.GetAsync(instanceId, cancellationToken)).Configuration ?? ConfigurationBody.Default : null;
         var lifetime = project is null ? Lifetime : TimeSpan.FromSeconds(project.SessionLifetimeSeconds);
         for (var round = 0; round < 3; round++)
         {
-            if (await this.ReadAsync(instanceId, hash, cancellationToken).ConfigureAwait(false) is not { } current
+            if (await this.ReadAsync(instanceId, hash, cancellationToken) is not { } current
                 || current.Value.Revoked || !Tokens.FixedTimeEquals(current.Value.TokenHash, hash) || current.Value.ExpiresAt <= clock.GetUtcNow())
             {
                 return null;
@@ -205,7 +213,7 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
             {
                 session = session with { ExpiresAt = policyExpiry };
                 var shortened = Change.Update(current, session);
-                if (!await data.SaveAsync(shortened, cancellationToken).ConfigureAwait(false))
+                if (!await data.SaveAsync(shortened, cancellationToken))
                 {
                     continue;
                 }
@@ -213,11 +221,11 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
                 version = shortened.Version!;
             }
 
-            var user = await users.GetAsync(instanceId, session.UserId, cancellationToken).ConfigureAwait(false);
+            var user = await users.GetAsync(instanceId, session.UserId, cancellationToken);
             if (session.SessionStamp != user?.SessionStamp
                 || project?.InactivityTimeoutMinutes is { } idle && (session.LastActivityAt ?? session.CreatedAt).AddMinutes(idle) <= clock.GetUtcNow())
             {
-                if (!await this.TryRevokeAsync(session, version, Credentials.New("session", session.TokenHash), cancellationToken).ConfigureAwait(false))
+                if (!await this.TryRevokeAsync(session, version, Credentials.New("session", session.TokenHash), cancellationToken))
                 {
                     continue;
                 }
@@ -233,8 +241,8 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
                 SessionId = session.Id,
             };
             if (authenticated is null || authenticated.Disabled || authenticated.AuthEpoch != session.AuthEpoch || authenticated.AuthStamp != session.AuthStamp
-                || !await credentials.AreCurrentAsync(instanceId, session.Bindings, cancellationToken).ConfigureAwait(false)
-                || !await totp.AllowsPrimaryAuthenticationAsync(authenticated, cancellationToken).ConfigureAwait(false) || session.ExpiresAt <= clock.GetUtcNow())
+                || !await credentials.AreCurrentAsync(instanceId, session.Bindings, cancellationToken)
+                || !await totp.AllowsPrimaryAuthenticationAsync(authenticated, cancellationToken) || session.ExpiresAt <= clock.GetUtcNow())
             {
                 return null;
             }
@@ -244,7 +252,7 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
             {
                 var active = session with { LastActivityAt = clock.GetUtcNow() };
                 var touched = Change.Update(active, version);
-                if (await data.SaveAsync([Change.Assert(authenticated), touched], cancellationToken).ConfigureAwait(false))
+                if (await data.SaveAsync([Change.Assert(authenticated), touched], cancellationToken))
                 {
                     session = active;
                     version = touched.Version!;
@@ -262,10 +270,10 @@ public sealed class Sessions(AuthData data, Users users, Credentials credentials
         List<Change> changes = [Credentials.Claim(session.InstanceId, binding), Change.Update(session with { Revoked = true }, version)];
         if (Tenancy.IsProject(session.InstanceId))
         {
-            var user = await users.GetAsync(session.InstanceId, session.UserId, cancellationToken).ConfigureAwait(false);
+            var user = await users.GetAsync(session.InstanceId, session.UserId, cancellationToken);
             changes.Add(Change.Insert(outbox.NewEvent(session.InstanceId, "session.revoked", session.UserId, user?.Email, sessionId: session.Id)));
         }
 
-        return await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false);
+        return await data.SaveAsync(changes, cancellationToken);
     }
 }

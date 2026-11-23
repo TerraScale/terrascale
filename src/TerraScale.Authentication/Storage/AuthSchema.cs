@@ -1,23 +1,32 @@
-using Microsoft.EntityFrameworkCore;
+using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Storage.Schema;
 
 namespace TerraScale.Authentication.Storage;
 
-public sealed class AuthSchema(IDbContextFactory<AuthDbContext> contexts)
+public sealed class AuthSchema(TerraBaseDbUpRunner runner)
 {
     private readonly TaskCompletionSource seeded = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private volatile bool bootstrapFailed;
 
-    public Task Ready => this.seeded.Task;
+    public Task Ready => seeded.Task;
 
-    public bool BootstrapPending => !this.bootstrapFailed && !this.seeded.Task.IsCompleted;
+    public bool BootstrapPending => !bootstrapFailed && !seeded.Task.IsCompleted;
 
     public async Task MigrateAsync(CancellationToken cancellationToken)
     {
-        await using var db = await contexts.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
-        await db.Database.MigrateAsync(cancellationToken).ConfigureAwait(false);
+        if (await runner.UpgradeAsync(cancellationToken) switch
+        {
+            Done => null,
+            Unavailable unavailable => unavailable,
+        } is { } failure)
+        {
+            throw ApiException.Unavailable(new InvalidOperationException(failure.Message));
+        }
     }
 
-    internal void MarkSeeded() => this.seeded.TrySetResult();
+    public Task<bool> CurrentAsync(CancellationToken cancellationToken) => runner.CurrentAsync(cancellationToken);
 
-    internal void MarkBootstrapFailed() => this.bootstrapFailed = true;
+    internal void MarkSeeded() => seeded.TrySetResult();
+
+    internal void MarkBootstrapFailed() => bootstrapFailed = true;
 }

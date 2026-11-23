@@ -24,7 +24,7 @@ public abstract class SelfAgentEndpoint(PlatformAuthentication authentication, A
 
         return await sessions.ResolveAsync(project, request.Cookies[Tenancy.SessionCookie(project)], cancellationToken) is { } live
             ? await this.HandleAsync(live.User, cancellationToken)
-            : Results.Unauthorized();
+            : TypedResults.Unauthorized();
     }
 
     protected void DescribeSelf(string operation, string summary, int status, Type? response)

@@ -16,6 +16,6 @@ public sealed class TestWebhookEndpoint(TenantDirectory tenants, PlatformAuthent
     protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
-        return Results.Json(await history.TestAsync(projectId, this.RouteId("id"), cancellationToken), WebhooksJson.Default.WebhookEventBody);
+        return TypedResults.Json(await history.TestAsync(projectId, this.RouteId("id"), cancellationToken), WebhooksJson.Default.WebhookEventBody);
     }
 }

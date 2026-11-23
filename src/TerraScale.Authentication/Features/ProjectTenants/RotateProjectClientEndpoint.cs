@@ -55,7 +55,7 @@ public sealed class RotateProjectClientEndpoint(TenantDirectory tenants, IOpenId
             descriptor.ClientSecret = secret;
             await applications.UpdateAsync(application, descriptor, cancellationToken);
             await this.Tenants.AuditClientRotationAsync(caller.Id, projectId, application.ClientId!, cancellationToken);
-            return Results.Json(new ClientSecretBody(application.ClientId!, secret, application.PreviousSecretExpiresAt), ProjectTenantJson.Default.ClientSecretBody);
+            return TypedResults.Json(new ClientSecretBody(application.ClientId!, secret, application.PreviousSecretExpiresAt), ProjectTenantJson.Default.ClientSecretBody);
         }
         finally
         {

@@ -16,6 +16,6 @@ public sealed class UpdateProjectOrganizationMemberEndpoint(ProjectOrganizationD
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.OrganizationBodyAsync(ProjectOrganizationsJson.Default.ProjectMembershipRequest, cancellationToken);
-        return Results.Json(await organizations.ChangeMemberAsync(project, this.Org, this.RouteId("user"), request.Role, false, cancellationToken), ProjectOrganizationsJson.Default.ProjectOrganizationMembership);
+        return TypedResults.Json(await organizations.ChangeMemberAsync(project, this.Org, this.RouteId("user"), request.Role, false, cancellationToken), ProjectOrganizationsJson.Default.ProjectOrganizationMembership);
     }
 }

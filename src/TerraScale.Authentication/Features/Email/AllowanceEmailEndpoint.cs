@@ -41,7 +41,7 @@ public sealed class AllowanceEmailEndpoint(PlatformDirectory directory, OwnerDel
         {
             return refused;
         }
-        return (await EmailApi.ReadAsync<AllowanceEmailRequest>(this.HttpContext, cancellationToken).ConfigureAwait(false) switch
+        return (await EmailApi.ReadAsync<AllowanceEmailRequest>(this.HttpContext, cancellationToken) switch
         {
             AllowanceEmailRequest request => await SendAsync(request, cancellationToken),
             Validation error => ErrorResults.ToResult(error),
@@ -59,13 +59,13 @@ public sealed class AllowanceEmailEndpoint(PlatformDirectory directory, OwnerDel
         {
             throw new ApiException(StatusCodes.Status422UnprocessableEntity, "invalid_request", "An observed current-month allowance threshold is required.");
         }
-        if (await directory.OrganizationAsync(request.OrganizationId, cancellationToken).ConfigureAwait(false) is null)
+        if (await directory.OrganizationAsync(request.OrganizationId, cancellationToken) is null)
         {
             throw PlatformDirectory.NotFound();
         }
 
         var result = await deliveries.SendAsync("allowance", $"{request.OrganizationId}/{month}/{request.Metric}/{request.Threshold}", request.OrganizationId!, Message(request),
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken);
         return TypedResults.Json(new AllowanceEmailResponse(result), AllowanceEmailJson.Default.AllowanceEmailResponse);
     }
 

@@ -17,7 +17,6 @@ public sealed class ListAccountAgentsEndpoint(PlatformAuthentication authenticat
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
         var (limit, after) = this.Paging(50);
-        using var home = HomeReads.Begin();
-        return Results.Json(await agents.ListAsync(caller.InstanceId, caller.Id, limit, after, cancellationToken), AgentJson.Default.AgentPageBody);
+        return TypedResults.Json(await agents.ListAsync(caller.InstanceId, caller.Id, limit, after, cancellationToken), AgentJson.Default.AgentPageBody);
     }
 }

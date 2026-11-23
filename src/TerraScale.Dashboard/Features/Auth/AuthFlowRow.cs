@@ -1,9 +1,7 @@
-using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace TerraScale.Dashboard.Features.Auth;
 
-public sealed class AuthFlowRow
+public sealed record AuthFlowRow
 {
     public const string OidcPurpose = "ts-dashboard-oidc";
     public const string StepUpPurpose = "ts-dashboard-step-up";
@@ -25,22 +23,9 @@ public sealed class AuthFlowRow
 
     public required DateTime ExpiresAt { get; init; }
 
-    public sealed class Configuration : IEntityTypeConfiguration<AuthFlowRow>
-    {
-        public void Configure(EntityTypeBuilder<AuthFlowRow> builder)
-        {
-            builder.ToTable("auth_flows", table =>
-            {
-                table.HasCheckConstraint("ck_auth_flows_id", "length(id) = 26");
-                table.HasCheckConstraint("ck_auth_flows_token_hash", "length(token_hash) = 64");
-                table.HasCheckConstraint("ck_auth_flows_purpose", $"purpose IN ('{OidcPurpose}', '{StepUpPurpose}', '{AlertSecretPurpose}')");
-                table.HasCheckConstraint("ck_auth_flows_nonce", "length(nonce) = 12");
-                table.HasCheckConstraint("ck_auth_flows_tag", "length(tag) = 16");
-                table.HasCheckConstraint("ck_auth_flows_lifetime", "expires_at > created_at");
-            });
-            builder.HasKey(row => row.Id);
-            builder.HasIndex(row => row.TokenHash).IsUnique();
-            builder.HasIndex(row => row.ExpiresAt);
-        }
-    }
+    public string NonceHex => Convert.ToHexString(Nonce);
+
+    public string CiphertextHex => Convert.ToHexString(Ciphertext);
+
+    public string TagHex => Convert.ToHexString(Tag);
 }

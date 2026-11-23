@@ -1,15 +1,16 @@
-using System.Text.Json.Serialization;
-using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
-using TerraScale.Dashboard.Platform.Rpc;
-using TerraScale.TerraBase.Contracts;
-using TerraScale.TerraBase.Contracts.Platform;
+using System.Data;
+using Dapper;
+using TerraScale.Results;
+using TerraScale.Dashboard.Platform.Clients;
 
 namespace TerraScale.Dashboard.Platform.Persistence
 {
-    public sealed class TerraBasePlanSync(TerraBaseRpcClient rpc, ILogger<TerraBasePlanSync> logger, BackgroundJobs jobs,
-        IDbContextFactory<DashboardDbContext> storage)
+    public sealed class TerraBasePlanSync(ControlPlaneClient control, ILogger<TerraBasePlanSync> logger, BackgroundJobs jobs,
+        DashboardDb storage, TimeProvider time)
     {
+        private const string PlanJobs = DashboardSql.BackgroundJobs.Select + " WHERE id LIKE 'plan/%'";
+        private const string JobById = DashboardSql.BackgroundJobs.Select + " WHERE id = @Id";
+        private const string LiveOrganization = "SELECT count(*) FROM organizations WHERE id = @Id AND erasure_id IS NULL";
         private static readonly TimeSpan Fresh = TimeSpan.FromSeconds(30);
         private static readonly TimeSpan RetryAfter = TimeSpan.FromSeconds(30);
         private static readonly TimeSpan ViewBudget = TimeSpan.FromSeconds(2);
@@ -44,23 +45,31 @@ namespace TerraScale.Dashboard.Platform.Persistence
 
         public async Task<bool> AnyDueAsync(IReadOnlyList<OrganizationRecord> organizations, CancellationToken cancellationToken)
         {
-            await using var db = await storage.CreateDbContextAsync(cancellationToken);
-            var states = await db.BackgroundJobs.AsNoTracking().Where(row => row.Id.StartsWith("plan/"))
-                .Select(row => new { State = row, Now = DateTime.UtcNow }).ToListAsync(cancellationToken);
+            List<BackgroundJobRow> states;
+            await using (var connection = await storage.OpenAsync(cancellationToken))
+            {
+                states = (await connection.QueryAsync<BackgroundJobRow>(PlanJobs)).AsList();
+            }
+
+            var now = time.GetUtcNow().UtcDateTime;
             foreach (var organization in organizations)
             {
                 if (PlatformDatabases.IsPlatform(organization.Id) || !TerraScaleIds.IsValid(organization.Id)) { continue; }
                 string plan;
                 try { plan = PlanFor(organization); }
                 catch (IOException) { continue; }
-                var state = states.SingleOrDefault(row => row.State.Id == "plan/" + organization.Id);
-                if (state is null || Due(state.State, plan, state.Now)) { return true; }
+                var state = states.SingleOrDefault(row => row.Id == "plan/" + organization.Id);
+                if (state is null || Due(state, plan, now))
+                {
+                    return true;
+                }
             }
             return false;
         }
 
         private static bool Due(BackgroundJobRow state, string plan, DateTime now) =>
-            state.LeaseUntil <= now && (state.Cursor != plan && state.Cursor != plan + "/projects" || state.AvailableAt <= now);
+            DateTime.SpecifyKind(state.LeaseUntil, DateTimeKind.Utc) <= now
+            && (state.Cursor != plan && state.Cursor != plan + "/projects" || DateTime.SpecifyKind(state.AvailableAt, DateTimeKind.Utc) <= now);
 
         internal async Task PublishAsync(OrganizationRecord organization, bool reconcile, CancellationToken cancellationToken)
         {
@@ -70,19 +79,26 @@ namespace TerraScale.Dashboard.Platform.Persistence
             try
             {
                 var plan = PlanFor(organization);
-                await using var db = await storage.CreateDbContextAsync(budget.Token);
                 var id = "plan/" + organization.Id;
-                var state = await db.BackgroundJobs.AsNoTracking().Where(row => row.Id == id)
-                    .Select(row => new { State = row, Now = DateTime.UtcNow }).SingleOrDefaultAsync(budget.Token);
-                if (state is not null && !Due(state.State, plan, state.Now)) { return; }
+                BackgroundJobRow? state;
+                await using (var connection = await storage.OpenAsync(budget.Token))
+                {
+                    state = await connection.QuerySingleOrDefaultAsync<BackgroundJobRow>(JobById, new { Id = id });
+                }
+
+                if (state is not null && !Due(state, plan, time.GetUtcNow().UtcDateTime))
+                {
+                    return;
+                }
+
                 await jobs.RunAsync(id, TimeSpan.Zero, async (claim, token) =>
                 {
-                    if (!await claim.Database.Organizations.AsNoTracking().AnyAsync(row => row.Id == organization.Id && row.ErasureId == null, token))
+                    if (await claim.Connection.ExecuteScalarAsync<long>(LiveOrganization, new { organization.Id }) == 0)
                     {
-                        claim.Database.BackgroundJobs.Remove(claim.State);
-                        await claim.Database.SaveChangesAsync(token);
+                        await claim.ForgetAsync(null, token);
                         return;
                     }
+
                     var row = claim.State;
                     row.Failures = row.Cursor == plan || row.Cursor == plan + "/projects" ? row.Failures + 1 : 1;
                     row.Cursor = plan;
@@ -124,7 +140,7 @@ namespace TerraScale.Dashboard.Platform.Persistence
                     }
                 }, budget.Token, plan);
             }
-            catch (Exception error) when (error is HttpRequestException or TerraBaseException or IOException or DbUpdateException)
+            catch (Exception error) when (error is HttpRequestException or TerraBaseException or IOException or DBConcurrencyException)
             {
                 logger.TerraBasePlanPublishFailedForOrganization(organization.Id, error.GetType().Name);
             }
@@ -139,22 +155,16 @@ namespace TerraScale.Dashboard.Platform.Persistence
 
         private async Task<int> PutAsync(string id, string plan, bool project, CancellationToken cancellationToken)
         {
-            var request = JsonSerializer.SerializeToElement(new PlanBody(plan), PlanSyncJson.Default.PlanBody);
-            var client = rpc.Platform<IPlatformService>().WithCancellationToken(cancellationToken);
-            try
+            var published = project
+                ? await control.SetProjectPlanAsync(id, plan, cancellationToken)
+                : await control.SetOrganizationPlanAsync(id, plan, cancellationToken);
+            return published switch
             {
-                if (project) { await client.SetProjectPlanAsync(id, request); }
-                else { await client.SetOrganizationPlanAsync(id, request); }
-                return 200;
-            }
-            catch (TerraBaseException error) { return error.Status; }
+                Done => StatusCodes.Status200OK,
+                TerraBaseRefusal refusal => refusal.Status,
+            };
         }
 
     }
 
-    public sealed record PlanBody(string Plan);
-
-    [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower)]
-    [JsonSerializable(typeof(PlanBody))]
-    internal sealed partial class PlanSyncJson : JsonSerializerContext;
 }

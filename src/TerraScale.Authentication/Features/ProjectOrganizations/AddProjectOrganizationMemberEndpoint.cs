@@ -16,6 +16,6 @@ public sealed class AddProjectOrganizationMemberEndpoint(ProjectOrganizationDire
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.OrganizationBodyAsync(ProjectOrganizationsJson.Default.ProjectMembershipRequest, cancellationToken);
-        return Results.Json(await organizations.AddAsync(project, this.Org, request.UserId, request.Role, cancellationToken), ProjectOrganizationsJson.Default.ProjectOrganizationMembership, statusCode: 201);
+        return TypedResults.Json(await organizations.AddAsync(project, this.Org, request.UserId, request.Role, cancellationToken), ProjectOrganizationsJson.Default.ProjectOrganizationMembership, statusCode: 201);
     }
 }

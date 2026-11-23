@@ -22,7 +22,6 @@ namespace TerraScale.Dashboard.Features.Onboarding
             }
 
             var session = await sessions.ReadAsync(context);
-            // Accounts are created on ts-auth's hosted sign-up; a signed-out visitor here is registering, so open it directly.
             if (session is null)
             {
                 var target = ReturnPath(returnTo) is { Length: > 0 } path ? path : "/onboarding" + (OfferedPlan(plans, requested) is { Length: > 0 } plan ? "?plan=" + Uri.EscapeDataString(plan) : "");
@@ -58,7 +57,6 @@ namespace TerraScale.Dashboard.Features.Onboarding
             {
                 page = page with { Error = "Payment setup could not be confirmed. Finish checkout or continue without payment." };
             }
-            // Offer exactly the regions the project step accepts: those TerraBase reports as serving.
             if (page.Step == "project")
             {
                 try { page = page with { Regions = [.. (await backend.RegionsAsync(context.RequestAborted)).Where(region => region.Healthy).Select(region => region.Code)] }; }
@@ -69,8 +67,6 @@ namespace TerraScale.Dashboard.Features.Onboarding
             return view;
         }
 
-        // ts-auth names a new account after its email (or the email's handle) until the user gives a name;
-        // only a real profile name is offered as the Full name default.
         internal static string ProfileName(string name, string email)
         {
             return name.Equals(email, StringComparison.OrdinalIgnoreCase) || name.Equals(email.Split('@')[0], StringComparison.OrdinalIgnoreCase) ? "" : name;
@@ -81,7 +77,7 @@ namespace TerraScale.Dashboard.Features.Onboarding
             var form = await FormRequests.ReadAsync(context, context.RequestAborted);
             if (!Csrf.Validate(context, form))
             {
-                return RequestError.FormExpired(context, "/onboarding", Results.StatusCode(403));
+                return RequestError.FormExpired(context, "/onboarding", TypedResults.StatusCode(403));
             }
 
             var session = await sessions.ReadAsync(context);

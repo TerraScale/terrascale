@@ -1,13 +1,11 @@
 using Cronos;
-using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Backups
 {
-    public sealed class BackupService(AccountService accounts, DatabaseService databases, IBackupBackend backend, IDbContextFactory<DashboardDbContext> storage, TimeProvider time)
+    public sealed class BackupService(AccountService accounts, DatabaseService databases, IBackupBackend backend, DashboardDb storage, TimeProvider time)
     {
-        // One producer page per call: the dashboard forwards its own cursor and returns exactly that page (TS-1230 pattern).
         public async Task<BackupPageSlice> ListPageAsync(AccountContext context, string databaseId, string? cursor, int limit, CancellationToken ct)
         {
             context = await databases.CurrentAsync(context, ct);
@@ -65,8 +63,6 @@ namespace TerraScale.Dashboard.Features.Backups
             catch (Exception error) when (BackupEndpoints.KnownFailure(error) &&
                 (error is not OperationCanceledException || !ct.IsCancellationRequested))
             { policyUnavailable = "Provider backup scheduling is unavailable."; }
-            // Snapshot inventory and scheduler policy are independent provider reads.
-            // A policy outage must not erase known restore points or their count.
             return new(policy, [.. backups.OrderByDescending(backup => backup.CreatedAt).ThenBy(backup => backup.Id, StringComparer.Ordinal).Select(View)])
             { PolicyUnavailable = policyUnavailable };
         }
@@ -228,8 +224,6 @@ namespace TerraScale.Dashboard.Features.Backups
                 throw new AccountAccessException("That restore point is no longer available.", 404);
             }
 
-            // The producer returns only after a new snapshot copy has completed.
-            // No local records or cached metadata can claim a successful restore.
             return (DatabaseService.Scope(context), await databases.HomeAsync(context, source, ct), source, backupId);
         }
 
@@ -282,7 +276,6 @@ namespace TerraScale.Dashboard.Features.Backups
             return new(await backend.DestinationAsync(scope, home, ct));
         }
 
-        // Credentials go to TerraBase, which seals them; the dashboard never stores or shows them again.
         public async Task<BackupDestinationView> SetDestinationAsync(AccountContext context, string databaseId, string endpoint, string region, string bucket,
             string accessKeyId, string secretKey, CancellationToken ct)
         {

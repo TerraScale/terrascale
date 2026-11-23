@@ -1,10 +1,10 @@
-using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace TerraScale.Dashboard.Platform.Identity;
 
-public sealed class SessionRow
+public sealed record SessionRow
 {
+    public string? OriginalVersion { get; set; }
+
     public const string Browser = "browser";
     public const string Credential = "credential";
 
@@ -28,24 +28,9 @@ public sealed class SessionRow
 
     public required byte[] Tag { get; set; }
 
-    public sealed class Configuration : IEntityTypeConfiguration<SessionRow>
-    {
-        public void Configure(EntityTypeBuilder<SessionRow> builder)
-        {
-            builder.ToTable("sessions", table =>
-            {
-                table.HasCheckConstraint("ck_sessions_id", "length(id) = 26");
-                table.HasCheckConstraint("ck_sessions_kind", $"(kind = '{Browser}' AND length(token_hash) = 64) OR (kind = '{Credential}' AND token_hash IS NULL)");
-                table.HasCheckConstraint("ck_sessions_user_id", "length(user_id) BETWEEN 1 AND 128");
-                table.HasCheckConstraint("ck_sessions_version", "length(version) = 26");
-                table.HasCheckConstraint("ck_sessions_nonce", "length(nonce) = 12");
-                table.HasCheckConstraint("ck_sessions_tag", "length(tag) = 16");
-            });
-            builder.HasKey(row => row.Id);
-            builder.HasIndex(row => row.TokenHash).IsUnique();
-            builder.HasIndex(row => new { row.UserId, row.Kind, row.ExpiresAt });
-            builder.HasIndex(row => new { row.Kind, row.Id, row.ExpiresAt });
-            builder.Property(row => row.Version).IsConcurrencyToken();
-        }
-    }
+    public string NonceHex => Convert.ToHexString(Nonce);
+
+    public string CiphertextHex => Convert.ToHexString(Ciphertext);
+
+    public string TagHex => Convert.ToHexString(Tag);
 }

@@ -32,7 +32,7 @@ var commandSyntax = map[string]string{
 	"db regions":       "db regions <database>",
 	"db rename":        "db rename <database> <new-name>",
 	"databases rename": "databases rename <database> <new-name>",
-	"shell":            "shell <database>",
+	"shell":            "shell <database> [-consistency fast|strong] [-bookmark <bookmark>]",
 	"backup list":      "backup list <database>", "backup create": "backup create <database>",
 	"backup restore":    "backup restore <database> <backup-id> <new-database>",
 	"backup restore-at": "backup restore-at <database> <RFC3339-time> <new-database> [platform|customer]",
@@ -43,7 +43,7 @@ var commandSyntax = map[string]string{
 	"functions deploy":   "functions deploy <database> <file.js|directory>", "functions list": "functions list <database>",
 	"functions invoke": "functions invoke <database> <name>", "functions logs": "functions logs <database> <name>",
 	"functions stats":  "functions stats [<database>] <name>",
-	"functions delete": "functions delete <database> <name>", "sql": "sql <database> <statement|->",
+	"functions delete": "functions delete <database> <name>", "sql": "sql <database> <statement|-> [-consistency fast|strong] [-bookmark <bookmark>]",
 	"rules pull": "rules pull <database>", "rules deploy": "rules deploy <database>",
 	"rules test":   "rules test <database> --operation read|create|update|delete --table <table> --auth <json> [--row <json>] [--new <json>] [--draft]",
 	"schema pull":  "schema pull <database>",
@@ -100,7 +100,6 @@ func helpSyntax(name string) string {
 	return fmt.Sprintf("ts %s (accepted operand counts: %v)", name, commands[name])
 }
 
-// requestedHelp validates the command before rendering. Help never authenticates.
 func requestedHelp(args []string, out io.Writer) (bool, error) {
 	requested := len(args) == 0
 	var words []string
@@ -116,7 +115,7 @@ func requestedHelp(args []string, out io.Writer) (bool, error) {
 		if strings.HasPrefix(a, "-") {
 			name, _, equal := strings.Cut(strings.TrimLeft(a, "-"), "=")
 			switch name {
-			case "database", "from", "ttl", "project", "org", "expected-id", "scope", "expires", "allow-cidr", "operation", "table", "auth", "row", "new", "name", "cron", "data", "limit", "regions", "home-region", "replica-regions", "lang":
+			case "database", "from", "ttl", "project", "org", "expected-id", "scope", "expires", "allow-cidr", "operation", "table", "auth", "row", "new", "name", "cron", "data", "limit", "regions", "lang", "consistency", "bookmark":
 				if !equal {
 					i++
 				}
@@ -185,7 +184,6 @@ func requestedHelp(args []string, out io.Writer) (bool, error) {
 	return true, err
 }
 
-// Parser diagnostics describe the failure without echoing possibly secret values.
 func parserError(err error) error {
 	message := "invalid option or value"
 	switch {
@@ -243,14 +241,14 @@ func helpOptions(name string) map[string]string {
 	case name == "backup destination":
 		options["-yes"] = "required for set (credential JSON only on stdin); delete otherwise types the project ID"
 	case name == "db create":
-		options["-home-region <region>"] = "earlier placement flag; use -regions"
-		options["-regions <a,b>"] = "one to nine distinct regions that hold the database"
-		options["-replica-regions <a,b>"] = "earlier placement flag; use -regions"
+		options["-regions <a,b>"] = "one to nine distinct peer regions that hold the database; each accepts reads and writes"
 		options["-all-regions"] = "every serving region"
 	case name == "db placement":
-		options["-regions <a,b>"] = "one to nine distinct regions that hold the database"
-		options["-replica-regions <a,b>"] = "earlier placement flag; use -regions"
+		options["-regions <a,b>"] = "one to nine distinct peer regions that hold the database; each accepts reads and writes"
 		options["-all-regions"] = "every serving region, including new ones"
+	case name == "sql" || name == "shell":
+		options["-consistency fast|strong"] = "fast commits locally and replicates asynchronously; strong commits on a 2-of-3 quorum; default is the database's"
+		options["-bookmark <bookmark>"] = "wait until the serving region has applied this TerraScale-Bookmark before running"
 	case name == "keys rotate":
 		options["<grace>"] = "required whole-second duration from 0s to 24h; previous secret remains valid for this grace; new secret appears once on stdout"
 	case strings.HasPrefix(name, "keys create"):

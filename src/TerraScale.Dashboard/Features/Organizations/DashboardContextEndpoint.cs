@@ -11,7 +11,7 @@ namespace TerraScale.Dashboard.Features.Organizations
         public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
         {
             var context = await AccountRequest.RequireAsync(HttpContext, sessions, accounts);
-            return context is null ? Results.Unauthorized() : Results.Json(AccountContextView.From(context));
+            return context is null ? TypedResults.Unauthorized() : TypedResults.Json(AccountContextView.From(context));
         }
     }
 }

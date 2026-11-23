@@ -20,7 +20,7 @@ public sealed class CreateProjectUserEndpoint(TenantDirectory tenants, PlatformA
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(UserProfileJson.Default.CreateProjectUserRequest, cancellationToken);
-        return Results.Json(Map(await profiles.CreateAsync(project, request, cancellationToken)), ProjectTenantJson.Default.ProjectUserBody,
+        return TypedResults.Json(Map(await profiles.CreateAsync(project, request, cancellationToken)), ProjectTenantJson.Default.ProjectUserBody,
             statusCode: StatusCodes.Status201Created);
     }
 }

@@ -22,7 +22,7 @@ public sealed class AgentIdProofEndpoint(PlatformAuthentication authentication, 
         var request = await this.BodyAsync(AgentIdJson.Default.AgentIdProofRequest, cancellationToken);
         return await transactions.ProveAsync(transaction, request.Proof, cancellationToken) switch
         {
-            Done => Results.NoContent(),
+            Done => TypedResults.NoContent(),
             NotFound notFound => ErrorResults.ToResult(notFound),
             Unauthorized unauthorized => ErrorResults.ToResult(unauthorized),
         };

@@ -9,10 +9,8 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.Platform;
 
-/// <summary><c>POST /v1/terrascale/account/email-change</c>.</summary>
 public sealed class RequestEmailChangeEndpoint(EmailChanges changes, StepUpProofs proofs, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/v1/terrascale/account/email-change");
@@ -23,13 +21,12 @@ public sealed class RequestEmailChangeEndpoint(EmailChanges changes, StepUpProof
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
     }
 
-    /// <inheritdoc />
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
         var body = await this.BodyAsync(EmailChangeJson.Default.EmailChangeRequest, cancellationToken);
         return await changes.RequestAsync(caller, this.HttpContext.Request, body.NewEmail, proofs, cancellationToken) switch
         {
-            EmailChangeBody requested => Results.Json(requested, EmailChangeJson.Default.EmailChangeBody, statusCode: StatusCodes.Status202Accepted),
+            EmailChangeBody requested => TypedResults.Json(requested, EmailChangeJson.Default.EmailChangeBody, statusCode: StatusCodes.Status202Accepted),
             Validation failure => ErrorResults.ToResult(failure),
             Conflict failure => ErrorResults.ToResult(failure),
             QuotaExceeded failure => ErrorResults.ToResult(failure),
@@ -38,10 +35,8 @@ public sealed class RequestEmailChangeEndpoint(EmailChanges changes, StepUpProof
     }
 }
 
-/// <summary><c>POST /v1/terrascale/account/email-change/confirm</c>.</summary>
 public sealed class ConfirmEmailChangeEndpoint(EmailChanges changes, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/v1/terrascale/account/email-change/confirm");
@@ -51,24 +46,21 @@ public sealed class ConfirmEmailChangeEndpoint(EmailChanges changes, PlatformAut
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
     }
 
-    /// <inheritdoc />
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
         return await changes.ConfirmAsync(caller, (await this.BodyAsync(EmailChangeJson.Default.ConfirmEmailChangeRequest, cancellationToken)).Code, cancellationToken) switch
         {
-            Done => Results.NoContent(),
+            Done => TypedResults.NoContent(),
             Forbidden failure => ErrorResults.ToResult(failure),
             Conflict failure => ErrorResults.ToResult(failure),
         };
     }
 }
 
-/// <summary>The cancel link of an email change notice. GET only renders; the POST cancels.</summary>
 public sealed class EmailChangeCancelPageEndpoint : EndpointWithoutRequest<IResult>
 {
     internal const string Path = "/ui/{slug}/email-change/cancel";
 
-    /// <inheritdoc />
     public override void Configure()
     {
         Get(Path);
@@ -80,15 +72,12 @@ public sealed class EmailChangeCancelPageEndpoint : EndpointWithoutRequest<IResu
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         ValueTask.FromResult(EmailChangeCancelHosted.Render(this.HttpContext, this.HttpContext.Request.Query["user"].ToString(), this.HttpContext.Request.Query["token"].ToString(), null));
 }
 
-/// <summary>Cancels a pending email change from the current address's link.</summary>
 public sealed class CancelEmailChangeEndpoint(EmailChanges changes, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post(EmailChangeCancelPageEndpoint.Path);
@@ -102,7 +91,6 @@ public sealed class CancelEmailChangeEndpoint(EmailChanges changes, AuthOptions 
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is null)

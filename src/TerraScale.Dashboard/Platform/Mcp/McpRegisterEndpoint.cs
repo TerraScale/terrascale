@@ -1,10 +1,9 @@
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Endpoints;
 
 namespace TerraScale.Dashboard.Platform.Mcp
 {
-    public sealed class McpRegisterEndpoint(IDbContextFactory<DashboardDbContext> storage, TimeProvider time) : EndpointWithoutRequest<IResult>
+    public sealed class McpRegisterEndpoint(DashboardDb storage, TimeProvider time) : EndpointWithoutRequest<IResult>
     {
         public override void Configure() => Post("/oauth/register");
 

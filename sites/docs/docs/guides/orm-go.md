@@ -176,6 +176,9 @@ err = bunDB.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 - The dialect is SQLite: SQLite SQL and SQLite type affinity, with the SQL API's own refusals (see [SQL](/concepts/sql)).
 - A transaction lives at most 5 seconds; past the limit the server rolls it back, so keep transactions small ([limits](/limits)).
 - Each open transaction holds one SQL session, and a connection runs one transaction at a time.
-- `LISTEN`/`NOTIFY` are Postgres features and do not exist in the SQLite dialect.
+- `LISTEN` is available over the [Postgres wire](/guides/postgres-clients#catalog-queries-settings-and-notifications), not through this driver.
+- Writes run in [fast mode](/concepts/replication) by default. Pass `tb.WithConsistency(ctx, tb.ConsistencyStrong)` as the context of `BeginTx` to run a transaction in strong mode.
 
-A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+## Over the Postgres wire
+
+GORM's `postgres` driver, `pgx`, sqlc's `postgresql` engine and bun's `pgdialect` also connect through the [Postgres wire](/guides/postgres-clients) with the connection parameters there. Use `pgx.TxOptions{IsoLevel: pgx.Serializable}` (or `sql.LevelSerializable`) for transactions that must run in [strong mode](/concepts/replication#strong-mode).

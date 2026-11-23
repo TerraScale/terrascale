@@ -1,10 +1,11 @@
+using Dapper;
+using System.Data;
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
 using Stripe;
 using TerraScale.Dashboard.Features.Billing.Internal;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.Observability;
-using TerraScale.TerraBase.Contracts;
+using TerraScale.Dashboard.Platform.Clients;
 using AccountService = TerraScale.Dashboard.Common.Accounts.AccountService;
 using TerraScale.Dashboard.Common.Validation;
 using TerraScale.Dashboard.Errors;
@@ -13,9 +14,7 @@ namespace TerraScale.Dashboard.Features.Billing
 {
     public readonly union WebhookReceipt(Done, Rejected, Deferred);
 
-    // Every entitlement is derived from a bound checkout and Stripe's current
-    // subscription. Browser return parameters and webhook snapshots grant nothing.
-    public sealed partial class StripeBilling(IDashboardIdentity identity, IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, AccountService accounts,
+    public sealed partial class StripeBilling(IDashboardIdentity identity, DashboardDb storage, OrganizationStore organizations, AccountService accounts,
         IHttpClientFactory http, TimeProvider time, TerraBasePlanSync plans, ILogger<StripeBilling> logger, ServiceSloTelemetry telemetry)
     {
         internal const string Origin = "https://dash.terrascale.tech";
@@ -173,8 +172,6 @@ namespace TerraScale.Dashboard.Features.Billing
             }
             catch
             {
-                // A concurrent caller may already have persisted this same
-                // idempotent session. Never expire a successfully bound checkout.
                 using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
                 try
                 {
@@ -197,8 +194,6 @@ namespace TerraScale.Dashboard.Features.Billing
             return await RefreshAsync(context.Organization!.Id, cancellationToken);
         }
 
-        // Reloading billing finishes a checkout whose browser return or webhook
-        // never reconciled it. Only Stripe's canonical facts grant the plan.
         public async Task<bool> ReconcileCheckoutAsync(AccountContext context, CancellationToken cancellationToken)
         {
             context = await MemberAsync(context, cancellationToken);
@@ -212,7 +207,6 @@ namespace TerraScale.Dashboard.Features.Billing
             return true;
         }
 
-        // PlanReconciler finishes a checkout paid in the last day whose webhook and browser return both went missing.
         internal async Task<bool> ReconcilePendingCheckoutAsync(BillingBinding binding, CancellationToken cancellationToken)
         {
             if (binding is not { Kind: "stripe", CheckoutId.Length: > 0, SubscriptionId.Length: 0, Status: "pending" } ||
@@ -332,8 +326,6 @@ namespace TerraScale.Dashboard.Features.Billing
             {
                 binding = await UpdateAsync(orgId, current => current.State = "deleting", cancellationToken, allowDeletion: true);
             }
-            // Creation may have reached Stripe before the Checkout ID's CAS write.
-            // Its durable reservation cannot certify absence of a subscription.
             if (binding.CheckoutId.Length == 0 && binding.SubscriptionId.Length == 0 && !terminalDeletion)
             {
                 throw new IOException("Checkout creation has not been reconciled.");
@@ -353,8 +345,6 @@ namespace TerraScale.Dashboard.Features.Billing
 
             if (binding.CheckoutId.Length > 0)
             {
-                // The webhook/browser return may not have persisted a completed
-                // Checkout's subscription yet. Keep its binding until it is terminal.
                 var checkout = await client.V1.Checkout.Sessions.GetAsync(binding.CheckoutId, cancellationToken: cancellationToken);
                 ValidateCheckout(binding, checkout);
                 if (checkout.Status == "open")
@@ -404,8 +394,6 @@ namespace TerraScale.Dashboard.Features.Billing
             }, cancellationToken, allowDeletion: terminalDeletion);
         }
 
-        // Stripe delivers a checkout's events together, and the return page and reconciler refresh the same organization;
-        // one refresh per organization at a time keeps them from exhausting each other's conditional-write retries.
         private readonly SemaphoreSlim[] refreshing = [.. Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1))];
 
         private async Task ApplyPaymentAsync(BillingBinding binding, string invoiceId, string eventType, DateTime created, CancellationToken cancellationToken)
@@ -446,7 +434,7 @@ namespace TerraScale.Dashboard.Features.Billing
                     await organizations.ReplaceAsync(stored, cancellationToken);
                     return;
                 }
-                catch (DbUpdateConcurrencyException)
+                catch (DBConcurrencyException)
                 {
                     continue;
                 }
@@ -484,8 +472,6 @@ namespace TerraScale.Dashboard.Features.Billing
                 }
 
                 var client = await ClientAsync(cancellationToken);
-                // Capture both versions before Stripe reads. A conflict in either
-                // projection requires fresh canonical facts, never a stale replay.
                 var organizationRow = await organizations.FindAsync(orgId, cancellationToken)
                     ?? throw new IOException("Billing organization is unavailable.");
                 var org = organizationRow.Erased ? throw new IOException("Dashboard record was erased.") : organizationRow.Organization;
@@ -510,9 +496,6 @@ namespace TerraScale.Dashboard.Features.Billing
                     checkout is { Status: "complete", Mode: "subscription", SubscriptionId.Length: > 0 } ? checkout.SubscriptionId : "";
                 if (subscriptionId.Length > 0)
                 {
-                    // The persisted subscription is an independent binding. Portal
-                    // plan changes and cancellation remain effective even while a
-                    // later checkout is open or expired.
                     var subscription = await client.V1.Subscriptions.GetAsync(subscriptionId,
                         new() { Expand = ["items.data.price.product", "default_payment_method", "customer.tax", "latest_invoice"] }, cancellationToken: cancellationToken);
                     if (subscription.Id != subscriptionId || subscription.CustomerId != binding.CustomerId || subscription.Metadata.GetValueOrDefault("organization_id") != orgId)
@@ -596,9 +579,6 @@ namespace TerraScale.Dashboard.Features.Billing
                 }
                 else if (unmappedPrice && (status is "active" or "trialing"))
                 {
-                    // Keep Stripe's canonical subscription binding for portal and
-                    // replacement decisions, but revoke an unqualified plan even
-                    // when this organization previously held paid entitlements.
                     if (org.Kind == "personal")
                     {
                         org.PlanId = OrganizationRecord.FreePlanId;
@@ -610,8 +590,6 @@ namespace TerraScale.Dashboard.Features.Billing
                 }
                 else if (org.Kind == "personal" && status is not ("past_due" or "unpaid" or "paused"))
                 {
-                    // Personal workspaces retain Free access when a subscription
-                    // ends or its first payment has not confirmed.
                     org.PlanId = OrganizationRecord.FreePlanId;
                     org.BillingStatus = "active";
                     binding.EffectivePlan = "free";
@@ -620,8 +598,6 @@ namespace TerraScale.Dashboard.Features.Billing
                 }
                 else
                 {
-                    // Dunning preserves the last granted plan while Stripe retries
-                    // payment. Business workspaces require billing attention.
                     org.BillingStatus = "billing_required";
                     binding.EffectivePlan = previousEffectivePlan;
                     binding.EffectiveInterval = previousEffectiveInterval;
@@ -642,7 +618,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 if (!conflicted)
                 {
                     try { await organizations.ReplaceAsync(organizationRow, cancellationToken); }
-                    catch (DbUpdateConcurrencyException) when (attempt < 3) { conflicted = true; }
+                    catch (DBConcurrencyException) when (attempt < 3) { conflicted = true; }
                 }
 
                 if (!conflicted)
@@ -702,9 +678,6 @@ namespace TerraScale.Dashboard.Features.Billing
 
                 return existing;
             }
-            // A pending checkout must expire before replacement. A completed
-            // checkout whose subscription ended can be replaced immediately,
-            // preserving the customer's binding.
             return await UpdateAsync(orgId, current =>
             {
                 if (current.RequestId != existing.RequestId || current.CheckoutId != existing.CheckoutId)
@@ -736,8 +709,9 @@ namespace TerraScale.Dashboard.Features.Billing
         {
             return ServerTiming.ReadAsync((storage, nameof(StripeCustomerRow), customerId), async () =>
             {
-                await using var db = await storage.CreateDbContextAsync(cancellationToken);
-                return await db.StripeCustomers.AsNoTracking().SingleOrDefaultAsync(row => row.CustomerId == customerId, cancellationToken);
+                await using var connection = await storage.OpenAsync(cancellationToken);
+                return await connection.QuerySingleOrDefaultAsync<StripeCustomerRow>(DashboardSql.StripeCustomers.Select + " WHERE customer_id = @CustomerId",
+                    new { CustomerId = customerId });
             });
         }
 
@@ -751,7 +725,7 @@ namespace TerraScale.Dashboard.Features.Billing
 
             if (value.Kind == "internal")
             {
-                var reservation = value.InternalReservation;
+                var reservation = value.Reservation;
                 if (value.State is not ("reserved" or "active") || reservation is null || reservation.SpendCapCents <= 0 || reservation.PreviousConfigurationId is null ||
                     reservation.Policy is null || reservation.Policy.ConfigurationId != value.RequestId ||
                     value.CustomerId.Length != 0 || value.CheckoutId.Length != 0 || value.SubscriptionId.Length != 0 ||
@@ -762,7 +736,7 @@ namespace TerraScale.Dashboard.Features.Billing
 
                 reservation.Policy.Validate(new() { Id = orgId, PlanId = reservation.Policy.PlanId });
             }
-            else if (value.Kind != "stripe" || value.InternalReservation is not null)
+            else if (value.Kind != "stripe" || value.Reservation is not null)
             {
                 throw new IOException("Billing ownership kind is invalid.");
             }
@@ -910,7 +884,6 @@ namespace TerraScale.Dashboard.Features.Billing
             {
                 return false;
             }
-            // The legacy wizard ID differs only in case from organizationId; ParseQuery treats them as one key.
             if (basePath == "/organization")
             {
                 if (query.TryGetValue("tab", out var tab) && tab != "billing")

@@ -1,17 +1,31 @@
+using Dapper;
+using System.Data;
 using System.Diagnostics;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.TsAuth;
 
 namespace TerraScale.Dashboard.Platform.Identity;
 
-public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> storage, IDashboardIdentity identity, IAuthGateway auth,
+public sealed class DashboardSessions(DashboardDb storage, IDashboardIdentity identity, IAuthGateway auth,
     IAuthRefreshGateway refresh, TimeProvider time, ILogger<DashboardSessions> logger)
 {
+    private const string ActiveBrowsers = "SELECT count(*) FROM sessions WHERE user_id = @UserId AND kind = @Browser AND expires_at > @Now";
+    private const string RemoveCredential = "DELETE FROM sessions WHERE id = @Id AND kind = @Credential";
+    private const string CredentialOwner = "SELECT user_id FROM sessions WHERE id = @Id AND kind = @Credential";
+    private const string RemoveOwned = "DELETE FROM sessions WHERE id = @Id AND user_id = @UserId";
+    private const string RemoveUser = "DELETE FROM sessions WHERE user_id = @UserId";
+    private const string Browsers = DashboardSql.Sessions.Select + " WHERE user_id = @UserId AND kind = @Browser AND expires_at > @Now";
+    private const string Expired = DashboardSql.Sessions.Select + " WHERE kind = @Browser AND expires_at <= @Now AND (@After IS NULL OR id > @After) ORDER BY id LIMIT @Limit";
+    private const string RemoveToken = "DELETE FROM sessions WHERE token_hash = @TokenHash AND expires_at > @Now";
+    private const string RevokeOther = "DELETE FROM sessions WHERE id = @Id AND user_id = @UserId AND kind = @Browser AND token_hash <> @Current";
+    private const string RevokeBrowsers = "DELETE FROM sessions WHERE user_id = @UserId AND kind = @Browser";
+    private const string ByToken = DashboardSql.Sessions.Select + " WHERE token_hash = @TokenHash AND kind = @Browser";
+    private const string ById = DashboardSql.Sessions.Select + " WHERE id = @Id AND kind = @Credential";
+
     internal const string Cookie = "ts-dashboard-session";
     private const int MaxBrowserSessions = 1000;
     private static readonly TimeSpan RenewBeforeExpiry = TimeSpan.FromSeconds(30);
@@ -27,15 +41,14 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
         var token = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
         var credentials = await identity.ReadAsync(context.RequestAborted);
         var now = time.GetUtcNow().UtcDateTime;
-        await using (var db = await storage.CreateDbContextAsync(context.RequestAborted))
+        await using (var connection = await storage.OpenAsync(context.RequestAborted))
         {
-            if (await db.Sessions.CountAsync(row => row.UserId == record.UserId && row.Kind == SessionRow.Browser && row.ExpiresAt > now, context.RequestAborted) >= MaxBrowserSessions)
+            if (await connection.ExecuteScalarAsync<long>(ActiveBrowsers, new { record.UserId, SessionRow.Browser, Now = now }) >= MaxBrowserSessions)
             {
                 throw new IOException("Too many active dashboard sessions.");
             }
 
-            db.Sessions.Add(NewRow(SessionRow.Browser, Key(token), record, credentials.SessionEncryptionKey));
-            await db.SaveChangesAsync(context.RequestAborted);
+            await connection.ExecuteAsync(DashboardSql.Sessions.Insert, NewRow(SessionRow.Browser, Key(token), record, credentials.SessionEncryptionKey));
         }
 
         await AccountEnrollment.ThrowIfErasedAsync(storage, record.UserId, context.RequestAborted);
@@ -111,10 +124,9 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
         var credentials = await identity.ReadAsync(cancellationToken);
         record = record with { SessionExpiresAt = expiresAt, RefreshLease = "", RefreshLeaseUntil = null };
         var row = NewRow(SessionRow.Credential, null, record, credentials.SessionEncryptionKey);
-        await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+        await using (var connection = await storage.OpenAsync(cancellationToken))
         {
-            db.Sessions.Add(row);
-            await db.SaveChangesAsync(cancellationToken);
+            await connection.ExecuteAsync(DashboardSql.Sessions.Insert, row);
         }
 
         await AccountEnrollment.ThrowIfErasedAsync(storage, record.UserId, cancellationToken);
@@ -133,8 +145,8 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
             return;
         }
 
-        await using var db = await storage.CreateDbContextAsync(cancellationToken);
-        await db.Sessions.Where(row => row.Id == id && row.Kind == SessionRow.Credential).ExecuteDeleteAsync(cancellationToken);
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        await connection.ExecuteAsync(RemoveCredential, new { Id = id, SessionRow.Credential });
     }
 
     public async Task DeleteCredentialAsync(string id, string subject, CancellationToken cancellationToken)
@@ -144,8 +156,8 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
             throw new IOException("Credential identity is invalid.");
         }
 
-        await using var db = await storage.CreateDbContextAsync(cancellationToken);
-        var owner = await db.Sessions.Where(row => row.Id == id && row.Kind == SessionRow.Credential).Select(row => row.UserId).SingleOrDefaultAsync(cancellationToken);
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        var owner = await connection.QuerySingleOrDefaultAsync<string>(CredentialOwner, new { Id = id, SessionRow.Credential });
         if (owner is null)
         {
             return;
@@ -156,26 +168,23 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
             throw new IOException("Credential ownership is invalid.");
         }
 
-        await db.Sessions.Where(row => row.Id == id && row.UserId == subject).ExecuteDeleteAsync(cancellationToken);
+        await connection.ExecuteAsync(RemoveOwned, new { Id = id, UserId = subject });
     }
 
     public async Task ForgetUserAsync(string userId, CancellationToken cancellationToken)
     {
-        await using var db = await storage.CreateDbContextAsync(cancellationToken);
-        await db.Sessions.Where(row => row.UserId == userId).ExecuteDeleteAsync(cancellationToken);
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        await connection.ExecuteAsync(RemoveUser, new { UserId = userId });
     }
 
     public async Task<IReadOnlyList<DashboardSessionInfo>> ListAsync(HttpContext context, SessionRecord session)
     {
         var current = BrowserToken(context) is { } token ? Key(token) : "";
         var now = time.GetUtcNow().UtcDateTime;
-        await using var db = await storage.CreateDbContextAsync(context.RequestAborted);
-        var rows = await db.Sessions.AsNoTracking()
-            .Where(row => row.UserId == session.UserId && row.Kind == SessionRow.Browser && row.ExpiresAt > now)
-            .Select(row => new { row.Id, row.TokenHash, row.Device, row.ExpiresAt })
-            .ToListAsync(context.RequestAborted);
+        await using var connection = await storage.OpenAsync(context.RequestAborted);
+        var rows = await connection.QueryAsync<SessionRow>(Browsers, new { session.UserId, SessionRow.Browser, Now = now });
         return [.. rows.Select(row => new DashboardSessionInfo(row.Id, row.TokenHash == current, row.Device is { Length: > 0 } device ? device : "Unknown device",
-                new DateTimeOffset(row.ExpiresAt)))
+                new DateTimeOffset(DateTime.SpecifyKind(row.ExpiresAt, DateTimeKind.Utc))))
             .OrderByDescending(item => item.ExpiresAt).ThenBy(item => item.Id, StringComparer.Ordinal)];
     }
 
@@ -367,15 +376,9 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
         while (true)
         {
             List<SessionRow> expired;
-            await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+            await using (var connection = await storage.OpenAsync(cancellationToken))
             {
-                var query = db.Sessions.AsNoTracking().Where(row => row.Kind == SessionRow.Browser && row.ExpiresAt <= now);
-                if (after is not null)
-                {
-                    query = query.Where(row => row.Id.CompareTo(after) > 0);
-                }
-
-                expired = await query.OrderBy(row => row.Id).Take(batchSize).ToListAsync(cancellationToken);
+                expired = (await connection.QueryAsync<SessionRow>(Expired, new { SessionRow.Browser, Now = now, After = after, Limit = batchSize })).AsList();
             }
 
             foreach (var row in expired)
@@ -426,8 +429,8 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
         {
             var hash = Key(token);
             var now = time.GetUtcNow().UtcDateTime;
-            await using var db = await storage.CreateDbContextAsync(context.RequestAborted);
-            await db.Sessions.Where(row => row.TokenHash == hash && row.ExpiresAt > now).ExecuteDeleteAsync(context.RequestAborted);
+            await using var connection = await storage.OpenAsync(context.RequestAborted);
+            await connection.ExecuteAsync(RemoveToken, new { TokenHash = hash, Now = now });
         }
         Clear(context);
     }
@@ -440,15 +443,14 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
         }
 
         var current = BrowserToken(context) is { } token ? Key(token) : "";
-        await using var db = await storage.CreateDbContextAsync(context.RequestAborted);
-        await db.Sessions.Where(row => row.Id == id && row.UserId == session.UserId && row.Kind == SessionRow.Browser && row.TokenHash != current)
-            .ExecuteDeleteAsync(context.RequestAborted);
+        await using var connection = await storage.OpenAsync(context.RequestAborted);
+        await connection.ExecuteAsync(RevokeOther, new { Id = id, session.UserId, SessionRow.Browser, Current = current });
     }
 
     public async Task RevokeUserAsync(string subject, CancellationToken cancellationToken)
     {
-        await using var db = await storage.CreateDbContextAsync(cancellationToken);
-        await db.Sessions.Where(row => row.UserId == subject && row.Kind == SessionRow.Browser).ExecuteDeleteAsync(cancellationToken);
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        await connection.ExecuteAsync(RevokeBrowsers, new { UserId = subject, SessionRow.Browser });
     }
 
     private static string? BrowserToken(HttpContext context)
@@ -468,41 +470,25 @@ public sealed class DashboardSessions(IDbContextFactory<DashboardDbContext> stor
 
     private async Task<SessionRow?> FindAsync(Lookup lookup, CancellationToken cancellationToken)
     {
-        await using var db = await storage.CreateDbContextAsync(cancellationToken);
-        var rows = db.Sessions.AsNoTracking();
-        return await (lookup.Kind == SessionRow.Browser
-                ? rows.Where(row => row.TokenHash == lookup.Key && row.Kind == SessionRow.Browser)
-                : rows.Where(row => row.Id == lookup.Key && row.Kind == SessionRow.Credential))
-            .SingleOrDefaultAsync(cancellationToken);
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        return lookup.Kind == SessionRow.Browser
+            ? await connection.QuerySingleOrDefaultAsync<SessionRow>(ByToken, new { TokenHash = lookup.Key, SessionRow.Browser })
+            : await connection.QuerySingleOrDefaultAsync<SessionRow>(ById, new { Id = lookup.Key, SessionRow.Credential });
     }
 
     private async Task<SessionRow?> ReplaceAsync(SessionRow row, SessionRecord record, string key, CancellationToken cancellationToken)
     {
-        await using var db = await storage.CreateDbContextAsync(cancellationToken);
-        var entry = db.Sessions.Attach(Copy(row));
         var (nonce, ciphertext, tag) = Seal(record, key);
-        entry.Entity.Version = AccountService.NewId();
-        entry.Entity.Nonce = nonce;
-        entry.Entity.Ciphertext = ciphertext;
-        entry.Entity.Tag = tag;
-        try
-        {
-            await db.SaveChangesAsync(cancellationToken);
-            return entry.Entity;
-        }
-        catch (DbUpdateConcurrencyException)
-        {
-            return null;
-        }
+        var next = Copy(row) with { OriginalVersion = row.Version, Version = AccountService.NewId(), Nonce = nonce, Ciphertext = ciphertext, Tag = tag };
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        return await connection.ExecuteAsync(DashboardSql.Sessions.Update, next) == 1 ? next : null;
     }
 
     private async Task RemoveAsync(SessionRow row, string reason, CancellationToken cancellationToken)
     {
         logger.DroppedStoredGrant(reason == "expired" ? LogLevel.Information : LogLevel.Warning, row.Kind, reason);
-        await using var db = await storage.CreateDbContextAsync(cancellationToken);
-        db.Sessions.Remove(Copy(row));
-        try { await db.SaveChangesAsync(cancellationToken); }
-        catch (DbUpdateConcurrencyException) { }
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        await connection.ExecuteAsync(DashboardSql.Sessions.Delete, Copy(row) with { OriginalVersion = row.Version });
     }
 
     private static SessionRow NewRow(string kind, string? tokenHash, SessionRecord record, string key)

@@ -27,6 +27,11 @@ export { V1TableShape } from "./v1/table-shape.js";
 /** @typedef {import("./v1/table-shape.js").V1TableShapeRequest} V1TableShapeRequest */
 /** @typedef {import("./v1/table-shape.js").V1TableShapeSubscribeOptions} V1TableShapeSubscribeOptions */
 export { V1SqlSocket, SqlSocketClosedError } from "./v1/sql-socket.js";
+export { mergeBookmarks } from "./v1/bookmark.js";
+/** @typedef {import("./v1/bookmark.js").V1Consistency} V1Consistency */
+/** @typedef {import("./v1/bookmark.js").V1SqlRequestOptions} V1SqlRequestOptions */
+/** @typedef {import("./v1/sql-socket.js").V1SqlFrameOptions} V1SqlFrameOptions */
+/** @typedef {import("./v1/terrabase-v1.js").V1SqlConnectOptions} V1SqlConnectOptions */
 export { generateId, isValidId, requireId } from "./ids.js";
 /** @typedef {import("./ids.js").EntityId} EntityId */
 export { ExactDecimal } from "./v1/json.js";

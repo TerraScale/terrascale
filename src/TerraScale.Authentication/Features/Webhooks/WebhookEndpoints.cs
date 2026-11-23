@@ -1,3 +1,4 @@
+using Dapper;
 using System.Collections.Frozen;
 using System.Security.Cryptography;
 using System.Text;
@@ -8,16 +9,21 @@ using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Security;
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Storage;
 
 namespace TerraScale.Authentication.Features.Webhooks;
 
 public sealed record WebhookEndpointRecord(string InstanceId, string Id, string ProjectId, string Url, IReadOnlyList<string> EventTypes,
-    string SecretBox, string? PreviousSecretBox = null, DateTimeOffset? PreviousSecretExpiresAt = null, DateTimeOffset CreatedAt = default);
+    string SecretBox, string? PreviousSecretBox = null, DateTimeOffset? PreviousSecretExpiresAt = null, DateTimeOffset CreatedAt = default)
+{
+    public string? Version { get; init; }
+}
 
 public sealed record WebhookEndpointStateRecord(string EndpointId, string ProjectId, DateTimeOffset? FirstFailureAt = null,
-    DateTimeOffset? DisabledAt = null, DateTimeOffset LeaseUntil = default, DateTimeOffset LastServedAt = default);
+    DateTimeOffset? DisabledAt = null, DateTimeOffset LeaseUntil = default, DateTimeOffset LastServedAt = default)
+{
+    public string? Version { get; init; }
+}
 
 public sealed record CreateWebhookEndpointRequest(string? Url, IReadOnlyList<string>? EventTypes);
 
@@ -44,8 +50,8 @@ public sealed class WebhookEndpoints(AuthData data, ProjectAuthSettings settings
 
     public async Task<(WebhookEndpointRecord Endpoint, string Secret)> CreateAsync(string projectId, string url, IReadOnlyList<string> eventTypes, CancellationToken cancellationToken)
     {
-        var (current, settingsVersion) = await settings.ReadVersionedAsync(projectId, cancellationToken).ConfigureAwait(false);
-        if ((await this.ListAsync(projectId, cancellationToken).ConfigureAwait(false)).Count >= MaxPerProject)
+        var (current, settingsVersion) = await settings.ReadVersionedAsync(projectId, cancellationToken);
+        if ((await this.ListAsync(projectId, cancellationToken)).Count >= MaxPerProject)
         {
             throw new ApiException(409, "webhook_endpoint_limit", $"A project registers at most {MaxPerProject} webhook endpoints.");
         }
@@ -59,7 +65,7 @@ public sealed class WebhookEndpoints(AuthData data, ProjectAuthSettings settings
                 Change.Insert(endpoint),
                 Change.Insert(new WebhookEndpointStateRecord(id, projectId)),
                 ProjectAuthSettings.Write(current with { InstanceId = projectId }, settingsVersion),
-            ], cancellationToken).ConfigureAwait(false))
+            ], cancellationToken))
         {
             throw new ApiException(409, "version_conflict", "The project's webhook endpoints changed concurrently; read them again and retry.");
         }
@@ -68,27 +74,33 @@ public sealed class WebhookEndpoints(AuthData data, ProjectAuthSettings settings
     }
 
     public async Task<IReadOnlyList<WebhookEndpointBody>> ListAsync(string projectId, CancellationToken cancellationToken) =>
-        await data.ReadAsync((db, token) => (from endpoint in db.WebhookEndpoints
-                                             join state in db.WebhookEndpointStates on endpoint.Id equals state.EndpointId
-                                             where endpoint.ProjectId == projectId && endpoint.InstanceId == projectId
-                                             orderby endpoint.CreatedAt, endpoint.Id
-                                             select new WebhookEndpointBody(endpoint.Id, endpoint.Url, endpoint.EventTypes, endpoint.CreatedAt, null, null, state.DisabledAt))
-            .ToListAsync(token), cancellationToken).ConfigureAwait(false);
+        await this.ListBodiesAsync(projectId, cancellationToken);
+
+    private async Task<IReadOnlyList<WebhookEndpointBody>> ListBodiesAsync(string projectId, CancellationToken cancellationToken)
+    {
+        var endpoints = (await data.ReadAsync(connection => connection.QueryAsync<WebhookEndpointRecord>(
+            "SELECT * FROM webhook_endpoints WHERE project_id = @projectId AND instance_id = @projectId ORDER BY created_at, id", new { projectId }), cancellationToken)).AsList();
+        var states = (await data.ReadAsync(connection => connection.QueryAsync<WebhookEndpointStateRecord>(
+            "SELECT * FROM webhook_endpoint_states WHERE project_id = @projectId", new { projectId }), cancellationToken))
+            .ToDictionary(state => state.EndpointId, StringComparer.Ordinal);
+        return [.. endpoints.Where(endpoint => states.ContainsKey(endpoint.Id))
+            .Select(endpoint => new WebhookEndpointBody(endpoint.Id, endpoint.Url, endpoint.EventTypes, endpoint.CreatedAt, null, null, states[endpoint.Id].DisabledAt))];
+    }
 
     public async Task<bool> DeleteAsync(string projectId, string id, CancellationToken cancellationToken)
     {
-        if (await this.ReadAsync(projectId, id, cancellationToken).ConfigureAwait(false) is not { } row)
+        if (await this.ReadAsync(projectId, id, cancellationToken) is not { } row)
         {
             return false;
         }
 
-        return await data.SaveAsync(Change.Delete(row), cancellationToken).ConfigureAwait(false);
+        return await data.SaveAsync(Change.Delete(row), cancellationToken);
     }
 
     public async Task<(WebhookEndpointRecord Endpoint, string Secret)> RotateAsync(string projectId, string id,
         IReadOnlyList<Change> consumption, CancellationToken cancellationToken)
     {
-        var row = await this.ReadAsync(projectId, id, cancellationToken).ConfigureAwait(false) ?? throw new ApiException(404, "not_found", "No such resource.");
+        var row = await this.ReadAsync(projectId, id, cancellationToken) ?? throw new ApiException(404, "not_found", "No such resource.");
         var endpoint = row.Value;
         var secret = NewSecret();
         var rotated = endpoint with
@@ -97,9 +109,9 @@ public sealed class WebhookEndpoints(AuthData data, ProjectAuthSettings settings
             PreviousSecretBox = endpoint.SecretBox,
             PreviousSecretExpiresAt = clock.GetUtcNow() + DualSecretWindow,
         };
-        if (!await data.SaveAsync([.. consumption, Change.Update(row, rotated)], cancellationToken).ConfigureAwait(false))
+        if (!await data.SaveAsync([.. consumption, Change.Update(row, rotated)], cancellationToken))
         {
-            throw (await this.ReadAsync(projectId, id, cancellationToken).ConfigureAwait(false))?.Version == row.Version
+            throw (await this.ReadAsync(projectId, id, cancellationToken))?.Version == row.Version
                 ? StepUpProofs.Required()
                 : new ApiException(409, "version_conflict", "The webhook endpoint changed; read it again and retry.");
         }
@@ -107,9 +119,9 @@ public sealed class WebhookEndpoints(AuthData data, ProjectAuthSettings settings
         return (rotated, secret);
     }
 
-    private Task<Versioned<WebhookEndpointRecord>?> ReadAsync(string projectId, string id, CancellationToken cancellationToken) =>
-        data.ReadAsync((db, token) => db.WebhookEndpoints.Where(endpoint => endpoint.Id == id && endpoint.ProjectId == projectId && endpoint.InstanceId == projectId)
-            .WithVersion().SingleOrDefaultAsync(token), cancellationToken);
+    private async Task<Versioned<WebhookEndpointRecord>?> ReadAsync(string projectId, string id, CancellationToken cancellationToken) =>
+        Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<WebhookEndpointRecord>(
+            "SELECT * FROM webhook_endpoints WHERE id = @id AND project_id = @projectId AND instance_id = @projectId", new { id, projectId }), cancellationToken));
 
     public static string NewSecret() => "whsec_" + Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
 

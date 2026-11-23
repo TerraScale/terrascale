@@ -15,6 +15,6 @@ public sealed class GetProjectOrganizationEndpoint(ProjectOrganizationDirectory 
     protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var project = await this.AccessAsync(caller, Roles.Viewer, cancellationToken);
-        return Results.Json(ProjectOrganizationDirectory.Body((await organizations.ReadAsync(project, this.Org, cancellationToken)).Value), ProjectOrganizationsJson.Default.ProjectOrganizationBody);
+        return TypedResults.Json(ProjectOrganizationDirectory.Body((await organizations.ReadAsync(project, this.Org, cancellationToken)).Value), ProjectOrganizationsJson.Default.ProjectOrganizationBody);
     }
 }

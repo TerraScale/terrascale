@@ -16,7 +16,7 @@ Starter, Pro and Team can be billed monthly or yearly; a year costs ten monthly 
 
 - **Writes.** One operation unit is each started 4 KiB (4,096 bytes) of data successfully written; every changed row counts at least one unit. Writes and function invocations share one monthly operations allowance.
 - **Function invocations.** Each invocation is 1 operation unit. Every function invocation counts in the shared monthly operations allowance, from HTTP or cron, including handler errors and timeouts. Refused invocations are not counted. There is no CPU or duration charge; SQL inside a handler counts like any other SQL.
-- **Storage.** Stored bytes in the region that orders the database's writes, sampled hourly. Copies in the database's other regions are not billed separately. One GB-month is 1 GB (10^9 bytes) stored for a whole month.
+- **Storage.** Stored bytes of one copy of the database, sampled hourly. Copies in the database's other regions are not billed separately. One GB-month is 1 GB (10^9 bytes) stored for a whole month.
 - **Reads.** SQL reads are not billed; they count toward the plan's monthly fair use. Shape reads served from the edge are free and not counted.
 
 Free includes small allowances without a card; new writes and function invocations stop at its operation allowance and there are no overage charges. Paid plans include monthly allowances; operation units over the allowance are added to the next subscription invoice at the overage rate, up to the plan's hard cap (operationUnitCapPerMonth), where new writes and function invocations stop until the next UTC month or an upgrade. SQL reads stop at the plan's fair use (sqlReadUnitsPerMonth); shape reads stay available. Storage over the allowance is added to the next invoice at the storage overage rate per GB-month of average stored bytes above it. Client egress over the allowance is not billed yet.
@@ -24,8 +24,6 @@ Free includes small allowances without a card; new writes and function invocatio
 Overage rates on paid plans: $5 per million operation units and $0.5 per GB-month of storage.
 
 When a plan's write cap or SQL read fair use is reached, the statement answers `429 quota_exceeded` (Postgres SQLSTATE `53100`) until the next UTC month or an upgrade. A function invocation past the write cap answers `429 quota_exceeded` the same way.
-
-A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 
 ## Regions per database
 
@@ -37,7 +35,7 @@ A push stream that returns NATS error 10074 is not retried, because the stream w
 | Team | 1 |
 | Enterprise | 1 |
 
-A database lives in a set of regions, at least one, and every region of the set accepts reads and writes. One region of the set orders the writes; TerraBase picks it. The default TerraScale-Durability is local.
+A database lives in a set of regions, at least one. Every region of the set is an equal peer that accepts reads and writes; there is no home region.
 The catalog's regionsPerDatabase counts the regions in which a database's writes and stored bytes are metered: one per database on every plan. Copies in the database's other regions are not billed separately. See [regions](/concepts/regions) and [replication](/concepts/replication).
 
 ## Spending caps

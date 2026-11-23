@@ -22,14 +22,14 @@ public sealed class OrganizationInvitationPageEndpoint(ProjectOrganizationDirect
         var tenant = Tenancy.Resolved(this.HttpContext);
         if (tenant is null || !Tenancy.IsProject(tenant))
         {
-            return Results.NotFound();
+            return TypedResults.NotFound();
         }
 
         var secret = this.HttpContext.Request.Query["token"].ToString();
         var invite = await organizations.InvitationAsync(tenant, secret, cancellationToken);
         if (await sessions.ResolveAsync(tenant, this.HttpContext.Request.Cookies[Tenancy.SessionCookie(tenant)], cancellationToken) is null)
         {
-            return Results.Redirect($"/ui/{tenant}/sign-in?next={Uri.EscapeDataString(this.HttpContext.Request.Path + this.HttpContext.Request.QueryString)}");
+            return TypedResults.Redirect($"/ui/{tenant}/sign-in?next={Uri.EscapeDataString(this.HttpContext.Request.Path + this.HttpContext.Request.QueryString)}");
         }
 
         var org = await organizations.ReadAsync(tenant, invite.Value.OrganizationId, cancellationToken);

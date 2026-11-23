@@ -1,5 +1,5 @@
+using Dapper;
 using System.Net;
-using Microsoft.EntityFrameworkCore;
 using Stripe;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Common.Validation;
@@ -71,8 +71,9 @@ public sealed partial class StripeBilling
 
     internal async Task<PendingOrganizationCheckout?> PendingOrganizationAsync(string userId, CancellationToken cancellationToken)
     {
-        await using var db = await storage.CreateDbContextAsync(cancellationToken);
-        return await db.PendingOrganizationCheckouts.AsNoTracking().SingleOrDefaultAsync(row => row.UserId == userId && row.State != OrganizationCheckoutStates.RefundPending, cancellationToken);
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        return await connection.QuerySingleOrDefaultAsync<PendingOrganizationCheckout>(DashboardSql.PendingOrganizationCheckouts.Select + " WHERE user_id = @UserId AND state <> @RefundPending",
+            new { UserId = userId, OrganizationCheckoutStates.RefundPending });
     }
 
     private async Task<Stripe.Checkout.Session> CreateDraftCheckoutAsync(SessionRecord session, string draftId, string name, BillingPlan plan, string interval, DateTime createdAt, CancellationToken cancellationToken)

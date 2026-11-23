@@ -15,6 +15,6 @@ public sealed class RevokeProjectInvitationEndpoint(TenantDirectory tenants, Pla
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         await invitations.RevokeAsync(projectId, this.RouteId("invitation"), cancellationToken);
-        return Results.NoContent();
+        return TypedResults.NoContent();
     }
 }

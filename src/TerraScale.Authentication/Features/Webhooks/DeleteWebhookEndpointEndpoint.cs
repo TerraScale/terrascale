@@ -16,6 +16,6 @@ public sealed class DeleteWebhookEndpointEndpoint(TenantDirectory tenants, Platf
     protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
-        return await webhooks.DeleteAsync(projectId, this.RouteId("id"), cancellationToken) ? Results.NoContent() : throw PlatformDirectory.NotFound();
+        return await webhooks.DeleteAsync(projectId, this.RouteId("id"), cancellationToken) ? TypedResults.NoContent() : throw PlatformDirectory.NotFound();
     }
 }

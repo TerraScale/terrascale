@@ -9,33 +9,28 @@ using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Features.Identity;
 
-/// <summary>
-/// Deletes dead sessions and spent code records every ten minutes on every replica. Deletes are version-conditional,
-/// so concurrent passes are safe; a failed pass is retried at the next tick, and dead records grant nothing while they wait.
-/// </summary>
 public sealed class SessionPruner(AuthSchema schema, Sessions sessions, Passcodes passcodes, Challenges challenges, StepUpProofs proofs, AgentEnrollments enrollments, OidcTokenStore oidcTokens, OidcAuthorizationStore oidcAuthorizations, ILogger<SessionPruner> logger, AccountProtection protection, AgentAssertions agents, AgentIdTransactions agentSignIns) : BackgroundService
 {
     internal const int BatchSize = 500;
 
     private static readonly TimeSpan Interval = TimeSpan.FromMinutes(10);
 
-    /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await schema.Ready.WaitAsync(stoppingToken).ConfigureAwait(false);
+        await schema.Ready.WaitAsync(stoppingToken);
         using var timer = new PeriodicTimer(Interval);
-        while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
+        while (await timer.WaitForNextTickAsync(stoppingToken))
         {
-            await this.PruneAsync("attack protection", protection.PruneAsync, stoppingToken).ConfigureAwait(false);
-            await this.PruneAsync("sessions", sessions.PruneAsync, stoppingToken).ConfigureAwait(false);
-            await this.PruneAsync("passcodes", passcodes.PruneAsync, stoppingToken).ConfigureAwait(false);
-            await this.PruneAsync("challenges", challenges.PruneAsync, stoppingToken).ConfigureAwait(false);
-            await this.PruneAsync("step-up proofs", proofs.PruneAsync, stoppingToken).ConfigureAwait(false);
-            await this.PruneAsync("agent enrollments", enrollments.PruneAsync, stoppingToken).ConfigureAwait(false);
-            await this.PruneAsync("OIDC tokens", oidcTokens.PruneAsync, stoppingToken).ConfigureAwait(false);
-            await this.PruneAsync("OIDC authorizations", oidcAuthorizations.PruneAsync, stoppingToken).ConfigureAwait(false);
-            await this.PruneAsync("agent assertions", agents.PruneAsync, stoppingToken).ConfigureAwait(false);
-            await this.PruneAsync("agent sign-in transactions", agentSignIns.PruneAsync, stoppingToken).ConfigureAwait(false);
+            await this.PruneAsync("attack protection", protection.PruneAsync, stoppingToken);
+            await this.PruneAsync("sessions", sessions.PruneAsync, stoppingToken);
+            await this.PruneAsync("passcodes", passcodes.PruneAsync, stoppingToken);
+            await this.PruneAsync("challenges", challenges.PruneAsync, stoppingToken);
+            await this.PruneAsync("step-up proofs", proofs.PruneAsync, stoppingToken);
+            await this.PruneAsync("agent enrollments", enrollments.PruneAsync, stoppingToken);
+            await this.PruneAsync("OIDC tokens", oidcTokens.PruneAsync, stoppingToken);
+            await this.PruneAsync("OIDC authorizations", oidcAuthorizations.PruneAsync, stoppingToken);
+            await this.PruneAsync("agent assertions", agents.PruneAsync, stoppingToken);
+            await this.PruneAsync("agent sign-in transactions", agentSignIns.PruneAsync, stoppingToken);
         }
     }
 
@@ -43,7 +38,7 @@ public sealed class SessionPruner(AuthSchema schema, Sessions sessions, Passcode
     {
         try
         {
-            await prune(BatchSize, stoppingToken).ConfigureAwait(false);
+            await prune(BatchSize, stoppingToken);
         }
         catch (Exception error) when (!stoppingToken.IsCancellationRequested)
         {

@@ -24,6 +24,6 @@ public sealed class VerifyUserApiKeyEndpoint(TenantDirectory tenants, PlatformAu
 
         var project = await this.AccessAsync(caller, Roles.Viewer, cancellationToken, TerraBaseScopes.AuthRead);
         var request = await this.BodyAsync(UserApiKeyJson.Default.VerifyUserApiKeyRequest, cancellationToken);
-        return Results.Json(await keys.VerifyAsync(project, request.Key, cancellationToken), UserApiKeyJson.Default.VerifyUserApiKeyBody);
+        return TypedResults.Json(await keys.VerifyAsync(project, request.Key, cancellationToken), UserApiKeyJson.Default.VerifyUserApiKeyBody);
     }
 }

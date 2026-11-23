@@ -1,4 +1,4 @@
-using TerraScale.TerraBase.Contracts;
+using TerraScale.Dashboard.Platform.Clients;
 using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -7,8 +7,6 @@ namespace TerraScale.Dashboard.Common.Databases
 {
     public sealed partial class DatabaseService
     {
-        // A write addressed by id must survive a listing gap: refresh once from TerraBase before refusing it.
-        // Discover one missing ID, never reconcile inventory. No name or caller-chosen project reaches the producer.
         public async Task<(AccountContext Context, DatabaseRecord Database)> LookupAsync(AccountContext context, string id, CancellationToken ct)
         {
             if (!TerraScaleIds.IsValid(id))
@@ -42,7 +40,6 @@ namespace TerraScale.Dashboard.Common.Databases
             try
             {
                 var catalog = await backend.CatalogAsync(ct);
-                // A missing record has no known home: project GRU does not exclude an SJC+FRA database.
                 var listings = await Task.WhenAll(catalog.Select(async region =>
                 {
                     try { return (Region: region.Id, Items: (IReadOnlyList<ManagedDatabase>?)await backend.ListAsync(scope, region, ct)); }
@@ -61,7 +58,6 @@ namespace TerraScale.Dashboard.Common.Databases
                 if (matches.Length > 0)
                 {
                     var remote = matches[0];
-                    // Producer names allow underscores/trailing hyphens; creation-form policy must not hide valid databases.
                     if (remote.ProjectId != project.Id || remote.CreatedAt == default || remote.Name is null || !ProducerName().IsMatch(remote.Name) ||
                         ReservedProducerName().IsMatch(remote.Name) || remote.BranchedFrom is { } source && (!TerraScaleIds.IsValid(source) || source == id) ||
                         remote.AllRegions && remote.ReplicaRegions is not { Count: 0 })
@@ -84,7 +80,6 @@ namespace TerraScale.Dashboard.Common.Databases
             catch (Exception error) when (!ct.IsCancellationRequested &&
                 (DatabaseResults.KnownFailure(error) || error is TerraBaseException or TimeoutException or HttpRequestException or IOException or InvalidDataException or JsonException or OperationCanceledException))
             { throw Unavailable(id); }
-            // Only complete, successful regional pagination can establish absence.
             if (imported is null)
             {
                 throw NotFound(id);
@@ -108,7 +103,6 @@ namespace TerraScale.Dashboard.Common.Databases
                 target.Databases[id] = imported;
                 resolved = imported;
             }, ct);
-            // Do not publish uncommitted metadata into the request, or replace a concurrent winner's settings/revision.
             project.Databases[id] = resolved;
             return (context, resolved);
 
@@ -118,13 +112,11 @@ namespace TerraScale.Dashboard.Common.Databases
             }
         }
 
-        // Definitive absence, proven only by complete pagination: the database is not this project's.
         private static AccountAccessException NotFound(string id)
         {
             return new("Database " + id + " was not found in this project.", 404);
         }
 
-        // Transient upstream states stay retryable and say so; the id was never the problem.
         private static AccountAccessException Unavailable(string id)
         {
             return new("Database " + id + " is temporarily unavailable; retry in a few seconds.", 503);

@@ -21,7 +21,7 @@ public sealed class ProjectWaitlistPageEndpoint(ProjectAuthSettings settings) : 
         if (SignInFlow.WrongSlug(this.HttpContext)
             || (await settings.GetAsync(SignInFlow.Tenant(this.HttpContext), cancellationToken)).SignUpMode != "waitlist")
         {
-            return Results.NotFound();
+            return TypedResults.NotFound();
         }
 
         var nonce = BrowserSecurity.NewNonce();

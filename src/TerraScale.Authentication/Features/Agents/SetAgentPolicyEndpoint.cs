@@ -15,6 +15,6 @@ public sealed class SetAgentPolicyEndpoint(TenantDirectory tenants, PlatformAuth
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(AgentJson.Default.AgentPolicyBody, cancellationToken);
-        return Results.Json(await agents.SetPolicyAsync(project, request.AllowedScopes, caller.Id, cancellationToken), AgentJson.Default.AgentPolicyBody);
+        return TypedResults.Json(await agents.SetPolicyAsync(project, request.AllowedScopes, caller.Id, cancellationToken), AgentJson.Default.AgentPolicyBody);
     }
 }

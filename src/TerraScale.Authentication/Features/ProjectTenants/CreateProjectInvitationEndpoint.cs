@@ -18,6 +18,6 @@ public sealed class CreateProjectInvitationEndpoint(TenantDirectory tenants, Pla
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.BodyAsync(ProjectTenantJson.Default.CreateProjectInvitationRequest, cancellationToken);
         var invitation = await invitations.CreateAsync(projectId, request.Email, request.RedirectUrl, caller switch { ProjectCaller.SignedIn(var person) => person.Email, ProjectCaller.SecretKey(var key) => key.Name, _ => throw new UnreachableException() }, AuthEmails.Locale(this.HttpContext.Request), cancellationToken);
-        return Results.Json(invitation, ProjectTenantJson.Default.ProjectInvitationBody, statusCode: 201);
+        return TypedResults.Json(invitation, ProjectTenantJson.Default.ProjectInvitationBody, statusCode: 201);
     }
 }

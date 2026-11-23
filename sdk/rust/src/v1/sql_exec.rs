@@ -15,6 +15,7 @@ use super::client::{backoff, Req, RetryPolicy};
 use super::database::Database;
 use super::errors::{Error, Result};
 use super::ids::check_database_selector;
+use crate::consistency::{ConsistencyMode, BOOKMARK_HEADER, CONSISTENCY_HEADER};
 
 /// Maximum statements in one request.
 pub const MAX_SQL_STATEMENTS: usize = 256;
@@ -41,7 +42,18 @@ pub mod sql_error_codes {
     pub const FORBIDDEN_SCOPE: &str = "forbidden_scope";
     /// The statement leaves the SQL sandbox (ATTACH, VACUUM, file functions, …).
     pub const SQL_SANDBOX: &str = "sql_sandbox";
+    /// A concurrent transaction or schema change rolled this one back
+    /// (SQLSTATE 40001); resending it can succeed.
     pub const SERIALIZATION_CONFLICT: &str = "serialization_conflict";
+    /// The schema changed while the statement ran; resending it can succeed.
+    pub const SCHEMA_MISMATCH: &str = "schema_mismatch";
+    /// The statement needs a strong transaction; reported to clients as
+    /// [`SERIALIZATION_CONFLICT`].
+    pub const STRONG_REQUIRED: &str = "strong_required";
+    /// `TerraScale-Bookmark` was not a bookmark returned by TerraScale.
+    pub const INVALID_BOOKMARK: &str = "invalid_bookmark";
+    /// `TerraScale-Consistency` was neither `fast` nor `strong`.
+    pub const INVALID_CONSISTENCY: &str = "invalid_consistency";
     pub const ROW_CONFLICT: &str = "row_conflict";
     pub const TOO_LARGE: &str = "too_large";
     pub const QUERY_CANCELED: &str = "query_canceled";
@@ -211,6 +223,7 @@ impl From<String> for SqlStatement {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SqlColumn {
     pub name: String,
+    #[serde(alias = "type")]
     pub decltype: Option<String>,
 }
 
@@ -219,7 +232,9 @@ pub struct SqlColumn {
 pub struct SqlStatementResult {
     pub columns: Vec<SqlColumn>,
     pub rows: Vec<Vec<SqlValue>>,
+    #[serde(alias = "rowsAffected")]
     pub rows_affected: u64,
+    #[serde(alias = "lastInsertRowId")]
     pub last_insert_rowid: Option<i64>,
 }
 
@@ -389,7 +404,13 @@ fn mismatch(expected: &str, actual: &SqlValue) -> Error {
 
 /// SQL on one database. Every call is one request and one transaction: all
 /// statements commit or none do. `BEGIN`/`COMMIT`/`ROLLBACK` are refused.
-/// A `409 serialization_conflict` rolled back and is resent at most twice.
+/// A `409 serialization_conflict` (including a schema mismatch) rolled back
+/// and is resent at most twice.
+///
+/// Each request sends the database's causal bookmark as `TerraScale-Bookmark`
+/// and each answer's bookmark advances it, so any active-active region serves
+/// this client's own writes. [`Self::with_consistency`] selects `fast` or
+/// `strong` commits through `TerraScale-Consistency`.
 ///
 /// ```no_run
 /// # async fn demo(client: terrascale::v1::Client) -> terrascale::v1::Result<()> {
@@ -414,17 +435,77 @@ fn mismatch(expected: &str, actual: &SqlValue) -> Error {
 #[derive(Debug, Clone)]
 pub struct Sql {
     db: Database,
+    consistency: Option<ConsistencyMode>,
+    bookmark: Option<String>,
+}
+
+/// The results of one SQL request with the causality TerraScale reported.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SqlBatchOutcome {
+    /// One result per statement, in order.
+    pub results: Vec<SqlStatementResult>,
+    /// The `TerraScale-Bookmark` of the answer, when sent.
+    pub bookmark: Option<String>,
+    /// The mode the transaction ran with, when reported.
+    pub consistency: Option<ConsistencyMode>,
 }
 
 impl Database {
     /// SQL on this database. Performs no I/O.
     #[must_use]
     pub fn sql(&self) -> Sql {
-        Sql { db: self.clone() }
+        Sql {
+            db: self.clone(),
+            consistency: self.consistency(),
+            bookmark: None,
+        }
     }
 }
 
 impl Sql {
+    /// Runs later requests with `TerraScale-Consistency: fast` or `strong`.
+    #[must_use]
+    pub fn with_consistency(mut self, mode: ConsistencyMode) -> Self {
+        self.consistency = Some(mode);
+        self
+    }
+
+    /// Runs later requests as strong 2-of-3 quorum transactions.
+    #[must_use]
+    pub fn strong(self) -> Self {
+        self.with_consistency(ConsistencyMode::Strong)
+    }
+
+    /// Also waits for `bookmark`, for example one returned to another
+    /// client, before later requests run; it is merged with the database's
+    /// tracked bookmark. An invalid bookmark fails each request locally.
+    #[must_use]
+    pub fn with_bookmark(mut self, bookmark: impl Into<String>) -> Self {
+        self.bookmark = Some(bookmark.into());
+        self
+    }
+
+    /// The consistency mode requests send, when one is set.
+    #[must_use]
+    pub fn consistency(&self) -> Option<ConsistencyMode> {
+        self.consistency
+    }
+
+    /// The newest causal bookmark observed on this database.
+    #[must_use]
+    pub fn bookmark(&self) -> Option<String> {
+        self.db.bookmark()
+    }
+
+    /// Runs 1..=256 statements as one strong 2-of-3 quorum transaction, the
+    /// REST form of `BEGIN STRONG` … `COMMIT`.
+    pub async fn batch_strong(
+        &self,
+        statements: Vec<SqlStatement>,
+    ) -> Result<Vec<SqlStatementResult>> {
+        self.clone().strong().batch(statements).await
+    }
+
     /// Runs one statement with positional arguments.
     pub async fn execute(&self, sql: &str, args: &[SqlValue]) -> Result<SqlStatementResult> {
         self.execute_statement(SqlStatement::new(sql).args(args.iter().cloned()))
@@ -486,8 +567,17 @@ impl Sql {
     /// result per statement in order. A refused statement rolls everything
     /// back and returns [`Error::Sql`] naming it.
     pub async fn batch(&self, statements: Vec<SqlStatement>) -> Result<Vec<SqlStatementResult>> {
+        Ok(self.batch_outcome(statements).await?.results)
+    }
+
+    /// [`Self::batch`], also returning the answer's bookmark and the mode
+    /// the transaction ran with.
+    pub async fn batch_outcome(&self, statements: Vec<SqlStatement>) -> Result<SqlBatchOutcome> {
         check_database_selector(self.db.name())?;
         validate_batch(&statements)?;
+        if let Some(bookmark) = &self.bookmark {
+            super::database::check_bookmark(bookmark)?;
+        }
         let body = serde_json::json!({ "statements": statements });
         let mut attempt = 0;
         loop {
@@ -495,9 +585,7 @@ impl Sql {
                 Err(error)
                     if attempt < CONFLICT_RETRIES
                         && error.status() == Some(409)
-                        && error.sql().is_some_and(|sql| {
-                            sql.code == sql_error_codes::SERIALIZATION_CONFLICT
-                        }) =>
+                        && error.is_serialization_conflict() =>
                 {
                     attempt += 1;
                     tokio::time::sleep(backoff(&RetryPolicy::default(), attempt)).await;
@@ -507,16 +595,21 @@ impl Sql {
         }
     }
 
-    async fn send(
-        &self,
-        body: &serde_json::Value,
-        expected: usize,
-    ) -> Result<Vec<SqlStatementResult>> {
-        let request = Req::new(
+    async fn send(&self, body: &serde_json::Value, expected: usize) -> Result<SqlBatchOutcome> {
+        let mut request = Req::new(
             Method::POST,
             vec!["v1", "databases", self.db.name(), "sql", "execute"],
         )
         .json(body)?;
+        let tracker = self.db.bookmark_tracker();
+        if let Some(bookmark) = tracker.with(self.bookmark.as_deref()) {
+            request.headers.push((BOOKMARK_HEADER, bookmark));
+        }
+        if let Some(mode) = self.consistency {
+            request
+                .headers
+                .push((CONSISTENCY_HEADER, mode.as_str().to_owned()));
+        }
         let response = self.db.client().send_project(request).await?;
 
         #[derive(Deserialize)]
@@ -527,7 +620,22 @@ impl Sql {
         if !results_match(&results, expected) {
             return Err(response.invalid("SQL results do not match the statements".into()));
         }
-        Ok(results)
+        let bookmark = response
+            .header(BOOKMARK_HEADER)
+            .map(str::trim)
+            .filter(|bookmark| !bookmark.is_empty())
+            .map(str::to_owned);
+        if let Some(bookmark) = &bookmark {
+            tracker.observe(bookmark);
+        }
+        let consistency = response
+            .header(CONSISTENCY_HEADER)
+            .and_then(|mode| mode.parse().ok());
+        Ok(SqlBatchOutcome {
+            results,
+            bookmark,
+            consistency,
+        })
     }
 }
 

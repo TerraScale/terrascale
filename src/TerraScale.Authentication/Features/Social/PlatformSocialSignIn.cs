@@ -16,22 +16,19 @@ using TerraScale.Authentication.Security;
 
 namespace TerraScale.Authentication.Features.Social;
 
-/// <summary>Authorization-code OAuth with S256 PKCE, browser binding and durable single-use state.</summary>
 public sealed class PlatformSocialSignIn(AuthOptions options, Challenges challenges, Users users,
     Sessions sessions, TotpCredentials mfa, IHttpClientFactory clients, TimeProvider clock)
 {
-    /// <summary>The named backchannel; tests replace only its HTTP transport.</summary>
     public const string HttpClientName = "platform-social-sign-in";
     private const string Purpose = "social-sign-in";
     private static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(10);
 
-    /// <summary>Starts platform sign-in using only the platform's credentials.</summary>
     public async Task<IResult> StartAsync(HttpContext context, string provider, string? next, CancellationToken cancellationToken)
     {
         var tenant = SignInFlow.Tenant(context);
         if (this.Credentials(tenant, provider) is not { } credential)
         {
-            return Results.NotFound();
+            return TypedResults.NotFound();
         }
 
         var browser = Tokens.RandomToken(43);
@@ -43,7 +40,7 @@ public sealed class PlatformSocialSignIn(AuthOptions options, Challenges challen
         context.Response.Cookies.Append(Cookie(hash), browser, CookieOptions());
         context.Response.Headers.CacheControl = "no-store";
         var authorization = provider == SocialProviders.GitHub ? "https://github.com/login/oauth/authorize" : "https://accounts.google.com/o/oauth2/v2/auth";
-        return Results.Redirect(QueryHelpers.AddQueryString(authorization, new Dictionary<string, string?>
+        return TypedResults.Redirect(QueryHelpers.AddQueryString(authorization, new Dictionary<string, string?>
         {
             ["client_id"] = credential.ClientId,
             ["redirect_uri"] = this.Callback(provider).AbsoluteUri,
@@ -55,7 +52,6 @@ public sealed class PlatformSocialSignIn(AuthOptions options, Challenges challen
         }));
     }
 
-    /// <summary>Verifies the browser, consumes state once, then exchanges the code and opens a fresh session.</summary>
     public async Task<IResult> CompleteAsync(HttpContext context, string tenant, string provider, CancellationToken cancellationToken)
     {
         context.Response.Headers.CacheControl = "no-store";
@@ -108,15 +104,12 @@ public sealed class PlatformSocialSignIn(AuthOptions options, Challenges challen
             return Refused(context, tenant);
         }
 
-        // The authority comes from these fixed, trusted backchannels, never from user-supplied claims.
         var providerIdentity = new LinkedProvider(provider, provider == SocialProviders.Google ? "https://accounts.google.com" : "https://github.com", credential.ClientId, verified.Subject);
-        // Only a bound subject or a new account resolves; an email collision refuses without touching that account.
         if (await users.FromProviderAsync(tenant, providerIdentity, email, cancellationToken) is not { } resolved)
         {
             return Refused(context, tenant);
         }
 
-        // An active local factor gets the hosted second step; its sealed challenge carries the consumed callback binding.
         var user = resolved with { AuthenticationBindings = [.. resolved.AuthenticationBindings, binding] };
         var next = SignInFlow.SafeNext(context, payload.Next);
         if (await SignInFlow.SecondFactorAsync(context, mfa, user, next, cancellationToken) is { } factor)
@@ -184,7 +177,6 @@ public sealed class PlatformSocialSignIn(AuthOptions options, Challenges challen
         using var emailsResponse = await client.GetAsync("https://api.github.com/user/emails", cancellationToken);
         emailsResponse.EnsureSuccessStatusCode();
         using var emails = JsonDocument.Parse(await emailsResponse.Content.ReadAsStringAsync(cancellationToken));
-        // Require a verified primary address. GitHub's public profile email is neither required nor trusted.
         foreach (var item in emails.RootElement.EnumerateArray())
         {
             if (item.GetProperty("primary").ValueKind == JsonValueKind.True && item.GetProperty("verified").ValueKind == JsonValueKind.True

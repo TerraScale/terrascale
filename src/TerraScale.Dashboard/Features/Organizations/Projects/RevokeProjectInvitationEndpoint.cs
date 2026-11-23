@@ -19,7 +19,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             context = await AccountScope.RefreshAsync(accounts, context, http.RequestAborted, requireProject: true);
@@ -30,7 +30,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
                 {
                     http.Response.Headers.CacheControl = "no-store";
                     await DatastarEvents.PatchElementsAsync(http, ProjectInvitationPageView.Create(new(ShellModel.For(http, context, "Project invitations"), [], null, message)));
-                    return Results.Empty;
+                    return TypedResults.Empty;
                 }
                 return ProjectInvitationEndpoints.Page(http, context, [], error: message, status: status);
             }
@@ -95,7 +95,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Projects
         {
             http.Response.Headers.CacheControl = "no-store";
             await DatastarEvents.PatchElementsAsync(http, ProjectInvitationPageView.Create(new(ShellModel.For(http, context, "Project invitations"), items, next, Notice: notice)));
-            return Results.Empty;
+            return TypedResults.Empty;
         }
     }
 }

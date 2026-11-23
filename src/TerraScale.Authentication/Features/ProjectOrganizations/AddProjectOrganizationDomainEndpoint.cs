@@ -16,6 +16,6 @@ public sealed class AddProjectOrganizationDomainEndpoint(ProjectOrganizationDire
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var request = await this.OrganizationBodyAsync(ProjectOrganizationsJson.Default.ProjectDomainRequest, cancellationToken);
-        return Results.Json(await organizations.AddDomainAsync(project, this.Org, request.Domain, cancellationToken), ProjectOrganizationsJson.Default.ProjectOrganizationDomainBody, statusCode: 201);
+        return TypedResults.Json(await organizations.AddDomainAsync(project, this.Org, request.Domain, cancellationToken), ProjectOrganizationsJson.Default.ProjectOrganizationDomainBody, statusCode: 201);
     }
 }

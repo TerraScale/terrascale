@@ -1,18 +1,15 @@
-using Microsoft.EntityFrameworkCore;
+using TerraScale.Results;
+using TerraScale.Endpoints;
 using System.Text.Json;
-using TerraScale.Dashboard.Platform.Rpc;
-using TerraScale.TerraBase.Contracts.Management;
-using TerraScale.TerraBase.Contracts.Backups;
+using TerraScale.Dashboard.Platform.Clients;
 using System.Globalization;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Common.UI;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.Datastar;
-using TerraScale.TerraBase.Contracts;
 
 namespace TerraScale.Dashboard.Features.Backups
 {
-    // The datetime-local value of a UTC recovery point.
     public static class RecoveryPoint
     {
         public static string Input(DateTimeOffset point)
@@ -58,7 +55,7 @@ namespace TerraScale.Dashboard.Features.Backups
         }
     }
 
-    public sealed class WholeDatabaseRecovery(TerraBaseRpcClient rpc, IProjectAccessTokens tokens, DatabaseService databases, IDbContextFactory<DashboardDbContext> storage, TimeProvider time)
+    public sealed class WholeDatabaseRecovery(TerraBaseHttpClient terraBase, IProjectAccessTokens tokens, DatabaseService databases, DashboardDb storage, TimeProvider time)
     {
         public async Task<(AccountContext Context, DatabaseRecord Database)> SourceAsync(AccountContext context, string id, CancellationToken ct)
         {
@@ -188,7 +185,6 @@ namespace TerraScale.Dashboard.Features.Backups
         }
         private static DateTimeOffset Instant(string point, WholeDatabaseWindow available)
         {
-            // get_point_in_time_window serializes its bounds with a +00:00 offset; accept them as returned.
             if (!DateTimeOffset.TryParseExact(point,
                 ["yyyy-MM-dd'T'HH:mm", "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFzzz"],
                 CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var instant))
@@ -203,11 +199,30 @@ namespace TerraScale.Dashboard.Features.Backups
 
             return instant;
         }
-        private async Task<IBackupsService> ClientAsync(AccountContext context, DatabaseRecord source, string[] permissions, CancellationToken ct)
+        private async Task<RecoveryClient> ClientAsync(AccountContext context, DatabaseRecord source, string[] permissions, CancellationToken ct)
         {
-            var home = await databases.HomeAsync(context, source, ct);
+            await databases.HomeAsync(context, source, ct);
             var access = await tokens.GetAsync(context.Session, context.Organization!.Id, context.Project!.Id, permissions, ct);
-            return rpc.User<IBackupsService>(access, home.Id).WithCancellationToken(ct);
+            return new(terraBase, ServiceCaller.User(access), ct);
+        }
+
+        private sealed class RecoveryClient(TerraBaseHttpClient terraBase, ServiceCaller caller, CancellationToken cancellationToken)
+        {
+            public Task<TerraBaseRestoreWindow> GetRestoreWindowAsync(string projectId, string database, string? destination) =>
+                destination is null or "platform"
+                    ? TerraBaseResults.RequireAsync(terraBase.GetRestoreWindowAsync(caller, projectId, database, cancellationToken))
+                    : TerraBaseResults.RequireAsync(Task.FromResult<Result<TerraBaseRestoreWindow, TerraBaseRefusal>>(Unsupported));
+
+            public Task<TerraBasePointInTimePlan> PlanPointInTimeAsync(string projectId, string database, TerraBasePointInTimeRequest request) =>
+                TerraBaseResults.RequireAsync(terraBase.PlanPointInTimeAsync(caller, projectId, database, request, cancellationToken));
+
+            public Task<JsonElement> StartRestorePointInTimeAsync(string projectId, string database, TerraBasePointInTimeRequest request) =>
+                TerraBaseResults.RequireAsync(terraBase.RestorePointInTimeAsync(caller, projectId, database, request, cancellationToken));
+
+            public Task<JsonElement> RewindPointInTimeAsync(string projectId, string database, TerraBasePointInTimeRequest request) =>
+                TerraBaseResults.RequireAsync(terraBase.RewindPointInTimeAsync(caller, projectId, database, request, cancellationToken));
+
+            private static TerraBaseRefusal Unsupported { get; } = new(StatusCodes.Status404NotFound, "not_found", "Customer backup destinations are not available on this TerraBase.");
         }
         private static async Task<T> SafeAsync<T>(Func<Task<T>> action)
         {
@@ -215,7 +230,6 @@ namespace TerraScale.Dashboard.Features.Backups
             catch (TerraBaseWrongRegionException error) { throw new DatabaseWrongRegionException(error.Region, error.HomeRegion, error.Regions); }
             catch (TerraBaseException error)
             {
-                // Only known codes select fixed text. Provider messages can contain object paths or secrets.
                 var message = error.ErrorCode switch
                 {
                     "backup_history_incomplete" => "Backup history is incomplete for that time. Refresh the window and choose another retained point.",
@@ -239,12 +253,23 @@ namespace TerraScale.Dashboard.Features.Backups
         }
     }
 
-    public static class WholeDatabaseRecoveryEndpoints
+    public sealed class WholeDatabaseRecoveryEndpoint(DashboardSessions sessions, AccountService accounts, WholeDatabaseRecovery recovery) : EndpointWithoutRequest<IResult>
     {
-        public static IEndpointRouteBuilder MapWholeDatabaseRecovery(this IEndpointRouteBuilder endpoints)
+        public override void Configure()
         {
-            endpoints.MapMethods("/databases/{databaseId}/point-in-time", ["POST"], async Task<IResult> (HttpContext http, string databaseId,
-                DashboardSessions sessions, AccountService accounts, WholeDatabaseRecovery recovery) =>
+            Post("/databases/{databaseId}/point-in-time");
+            Summary("Plan, rewind or restore a database to a point in time");
+            Tags("Backups");
+        }
+
+        public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+        {
+            var http = HttpContext;
+            if (http.Request.RouteValues["databaseId"] is not string databaseId)
+            {
+                return TypedResults.BadRequest("A database is required.");
+            }
+
             {
                 var context = await AccountRequest.RequireAsync(http, sessions, accounts);
                 if (context is null)
@@ -259,7 +284,7 @@ namespace TerraScale.Dashboard.Features.Backups
                     var form = await FormRequests.ReadAsync(http, http.RequestAborted);
                     if (!Csrf.Validate(http, form))
                     {
-                        return RequestError.FormExpired(http, DatabaseService.Path(database.Id, "backups"), Results.BadRequest("Invalid form token."));
+                        return RequestError.FormExpired(http, DatabaseService.Path(database.Id, "backups"), TypedResults.BadRequest("Invalid form token."));
                     }
 
                     var page = new WholeDatabaseRecoveryPage(ShellModel.For(http, context, database.Name + " · Backups"), database,
@@ -297,14 +322,13 @@ namespace TerraScale.Dashboard.Features.Backups
                     {
                         var card = await BackupEndpoints.PitrCardAsync(http, context, database, page, null, null, http.RequestAborted);
                         await DatastarEvents.PatchElementsAsync(http, PitrCardView.Create(card));
-                        return Results.Empty;
+                        return TypedResults.Empty;
                     }
 
                     return HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "backups"));
                 }
                 catch (Exception error) when (BackupEndpoints.KnownFailure(error)) { return DatabaseResults.PageFailure(http, context, error); }
-            });
-            return endpoints;
+            }
         }
     }
 }

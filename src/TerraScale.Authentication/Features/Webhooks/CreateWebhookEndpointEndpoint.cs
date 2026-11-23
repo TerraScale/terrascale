@@ -32,7 +32,7 @@ public sealed class CreateWebhookEndpointEndpoint(TenantDirectory tenants, Platf
 
         _ = await proofs.ConsumeHeaderAsync(caller.Person, this.HttpContext.Request, "create_webhook_endpoint", null, cancellationToken);
         var (endpoint, secret) = await webhooks.CreateAsync(projectId, uri.AbsoluteUri, [.. events], cancellationToken);
-        return Results.Json(new WebhookEndpointBody(endpoint.Id, endpoint.Url, endpoint.EventTypes, endpoint.CreatedAt, secret),
+        return TypedResults.Json(new WebhookEndpointBody(endpoint.Id, endpoint.Url, endpoint.EventTypes, endpoint.CreatedAt, secret),
             WebhooksJson.Default.WebhookEndpointBody, statusCode: StatusCodes.Status201Created)
             .WithLocation($"/v1/{projectId}/webhook-endpoints/{endpoint.Id}");
     }

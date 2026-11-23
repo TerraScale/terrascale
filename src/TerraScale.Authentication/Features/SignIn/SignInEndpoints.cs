@@ -19,19 +19,10 @@ using ZLogger;
 
 namespace TerraScale.Authentication.Features.SignIn;
 
-/// <summary>The fields the hosted sign-in forms post (<c>application/x-www-form-urlencoded</c>).</summary>
-/// <param name="Email">The account's email address.</param>
-/// <param name="Code">The six-digit emailed code (verify only).</param>
-/// <param name="Next">The page to resume: an authorization request, <c>/{slug}/oauth/authorize?…</c>, or the device page.</param>
-/// <param name="Password">The account password (password sign-in, sign-up and reset only).</param>
-/// <param name="PendingToken">The pending sign-up's token (sign-up verification only).</param>
-/// <param name="Challenge">The sealed second-factor challenge (second-factor step only).</param>
 public sealed record SignInForm(string? Email, string? Code, string? Next, string? Password = null, string? PendingToken = null, string? Challenge = null, string? Username = null);
 
-/// <summary><c>GET /ui/{slug}/sign-in</c>: asks for the email address to send a sign-in code to.</summary>
 public sealed class SignInPageEndpoint : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/ui/{slug}/sign-in");
@@ -43,12 +34,11 @@ public sealed class SignInPageEndpoint : EndpointWithoutRequest<IResult>
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (SignInFlow.WrongSlug(this.HttpContext))
         {
-            return Results.NotFound();
+            return TypedResults.NotFound();
         }
 
         var next = SignInFlow.SafeNext(this.HttpContext, this.HttpContext.Request.Query["next"]);
@@ -58,13 +48,8 @@ public sealed class SignInPageEndpoint : EndpointWithoutRequest<IResult>
     }
 }
 
-/// <summary>
-/// <c>POST /ui/{slug}/sign-in</c>: emails a code when the address has an account. The page and its timing are the same
-/// either way: <see cref="SignInMail"/> delivers after the response.
-/// </summary>
 public sealed class RequestPasscodeEndpoint(SignInMail mail, HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/ui/{slug}/sign-in");
@@ -73,7 +58,6 @@ public sealed class RequestPasscodeEndpoint(SignInMail mail, HostedAuth hosted, 
         Summary("Email a sign-in code");
         Description("Same-origin form post (the Origin header must be the public origin). The response never reveals whether the address has an account. Shared mail-start limits: an IP call bucket of 120 refilling 30 per minute, an IP mail bucket of 30 refilling 60 per hour, a 60-second cooldown per normalized email across sign-in, sign-up and reset, and 5 mail calls per normalized email per hour, including unknown emails. IPv6 is grouped per /64 and additionally per /48 at four times the IP budget. Exhaustion answers 429 with Retry-After; a spent hourly code budget is told plainly - no new code was sent, when it resets, the resend control disabled for the same wait - identically for every address, whether or not it has an account, so nothing becomes enumerable. A new code replaces the previous one. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
         Tags("Sign-in");
-        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<string>(StatusCodes.Status403Forbidden, "text/html");
@@ -82,7 +66,6 @@ public sealed class RequestPasscodeEndpoint(SignInMail mail, HostedAuth hosted, 
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)
@@ -105,7 +88,6 @@ public sealed class RequestPasscodeEndpoint(SignInMail mail, HostedAuth hosted, 
             return sso;
         }
 
-        // Reserved first: a full delivery queue answers 503 without spending the caller's mail budgets.
         using var reservation = mail.Reserve();
         if (await hosted.LimitMailAsync(address, ip, cancellationToken) is { } refusal)
         {
@@ -129,13 +111,8 @@ public sealed class RequestPasscodeEndpoint(SignInMail mail, HostedAuth hosted, 
     }
 }
 
-/// <summary>
-/// <c>POST /ui/{slug}/sign-in/verify</c>: redeems the code, opens a fresh session and sets the session cookie, then
-/// resumes the authorization request.
-/// </summary>
 public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions sessions, TotpCredentials mfa, HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/ui/{slug}/sign-in/verify");
@@ -144,7 +121,6 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
         Description("Same-origin form post. A code works once, for 30 minutes (ten minutes for magic links and pending social links), until a newer code replaces it, and dies after 5 wrong guesses. Hosted sign-in pages share the IP call bucket of 120 refilling 30 per minute and 5 attempts per normalized email per 30 minutes, including unknown emails and replaced codes; exhaustion answers 429 with Retry-After. An account-budget refusal temporarily blocks code redemption until the stored window ends and queues one best-effort lockout email notice per real account for that deadline, in the browser language; recovery remains separate. Success sets the tsauth_session cookie (Secure, HttpOnly, SameSite=Lax) and continues to next."
             + " An account with an active authenticator app gets the second-factor step (no session cookie yet); corrupt or unavailable MFA state fails closed.");
         Tags("Sign-in");
-        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<string>(StatusCodes.Status401Unauthorized, "text/html");
@@ -154,7 +130,6 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)
@@ -210,13 +185,8 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
     }
 }
 
-/// <summary>
-/// <c>POST /ui/{slug}/sign-in/password</c>: without a password, shows the password step for the address; with one,
-/// checks it, opens a fresh session and resumes like the code sign-in.
-/// </summary>
 public sealed class PasswordSignInEndpoint(Sessions sessions, TotpCredentials mfa, HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/ui/{slug}/sign-in/password");
@@ -225,7 +195,6 @@ public sealed class PasswordSignInEndpoint(Sessions sessions, TotpCredentials mf
         Summary("Sign in with a password");
         Description("Same-origin form post. A post without password shows the password step. With email and password it charges the password budgets: 10 attempts per normalized email per 15 minutes; with account lockout on, the account locks after 10 failures for 30 minutes. A wrong email or password and an account without a password answer the same 401 page. A right password of an account with an active authenticator app gets the second-factor step. Success sets the tsauth_session cookie and continues to next.");
         Tags("Sign-in");
-        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<string>(StatusCodes.Status401Unauthorized, "text/html");
@@ -235,7 +204,6 @@ public sealed class PasswordSignInEndpoint(Sessions sessions, TotpCredentials mf
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)
@@ -294,10 +262,8 @@ public sealed class PasswordSignInEndpoint(Sessions sessions, TotpCredentials mf
     }
 }
 
-/// <summary><c>GET /ui/{slug}/sign-up</c>: asks for the new account's email address and password.</summary>
 public sealed class SignUpPageEndpoint : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/ui/{slug}/sign-up");
@@ -309,12 +275,11 @@ public sealed class SignUpPageEndpoint : EndpointWithoutRequest<IResult>
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (SignInFlow.WrongSlug(this.HttpContext))
         {
-            return Results.NotFound();
+            return TypedResults.NotFound();
         }
 
         var next = SignInFlow.SafeNext(this.HttpContext, this.HttpContext.Request.Query["next"]);
@@ -323,13 +288,8 @@ public sealed class SignUpPageEndpoint : EndpointWithoutRequest<IResult>
     }
 }
 
-/// <summary>
-/// <c>POST /ui/{slug}/sign-up</c>: starts a sign-up and asks for the emailed code. The page is
-/// the same whether or not the address has an account; an existing account is mailed a sign-in code instead.
-/// </summary>
 public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options, SignUpRestrictions restrictions, Users users) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/ui/{slug}/sign-up");
@@ -338,7 +298,6 @@ public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options, 
         Summary("Start a sign-up");
         Description("Same-origin form post with email and password (10 to 256 Unicode characters, not a common, repetitive or own-email password). One IP may start 20 sign-ups per hour (429 with Retry-After). Shares the mail-start limits: the IP call and mail budgets, a 60-second cooldown per normalized email across every mail start, and 5 codes per normalized email per UTC clock hour; exhaustion answers 429 with Retry-After. A new address is mailed a verification code bound to a random pending token the page carries; an address with an account is mailed a sign-in code and the password is discarded. An address whose account or pending sign-up already spent the hour's code budget is told that plainly (429, Retry-After, resend disabled) - identically for every refused address, whether or not it has an account, so nothing becomes enumerable. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
         Tags("Sign-in");
-        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<string>(StatusCodes.Status400BadRequest, "text/html");
@@ -348,7 +307,6 @@ public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options, 
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)
@@ -421,14 +379,8 @@ public sealed class StartSignUpEndpoint(HostedAuth hosted, AuthOptions options, 
     }
 }
 
-/// <summary>
-/// <c>POST /ui/{slug}/sign-up/resend</c>: emails a fresh code for the pending sign-up, replacing the previous one. The
-/// page is the same whether or not the address still has a pending sign-up; an address with an account is mailed a
-/// sign-in code instead.
-/// </summary>
 public sealed class ResendSignUpEndpoint(SignInMail mail, HostedAuth hosted, AuthOptions options, SignUpRestrictions restrictions) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/ui/{slug}/sign-up/resend");
@@ -437,7 +389,6 @@ public sealed class ResendSignUpEndpoint(SignInMail mail, HostedAuth hosted, Aut
         Summary("Resend the sign-up code");
         Description("Same-origin form post with the email and pending token of the pending sign-up. A fresh code is mailed to the same pending sign-up, replacing the previous code; an address that got an account meanwhile is mailed a sign-in code instead. The page is the same either way. Shares the mail-start limits (IP call and mail budgets, the 60-second mail cooldown per normalized email, 5 codes per normalized email per UTC clock hour); exhaustion answers 429 with Retry-After, and a spent hourly code budget is told plainly with its resend control disabled - identically for every refused address, whether or not it has an account, so nothing becomes enumerable. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
         Tags("Sign-in");
-        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<string>(StatusCodes.Status403Forbidden, "text/html");
@@ -446,7 +397,6 @@ public sealed class ResendSignUpEndpoint(SignInMail mail, HostedAuth hosted, Aut
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)
@@ -456,7 +406,6 @@ public sealed class ResendSignUpEndpoint(SignInMail mail, HostedAuth hosted, Aut
 
         var address = form.Email?.Trim() ?? string.Empty;
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);
-        // Reserved first: a full delivery queue answers 503 without spending the caller's mail budgets.
         if (await restrictions.AdmissionAsync(SignInFlow.Tenant(this.HttpContext), address, false, cancellationToken) is null)
         {
             return SignInFlow.Refused(this.HttpContext);
@@ -480,13 +429,8 @@ public sealed class ResendSignUpEndpoint(SignInMail mail, HostedAuth hosted, Aut
     }
 }
 
-/// <summary>
-/// <c>POST /ui/{slug}/sign-up/verify</c>: redeems the emailed code. A sign-up code with its pending token creates the
-/// account; a sign-in code (the address already had one) signs that account in. Either way a session opens.
-/// </summary>
 public sealed class VerifySignUpEndpoint(Passcodes passcodes, Sessions sessions, TotpCredentials mfa, HostedAuth hosted, AuthOptions options, ILogger<VerifySignUpEndpoint> logger) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/ui/{slug}/sign-up/verify");
@@ -494,7 +438,6 @@ public sealed class VerifySignUpEndpoint(Passcodes passcodes, Sessions sessions,
         Summary("Verify a sign-up");
         Description("Same-origin form post with email, code and pending_token. Shares the sign-in code budgets: the IP call bucket of 120 refilling 30 per minute and 5 attempts per normalized email per 30 minutes; exhaustion answers 429 with Retry-After. A wrong, expired or used code, or another requester's token, answers 401. Success creates the account (or signs the existing one in), sets the tsauth_session cookie and continues to next.");
         Tags("Sign-in");
-        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<string>(StatusCodes.Status401Unauthorized, "text/html");
@@ -504,7 +447,6 @@ public sealed class VerifySignUpEndpoint(Passcodes passcodes, Sessions sessions,
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)
@@ -552,10 +494,8 @@ public sealed class VerifySignUpEndpoint(Passcodes passcodes, Sessions sessions,
     }
 }
 
-/// <summary><c>GET /ui/{slug}/reset</c>: asks for the email address of the account whose password to reset.</summary>
 public sealed class ResetPageEndpoint : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/ui/{slug}/reset");
@@ -567,17 +507,14 @@ public sealed class ResetPageEndpoint : EndpointWithoutRequest<IResult>
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         ValueTask.FromResult(SignInFlow.WrongSlug(this.HttpContext)
-            ? Results.NotFound()
+            ? TypedResults.NotFound()
             : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Reset, SignInFlow.Tenant(this.HttpContext), Next: SignInFlow.SafeNext(this.HttpContext, this.HttpContext.Request.Query["next"]))));
 }
 
-/// <summary><c>POST /ui/{slug}/reset</c>: emails a reset code when the address has an account; the page is the same either way.</summary>
 public sealed class StartResetEndpoint(HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/ui/{slug}/reset");
@@ -586,7 +523,6 @@ public sealed class StartResetEndpoint(HostedAuth hosted, AuthOptions options) :
         Summary("Email a password reset code");
         Description("Same-origin form post with email. Shares the mail-start limits (IP call and mail budgets, the 60-second mail cooldown per normalized email, 5 codes per normalized email per UTC clock hour); exhaustion answers 429 with Retry-After. The response never reveals whether the address has an account; a spent hourly code budget is told plainly (429, Retry-After, resend disabled), identically for every refused address, so nothing becomes enumerable. A full or stopping delivery queue answers 503 before code issuance, including for unknown addresses.");
         Tags("Sign-in");
-        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<string>(StatusCodes.Status403Forbidden, "text/html");
@@ -595,7 +531,6 @@ public sealed class StartResetEndpoint(HostedAuth hosted, AuthOptions options) :
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)
@@ -659,10 +594,8 @@ public sealed class ResendResetEndpoint(HostedAuth hosted, AuthOptions options) 
     }
 }
 
-/// <summary><c>POST /ui/{slug}/reset/complete</c>: sets a new password with the emailed reset code.</summary>
 public sealed class CompleteResetEndpoint(HostedAuth hosted, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/ui/{slug}/reset/complete");
@@ -671,7 +604,6 @@ public sealed class CompleteResetEndpoint(HostedAuth hosted, AuthOptions options
         Summary("Set a new password with a reset code");
         Description("Same-origin form post with email, code and password; the password follows the sign-up policy (400 outside it, the code stays live). Limits: the IP call bucket of 120 refilling 30 per minute and 5 attempts per normalized email per 30 minutes (429 with Retry-After); a wrong, expired or used code and an unknown address answer the same 401 page. Success signs the user out everywhere and continues to the sign-in page.");
         Tags("Sign-in");
-        // Accepts<T> describes a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
         Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<string>(StatusCodes.Status400BadRequest, "text/html");
@@ -682,7 +614,6 @@ public sealed class CompleteResetEndpoint(HostedAuth hosted, AuthOptions options
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)
@@ -709,7 +640,6 @@ public sealed class CompleteResetEndpoint(HostedAuth hosted, AuthOptions options
     }
 }
 
-/// <summary>Checks shared by the sign-in forms.</summary>
 internal static class SignInFlow
 {
     public static IResult Limited(HttpContext context, SignInStep step, TimeSpan wait, string email, string? next, string? pendingToken = null, string? challenge = null)
@@ -729,11 +659,6 @@ internal static class SignInFlow
             StatusCodes.Status429TooManyRequests);
     }
 
-    /// <summary>
-    /// The page for an address that spent this hour's code budget: says so, instead of claiming a code was sent, and
-    /// leaves no resend control to press. The wait, copy and structure are the same for every refused address, so
-    /// nothing tells an address with an account from one without.
-    /// </summary>
     public static IResult BudgetExhausted(HttpContext context, SignInStep step, TimeSpan wait, string email, string? next, string? pendingToken = null, string? challenge = null)
     {
         var seconds = Math.Max(1, (long)Math.Ceiling(wait.TotalSeconds));
@@ -752,7 +677,6 @@ internal static class SignInFlow
             StatusCodes.Status429TooManyRequests);
     }
 
-    /// <summary>A whole-second wait for people: seconds below two minutes, whole minutes above.</summary>
     public static string RetryWait(HostedPageCopy copy, long seconds) => seconds > 120
         ? copy.RetryWaitMinutes.Replace("{minutes}", ((long)Math.Ceiling(seconds / 60.0)).ToString(CultureInfo.InvariantCulture))
         : copy.RetryWaitSeconds.Replace("{seconds}", seconds.ToString(CultureInfo.InvariantCulture));
@@ -778,10 +702,6 @@ internal static class SignInFlow
         }, StatusCodes.Status401Unauthorized);
     }
 
-    /// <summary>
-    /// The hosted page for a transient failure: keeps the visitor on their step with the address they entered and the
-    /// same forms a fresh visit shows, so a stalled or busy backend never leaves a dead end that forces starting over.
-    /// </summary>
     public static IResult Transient(HttpContext context)
     {
         var form = context.Request.HasFormContentType ? context.Request.Form : null;
@@ -821,7 +741,6 @@ internal static class SignInFlow
         }, StatusCodes.Status503ServiceUnavailable);
     }
 
-    /// <summary>The browser's rate-limit subject; a request without a peer address cannot be limited, so it is refused.</summary>
     public static string Ip(HttpContext context) =>
         HostedAuth.Subject(context.Connection.RemoteIpAddress?.ToString()) ?? throw ApiException.Unavailable();
 
@@ -875,7 +794,6 @@ internal static class SignInFlow
         return result;
     }
 
-    /// <summary>A primary-only session for <paramref name="user"/>, or null when MFA or a newer epoch refuses one.</summary>
     public static async Task<IssuedSession?> OpenSessionAsync(Sessions sessions, UserRecord user, CancellationToken cancellationToken)
     {
         try
@@ -926,13 +844,6 @@ internal static class SignInFlow
         return result;
     }
 
-    /// <summary>
-    /// A redirect back to the authorization request in <paramref name="next"/> when the browser already holds a live
-    /// session for the page's tenant, so a signed-in visitor sent to sign in or sign up again (an application that lost
-    /// its own session) returns without a second sign-in; otherwise null. The authorization endpoint still enforces
-    /// max_age and prompt; a request that demands a new sign-in carries ts_login_after and always gets the form, so this
-    /// never loops.
-    /// </summary>
     public static async Task<IResult?> ResumeAsync(HttpContext context, string? next, CancellationToken cancellationToken)
     {
         var tenant = Tenant(context);
@@ -946,16 +857,14 @@ internal static class SignInFlow
         try
         {
             return await context.RequestServices.GetRequiredService<Sessions>().ResolveAsync(tenant, token, cancellationToken) is null
-                ? null : Results.Redirect(next);
+                ? null : TypedResults.Redirect(next);
         }
         catch (ApiException error) when (error.Status == StatusCodes.Status503ServiceUnavailable)
         {
-            // The page still works; the authorization request checks the session again.
             return null;
         }
     }
 
-    /// <summary>The single sign-on page when <paramref name="email"/> must sign in through its organization's identity provider; otherwise null.</summary>
     public static async Task<IResult?> SsoAsync(HttpContext context, string email, string? next, CancellationToken cancellationToken)
     {
         var sso = context.RequestServices.GetRequiredService<SsoSignIn>();
@@ -992,7 +901,6 @@ internal static class SignInFlow
         || !string.Equals(context.GetRouteValue("slug") as string, tenant, StringComparison.Ordinal)
         || !Allowed(context);
 
-    // A sign-in method the tenant turned off has no pages: passcode sign-in, password sign-in and reset, or sign-up.
     private static bool Allowed(HttpContext context)
     {
         var theme = HostedTheme.Of(context);
@@ -1010,19 +918,15 @@ internal static class SignInFlow
         };
     }
 
-    /// <summary>Whether <see cref="Tenant"/> can resolve: the slug was accepted, so the sign-in page can render.</summary>
     public static bool HostedPage(HttpContext context) =>
         context.Request.Path.StartsWithSegments("/ui")
         && HttpMethods.IsPost(context.Request.Method)
         && Tenancy.Resolved(context) is { Length: > 0 };
 
-    /// <summary>The tenant of a hosted page whose slug <see cref="WrongSlug"/> accepted.</summary>
     public static string Tenant(HttpContext context) => Tenancy.Resolved(context) ?? throw new InvalidOperationException("The page has no tenant.");
 
-    /// <summary>The device page, which a sign-in may resume.</summary>
     public static string DevicePath => $"/ui/{OidcIssuer.Slug}/device";
 
-    /// <summary>The tenant's security page, which a sign-in may resume.</summary>
     public static string SecurityPath(string tenant) => $"/ui/{tenant}/security";
 
     public static string? SafeNext(HttpContext context, string? next) =>
@@ -1041,10 +945,6 @@ internal static class SignInFlow
             ? next
             : null;
 
-    /// <summary>
-    /// The posted form, or <see langword="null"/> for a wrong slug, a cross-origin post or a body that is not a form.
-    /// Login CSRF is refused by requiring the browser's Origin header to be the public origin.
-    /// </summary>
     public static async Task<SignInForm?> ReadAsync(HttpContext context, AuthOptions options, CancellationToken cancellationToken)
     {
         if (WrongSlug(context) || !context.Request.HasFormContentType
@@ -1072,11 +972,6 @@ internal static class SignInFlow
         return new SignInForm(form["email"], form["code"], form["next"], form["password"], form["pending_token"], form["challenge"], form["username"]);
     }
 
-    /// <summary>
-    /// Whether a serialized Origin (RFC 6454) names the public origin: same scheme, same host compared as the ASCII
-    /// (punycode) form browsers send, and same effective port, so <c>:443</c> or letter case in the configuration
-    /// never refuses a legitimate post. <c>null</c>, paths and credentials never match.
-    /// </summary>
     public static bool IsPublicOrigin(string origin, Uri publicOrigin) =>
         Uri.TryCreate(origin, UriKind.Absolute, out var parsed)
         && origin.Count(character => character == '/') == 2
@@ -1086,6 +981,6 @@ internal static class SignInFlow
         && parsed.Port == publicOrigin.Port;
 
     public static IResult Refused(HttpContext context) => WrongSlug(context)
-        ? Results.NotFound()
+        ? TypedResults.NotFound()
         : SignInPageModel.Render(context, new SignInPageModel(SignInStep.Rejected, Tenant(context)), StatusCodes.Status403Forbidden);
 }

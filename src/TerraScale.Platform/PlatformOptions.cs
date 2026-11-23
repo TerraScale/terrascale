@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Globalization;
 using System.Net;
+using System.Security.Cryptography;
 
 namespace TerraScale.Platform;
 
@@ -42,7 +43,7 @@ public sealed record PlatformOptions(
             reader.HttpUri("TS_PLATFORM_TERRABASE_URL", new Uri("http://127.0.0.1:8081/")),
             QuicEndpointOptions.From(reader),
             reader.Hex("TERRABASE_PEER_SECRET", 32),
-            Convert.FromHexString(reader.Hex("TERRABASE_MASTER_KEY", 32)),
+            reader.SecretsKey("TERRABASE_MASTER_KEY"),
             reader.OptionalHttpUri("TERRABASE_AUTH_ISSUER"),
             reader.Optional("TERRABASE_AUTH_AUDIENCE"),
             reader.Segment("TS_REGION"),
@@ -180,6 +181,25 @@ internal sealed class EnvironmentReader(IReadOnlyDictionary<string, string> valu
         return value.Length == bytes * 2 && value.All(char.IsAsciiHexDigit)
             ? value
             : throw new ArgumentException($"{key} must contain {bytes * 2} hexadecimal characters.");
+    }
+
+    public byte[] SecretsKey(string key)
+    {
+        var value = Required(key);
+        var master = new byte[33];
+        if (value.Length == 64 && value.All(char.IsAsciiHexDigit))
+        {
+            Convert.FromHexString(value, master, out _, out _);
+        }
+        else if (!Convert.TryFromBase64String(value, master, out var written) || written != 32)
+        {
+            throw new ArgumentException($"{key} must be exactly 32 bytes, base64 or 64 hexadecimal characters.");
+        }
+
+        var derived = new byte[32];
+        HKDF.DeriveKey(HashAlgorithmName.SHA256, master.AsSpan(0, 32), derived, [], "terrascale.platform.secrets.v2"u8);
+        CryptographicOperations.ZeroMemory(master);
+        return derived;
     }
 
     public Ulid Identifier(string key, Ulid fallback)

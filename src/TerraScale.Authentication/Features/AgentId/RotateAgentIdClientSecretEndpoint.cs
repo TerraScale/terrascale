@@ -36,7 +36,7 @@ public sealed class RotateAgentIdClientSecretEndpoint(PlatformAuthentication aut
 
         return await clients.RotateAsync(proof, clientId, grace, cancellationToken) switch
         {
-            AgentIdClientSecretBody rotated => Results.Json(rotated, AgentIdClientJson.Default.AgentIdClientSecretBody),
+            AgentIdClientSecretBody rotated => TypedResults.Json(rotated, AgentIdClientJson.Default.AgentIdClientSecretBody),
             NotFound notFound => ErrorResults.ToResult(notFound),
             Conflict conflict => ErrorResults.ToResult(conflict),
             Forbidden forbidden => ErrorResults.ToResult(forbidden),

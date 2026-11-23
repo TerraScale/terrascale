@@ -19,8 +19,8 @@ public sealed class PasskeyOptionsEndpoint(PasskeyCredentials passkeys, Platform
 
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        return await passkeys.OptionsAsync(caller, cancellationToken).ConfigureAwait(false) is { } options
-            ? Results.Json(new PasskeyOptionsBody(options.Challenge, JsonDocument.Parse(options.Options.ToJson()).RootElement),
+        return await passkeys.OptionsAsync(caller, cancellationToken) is { } options
+            ? TypedResults.Json(new PasskeyOptionsBody(options.Challenge, JsonDocument.Parse(options.Options.ToJson()).RootElement),
                 WebAuthnJson.Default.PasskeyOptionsBody)
             : ErrorResults.ToResult(new Forbidden("Sign in again before enrolling a passkey.", "passkey_denied"));
     }

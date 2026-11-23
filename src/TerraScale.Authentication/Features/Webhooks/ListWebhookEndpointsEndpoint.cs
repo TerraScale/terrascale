@@ -17,6 +17,6 @@ public sealed class ListWebhookEndpointsEndpoint(TenantDirectory tenants, Platfo
     {
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         var endpoints = await webhooks.ListAsync(projectId, cancellationToken);
-        return Results.Json(new WebhookEndpointPageBody(endpoints, null), WebhooksJson.Default.WebhookEndpointPageBody);
+        return TypedResults.Json(new WebhookEndpointPageBody(endpoints, null), WebhooksJson.Default.WebhookEndpointPageBody);
     }
 }

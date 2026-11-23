@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http.HttpResults;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -51,8 +52,8 @@ public sealed class ScopedKeyEndpoint(ApiKeys keys, PlatformDirectory directory,
     {
         HttpContext.Response.Headers.CacheControl = "no-store";
         if (Credential(HttpContext.Request) is not { } secret
-            || await keys.AuthenticateAsync(secret, cancellationToken).ConfigureAwait(false) is not { } parent
-            || await directory.OrganizationAsync(parent.OrganizationId, cancellationToken).ConfigureAwait(false) is null)
+            || await keys.AuthenticateAsync(secret, cancellationToken) is not { } parent
+            || await directory.OrganizationAsync(parent.OrganizationId, cancellationToken) is null)
         {
             HttpContext.Response.Headers.WWWAuthenticate = "Basic realm=\"ts-auth\"";
             return Error(StatusCodes.Status401Unauthorized, "invalid_client", PlatformGrants.InvalidApiKeyNotice);
@@ -63,13 +64,13 @@ public sealed class ScopedKeyEndpoint(ApiKeys keys, PlatformDirectory directory,
             return Error(StatusCodes.Status403Forbidden, "forbidden", "A scoped key cannot mint keys.");
         }
 
-        if (!await limiter.TryAcquireAsync(PlatformDirectory.Instance, "scoped-key", parent.Id, ApiKeys.ScopedKeysPerMinute, cancellationToken).ConfigureAwait(false))
+        if (!await limiter.TryAcquireAsync(PlatformDirectory.Instance, "scoped-key", parent.Id, ApiKeys.ScopedKeysPerMinute, cancellationToken))
         {
             HttpContext.Response.Headers.RetryAfter = "60";
             return Error(StatusCodes.Status429TooManyRequests, "rate_limited", "Too many scoped keys for this API key; retry later.");
         }
 
-        if (await BodyAsync(cancellationToken).ConfigureAwait(false) is not { } body)
+        if (await BodyAsync(cancellationToken) is not { } body)
         {
             return Error(StatusCodes.Status400BadRequest, "invalid_request", $"The body must be a JSON object of at most {MaxBody} bytes with project, database, access and ttl_seconds.");
         }
@@ -105,9 +106,9 @@ public sealed class ScopedKeyEndpoint(ApiKeys keys, PlatformDirectory directory,
         if (body.Project is not null && body.Project != project
             || parent.Database is { } narrowed && narrowed != body.Database
             || scopes.Except(parent.Scopes).Any()
-            || await directory.ProjectAsync(project, cancellationToken).ConfigureAwait(false) is not { } found || found.Value.OrganizationId != parent.OrganizationId
-            || await directory.ClosureAsync("organization", parent.OrganizationId, cancellationToken).ConfigureAwait(false) is not null
-            || await directory.ClosureAsync("project", project, cancellationToken).ConfigureAwait(false) is not null)
+            || await directory.ProjectAsync(project, cancellationToken) is not { } found || found.Value.OrganizationId != parent.OrganizationId
+            || await directory.ClosureAsync("organization", parent.OrganizationId, cancellationToken) is not null
+            || await directory.ClosureAsync("project", project, cancellationToken) is not null)
         {
             return Error(StatusCodes.Status403Forbidden, "forbidden", "The project, database or access is beyond this API key's.");
         }
@@ -118,8 +119,8 @@ public sealed class ScopedKeyEndpoint(ApiKeys keys, PlatformDirectory directory,
             expiresAt = end;
         }
 
-        var (key, minted) = await keys.CreateScopedAsync(parent, ApiKeys.Generation(secret), project, body.Database!, scopes, expiresAt, cancellationToken).ConfigureAwait(false);
-        return Results.Json(new ScopedKeyBody(minted, key.Id, project, body.Database!, body.Access!, expiresAt), PlatformApiJson.Default.ScopedKeyBody,
+        var (key, minted) = await keys.CreateScopedAsync(parent, ApiKeys.Generation(secret), project, body.Database!, scopes, expiresAt, cancellationToken);
+        return TypedResults.Json(new ScopedKeyBody(minted, key.Id, project, body.Database!, body.Access!, expiresAt), PlatformApiJson.Default.ScopedKeyBody,
             statusCode: StatusCodes.Status201Created);
     }
 
@@ -160,7 +161,7 @@ public sealed class ScopedKeyEndpoint(ApiKeys keys, PlatformDirectory directory,
         using var buffer = new MemoryStream();
         var chunk = new byte[1024];
         int read;
-        while ((read = await HttpContext.Request.Body.ReadAsync(chunk, cancellationToken).ConfigureAwait(false)) > 0)
+        while ((read = await HttpContext.Request.Body.ReadAsync(chunk, cancellationToken)) > 0)
         {
             if (buffer.Length + read > MaxBody)
             {
@@ -180,6 +181,6 @@ public sealed class ScopedKeyEndpoint(ApiKeys keys, PlatformDirectory directory,
         }
     }
 
-    private static IResult Error(int status, string code, string message) =>
-        Results.Json(new ErrorBody(new ErrorDetail(code, message)), PlatformApiJson.Default.ErrorBody, statusCode: status);
+    private static JsonHttpResult<ErrorBody> Error(int status, string code, string message) =>
+        TypedResults.Json(new ErrorBody(new ErrorDetail(code, message)), PlatformApiJson.Default.ErrorBody, statusCode: status);
 }

@@ -67,4 +67,23 @@ Generate SQL migration files with `drizzle-kit generate`, then apply them with `
 - `query(sql, params, method)`: sends one statement with `db.execute` and maps the result rows — `all` and `values` return rows as arrays of column values in column order, `get` returns the first row (or no row), `run` returns no rows.
 - `batch(queries)`: sends every statement in one `db.batch` request and maps each result the same way.
 
-A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
+## Over the Postgres wire
+
+Drizzle's Postgres dialect also works against TerraScale through `node-postgres`, using the [Postgres wire](/guides/postgres-clients). Write `pgTable` schemas, `serial` ids, `$1` parameters, `returning()` and `onConflictDoUpdate()` as you would for Postgres, and run `drizzle-kit` migrations against the same connection:
+
+```ts
+import { drizzle } from "drizzle-orm/node-postgres";
+import pg from "pg";
+
+const pool = new pg.Pool({
+  host: "pg.terrascale.tech",
+  port: 5432,
+  database: `${process.env.TERRASCALE_PROJECT_ID}/${process.env.TERRASCALE_DATABASE_NAME}`,
+  user: "any",
+  password: process.env.TERRASCALE_API_KEY,
+  ssl: true,
+});
+export const db = drizzle(pool);
+```
+
+Wrap writes that must not race in `db.transaction(fn, { isolationLevel: "serializable" })` to run them in [strong mode](/concepts/replication#strong-mode).

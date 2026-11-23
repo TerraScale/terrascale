@@ -30,7 +30,6 @@ namespace TerraScale.Dashboard.Features.Databases
 
         public static IEndpointRouteBuilder MapDatabaseFeatures(this IEndpointRouteBuilder endpoints)
         {
-            endpoints.MapWholeDatabaseRecovery();
             return endpoints;
         }
 
@@ -52,7 +51,7 @@ namespace TerraScale.Dashboard.Features.Databases
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             try
@@ -63,7 +62,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 var page = CursorPaging.Page(context.Project?.Databases.Values ?? Enumerable.Empty<DatabaseRecord>(),
                     db => db.Id, CursorPaging.Scope(context, "databases"), limit, after);
                 var restricted = context.Organization is { } organization && !organization.ContainsMember(context.UserId);
-                return Results.Json(new CursorPage<object>([.. page.Items.Select(database => DatabaseOutput(database, restricted))], page.NextCursor, page.Limit));
+                return TypedResults.Json(new CursorPage<object>([.. page.Items.Select(database => DatabaseOutput(database, restricted))], page.NextCursor, page.Limit));
             }
             catch (Exception error) when (KnownFailure(error) || error is HttpRequestException or IOException or System.Text.Json.JsonException) { return Failure(error); }
         }
@@ -93,13 +92,13 @@ namespace TerraScale.Dashboard.Features.Databases
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, "/databases", Results.BadRequest("Invalid form token."));
+                return RequestError.FormExpired(http, "/databases", TypedResults.BadRequest("Invalid form token."));
             }
 
             try
@@ -111,7 +110,7 @@ namespace TerraScale.Dashboard.Features.Databases
                     case DatabaseRecord database when http.Request.IsDatastarRequest:
                         return await ListPageAsync(http, context, backend, databases, createdName: database.Name);
                     case DatabaseRecord database:
-                        return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(database.Id) + "?created=1") : Results.Json(DatabaseOutput(database), statusCode: 201);
+                        return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(database.Id) + "?created=1") : TypedResults.Json(DatabaseOutput(database), statusCode: 201);
                     case Failure refusal:
                         return WantsHtml(http) || http.Request.IsDatastarRequest
                             ? await ListPageAsync(http, context, backend, databases, error: DatabaseMutations.MessageOf(refusal), openCreate: true, name: form["name"].ToString(), status: DatabaseMutations.StatusOf(refusal), selection: Picked(form) ? Chosen(form) : null)
@@ -148,13 +147,13 @@ namespace TerraScale.Dashboard.Features.Databases
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), action == "delete" ? "danger" : "branches"), Results.BadRequest("Invalid form token."));
+                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), action == "delete" ? "danger" : "branches"), TypedResults.BadRequest("Invalid form token."));
             }
 
             var id = form["databaseId"].ToString();
@@ -168,12 +167,12 @@ namespace TerraScale.Dashboard.Features.Databases
                         var recovery = http.RequestServices.GetRequiredService<WholeDatabaseRecovery>();
                         var started = await recovery.StartForkAsync(context, id, pointInTime, form["name"].ToString(), DatabaseTtl.Seconds(DatabaseTtl.Hours(form["ttlHours"].ToString())), http.RequestAborted);
                         return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "backups") + "?restore=" + started.OperationId) :
-                            Results.Json(new { operationId = started.OperationId, status = started.Status }, statusCode: 202);
+                            TypedResults.Json(new { operationId = started.OperationId, status = started.Status }, statusCode: 202);
                     }
                     var refusal = await databases.BranchAsync(context, id, form["name"].ToString(), http.RequestAborted, DatabaseTtl.Hours(form["ttlHours"].ToString()));
                     if (refusal is DatabaseRecord branch)
                     {
-                        return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(branch.Id)) : Results.Json(DatabaseOutput(branch), statusCode: 201);
+                        return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(branch.Id)) : TypedResults.Json(DatabaseOutput(branch), statusCode: 201);
                     }
 
                     var branchFailure = DatabaseMutations.RefusedMutation(refusal);
@@ -184,7 +183,7 @@ namespace TerraScale.Dashboard.Features.Databases
                 var deleted = await databases.DeleteAsync(context, id, form.ContainsKey("confirmName") ? form["confirmName"].ToString() : form["confirm"].ToString(), http.RequestAborted);
                 if (deleted is Done)
                 {
-                    return WantsHtml(http) ? HttpRedirects.SeeOther("/databases") : Results.NoContent();
+                    return WantsHtml(http) ? HttpRedirects.SeeOther("/databases") : TypedResults.NoContent();
                 }
 
                 var deleteFailure = DatabaseMutations.RefusedDeletion(deleted);
@@ -207,7 +206,6 @@ namespace TerraScale.Dashboard.Features.Databases
             DetailPageAsync(http, context, databaseId, "backups", http.RequestServices.GetRequiredService<IDatabaseBackend>(),
                 http.RequestServices.GetRequiredService<DatabaseService>(), error, status: status);
 
-        // Keep the storage revision private; database responses retain their existing fields.
         internal static object DatabaseOutput(DatabaseRecord database, bool restricted = false)
         {
             return new
@@ -253,7 +251,7 @@ namespace TerraScale.Dashboard.Features.Databases
             if (http.Request.IsDatastarRequest)
             {
                 await DatastarEvents.PatchElementsAsync(http, DatabasesPatch.Create(page));
-                return Results.Empty;
+                return TypedResults.Empty;
             }
 
             var result = DatabasesView.Create(page);
@@ -286,7 +284,6 @@ namespace TerraScale.Dashboard.Features.Databases
             IReadOnlyList<DatabaseRegion> choices = [];
             var range = HomePage.NormalizeRange(http.Request.Query["range"]);
             var selectedTable = tab == "tables" ? http.Request.Query["table"].ToString() : "";
-            // Each tab's reads are independent of one another, so they all start before any is awaited.
             string CardRange(string key)
             {
                 return http.Request.Query[key].ToString() is { Length: > 0 } selected ? HomePage.NormalizeRange(selected) : range;
@@ -331,7 +328,6 @@ namespace TerraScale.Dashboard.Features.Databases
             }
             var conflictsRead = tab == "conflicts" ? ConflictsAsync() : null;
             var tablesRead = tab is "overview" or "tables" ? TablesAsync() : null;
-            // An all-regions database serves every catalog region; without the catalog it shows its recorded regions.
             if (tab == "replication" || tab == "overview" && database.AllRegions)
             {
                 try { choices = await backend.RegionsAsync(http.RequestAborted); }
@@ -354,7 +350,6 @@ namespace TerraScale.Dashboard.Features.Databases
             }
             var activity = activityRead is null ? null : await activityRead;
             var storage = storageRead is null ? null : (await storageRead).Databases.GetValueOrDefault(database.Id)?.StorageBytes;
-            // The backups section shows the same page error, which the tables read above may have just set.
             var backups = backupsRead is null ? null : (await backupsRead) with { Error = error };
             IReadOnlyList<string>? tableHistory = null;
             if (tab == "tables")
@@ -392,7 +387,7 @@ namespace TerraScale.Dashboard.Features.Databases
             if (tab == "replication" && HttpMethods.IsGet(http.Request.Method) && http.Request.IsDatastarRequest)
             {
                 await DatastarEvents.PatchElementsAsync(http, DatabaseReplicationView.Create(page));
-                return Results.Empty;
+                return TypedResults.Empty;
             }
 
             if (tab == "backups" && http.Request.IsDatastarRequest && page.Backups is { Recovery: { } recovery })
@@ -400,25 +395,25 @@ namespace TerraScale.Dashboard.Features.Databases
                 var card = await BackupEndpoints.PitrCardAsync(http, context, database,
                     recovery with { Error = page.Backups.Error }, page.Backups.Listing, page.Backups.Bucket, http.RequestAborted);
                 await DatastarEvents.PatchElementsAsync(http, PitrCardView.Create(card));
-                return Results.Empty;
+                return TypedResults.Empty;
             }
 
             if (tab == "conflicts" && http.Request.IsDatastarRequest)
             {
                 await DatastarEvents.PatchElementsAsync(http, DatabaseConflictsView.Create(page));
-                return Results.Empty;
+                return TypedResults.Empty;
             }
 
             if (tab == "replication" && http.Request.IsDatastarRequest)
             {
                 await DatastarEvents.PatchElementsAsync(http, DatabaseDetailSection.Create(page));
-                return Results.Empty;
+                return TypedResults.Empty;
             }
 
             if (tab == "backups" && http.Request.IsDatastarRequest && page.Backups?.Restore is not null)
             {
                 await DatastarEvents.PatchElementsAsync(http, RestoreStatusView.Create(page.Backups));
-                return Results.Empty;
+                return TypedResults.Empty;
             }
 
             var result = DatabaseDetailView.Create(page);

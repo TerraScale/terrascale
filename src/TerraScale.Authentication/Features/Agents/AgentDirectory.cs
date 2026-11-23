@@ -1,6 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Microsoft.EntityFrameworkCore;
+using Dapper;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Errors;
 using TerraScale.Authentication.Features.Oidc;
@@ -18,9 +18,21 @@ public static class AgentStatus
 }
 
 public sealed record AgentRecord(string ProjectId, string Id, string OwnerUserId, string Name, string Status, IReadOnlyList<string> AllowedScopes,
-    bool AllowSelfSubject, DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt, DateTimeOffset? RevokedAt, DateTimeOffset? LastUsedAt, long OwnerAuthEpoch, string OwnerAuthStamp, bool ShareOwnerEmail = false);
-public sealed record AgentKeyRecord(string ProjectId, string Kid, string AgentId, string PublicJwk, string Thumbprint, DateTimeOffset CreatedAt, DateTimeOffset? RevokedAt);
-public sealed record AgentPolicyRecord(string ProjectId, IReadOnlyList<string> AllowedScopes);
+    bool AllowSelfSubject, DateTimeOffset CreatedAt, DateTimeOffset? ExpiresAt, DateTimeOffset? RevokedAt, DateTimeOffset? LastUsedAt, long OwnerAuthEpoch, string OwnerAuthStamp, bool ShareOwnerEmail = false)
+{
+    public string? Version { get; init; }
+}
+
+public sealed record AgentKeyRecord(string ProjectId, string Kid, string AgentId, string PublicJwk, string Thumbprint, DateTimeOffset CreatedAt, DateTimeOffset? RevokedAt)
+{
+    public string? Version { get; init; }
+}
+
+public sealed record AgentPolicyRecord(string ProjectId, IReadOnlyList<string> AllowedScopes)
+{
+    public string? Version { get; init; }
+}
+
 public sealed record AgentOwner(string Id, long AuthEpoch, string? AuthStamp, bool Disabled);
 
 public sealed record AgentPolicyBody(IReadOnlyList<string> AllowedScopes);
@@ -45,8 +57,19 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
     public const int MaxActiveKeysPerAgent = 2;
 
     public async Task<AgentPolicyBody> PolicyAsync(string project, CancellationToken cancellationToken) =>
-        !Tenancy.IsProject(project) ? new(PlatformScopes) : new(await data.ReadAsync((db, token) => db.AgentPolicies.Where(row => row.ProjectId == project)
-            .Select(row => row.AllowedScopes).SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false) ?? []);
+        !Tenancy.IsProject(project) ? new(PlatformScopes) : new((await this.PolicyRowAsync(project, cancellationToken))?.Value.AllowedScopes ?? []);
+
+    private async Task<Versioned<AgentPolicyRecord>?> PolicyRowAsync(string project, CancellationToken cancellationToken) =>
+        Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<AgentPolicyRecord>(
+            "SELECT * FROM agent_policies WHERE project_id = @project", new { project }), cancellationToken));
+
+    private async Task<Versioned<UserRecord>?> UserAsync(string project, string userId, CancellationToken cancellationToken) =>
+        Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
+            "SELECT * FROM users WHERE instance_id = @project AND id = @userId", new { project, userId }), cancellationToken));
+
+    private async Task<Versioned<AgentRecord>?> AgentAsync(string project, string agentId, string? owner, CancellationToken cancellationToken) =>
+        Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<AgentRecord>(
+            "SELECT * FROM agents WHERE project_id = @project AND id = @agentId AND (@owner IS NULL OR owner_user_id = @owner)", new { project, agentId, owner }), cancellationToken));
 
     public async Task<AgentPolicyBody> SetPolicyAsync(string project, IReadOnlyList<string> scopes, string actor, CancellationToken cancellationToken)
     {
@@ -55,10 +78,10 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
             throw new ApiException(400, "invalid_request", "allowed_scopes must be empty or 1 to 64 unique scopes.");
         }
 
-        var current = await data.ReadAsync((db, token) => db.AgentPolicies.Where(row => row.ProjectId == project).WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
+        var current = await this.PolicyRowAsync(project, cancellationToken);
         var policy = new AgentPolicyRecord(project, scopes);
         await this.SaveAsync(project, actor, "agent.policy_updated", project, null,
-            [current is null ? Change.Insert(policy) : Change.Update(current, policy)], cancellationToken).ConfigureAwait(false);
+            [current is null ? Change.Insert(policy) : Change.Update(current, policy)], cancellationToken);
         return new(scopes);
     }
 
@@ -70,7 +93,7 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
         var now = clock.GetUtcNow();
         var name = PlatformDirectory.Name(request.Name);
         var policy = Tenancy.IsProject(project)
-            ? await data.ReadAsync((db, token) => db.AgentPolicies.Where(row => row.ProjectId == project).WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false)
+            ? await this.PolicyRowAsync(project, cancellationToken)
             : null;
         var allowed = Tenancy.IsProject(project) ? policy?.Value.AllowedScopes : PlatformScopes;
         if (name is not { Length: <= 64 } || request.AllowedScopes is not { } scopes || !MachineClients.ValidScopes(scopes) || allowed is null
@@ -80,21 +103,25 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
         }
 
         var key = AgentJwk.Parse(request.PublicJwk);
-        var user = await data.ReadAsync((db, token) => db.Users.Where(row => row.InstanceId == project && row.Id == userId).WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
+        var user = await this.UserAsync(project, userId, cancellationToken);
         if (user is null || user.Value.Disabled)
         {
             throw PlatformDirectory.NotFound();
         }
 
         var stamp = user.Value.AuthStamp ?? throw new InvalidDataException("The user has no authentication stamp.");
-        var live = await data.ReadAsync((db, token) => db.Agents.CountAsync(row => row.ProjectId == project && row.OwnerUserId == userId && row.Status == AgentStatus.Active
-            && (row.ExpiresAt == null || row.ExpiresAt > now) && row.OwnerAuthEpoch == user.Value.AuthEpoch && row.OwnerAuthStamp == stamp, token), cancellationToken).ConfigureAwait(false);
+        var (active, epoch) = (AgentStatus.Active, user.Value.AuthEpoch);
+        var live = await data.ReadAsync(connection => connection.ExecuteScalarAsync<int>(
+            """
+            SELECT COUNT(*) FROM agents WHERE project_id = @project AND owner_user_id = @userId AND status = @active
+                AND (expires_at IS NULL OR expires_at > @now) AND owner_auth_epoch = @epoch AND owner_auth_stamp = @stamp
+            """, new { project, userId, active, now, epoch, stamp }), cancellationToken);
         if (live >= MaxLiveAgentsPerUser)
         {
             throw new ApiException(409, "agent_limit", $"A user can have at most {MaxLiveAgentsPerUser} live agents.");
         }
 
-        if (await limiter.AcquireAsync(project, "agent-create", userId, 100, TimeSpan.FromHours(1), cancellationToken).ConfigureAwait(false) is { } wait)
+        if (await limiter.AcquireAsync(project, "agent-create", userId, 100, TimeSpan.FromHours(1), cancellationToken) is { } wait)
         {
             throw ApiException.RateLimited("Too many agents created.", wait);
         }
@@ -103,42 +130,43 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
         var stored = new AgentKeyRecord(project, AuthIds.New(), agent.Id, key.Jwk, key.Thumbprint, now, null);
         await this.SaveAsync(project, actor, "agent.created", agent.Id, key.Thumbprint,
             [Change.Insert(agent), Change.Insert(stored), .. policy is null ? [] : new[] { Change.Assert(policy) }, Change.Update(user, user.Value),
-                .. Event(project, () => events.Created(project, userId, agent.Id, stored.Kid)), .. bound(stored)], cancellationToken, deadline).ConfigureAwait(false);
+                .. Event(project, () => events.Created(project, userId, agent.Id, stored.Kid)), .. bound(stored)], cancellationToken, deadline);
         return Body(agent, [stored], new(user.Value.Id, user.Value.AuthEpoch, stamp, false));
     }
 
     public async Task<GetAgentResult> GetAsync(string project, string agentId, CancellationToken cancellationToken)
     {
-        var agent = await data.ReadAsync((db, token) => db.Agents.SingleOrDefaultAsync(row => row.ProjectId == project && row.Id == agentId, token), cancellationToken).ConfigureAwait(false);
+        var agent = (await this.AgentAsync(project, agentId, null, cancellationToken))?.Value;
         return agent is null
             ? new NotFound("No such resource.")
-            : (await this.BodiesAsync(project, [agent], cancellationToken).ConfigureAwait(false))[0];
+            : (await this.BodiesAsync(project, [agent], cancellationToken))[0];
     }
 
     public async Task<AgentPageBody> ListAsync(string project, string? owner, int limit, string? after, CancellationToken cancellationToken)
     {
         var from = PlatformDirectory.Cursor(after);
-        var rows = await data.ReadAsync((db, token) => db.Agents.Where(row => row.ProjectId == project && (owner == null || row.OwnerUserId == owner) && string.Compare(row.Id, from) > 0)
-            .OrderBy(row => row.Id).Take(limit + 1).ToListAsync(token), cancellationToken).ConfigureAwait(false);
+        var take = limit + 1;
+        var rows = (await data.ReadAsync(connection => connection.QueryAsync<AgentRecord>(
+            "SELECT * FROM agents WHERE project_id = @project AND (@owner IS NULL OR owner_user_id = @owner) AND id > @from ORDER BY id LIMIT @take",
+            new { project, owner, from, take }), cancellationToken)).AsList();
         var page = PlatformDirectory.Paged(rows, limit, row => row.Id);
-        return new(await this.BodiesAsync(project, page.Items, cancellationToken).ConfigureAwait(false), page.Next);
+        return new(await this.BodiesAsync(project, page.Items, cancellationToken), page.Next);
     }
 
     public async Task<AgentKeyBody> AddKeyAsync(string project, string agentId, string actor, AddAgentKeyRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         var key = AgentJwk.Parse(request.PublicJwk);
-        var agent = await data.ReadAsync((db, token) => db.Agents.Where(row => row.ProjectId == project && row.Id == agentId).WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false)
-            ?? throw PlatformDirectory.NotFound();
-        var owner = await data.ReadAsync((db, token) => db.Users.Where(row => row.InstanceId == project && row.Id == agent.Value.OwnerUserId)
-            .WithVersion().SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
+        var agent = await this.AgentAsync(project, agentId, null, cancellationToken) ?? throw PlatformDirectory.NotFound();
+        var owner = await this.UserAsync(project, agent.Value.OwnerUserId, cancellationToken);
         var now = clock.GetUtcNow();
         if (owner is null || Status(agent.Value, Owner(owner.Value)) != AgentStatus.Active || agent.Value.ExpiresAt <= now)
         {
             throw new ApiException(409, "agent_inactive", "The agent is revoked or expired, or its owner signed out everywhere or was disabled.");
         }
 
-        var active = await data.ReadAsync((db, token) => db.AgentKeys.CountAsync(row => row.ProjectId == project && row.AgentId == agentId && row.RevokedAt == null, token), cancellationToken).ConfigureAwait(false);
+        var active = await data.ReadAsync(connection => connection.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) FROM agent_keys WHERE project_id = @project AND agent_id = @agentId AND revoked_at IS NULL", new { project, agentId }), cancellationToken);
         if (active >= MaxActiveKeysPerAgent)
         {
             throw new ApiException(409, "agent_key_limit", $"An agent can have at most {MaxActiveKeysPerAgent} active keys; revoke one first.");
@@ -147,16 +175,15 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
         var stored = new AgentKeyRecord(project, AuthIds.New(), agentId, key.Jwk, key.Thumbprint, now, null);
         await this.SaveAsync(project, actor, "agent.key_added", stored.Kid, key.Thumbprint,
             [Change.Insert(stored), Change.Update(agent, agent.Value), Change.Assert(owner),
-                .. Event(project, () => events.KeyAdded(project, agent.Value.OwnerUserId, agentId, stored.Kid))], cancellationToken).ConfigureAwait(false);
+                .. Event(project, () => events.KeyAdded(project, agent.Value.OwnerUserId, agentId, stored.Kid))], cancellationToken);
         return KeyBody(stored);
     }
 
     public async Task RevokeKeyAsync(string project, string agentId, string kid, string actor, CancellationToken cancellationToken)
     {
-        var (agent, key) = await data.ReadAsync(async (db, token) => (
-            await db.Agents.Where(row => row.ProjectId == project && row.Id == agentId).WithVersion().SingleOrDefaultAsync(token).ConfigureAwait(false),
-            await db.AgentKeys.Where(row => row.ProjectId == project && row.AgentId == agentId && row.Kid == kid).WithVersion().SingleOrDefaultAsync(token).ConfigureAwait(false)),
-            cancellationToken).ConfigureAwait(false);
+        var agent = await this.AgentAsync(project, agentId, null, cancellationToken);
+        var key = Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<AgentKeyRecord>(
+            "SELECT * FROM agent_keys WHERE project_id = @project AND agent_id = @agentId AND kid = @kid", new { project, agentId, kid }), cancellationToken));
         if (agent is null || key is null)
         {
             throw PlatformDirectory.NotFound();
@@ -169,15 +196,14 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
 
         await this.SaveAsync(project, actor, "agent.key_revoked", kid, null,
             [Change.Update(key, key.Value with { RevokedAt = clock.GetUtcNow() }), Change.Update(agent, agent.Value),
-                .. Event(project, () => events.KeyRevoked(project, agent.Value.OwnerUserId, agentId, kid))], cancellationToken).ConfigureAwait(false);
+                .. Event(project, () => events.KeyRevoked(project, agent.Value.OwnerUserId, agentId, kid))], cancellationToken);
     }
 
     public async Task RevokeAsync(string project, string agentId, string? owner, string actor, CancellationToken cancellationToken)
     {
-        var (agent, keys) = await data.ReadAsync(async (db, token) => (
-            await db.Agents.Where(row => row.ProjectId == project && row.Id == agentId && (owner == null || row.OwnerUserId == owner)).WithVersion().SingleOrDefaultAsync(token).ConfigureAwait(false),
-            await db.AgentKeys.Where(row => row.ProjectId == project && row.AgentId == agentId && row.RevokedAt == null).WithVersion().ToListAsync(token).ConfigureAwait(false)),
-            cancellationToken).ConfigureAwait(false);
+        var agent = await this.AgentAsync(project, agentId, owner, cancellationToken);
+        var keys = Versioned.All(await data.ReadAsync(connection => connection.QueryAsync<AgentKeyRecord>(
+            "SELECT * FROM agent_keys WHERE project_id = @project AND agent_id = @agentId AND revoked_at IS NULL", new { project, agentId }), cancellationToken));
         if (agent is null)
         {
             throw PlatformDirectory.NotFound();
@@ -192,14 +218,12 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
         await this.SaveAsync(project, actor, "agent.revoked", agentId, null,
             [Change.Update(agent, agent.Value with { Status = AgentStatus.Revoked, RevokedAt = now }),
                 .. keys.Select(key => Change.Update(key, key.Value with { RevokedAt = now })),
-                .. Event(project, () => events.Revoked(project, agent.Value.OwnerUserId, agentId))], cancellationToken).ConfigureAwait(false);
+                .. Event(project, () => events.Revoked(project, agent.Value.OwnerUserId, agentId))], cancellationToken);
     }
 
     public async Task<ShareOwnerEmailResult> ShareOwnerEmailAsync(string project, string agentId, string owner, bool share, CancellationToken cancellationToken)
     {
-        using var home = HomeReads.Begin();
-        var agent = await data.ReadAsync((db, token) => db.Agents.Where(row => row.ProjectId == project && row.Id == agentId && row.OwnerUserId == owner).WithVersion()
-            .SingleOrDefaultAsync(token), cancellationToken).ConfigureAwait(false);
+        var agent = await this.AgentAsync(project, agentId, owner, cancellationToken);
         if (agent is null)
         {
             return new NotFound("No such resource.");
@@ -209,10 +233,10 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
         if (agent.Value.ShareOwnerEmail != share)
         {
             await this.SaveAsync(project, owner, share ? "agent.owner_email_shared" : "agent.owner_email_unshared", agentId, null, [Change.Update(agent, shared)], cancellationToken)
-                .ConfigureAwait(false);
+                ;
         }
 
-        return (await this.BodiesAsync(project, [shared], cancellationToken).ConfigureAwait(false))[0];
+        return (await this.BodiesAsync(project, [shared], cancellationToken))[0];
     }
 
     public static string Status(AgentRecord agent, AgentOwner? owner)
@@ -235,10 +259,10 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
 
         string[] ids = [.. agents.Select(agent => agent.Id)];
         string[] owners = [.. agents.Select(agent => agent.OwnerUserId).Distinct(StringComparer.Ordinal)];
-        var (keys, users) = await data.ReadAsync(async (db, token) => (
-            await db.AgentKeys.Where(row => row.ProjectId == project && ids.Contains(row.AgentId)).OrderBy(row => row.Kid).ToListAsync(token).ConfigureAwait(false),
-            await db.Users.Where(row => row.InstanceId == project && owners.Contains(row.Id))
-                .Select(row => new AgentOwner(row.Id, row.AuthEpoch, row.AuthStamp, row.Disabled)).ToListAsync(token).ConfigureAwait(false)), cancellationToken).ConfigureAwait(false);
+        var keys = await data.ReadAsync(connection => connection.QueryAsync<AgentKeyRecord>(
+            "SELECT * FROM agent_keys WHERE project_id = @project AND agent_id IN @ids ORDER BY kid", new { project, ids }), cancellationToken);
+        var users = await data.ReadAsync(connection => connection.QueryAsync<AgentOwner>(
+            "SELECT id, auth_epoch, auth_stamp, disabled FROM users WHERE instance_id = @project AND id IN @owners", new { project, owners }), cancellationToken);
         var byAgent = keys.ToLookup(key => key.AgentId, StringComparer.Ordinal);
         var byId = users.ToDictionary(user => user.Id, StringComparer.Ordinal);
         return [.. agents.Select(agent => Body(agent, byAgent[agent.Id], byId.GetValueOrDefault(agent.OwnerUserId)))];
@@ -254,14 +278,14 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
         DateTimeOffset? deadline = null)
     {
         var organization = Tenancy.IsProject(project)
-            ? (await platform.ProjectAsync(project, cancellationToken).ConfigureAwait(false) ?? throw PlatformDirectory.NotFound()).Value.OrganizationId
+            ? (await platform.ProjectAsync(project, cancellationToken) ?? throw PlatformDirectory.NotFound()).Value.OrganizationId
             : null;
         if (deadline <= clock.GetUtcNow())
         {
             throw new ApiException(409, "approval_expired", "The approval deadline passed before the agent could be stored.");
         }
 
-        if (await data.SaveAsync([.. changes, .. organization is null ? [] : new[] { platform.Audit(organization, actor, action, target) }], cancellationToken).ConfigureAwait(false))
+        if (await data.SaveAsync([.. changes, .. organization is null ? [] : new[] { platform.Audit(organization, actor, action, target) }], cancellationToken))
         {
             if (organization is null)
             {
@@ -271,7 +295,8 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
             return;
         }
 
-        if (thumbprint is not null && await data.ReadAsync((db, token) => db.AgentKeys.AnyAsync(row => row.ProjectId == project && row.Thumbprint == thumbprint, token), cancellationToken).ConfigureAwait(false))
+        if (thumbprint is not null && await data.ReadAsync(connection => connection.ExecuteScalarAsync<bool>(
+            "SELECT EXISTS (SELECT 1 FROM agent_keys WHERE project_id = @project AND thumbprint = @thumbprint)", new { project, thumbprint }), cancellationToken))
         {
             throw new ApiException(409, "agent_key_in_use", "This public key is already registered in the project; generate a new key pair.");
         }

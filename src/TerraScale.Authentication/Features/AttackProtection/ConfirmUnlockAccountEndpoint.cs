@@ -35,12 +35,12 @@ public sealed class ConfirmUnlockAccountEndpoint(AccountProtection protection, A
         if (!this.HttpContext.Request.HasFormContentType || this.HttpContext.Request.Headers.Origin is not [{ } origin]
             || !SignInFlow.IsPublicOrigin(origin, options.PublicOrigin))
         {
-            return Results.StatusCode(StatusCodes.Status403Forbidden);
+            return TypedResults.StatusCode(StatusCodes.Status403Forbidden);
         }
 
         var form = await this.HttpContext.Request.ReadFormAsync(cancellationToken);
         await protection.UnlockAsync(this.HttpContext.GetRouteValue("project") as string ?? "",
             form["user"].ToString(), form["token"].ToString(), cancellationToken);
-        return Results.Text("If the unlock link was valid, password sign-in is available again.");
+        return TypedResults.Text("If the unlock link was valid, password sign-in is available again.");
     }
 }

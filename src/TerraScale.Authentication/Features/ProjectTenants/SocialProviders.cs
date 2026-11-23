@@ -7,33 +7,18 @@ using TerraScale.Authentication.Security;
 
 namespace TerraScale.Authentication.Features.ProjectTenants;
 
-/// <summary>
-/// A sign-in provider a project configured with its own OAuth client (project-social-sign-in.md). The secret, or
-/// Apple's .p8 private key, is sealed under the master key and bound to the project and provider.
-/// </summary>
-/// <param name="Provider">One of <see cref="SocialProviders.Names"/>.</param>
-/// <param name="ClientId">The project's client id at the provider (Apple: its Services ID).</param>
-/// <param name="SecretBox">The sealed client secret, or Apple's sealed private key PEM.</param>
-/// <param name="Issuer">The generic OIDC provider's https issuer; null otherwise.</param>
-/// <param name="TeamId">Apple's team id; null otherwise.</param>
-/// <param name="KeyId">Apple's key id; null otherwise.</param>
 public sealed record SocialProviderRecord(string Provider, string ClientId, string SecretBox, string? Issuer = null, string? TeamId = null, string? KeyId = null, string? Tenant = null, OAuth2Configuration? OAuth2 = null);
 
 public sealed record OAuth2Configuration(string AuthorizeUrl, string TokenUrl, string UserinfoUrl, string Scopes, string IdClaim = "id", string EmailClaim = "email", string EmailVerifiedClaim = "email_verified");
 
-/// <summary>The supported providers and the checks and sealing of their configuration.</summary>
 public static partial class SocialProviders
 {
-    /// <summary>Google.</summary>
     public const string Google = "google";
 
-    /// <summary>GitHub (OAuth apps).</summary>
     public const string GitHub = "github";
 
-    /// <summary>Sign in with Apple.</summary>
     public const string Apple = "apple";
 
-    /// <summary>Any OpenID Connect provider, by its issuer.</summary>
     public const string Oidc = "oidc";
 
     public const string Microsoft = "microsoft";
@@ -47,7 +32,6 @@ public static partial class SocialProviders
 
     public static IReadOnlyList<string> Names { get; } = [Google, GitHub, Apple, Microsoft, GitLab, LinkedIn, Slack, Discord, Facebook, X, Oidc, OAuth2];
 
-    /// <summary>The label the hosted button shows.</summary>
     public static string Label(string provider) => provider switch
     {
         Google => "Google",
@@ -64,17 +48,12 @@ public static partial class SocialProviders
         _ => "single sign-on",
     };
 
-    /// <summary>The callback the customer registers at the provider.</summary>
     public static Uri Callback(AuthOptions options, string projectId, string provider)
     {
         ArgumentNullException.ThrowIfNull(options);
         return new(options.PublicOrigin, $"ui/{projectId}/social/{provider}/callback");
     }
 
-    /// <summary>
-    /// Validates a configuration and seals <paramref name="secret"/>; without a secret the stored one is kept, which
-    /// only an existing configuration of the same provider has. Throws 400 <c>invalid_request</c>.
-    /// </summary>
     public static SocialProviderRecord Seal(AuthOptions options, string projectId, string provider, SocialProviderRecord? current,
         string? clientId, string? secret, string? issuer, string? teamId, string? keyId, string? tenant = null, OAuth2Configuration? oauth2 = null)
     {
@@ -128,7 +107,6 @@ public static partial class SocialProviders
         return new(provider, clientId, box, issuer?.TrimEnd('/'), teamId, keyId, provider == Microsoft ? tenant ?? "common" : null, oauth2);
     }
 
-    /// <summary>The stored secret in clear, for the token request only; never logged or answered.</summary>
     public static string Open(AuthOptions options, string projectId, SocialProviderRecord record)
     {
         ArgumentNullException.ThrowIfNull(options);

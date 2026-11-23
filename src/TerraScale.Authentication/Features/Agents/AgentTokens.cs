@@ -1,7 +1,7 @@
+using Microsoft.AspNetCore.Http.HttpResults;
 using System.Collections.Frozen;
 using System.Text.Json;
 using Microsoft.AspNetCore;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using OpenIddict.Abstractions;
@@ -61,12 +61,12 @@ public sealed class AgentTokens(AuthData data, AgentAssertions assertions, KeyRi
             return Error(OidcErrors.InvalidRequest, "Send grant_type, one assertion, and optionally scope and requested_subject (owner or agent); nothing else.");
         }
 
-        return await this.IssueAsync(project, assertion, scopes, subject is "agent", cancellationToken).ConfigureAwait(false);
+        return await this.IssueAsync(project, assertion, scopes, subject is "agent", cancellationToken);
     }
 
     private async Task<IResult> IssueAsync(string project, string assertion, IReadOnlyList<string>? requested, bool self, CancellationToken cancellationToken)
     {
-        var (verified, refusedAgent, reason) = await assertions.VerifyAsync(project, assertion, TokenEndpoint(options, project), cancellationToken).ConfigureAwait(false);
+        var (verified, refusedAgent, reason) = await assertions.VerifyAsync(project, assertion, TokenEndpoint(options, project), cancellationToken);
         if (verified is null)
         {
             return this.Refuse(project, refusedAgent, reason);
@@ -81,8 +81,8 @@ public sealed class AgentTokens(AuthData data, AgentAssertions assertions, KeyRi
             return this.Refuse(project, agentId, self && !agent.Value.AllowSelfSubject ? "self subject not allowed" : "scope outside the agent's allowed scopes");
         }
 
-        if ((await limiter.AcquireAsync(project, "agent-token-agent", agentId, AgentMinuteBudget, TimeSpan.FromMinutes(1), cancellationToken).ConfigureAwait(false)
-            ?? await limiter.AcquireAsync(project, "agent-token-owner", agent.Value.OwnerUserId, OwnerMinuteBudget, TimeSpan.FromMinutes(1), cancellationToken).ConfigureAwait(false))
+        if ((await limiter.AcquireAsync(project, "agent-token-agent", agentId, AgentMinuteBudget, TimeSpan.FromMinutes(1), cancellationToken)
+            ?? await limiter.AcquireAsync(project, "agent-token-owner", agent.Value.OwnerUserId, OwnerMinuteBudget, TimeSpan.FromMinutes(1), cancellationToken))
             is { } wait)
         {
             return HostedAuth.TooMany(wait);
@@ -91,7 +91,7 @@ public sealed class AgentTokens(AuthData data, AgentAssertions assertions, KeyRi
         var scope = string.Join(' ', scopes);
         var issuedAt = DateTimeOffset.FromUnixTimeSeconds(now.ToUnixTimeSeconds());
         var expiresAt = DateTimeOffset.FromUnixTimeSeconds(Math.Min((issuedAt + Lifetime).ToUnixTimeSeconds(), agent.Value.ExpiresAt?.ToUnixTimeSeconds() ?? long.MaxValue));
-        var body = new AgentTokenBody(await this.SignAsync(project, agent.Value, scope, self, issuedAt, expiresAt, cancellationToken).ConfigureAwait(false), "Bearer",
+        var body = new AgentTokenBody(await this.SignAsync(project, agent.Value, scope, self, issuedAt, expiresAt, cancellationToken), "Bearer",
             (long)(expiresAt - issuedAt).TotalSeconds, scope);
         var gate = clock.GetUtcNow();
         if (gate > verified.AcceptedUntil || expiresAt <= gate)
@@ -105,14 +105,14 @@ public sealed class AgentTokens(AuthData data, AgentAssertions assertions, KeyRi
             changes.Add(Change.Update(agent, agent.Value with { LastUsedAt = now }));
         }
 
-        return await data.SaveAsync(changes, cancellationToken).ConfigureAwait(false)
-            ? Results.Json(body, AgentJson.Default.AgentTokenBody)
+        return await data.SaveAsync(changes, cancellationToken)
+            ? TypedResults.Json(body, AgentJson.Default.AgentTokenBody)
             : this.Refuse(project, agentId, "assertion replayed, or the key, owner or agent changed");
     }
 
     private async Task<string> SignAsync(string project, AgentRecord agent, string scope, bool self, DateTimeOffset issuedAt, DateTimeOffset expiresAt, CancellationToken cancellationToken)
     {
-        var signing = await ring.GetActiveAsync(project, cancellationToken).ConfigureAwait(false);
+        var signing = await ring.GetActiveAsync(project, cancellationToken);
         try
         {
             var claims = new Dictionary<string, object>(StringComparer.Ordinal)
@@ -164,14 +164,14 @@ public sealed class AgentTokens(AuthData data, AgentAssertions assertions, KeyRi
         return value is null || scopes is { Count: > 0 };
     }
 
-    private IResult Refuse(string project, string? agentId, string reason)
+    private JsonHttpResult<OAuthErrorBody> Refuse(string project, string? agentId, string reason)
     {
         logger.ZLogInformation($"Agent token refused in project {project} for agent {agentId ?? "unknown"}: {reason}");
         return Error(OidcErrors.InvalidGrant, Refusal);
     }
 
-    private static IResult Error(string error, string description) =>
-        Results.Json(new OAuthErrorBody(error, description), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status400BadRequest);
+    private static JsonHttpResult<OAuthErrorBody> Error(string error, string description) =>
+        TypedResults.Json(new OAuthErrorBody(error, description), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status400BadRequest);
 }
 
 internal sealed class RouteAgentGrant : IOpenIddictServerHandler<ExtractTokenRequestContext>

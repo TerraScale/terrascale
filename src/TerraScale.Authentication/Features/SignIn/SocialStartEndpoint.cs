@@ -22,7 +22,7 @@ public sealed class SocialStartEndpoint(SocialSignIn social, HostedAuth hosted) 
     {
         if (await SocialFlow.ProviderAsync(this.HttpContext, cancellationToken) is not { } provider)
         {
-            return Results.NotFound();
+            return TypedResults.NotFound();
         }
 
         var tenant = SignInFlow.Tenant(this.HttpContext);
@@ -37,7 +37,7 @@ public sealed class SocialStartEndpoint(SocialSignIn social, HostedAuth hosted) 
             var (location, sealedState) = await social.StartAsync(tenant, provider, next, cancellationToken);
             PendingSocialLinks.Delete(this.HttpContext, tenant);
             this.HttpContext.Response.Cookies.Append(SocialSignIn.Cookie(tenant), sealedState, SocialFlow.CookieOptions(tenant));
-            return Results.Redirect(location.AbsoluteUri);
+            return TypedResults.Redirect(location.AbsoluteUri);
         }
         catch (Exception error) when (error is HttpRequestException or InvalidOperationException or TaskCanceledException && !cancellationToken.IsCancellationRequested)
         {

@@ -11,10 +11,10 @@ public interface IEmailProvider
 public sealed class FailoverEmailSender(IReadOnlyList<IEmailProvider> providers, ILogger<FailoverEmailSender> logger) : IEmailSender
 {
     public async Task SendAsync(string recipient, EmailMessage message, CancellationToken cancellationToken) =>
-        _ = await this.DeliverAsync(recipient, message, cancellationToken).ConfigureAwait(false);
+        _ = await this.DeliverAsync(recipient, message, cancellationToken);
 
     public async Task<EmailDeliveryOutcome> DeliverAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
-        => (await this.DeliverResultAsync(recipient, message, cancellationToken).ConfigureAwait(false)).Outcome;
+        => (await this.DeliverResultAsync(recipient, message, cancellationToken)).Outcome;
 
     internal async Task<EmailProviderResult> DeliverResultAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
     {
@@ -22,7 +22,7 @@ public sealed class FailoverEmailSender(IReadOnlyList<IEmailProvider> providers,
         var allRetryable = true;
         for (var index = 0; index < providers.Count; index++)
         {
-            var result = await providers[index].DeliverResultAsync(recipient, message, cancellationToken).ConfigureAwait(false);
+            var result = await providers[index].DeliverResultAsync(recipient, message, cancellationToken);
             if (result.Outcome == EmailDeliveryOutcome.Accepted)
             {
                 return result;

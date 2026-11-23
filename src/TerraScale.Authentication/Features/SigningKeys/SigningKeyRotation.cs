@@ -12,14 +12,13 @@ public sealed class SigningKeyRotation(AuthSchema schema, ClientRegistration cli
     private static readonly TimeSpan FirstBootstrapRetry = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan MaxBootstrapRetry = TimeSpan.FromMinutes(5);
 
-    /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var retry = FirstBootstrapRetry;
-        while (!await this.TryBootstrapAsync(stoppingToken).ConfigureAwait(false))
+        while (!await this.TryBootstrapAsync(stoppingToken))
         {
             schema.MarkBootstrapFailed();
-            await Task.Delay(retry, stoppingToken).ConfigureAwait(false);
+            await Task.Delay(retry, stoppingToken);
             retry = TimeSpan.FromTicks(Math.Min(retry.Ticks * 2, MaxBootstrapRetry.Ticks));
         }
 
@@ -29,7 +28,7 @@ public sealed class SigningKeyRotation(AuthSchema schema, ClientRegistration cli
         {
             try
             {
-                switch (await ring.RotateIfDueAsync(OidcIssuer.InstanceId, stoppingToken).ConfigureAwait(false))
+                switch (await ring.RotateIfDueAsync(OidcIssuer.InstanceId, stoppingToken))
                 {
                     case Added:
                         this.Log(target => target.ZLogInformation($"Scheduled rotation added a signing key"));
@@ -41,8 +40,6 @@ public sealed class SigningKeyRotation(AuthSchema schema, ClientRegistration cli
                         break;
                 }
             }
-            // A failure while stopping is not reported: the timer wait below ends the loop. Rethrowing it would fault
-            // the host's StopAsync.
             catch (Exception error) when (error is not OutOfMemoryException)
             {
                 if (!stoppingToken.IsCancellationRequested)
@@ -51,7 +48,7 @@ public sealed class SigningKeyRotation(AuthSchema schema, ClientRegistration cli
                 }
             }
         }
-        while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
+        while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 
     private async Task<bool> TryBootstrapAsync(CancellationToken stoppingToken)
@@ -59,13 +56,13 @@ public sealed class SigningKeyRotation(AuthSchema schema, ClientRegistration cli
         var step = "schema migration";
         try
         {
-            await schema.MigrateAsync(stoppingToken).ConfigureAwait(false);
+            await schema.MigrateAsync(stoppingToken);
             step = "platform seed";
-            await platform.EnsureAsync(stoppingToken).ConfigureAwait(false);
+            await platform.EnsureAsync(stoppingToken);
             step = "client registration";
-            await clients.RegisterAllAsync(stoppingToken).ConfigureAwait(false);
+            await clients.RegisterAllAsync(stoppingToken);
             step = "signing key provisioning";
-            if (await ring.ProvisionAsync(OidcIssuer.InstanceId, stoppingToken).ConfigureAwait(false))
+            if (await ring.ProvisionAsync(OidcIssuer.InstanceId, stoppingToken))
             {
                 this.Log(target => target.ZLogInformation($"Audit: startup provisioned the platform issuer's first signing key"));
             }
@@ -82,7 +79,6 @@ public sealed class SigningKeyRotation(AuthSchema schema, ClientRegistration cli
         }
     }
 
-    // Logging is best effort: a failing provider must not fault this service, which would stop the host.
     private void Log(Action<ILogger> write)
     {
         try

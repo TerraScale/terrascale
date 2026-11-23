@@ -1,19 +1,23 @@
-using Microsoft.EntityFrameworkCore;
+using Dapper;
+using System.Data;
 using Stripe;
-using TerraScale.TerraBase.Contracts;
+using TerraScale.Dashboard.Platform.Clients;
 using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Billing;
 
 public sealed partial class StripeBilling
 {
+    private const string PendingReceipts = DashboardSql.StripeEventReceipts.Select + " WHERE completed_at IS NULL AND processing_until <= @Now";
+    private const string CleanReceipts = "DELETE FROM stripe_event_receipts WHERE received_at < @Cutoff AND processing_until < @Now";
+
     public async Task<OrganizationRecord> ResolveExpiredGraceAsync(string organizationId, CancellationToken cancellationToken)
     {
         var row = await organizations.FindAsync(organizationId, cancellationToken) ?? throw new IOException("Billing organization is unavailable.");
         if (row.Erased) { throw new IOException("Billing organization was erased."); }
         if (row.Organization.BillingStatus != "active" || row.Organization.PaymentGraceUntil is not { } deadline || deadline > time.GetUtcNow()) { return row.Organization; }
         try { await RefreshAsync(organizationId, cancellationToken); }
-        catch (Exception error) when (error is DbUpdateException or StripeException or HttpRequestException or IOException or TerraBaseException or TimeoutException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        catch (Exception error) when (error is DBConcurrencyException or StripeException or HttpRequestException or IOException or TerraBaseException or TimeoutException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
         {
             telemetry.ReportDeferredGraceExpiry();
             while (true)
@@ -65,15 +69,19 @@ public sealed partial class StripeBilling
 
     public async Task RecoverEventReceiptsAsync(CancellationToken cancellationToken)
     {
-        await using var db = await storage.CreateDbContextAsync(cancellationToken);
         var now = time.GetUtcNow();
-        var pending = await db.StripeEventReceipts.AsNoTracking().Where(row => row.CompletedAt == null && row.ProcessingUntil <= now).ToListAsync(cancellationToken);
+        List<StripeEventReceipt> pending;
+        await using (var connection = await storage.OpenAsync(cancellationToken))
+        {
+            pending = (await connection.QueryAsync<StripeEventReceipt>(PendingReceipts, new { Now = now })).AsList();
+        }
+
         foreach (var receipt in pending)
         {
             receipt.ProcessingUntil = now.AddMinutes(5);
             if (!await storage.ReplaceAsync(receipt, cancellationToken)) { continue; }
             try { await ApplyEventReceiptAsync(receipt, cancellationToken); }
-            catch (Exception error) when (error is DbUpdateException or StripeException or HttpRequestException or IOException or TerraBaseException or TimeoutException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+            catch (Exception error) when (error is DBConcurrencyException or StripeException or HttpRequestException or IOException or TerraBaseException or TimeoutException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
             {
                 receipt.ProcessingUntil = time.GetUtcNow();
                 await storage.ReplaceAsync(receipt, cancellationToken);
@@ -85,8 +93,8 @@ public sealed partial class StripeBilling
     public async Task CleanEventReceiptsAsync(CancellationToken cancellationToken)
     {
         var cutoff = time.GetUtcNow().AddDays(-30);
-        await using var db = await storage.CreateDbContextAsync(cancellationToken);
         var now = time.GetUtcNow();
-        await db.StripeEventReceipts.Where(row => row.ReceivedAt < cutoff && row.ProcessingUntil < now).ExecuteDeleteAsync(cancellationToken);
+        await using var connection = await storage.OpenAsync(cancellationToken);
+        await connection.ExecuteAsync(CleanReceipts, new { Cutoff = cutoff, Now = now });
     }
 }

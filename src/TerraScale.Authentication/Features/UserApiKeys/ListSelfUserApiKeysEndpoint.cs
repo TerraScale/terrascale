@@ -13,6 +13,6 @@ public sealed class ListSelfUserApiKeysEndpoint(PlatformAuthentication authentic
 
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
-        return Results.Json(await keys.ListAsync(this.RouteId("project"), caller.Id, cancellationToken), UserApiKeyJson.Default.UserApiKeyPageBody);
+        return TypedResults.Json(await keys.ListAsync(this.RouteId("project"), caller.Id, cancellationToken), UserApiKeyJson.Default.UserApiKeyPageBody);
     }
 }

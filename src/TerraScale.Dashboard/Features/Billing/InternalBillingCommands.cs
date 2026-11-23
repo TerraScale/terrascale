@@ -1,5 +1,4 @@
-using Microsoft.EntityFrameworkCore;
-using TerraScale.TerraBase.Contracts;
+using TerraScale.Dashboard.Platform.Clients;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Numerics;
@@ -11,8 +10,6 @@ using TerraScale.Dashboard.Common.Validation;
 
 namespace TerraScale.Dashboard.Features.Billing
 {
-    // The command entry is also the production Program entry. Complete-application
-    // E2E fixtures replace its whole host factory, never individual job functions.
     public static class InternalBillingCommands
     {
         private const string Configure = "configure-internal-billing";
@@ -47,10 +44,7 @@ namespace TerraScale.Dashboard.Features.Billing
             try
             {
                 application = buildApplication([]) ?? throw new InvalidOperationException("The command application is unavailable.");
-                await using (var db = await application.Services.GetRequiredService<IDbContextFactory<DashboardDbContext>>().CreateDbContextAsync(cancellationToken))
-                {
-                    await db.Database.MigrateAsync(cancellationToken);
-                }
+                await application.Services.GetRequiredService<DashboardDbUpRunner>().UpgradeAsync(cancellationToken);
 
                 var auth = application.Services.GetRequiredService<TsAuthGateway>();
                 var accounts = application.Services.GetRequiredService<AccountService>();
@@ -87,7 +81,6 @@ namespace TerraScale.Dashboard.Features.Billing
             catch (Exception) when (application is null) { failure = "Internal billing dependencies are unavailable."; }
             finally
             {
-                // The device grant is never printed, cached or copied into a browser session.
                 if (grant is not null && application is not null)
                 {
                     using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -232,8 +225,6 @@ namespace TerraScale.Dashboard.Features.Billing
             return new Arguments(command, org, email, plan, cap, writes, storage);
         }
 
-        // Go's Int64 flag parser accepts decimal and explicit binary/octal/hex
-        // integers, including legal separators, while rejecting signed overflow.
         private static CommandRejection? Integer(string value, string name, out long parsed)
         {
             parsed = 0;

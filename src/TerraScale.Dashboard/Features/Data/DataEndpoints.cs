@@ -21,13 +21,13 @@ namespace TerraScale.Dashboard.Features.Data
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "sql"), Results.BadRequest("Invalid form token."));
+                return RequestError.FormExpired(http, DatabaseService.Path(form["databaseId"].ToString(), "sql"), TypedResults.BadRequest("Invalid form token."));
             }
 
             var id = form["databaseId"].ToString();
@@ -44,7 +44,7 @@ namespace TerraScale.Dashboard.Features.Data
                     var invalid = diagnostics.Any(item => item.Severity == "error");
                     return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, id, data, saved,
                         formError: form["sql"].ToString().Trim().Length == 0 ? SqlValidation.Error("") : "",
-                        sql: form["sql"].ToString(), sqlChecked: !invalid, status: invalid ? 422 : 200) : Results.Json(diagnostics);
+                        sql: form["sql"].ToString(), sqlChecked: !invalid, status: invalid ? 422 : 200) : TypedResults.Json(diagnostics);
                 }
                 if (action is "sql" or "saved-queries")
                 {
@@ -62,7 +62,7 @@ namespace TerraScale.Dashboard.Features.Data
                         }
 
                         var result = await data.SqlAsync(context, id, form["sql"].ToString(), true, http.RequestAborted);
-                        return Results.Json(new { columns = result.Columns, rows = result.Rows, rowsAffected = result.RowsAffected, lastInsertRowId = result.LastInsertRowId });
+                        return TypedResults.Json(new { columns = result.Columns, rows = result.Rows, rowsAffected = result.RowsAffected, lastInsertRowId = result.LastInsertRowId });
                     }
                     switch (await saved.SaveAsync(context, id, form["name"].ToString(), form["sql"].ToString(), http.RequestAborted))
                     {
@@ -71,7 +71,7 @@ namespace TerraScale.Dashboard.Features.Data
                             {
                                 return await PageAsync(http, context, id, data, saved);
                             }
-                            return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "sql") + "?savedQueryId=" + Uri.EscapeDataString(savedQuery.Id)) : Results.Json(PublicSavedQuery(savedQuery), statusCode: 201);
+                            return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "sql") + "?savedQueryId=" + Uri.EscapeDataString(savedQuery.Id)) : TypedResults.Json(PublicSavedQuery(savedQuery), statusCode: 201);
                         case Forbidden failure:
                             return await Refused(StatusCodes.Status403Forbidden, failure.Message);
                         case Validation failure:
@@ -89,7 +89,7 @@ namespace TerraScale.Dashboard.Features.Data
                         case NotFound failure:
                             return DatabaseResults.WantsHtml(http)
                                 ? NotFoundEndpoints.Page(http, context)
-                                : Results.Problem(failure.Message ?? "Not found.", statusCode: StatusCodes.Status404NotFound);
+                                : TypedResults.Problem(failure.Message ?? "Not found.", statusCode: StatusCodes.Status404NotFound);
                         case Forbidden failure:
                             return await Refused(StatusCodes.Status403Forbidden, failure.Message);
                     }
@@ -99,7 +99,7 @@ namespace TerraScale.Dashboard.Features.Data
                         return await PageAsync(http, context, id, data, saved);
                     }
                 }
-                return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "sql")) : Results.NoContent();
+                return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "sql")) : TypedResults.NoContent();
             }
             catch (Exception error) when (DatabaseResults.KnownFailure(error))
             {
@@ -116,7 +116,7 @@ namespace TerraScale.Dashboard.Features.Data
             {
                 if (!DatabaseResults.WantsHtml(http) && !http.Request.IsDatastarRequest)
                 {
-                    return Results.Problem(message, statusCode: status);
+                    return TypedResults.Problem(message, statusCode: status);
                 }
 
                 return await PageAsync(http, context, id, data, saved, message, action == "saved-queries" ? "save-query" : action == "saved-queries/delete" ? "delete-query-" + form["id"] : "",
@@ -270,7 +270,7 @@ namespace TerraScale.Dashboard.Features.Data
                 {
                     await DatastarEvents.PatchElementsAsync(http, SqlRunPatch.Create(page));
                 }
-                return Results.Empty;
+                return TypedResults.Empty;
             }
             var result = DataView.Create(page);
             result.StatusCode = status;

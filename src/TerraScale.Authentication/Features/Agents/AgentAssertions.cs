@@ -1,6 +1,6 @@
+using Dapper;
 using System.Security.Cryptography;
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using TerraScale.Authentication.Contracts;
@@ -11,6 +11,8 @@ namespace TerraScale.Authentication.Features.Agents;
 
 public sealed record AgentAssertionRecord(string ProjectId, string AgentId, string Jti, DateTimeOffset KeepUntil)
 {
+    public string? Version { get; init; }
+
     public const int MaxJtiLength = 128;
 }
 
@@ -46,8 +48,8 @@ public sealed class AgentAssertions(AuthData data, TimeProvider clock)
             return (null, null, "malformed assertion or header");
         }
 
-        var key = await data.ReadAsync((db, token) => db.AgentKeys.Where(row => row.ProjectId == project && row.Kid == kid).WithVersion().SingleOrDefaultAsync(token),
-            cancellationToken).ConfigureAwait(false);
+        var key = Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<AgentKeyRecord>(
+            "SELECT * FROM agent_keys WHERE project_id = @project AND kid = @kid", new { project, kid }), cancellationToken));
         var validated = await Handler.ValidateTokenAsync(unverified, new TokenValidationParameters
         {
             IssuerSigningKey = key is null ? Decoy : new JsonWebKey(key.Value.PublicJwk) { KeyId = kid },
@@ -60,7 +62,7 @@ public sealed class AgentAssertions(AuthData data, TimeProvider clock)
             RequireExpirationTime = true,
             ValidateLifetime = true,
             ClockSkew = ClockSkew,
-        }).ConfigureAwait(false);
+        });
         if (key is null)
         {
             return (null, null, "unknown key");
@@ -73,13 +75,11 @@ public sealed class AgentAssertions(AuthData data, TimeProvider clock)
             return (null, agentId, "signature or claims");
         }
 
-        var (agent, owner) = await data.ReadAsync(async (db, token) =>
-        {
-            var agent = await db.Agents.Where(row => row.ProjectId == project && row.Id == agentId).WithVersion().SingleOrDefaultAsync(token).ConfigureAwait(false);
-            var owner = agent is null ? null
-                : await db.Users.Where(row => row.InstanceId == project && row.Id == agent.Value.OwnerUserId).WithVersion().SingleOrDefaultAsync(token).ConfigureAwait(false);
-            return (agent, owner);
-        }, cancellationToken).ConfigureAwait(false);
+        var agent = Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<AgentRecord>(
+            "SELECT * FROM agents WHERE project_id = @project AND id = @agentId", new { project, agentId }), cancellationToken));
+        var ownerId = agent?.Value.OwnerUserId;
+        var owner = agent is null ? null : Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
+            "SELECT * FROM users WHERE instance_id = @project AND id = @ownerId", new { project, ownerId }), cancellationToken));
         if (agent is null)
         {
             return (null, agentId, "unknown agent");
@@ -107,8 +107,11 @@ public sealed class AgentAssertions(AuthData data, TimeProvider clock)
     public async Task<int> PruneAsync(int batchSize, CancellationToken cancellationToken)
     {
         var now = clock.GetUtcNow();
-        return await data.InBatchesAsync(batchSize, (db, token) => db.AgentAssertions.Where(row => row.KeepUntil <= now)
-            .OrderBy(row => row.KeepUntil).Take(batchSize).ExecuteDeleteAsync(token), cancellationToken).ConfigureAwait(false);
+        return await data.InBatchesAsync(batchSize, connection => connection.ExecuteAsync(
+            """
+            DELETE FROM agent_assertions WHERE (project_id, agent_id, jti) IN (
+                SELECT project_id, agent_id, jti FROM agent_assertions WHERE keep_until <= @now ORDER BY keep_until LIMIT @batchSize)
+            """, new { now, batchSize }), cancellationToken);
     }
 
     private static (long Iat, long Exp)? Times(JsonWebToken assertion)

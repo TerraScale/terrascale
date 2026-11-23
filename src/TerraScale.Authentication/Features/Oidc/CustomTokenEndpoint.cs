@@ -66,7 +66,7 @@ public sealed class CustomTokenEndpoint(CustomTokens tokens, ApiKeys keys, Attem
             if (await keys.AuthenticateAsync(secret, cancellationToken) is not { } key)
             {
                 this.HttpContext.Response.Headers.WWWAuthenticate = "Bearer realm=\"ts-auth\"";
-                return Results.Json(new ErrorBody(new ErrorDetail("unauthorized", "Present a live project API key with auth:tokens:mint.")),
+                return TypedResults.Json(new ErrorBody(new ErrorDetail("unauthorized", "Present a live project API key with auth:tokens:mint.")),
                     CustomTokenJson.Default.ErrorBody, statusCode: StatusCodes.Status401Unauthorized);
             }
 
@@ -82,7 +82,7 @@ public sealed class CustomTokenEndpoint(CustomTokens tokens, ApiKeys keys, Attem
             {
                 CustomTokenRequest parsed => await tokens.IssueAsync(key, project, parsed, cancellationToken) switch
                 {
-                    CustomTokenBody minted => Results.Json(minted, CustomTokenJson.Default.CustomTokenBody),
+                    CustomTokenBody minted => TypedResults.Json(minted, CustomTokenJson.Default.CustomTokenBody),
                     Validation invalid => ErrorResults.ToResult(invalid),
                 },
                 Validation invalid => ErrorResults.ToResult(invalid),

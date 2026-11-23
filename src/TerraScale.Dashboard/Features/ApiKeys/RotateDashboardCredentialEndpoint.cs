@@ -37,13 +37,13 @@ namespace TerraScale.Dashboard.Features.ApiKeys
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, "/api-keys", Results.BadRequest("Invalid form token."));
+                return RequestError.FormExpired(http, "/api-keys", TypedResults.BadRequest("Invalid form token."));
             }
 
             try
@@ -53,7 +53,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                     const string denied = "Project member access is required.";
                     return DatabaseEndpoints.WantsHtml(http)
                         ? await ApiKeyPages.PageAsync(http, context, keys, databases, denied, status: StatusCodes.Status403Forbidden)
-                        : Results.Problem(denied, statusCode: StatusCodes.Status403Forbidden);
+                        : TypedResults.Problem(denied, statusCode: StatusCodes.Status403Forbidden);
                 }
 
                 var ttl = form["previousSecretTtl"].ToString();
@@ -63,7 +63,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                     const string refused = "The old secret's grace period must be between 0 and 86400 seconds.";
                     return DatabaseEndpoints.WantsHtml(http)
                         ? await ApiKeyPages.PageAsync(http, context, keys, databases, refused, status: StatusCodes.Status422UnprocessableEntity)
-                        : Results.Problem(refused, statusCode: StatusCodes.Status422UnprocessableEntity);
+                        : TypedResults.Problem(refused, statusCode: StatusCodes.Status422UnprocessableEntity);
                 }
 
                 var intent = StepUpFlow.Intent(http, context, "rotate_api_key");
@@ -73,7 +73,7 @@ namespace TerraScale.Dashboard.Features.ApiKeys
                 }
 
                 var credential = await keys.RotateAsync(context, form["keyId"].ToString(), previousSecretTtl, http.RequestAborted, intent.Challenge.Proof);
-                return DatabaseEndpoints.WantsHtml(http) ? await ApiKeyPages.PageAsync(http, context, keys, databases, revealed: credential) : Results.Json(new ProjectApiKeySecret(ApiKeyService.Metadata(credential.Key), credential.Secret), ApiKeyContractJson.Default.ProjectApiKeySecret);
+                return DatabaseEndpoints.WantsHtml(http) ? await ApiKeyPages.PageAsync(http, context, keys, databases, revealed: credential) : TypedResults.Json(new ProjectApiKeySecret(ApiKeyService.Metadata(credential.Key), credential.Secret), ApiKeyContractJson.Default.ProjectApiKeySecret);
             }
             catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.WantsHtml(http) ? await ApiKeyPages.PageAsync(http, context, keys, databases, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error)) : DatabaseEndpoints.Failure(error); }
         }

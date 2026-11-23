@@ -15,21 +15,11 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.Email;
 
-/// <summary><c>PUT /v1/{slug}/email/branding</c> body.</summary>
-/// <param name="ExpectedVersion">The configuration version the caller last read (0 before the first save).</param>
-/// <param name="Actor">Who is making the change.</param>
-/// <param name="Branding">The complete new branding; omitted or null fields go back to the default.</param>
 public sealed record EmailBrandingRequest(
     [property: JsonPropertyName("expected_version")] long? ExpectedVersion,
     [property: JsonPropertyName("actor")] EmailActor? Actor,
     [property: JsonPropertyName("branding")] EmailBranding? Branding);
 
-/// <summary>An instance's branding.</summary>
-/// <param name="Version">The configuration version.</param>
-/// <param name="UpdatedAt">When that version was saved; null for the defaults.</param>
-/// <param name="UpdatedBy">Who saved it.</param>
-/// <param name="Branding">The saved branding; null fields use the default.</param>
-/// <param name="Defaults">What each field is when it is null.</param>
 public sealed record EmailBrandingResponse(
     [property: JsonPropertyName("version")] long Version,
     [property: JsonPropertyName("updated_at")] DateTimeOffset? UpdatedAt,
@@ -37,41 +27,21 @@ public sealed record EmailBrandingResponse(
     [property: JsonPropertyName("branding")] EmailBranding Branding,
     [property: JsonPropertyName("defaults")] EmailBranding Defaults);
 
-/// <summary><c>PUT /v1/{slug}/email/templates/{kind}/{locale}</c> body.</summary>
-/// <param name="ExpectedVersion">The configuration version the caller last read.</param>
-/// <param name="Actor">Who is making the change.</param>
-/// <param name="Fields">The complete override; null fields use the default, and all null resets the template.</param>
 public sealed record EmailTemplateRequest(
     [property: JsonPropertyName("expected_version")] long? ExpectedVersion,
     [property: JsonPropertyName("actor")] EmailActor? Actor,
     [property: JsonPropertyName("fields")] EmailTemplateFields? Fields);
 
-/// <summary>One template in the list.</summary>
-/// <param name="Kind">The email kind.</param>
-/// <param name="Locale">The locale.</param>
-/// <param name="Overridden">Whether any field is overridden.</param>
-/// <param name="Variables">The placeholders its copy may use.</param>
 public sealed record EmailTemplateSummary(
     [property: JsonPropertyName("kind")] string Kind,
     [property: JsonPropertyName("locale")] string Locale,
     [property: JsonPropertyName("overridden")] bool Overridden,
     [property: JsonPropertyName("variables")] IReadOnlyList<string> Variables);
 
-/// <summary>Every template.</summary>
-/// <param name="Version">The configuration version.</param>
-/// <param name="Templates">Each kind in each locale.</param>
 public sealed record EmailTemplateListResponse(
     [property: JsonPropertyName("version")] long Version,
     [property: JsonPropertyName("templates")] IReadOnlyList<EmailTemplateSummary> Templates);
 
-/// <summary>One template.</summary>
-/// <param name="Kind">The email kind.</param>
-/// <param name="Locale">The locale.</param>
-/// <param name="Version">The configuration version.</param>
-/// <param name="Overridden">Whether any field is overridden.</param>
-/// <param name="Variables">The placeholders its copy may use.</param>
-/// <param name="Fields">The override; null fields use the default.</param>
-/// <param name="Defaults">The default copy.</param>
 public sealed record EmailTemplateResponse(
     [property: JsonPropertyName("kind")] string Kind,
     [property: JsonPropertyName("locale")] string Locale,
@@ -81,12 +51,6 @@ public sealed record EmailTemplateResponse(
     [property: JsonPropertyName("fields")] EmailTemplateFields Fields,
     [property: JsonPropertyName("defaults")] EmailTemplateFields Defaults);
 
-/// <summary><c>POST /v1/{slug}/email/preview</c> body. Drafts are rendered, never saved.</summary>
-/// <param name="Kind">The email kind.</param>
-/// <param name="Locale">The locale.</param>
-/// <param name="ColorScheme"><c>auto</c> (default), <c>light</c> or <c>dark</c>: pins an auto theme for the preview.</param>
-/// <param name="Branding">Draft branding instead of the saved one.</param>
-/// <param name="Fields">Draft copy for this kind and locale instead of the saved one.</param>
 public sealed record EmailPreviewRequest(
     [property: JsonPropertyName("kind")] string? Kind,
     [property: JsonPropertyName("locale")] string? Locale,
@@ -94,22 +58,11 @@ public sealed record EmailPreviewRequest(
     [property: JsonPropertyName("branding")] EmailBranding? Branding = null,
     [property: JsonPropertyName("fields")] EmailTemplateFields? Fields = null);
 
-/// <summary>A rendered email.</summary>
-/// <param name="Subject">Subject line.</param>
-/// <param name="Html">HTML part.</param>
-/// <param name="Text">Plain-text part.</param>
 public sealed record EmailPreviewResponse(
     [property: JsonPropertyName("subject")] string Subject,
     [property: JsonPropertyName("html")] string Html,
     [property: JsonPropertyName("text")] string Text);
 
-/// <summary><c>POST /v1/{slug}/email/test</c> body.</summary>
-/// <param name="Kind">The email kind.</param>
-/// <param name="Locale">The locale.</param>
-/// <param name="To">The recipient; the dashboard sends only to its signed-in user.</param>
-/// <param name="Actor">Who asked for it.</param>
-/// <param name="Branding">Draft branding instead of the saved one.</param>
-/// <param name="Fields">Draft copy instead of the saved one.</param>
 public sealed record EmailTestRequest(
     [property: JsonPropertyName("kind")] string? Kind,
     [property: JsonPropertyName("locale")] string? Locale,
@@ -118,9 +71,6 @@ public sealed record EmailTestRequest(
     [property: JsonPropertyName("branding")] EmailBranding? Branding = null,
     [property: JsonPropertyName("fields")] EmailTemplateFields? Fields = null);
 
-/// <summary>A test email accepted by the provider; this does not confirm inbox delivery.</summary>
-/// <param name="To">The recipient.</param>
-/// <param name="Subject">The subject it was sent with.</param>
 public sealed record EmailTestResponse(
     [property: JsonPropertyName("to")] string To,
     [property: JsonPropertyName("subject")] string Subject);
@@ -129,24 +79,14 @@ public sealed record EmailTestResponse(
 [JsonSerializable(typeof(ErrorBody))]
 internal sealed partial class EmailEndpointJson : JsonSerializerContext;
 
-/// <summary>One saved version.</summary>
-/// <param name="Version">Its number.</param>
-/// <param name="CreatedAt">When it was saved.</param>
-/// <param name="Actor">Who saved it.</param>
-/// <param name="Change">What changed.</param>
 public sealed record EmailVersionSummary(
     [property: JsonPropertyName("version")] long Version,
     [property: JsonPropertyName("created_at")] DateTimeOffset? CreatedAt,
     [property: JsonPropertyName("actor")] EmailActor? Actor,
     [property: JsonPropertyName("change")] string? Change);
 
-/// <summary>The newest saved versions, newest first.</summary>
-/// <param name="Versions">The versions.</param>
 public sealed record EmailVersionListResponse([property: JsonPropertyName("versions")] IReadOnlyList<EmailVersionSummary> Versions);
 
-/// <summary><c>POST /v1/{slug}/email/versions/{version}/restore</c> body.</summary>
-/// <param name="ExpectedVersion">The configuration version the caller last read.</param>
-/// <param name="Actor">Who is making the change.</param>
 public sealed record EmailRestoreRequest(
     [property: JsonPropertyName("expected_version")] long? ExpectedVersion,
     [property: JsonPropertyName("actor")] EmailActor? Actor);
@@ -155,21 +95,14 @@ internal readonly union EmailBody<T>(T, Validation, PayloadTooLarge, Unsupported
 
 internal readonly union SavedEmailConfig(EmailConfig, Conflict);
 
-/// <summary>
-/// What every <c>/v1/{slug}/email/*</c> endpoint shares. The only caller is the ts-dashboard confidential client, with
-/// HTTP Basic credentials (RFC 6749 section 2.3.1) checked in constant time against <c>TS_AUTH_DASHBOARD_CLIENT_SECRET</c>;
-/// the dashboard authorizes its own user first. Only the <c>terrascale</c> instance exists.
-/// </summary>
 internal static class EmailApi
 {
     public const int MaxBodyBytes = 64 * 1024;
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
 
-    /// <summary>A 401 for a missing or wrong client credential, a 404 for another instance, or null to proceed.</summary>
     public static IResult? Refuse(HttpContext context, AuthOptions options) => DashboardClientAuthentication.Refuse(context, options);
 
-    /// <summary>Reads a JSON body of at most <see cref="MaxBodyBytes"/>; anything else is 400, 413 or 415.</summary>
     public static async Task<EmailBody<T>> ReadAsync<T>(HttpContext context, CancellationToken cancellationToken)
     {
         if (!context.Request.HasJsonContentType())
@@ -225,7 +158,6 @@ internal static class EmailApi
         Conflict error => ErrorResults.ToResult(error),
     };
 
-    /// <summary>The configuration with drafts applied for a preview or test.</summary>
     public static EmailConfig Draft(EmailConfig config, AuthEmailKind kind, string locale, EmailBranding? branding, EmailTemplateFields? fields) => config with
     {
         Branding = branding is null ? config.Branding : EmailValidation.Branding(branding),
@@ -239,7 +171,6 @@ internal static class EmailApi
         return fields == new EmailTemplateFields() ? [.. others] : [.. others, new EmailTemplateOverride(name, locale, fields)];
     }
 
-    /// <summary>Realistic synthetic values for previews and test sends.</summary>
     public static AuthEmailValues Sample(AuthEmailKind kind, string email, AuthOptions options, DateTimeOffset now) => new(email)
     {
         Code = kind is AuthEmailKind.MagicLink or AuthEmailKind.Invitation or AuthEmailKind.NewDevice or AuthEmailKind.Lockout or AuthEmailKind.EmailChangeNotice ? null : "123456",
@@ -280,10 +211,8 @@ internal static class EmailApi
         TypedResults.Json(new ErrorBody(new ErrorDetail(code, message)), EmailEndpointJson.Default.ErrorBody, statusCode: status);
 }
 
-/// <summary><c>GET /v1/{slug}/email/branding</c>: the saved branding and the defaults.</summary>
 public sealed class GetEmailBrandingEndpoint(EmailSettings settings, AuthEmails emails, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/v1/{slug}/email/branding");
@@ -297,16 +226,13 @@ public sealed class GetEmailBrandingEndpoint(EmailSettings settings, AuthEmails 
         Metadata(new RequiresSecurity(SecuritySchemes.ClientBasic));
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         EmailApi.Refuse(this.HttpContext, options)
         ?? TypedResults.Json(EmailApi.Branding(await settings.GetAsync(OidcIssuer.InstanceId, cancellationToken), emails));
 }
 
-/// <summary><c>PUT /v1/{slug}/email/branding</c>: saves the branding as a new version.</summary>
 public sealed class PutEmailBrandingEndpoint(EmailSettings settings, AuthEmails emails, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Put("/v1/{slug}/email/branding");
@@ -314,7 +240,6 @@ public sealed class PutEmailBrandingEndpoint(EmailSettings settings, AuthEmails 
         Summary("Save email branding");
         Description("Replaces the whole branding (null or omitted fields use the default) if the configuration is still at expected_version, and returns the new version. Colours are #rrggbb; URLs are https; logo_url needs logo_width and logo_height.");
         Tags("Email");
-        // TerraScale.Endpoints drops Accepts<T>\'s type from OpenAPI; ASP.NET\'s own metadata keeps the request schema.
         Metadata(new AcceptsMetadata(["application/json"], typeof(EmailBrandingRequest)));
         Produces<EmailBrandingResponse>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -325,7 +250,6 @@ public sealed class PutEmailBrandingEndpoint(EmailSettings settings, AuthEmails 
         Metadata(new RequiresSecurity(SecuritySchemes.ClientBasic));
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (EmailApi.Refuse(this.HttpContext, options) is { } refused)
@@ -352,10 +276,8 @@ public sealed class PutEmailBrandingEndpoint(EmailSettings settings, AuthEmails 
     }
 }
 
-/// <summary><c>GET /v1/{slug}/email/templates</c>: every kind and locale, and which are overridden.</summary>
 public sealed class ListEmailTemplatesEndpoint(EmailSettings settings, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/v1/{slug}/email/templates");
@@ -369,7 +291,6 @@ public sealed class ListEmailTemplatesEndpoint(EmailSettings settings, AuthOptio
         Metadata(new RequiresSecurity(SecuritySchemes.ClientBasic));
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (EmailApi.Refuse(this.HttpContext, options) is { } refused)
@@ -387,10 +308,8 @@ public sealed class ListEmailTemplatesEndpoint(EmailSettings settings, AuthOptio
     }
 }
 
-/// <summary><c>GET /v1/{slug}/email/templates/{kind}/{locale}</c>: one template's override and defaults.</summary>
 public sealed class GetEmailTemplateEndpoint(EmailSettings settings, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/v1/{slug}/email/templates/{kind}/{locale}");
@@ -404,7 +323,6 @@ public sealed class GetEmailTemplateEndpoint(EmailSettings settings, AuthOptions
         Metadata(new RequiresSecurity(SecuritySchemes.ClientBasic));
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (EmailApi.Refuse(this.HttpContext, options) is { } refused)
@@ -418,10 +336,8 @@ public sealed class GetEmailTemplateEndpoint(EmailSettings settings, AuthOptions
     }
 }
 
-/// <summary><c>PUT /v1/{slug}/email/templates/{kind}/{locale}</c>: saves one template's override as a new version.</summary>
 public sealed class PutEmailTemplateEndpoint(EmailSettings settings, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Put("/v1/{slug}/email/templates/{kind}/{locale}");
@@ -429,7 +345,6 @@ public sealed class PutEmailTemplateEndpoint(EmailSettings settings, AuthOptions
         Summary("Save an email template");
         Description("Replaces the override (null fields use the default; all null resets the template) if the configuration is still at expected_version. Copy is plain text with the kind's {{ name }} placeholders only; a blank line in body starts a paragraph. The code, button, expiry line and footer always come from the layout.");
         Tags("Email");
-        // TerraScale.Endpoints drops Accepts<T>\'s type from OpenAPI; ASP.NET\'s own metadata keeps the request schema.
         Metadata(new AcceptsMetadata(["application/json"], typeof(EmailTemplateRequest)));
         Produces<EmailTemplateResponse>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -440,7 +355,6 @@ public sealed class PutEmailTemplateEndpoint(EmailSettings settings, AuthOptions
         Metadata(new RequiresSecurity(SecuritySchemes.ClientBasic));
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (EmailApi.Refuse(this.HttpContext, options) is { } refused)
@@ -470,10 +384,8 @@ public sealed class PutEmailTemplateEndpoint(EmailSettings settings, AuthOptions
     }
 }
 
-/// <summary><c>POST /v1/{slug}/email/preview</c>: renders an email with sample values and optional drafts.</summary>
 public sealed class PreviewEmailEndpoint(EmailSettings settings, AuthEmails emails, AuthOptions options, TimeProvider clock) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/v1/{slug}/email/preview");
@@ -481,7 +393,6 @@ public sealed class PreviewEmailEndpoint(EmailSettings settings, AuthEmails emai
         Summary("Preview an email");
         Description("Renders kind in locale with synthetic values (code 123456; lockout until 15 minutes from now in UTC, without a code, link or expiry line) and the saved configuration, or the draft branding and fields given. Nothing is saved or sent. color_scheme light or dark pins an auto theme for the preview.");
         Tags("Email");
-        // TerraScale.Endpoints drops Accepts<T>\'s type from OpenAPI; ASP.NET\'s own metadata keeps the request schema.
         Metadata(new AcceptsMetadata(["application/json"], typeof(EmailPreviewRequest)));
         Produces<EmailPreviewResponse>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -491,7 +402,6 @@ public sealed class PreviewEmailEndpoint(EmailSettings settings, AuthEmails emai
         Metadata(new RequiresSecurity(SecuritySchemes.ClientBasic));
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (EmailApi.Refuse(this.HttpContext, options) is { } refused)
@@ -524,13 +434,10 @@ public sealed class PreviewEmailEndpoint(EmailSettings settings, AuthEmails emai
     }
 }
 
-/// <summary><c>POST /v1/{slug}/email/test</c>: sends a sample email to one address.</summary>
 public sealed class TestEmailEndpoint(EmailSettings settings, AuthEmails emails, IEmailSender email, AttemptLimiter limiter, AuthOptions options, TimeProvider clock) : EndpointWithoutRequest<IResult>
 {
-    /// <summary>Test emails per instance per minute, across replicas.</summary>
     public const int PerMinute = 10;
 
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/v1/{slug}/email/test");
@@ -538,7 +445,6 @@ public sealed class TestEmailEndpoint(EmailSettings settings, AuthEmails emails,
         Summary("Send a test email");
         Description("Renders like preview (auto colour scheme) and sends it to `to` with the subject prefixed [Test]. 202 confirms provider acceptance, not inbox delivery. Rejected or unknown acceptance returns 502; do not automatically retry unknown acceptance. At most 10 per instance per minute; capacity refusals also return 429 with Retry-After.");
         Tags("Email");
-        // TerraScale.Endpoints drops Accepts<T>\'s type from OpenAPI; ASP.NET\'s own metadata keeps the request schema.
         Metadata(new AcceptsMetadata(["application/json"], typeof(EmailTestRequest)));
         Produces<EmailTestResponse>(StatusCodes.Status202Accepted);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -550,7 +456,6 @@ public sealed class TestEmailEndpoint(EmailSettings settings, AuthEmails emails,
         Metadata(new RequiresSecurity(SecuritySchemes.ClientBasic));
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (EmailApi.Refuse(this.HttpContext, options) is { } refused)
@@ -598,10 +503,8 @@ public sealed class TestEmailEndpoint(EmailSettings settings, AuthEmails emails,
     }
 }
 
-/// <summary><c>GET /v1/{slug}/email/versions</c>: the newest saved versions.</summary>
 public sealed class ListEmailVersionsEndpoint(EmailSettings settings, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/v1/{slug}/email/versions");
@@ -616,7 +519,6 @@ public sealed class ListEmailVersionsEndpoint(EmailSettings settings, AuthOption
         Metadata(new RequiresSecurity(SecuritySchemes.ClientBasic));
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (EmailApi.Refuse(this.HttpContext, options) is { } refused)
@@ -637,10 +539,8 @@ public sealed class ListEmailVersionsEndpoint(EmailSettings settings, AuthOption
     }
 }
 
-/// <summary><c>GET /v1/{slug}/email/versions/{version}</c>: one saved version in full.</summary>
 public sealed class GetEmailVersionEndpoint(EmailSettings settings, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/v1/{slug}/email/versions/{version}");
@@ -654,7 +554,6 @@ public sealed class GetEmailVersionEndpoint(EmailSettings settings, AuthOptions 
         Metadata(new RequiresSecurity(SecuritySchemes.ClientBasic));
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         EmailApi.Refuse(this.HttpContext, options)
         ?? await Find(settings, this.HttpContext, cancellationToken) switch
@@ -670,10 +569,8 @@ public sealed class GetEmailVersionEndpoint(EmailSettings settings, AuthOptions 
             : new NotFound("No such version.");
 }
 
-/// <summary><c>POST /v1/{slug}/email/versions/{version}/restore</c>: saves an earlier version again as the newest.</summary>
 public sealed class RestoreEmailVersionEndpoint(EmailSettings settings, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/v1/{slug}/email/versions/{version}/restore");
@@ -681,7 +578,6 @@ public sealed class RestoreEmailVersionEndpoint(EmailSettings settings, AuthOpti
         Summary("Roll back the email configuration");
         Description("Saves version's branding and templates as a new version (change rollback:{version}) if the configuration is still at expected_version. History is never rewritten.");
         Tags("Email");
-        // TerraScale.Endpoints drops Accepts<T>\'s type from OpenAPI; ASP.NET\'s own metadata keeps the request schema.
         Metadata(new AcceptsMetadata(["application/json"], typeof(EmailRestoreRequest)));
         Produces<EmailConfig>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -692,7 +588,6 @@ public sealed class RestoreEmailVersionEndpoint(EmailSettings settings, AuthOpti
         Metadata(new RequiresSecurity(SecuritySchemes.ClientBasic));
     }
 
-    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (EmailApi.Refuse(this.HttpContext, options) is { } refused)

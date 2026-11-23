@@ -1,22 +1,26 @@
+using Dapper;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using StripeException = Stripe.StripeException;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing;
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Common.UI;
 
 namespace TerraScale.Dashboard.Features.Profile
 {
-    // ts-auth deletes the user, its sessions, tokens, memberships and the organizations only
-    // the user belongs to, including project/database erasure; the dashboard then drops
-    // its own records for the scope confirmed by ts-auth.
-    // ts-auth fences that scope atomically; paid plans end in Stripe, without a refund, only for
-    // organizations it proves deleted, so a membership change can never cancel a shared plan.
     public static partial class AccountDeletion
     {
+        private const string DeletionByKey = DashboardSql.AccountDeletions.Select + " WHERE key_hash = @KeyHash";
+        private const string DeletionsOf = DashboardSql.AccountDeletions.Select + " WHERE user_id = @UserId";
+        private const string RemoveCompleted = "DELETE FROM account_deletions WHERE completed_until <= @Now";
+        private const string RemoveKey = "DELETE FROM account_deletions WHERE key_hash = @KeyHash";
+        private const string Complete = """
+            UPDATE account_deletions SET user_id = NULL, nonce = NULL, ciphertext = NULL, tag = NULL, completed_until = @CompletedUntil, version = @Version
+            WHERE id = @Id AND version = @OriginalVersion
+            """;
+
         private const string Operations = "account_deletions";
         internal const string Cookie = "ts-dashboard-deletion";
         private sealed record Operation(SessionRecord Session, string[] Organizations, string Receipt, string Authorization, DateTimeOffset ExpiresAt)
@@ -28,12 +32,12 @@ namespace TerraScale.Dashboard.Features.Profile
         }
         private static readonly TimeSpan CompletionKept = TimeSpan.FromDays(15);
 
-        public static async Task<IResult> DeleteAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, ITsAuthPlatform platform, IDbContextFactory<DashboardDbContext> storage, AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity)
+        public static async Task<IResult> DeleteAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, ITsAuthPlatform platform, DashboardDb storage, AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity)
         {
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, "/profile?tab=danger", Results.StatusCode(403));
+                return RequestError.FormExpired(http, "/profile?tab=danger", TypedResults.StatusCode(403));
             }
 
             if (await ReadOperationAsync(http, storage, identity) is { } pending)
@@ -44,7 +48,7 @@ namespace TerraScale.Dashboard.Features.Profile
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var cancellationToken = http.RequestAborted;
@@ -64,7 +68,6 @@ namespace TerraScale.Dashboard.Features.Profile
                     var members = await platform.ListMembersAsync(context.Session, org.Id, cancellationToken);
                     if (members.Any(member => member.UserId != context.UserId))
                     {
-                        // Checked before any subscription is canceled; ts-auth enforces the same rule below.
                         if (members.Any(member => member.UserId == context.UserId && member.Role == "owner") &&
                             !members.Any(member => member.UserId != context.UserId && member.Role == "owner"))
                         {
@@ -86,8 +89,6 @@ namespace TerraScale.Dashboard.Features.Profile
                 {
                     throw StepUpFlow.Required();
                 }
-                // No vendor or data effects precede successful consumption. A lost answer
-                // requires another hosted proof; the pending intent never becomes an operation.
                 var authorization = await StepUpFlow.ConsumeAsync(http, context, intent);
                 if (string.IsNullOrEmpty(authorization))
                 {
@@ -109,7 +110,6 @@ namespace TerraScale.Dashboard.Features.Profile
                 }
                 catch (AccountAccessException error) when (error.Code == "last_owner")
                 { throw new AccountAccessException("Transfer ownership of your shared organizations before deleting your account.", 409); }
-                // Dashboard records go only after ts-auth confirms; a 401/404 can mean an expired token or a ts-auth without the route.
                 confirmed = true;
                 return await CompleteAsync(http, sessions, platform, storage, tokens, billing, operation);
             }
@@ -122,7 +122,7 @@ namespace TerraScale.Dashboard.Features.Profile
         }
 
         private static async Task<IResult> RefusedAsync(HttpContext http, DashboardSessions sessions, AccountContext context, AccessTokens tokens,
-            ITsAuthPlatform platform, IDbContextFactory<DashboardDbContext> storage, IDashboardIdentity identity, AccountAccessException error, IFormCollection form, CancellationToken cancellationToken)
+            ITsAuthPlatform platform, DashboardDb storage, IDashboardIdentity identity, AccountAccessException error, IFormCollection form, CancellationToken cancellationToken)
         {
             if (error.StatusCode == 409 && await ReadOperationAsync(http, storage, identity) is { } refused)
             {
@@ -142,12 +142,12 @@ namespace TerraScale.Dashboard.Features.Profile
             return view;
         }
 
-        public static async Task<IResult> ContinueAsync(HttpContext http, DashboardSessions sessions, ITsAuthPlatform platform, IDbContextFactory<DashboardDbContext> storage, AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity)
+        public static async Task<IResult> ContinueAsync(HttpContext http, DashboardSessions sessions, ITsAuthPlatform platform, DashboardDb storage, AccessTokens tokens, StripeBilling billing, IDashboardIdentity identity)
         {
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, "/account-deletion", Results.StatusCode(403));
+                return RequestError.FormExpired(http, "/account-deletion", TypedResults.StatusCode(403));
             }
 
             if (await CompletedAsync(http, storage))
@@ -157,10 +157,10 @@ namespace TerraScale.Dashboard.Features.Profile
             }
 
             return await ReadOperationAsync(http, storage, identity) is { } operation
-                ? await AdvanceAsync(http, sessions, platform, storage, tokens, billing, operation) : Results.Unauthorized();
+                ? await AdvanceAsync(http, sessions, platform, storage, tokens, billing, operation) : TypedResults.Unauthorized();
         }
 
-        private static async Task<IResult> AdvanceAsync(HttpContext http, DashboardSessions sessions, ITsAuthPlatform platform, IDbContextFactory<DashboardDbContext> storage, AccessTokens tokens, StripeBilling billing, Operation operation)
+        private static async Task<IResult> AdvanceAsync(HttpContext http, DashboardSessions sessions, ITsAuthPlatform platform, DashboardDb storage, AccessTokens tokens, StripeBilling billing, Operation operation)
         {
             try
             {
@@ -170,7 +170,7 @@ namespace TerraScale.Dashboard.Features.Profile
                 {
                     await DropAsync(storage, Key(http), http.RequestAborted);
                     http.Response.Cookies.Delete(Cookie);
-                    return Results.Problem(StepUpFlow.Required().Message, statusCode: 403,
+                    return TypedResults.Problem(StepUpFlow.Required().Message, statusCode: 403,
                         extensions: new Dictionary<string, object?> { ["code"] = "step_up_required" });
                 }
                 if (!completed)
@@ -190,13 +190,13 @@ namespace TerraScale.Dashboard.Features.Profile
 
                 await DropAsync(storage, Key(http), http.RequestAborted);
                 http.Response.Cookies.Delete(Cookie);
-                return Results.Text(error.Message + " Dashboard records have been retained. Return to your profile to resolve the issue.", statusCode: error.StatusCode);
+                return TypedResults.Text(error.Message + " Dashboard records have been retained. Return to your profile to resolve the issue.", statusCode: error.StatusCode);
             }
             catch (Exception error) when (Transient(error, http)) { return Retry(http); }
         }
 
         private static async Task<Operation> PrepareCheckoutDeletionAsync(HttpContext http, ITsAuthPlatform platform,
-            IDbContextFactory<DashboardDbContext> storage, IDashboardIdentity identity, StripeBilling billing, Operation operation)
+            DashboardDb storage, IDashboardIdentity identity, StripeBilling billing, Operation operation)
         {
             await billing.PrepareOrganizationAccountDeletionAsync(operation.Session, http, http.RequestAborted);
             var context = await http.RequestServices.GetRequiredService<AccountService>().GetContextAsync(operation.Session, http.RequestAborted);
@@ -220,12 +220,11 @@ namespace TerraScale.Dashboard.Features.Profile
             return HttpRedirects.SeeOther("/account-deletion?retry=" + Math.Min(5, Math.Clamp(attempt, 0, 5) + 1));
         }
 
-        private static async Task<IResult> CompleteAsync(HttpContext http, DashboardSessions sessions, ITsAuthPlatform platform, IDbContextFactory<DashboardDbContext> storage, AccessTokens tokens, StripeBilling? billing, Operation operation)
+        private static async Task<IResult> CompleteAsync(HttpContext http, DashboardSessions sessions, ITsAuthPlatform platform, DashboardDb storage, AccessTokens tokens, StripeBilling? billing, Operation operation)
         {
             var cancellationToken = http.RequestAborted;
             foreach (var orgId in operation.Organizations)
             {
-                // A sole organization can become shared before ts-auth fences it. Only its own deletion proof permits cleanup.
                 try
                 {
                     if (!await platform.AccountDeletionOrganizationCompletedAsync(operation.Receipt, orgId, cancellationToken))
@@ -234,8 +233,6 @@ namespace TerraScale.Dashboard.Features.Profile
                     }
                 }
                 catch (AccountAccessException error) when (error.StatusCode == 404) { continue; }
-                // The billing binding stays for DeletionReconciler, which ends the plan from the same proof
-                // until it succeeds and only then fences billing; this attempt just ends it without waiting.
                 if (billing is not null)
                 {
                     try { await billing.EndSubscriptionAsync(orgId, cancellationToken, completedDeletion: true); }
@@ -258,8 +255,6 @@ namespace TerraScale.Dashboard.Features.Profile
             return HttpRedirects.SeeOther("/account-deleted");
         }
 
-        // Possession of the original opaque dashboard cookie continues only this previously authorized operation.
-        // It never authenticates a user or grants access to any other dashboard resource.
         private static string Key(HttpContext http)
         {
             var cookie = http.Request.Cookies[Cookie] ?? http.Request.Cookies["ts-dashboard-session"];
@@ -271,7 +266,7 @@ namespace TerraScale.Dashboard.Features.Profile
             return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(cookie)));
         }
 
-        private static async Task WriteOperationAsync(HttpContext http, IDbContextFactory<DashboardDbContext> storage, IDashboardIdentity identity, Operation operation)
+        private static async Task WriteOperationAsync(HttpContext http, DashboardDb storage, IDashboardIdentity identity, Operation operation)
         {
             var key = Key(http);
             var nonce = RandomNumberGenerator.GetBytes(12);
@@ -282,11 +277,11 @@ namespace TerraScale.Dashboard.Features.Profile
                 var tag = new byte[16];
                 using var aes = new AesGcm(Convert.FromBase64String((await identity.ReadAsync(http.RequestAborted)).SessionEncryptionKey), 16);
                 aes.Encrypt(nonce, bytes, ciphertext, tag, Encoding.UTF8.GetBytes(Operations + key));
-                await using var db = await storage.CreateDbContextAsync(http.RequestAborted);
-                var row = await db.AccountDeletions.SingleOrDefaultAsync(item => item.KeyHash == key, http.RequestAborted);
+                await using var connection = await storage.OpenAsync(http.RequestAborted);
+                var row = await connection.QuerySingleOrDefaultAsync<AccountDeletionRow>(DeletionByKey, new { KeyHash = key });
                 if (row is null)
                 {
-                    db.AccountDeletions.Add(new AccountDeletionRow
+                    await connection.ExecuteAsync(DashboardSql.AccountDeletions.Insert, new AccountDeletionRow
                     {
                         Id = AccountService.NewId(),
                         KeyHash = key,
@@ -303,26 +298,27 @@ namespace TerraScale.Dashboard.Features.Profile
                     row.Nonce = nonce;
                     row.Ciphertext = ciphertext;
                     row.Tag = tag;
+                    row.OriginalVersion = row.Version;
                     row.Version = AccountService.NewId();
+                    DashboardDb.Expect(await connection.ExecuteAsync(DashboardSql.AccountDeletions.Update, row));
                 }
-                await db.SaveChangesAsync(http.RequestAborted);
             }
             finally { CryptographicOperations.ZeroMemory(bytes); }
             http.Response.Cookies.Append(Cookie, http.Request.Cookies[Cookie] ?? http.Request.Cookies["ts-dashboard-session"]!,
                 new CookieOptions { HttpOnly = true, Secure = http.Request.IsHttps, SameSite = SameSiteMode.Strict, Path = "/" });
         }
 
-        private static async Task<Operation?> ReadOperationAsync(HttpContext http, IDbContextFactory<DashboardDbContext> storage, IDashboardIdentity identity)
+        private static async Task<Operation?> ReadOperationAsync(HttpContext http, DashboardDb storage, IDashboardIdentity identity)
         {
             return await FindAsync(http, storage) is { CompletedUntil: null } row ? await OpenAsync(row, identity, http.RequestAborted) : null;
         }
 
-        private static async Task<bool> CompletedAsync(HttpContext http, IDbContextFactory<DashboardDbContext> storage)
+        private static async Task<bool> CompletedAsync(HttpContext http, DashboardDb storage)
         {
             return await FindAsync(http, storage) is { CompletedUntil: { } until } && RowSync.At(until) > http.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow();
         }
 
-        private static async Task<AccountDeletionRow?> FindAsync(HttpContext http, IDbContextFactory<DashboardDbContext> storage)
+        private static async Task<AccountDeletionRow?> FindAsync(HttpContext http, DashboardDb storage)
         {
             var cookie = http.Request.Cookies[Cookie] ?? http.Request.Cookies["ts-dashboard-session"];
             if (cookie is not { Length: 64 } || !cookie.All(char.IsAsciiHexDigitLower))
@@ -331,17 +327,17 @@ namespace TerraScale.Dashboard.Features.Profile
             }
 
             var key = Key(http);
-            await using var db = await storage.CreateDbContextAsync(http.RequestAborted);
-            return await db.AccountDeletions.AsNoTracking().SingleOrDefaultAsync(row => row.KeyHash == key, http.RequestAborted);
+            await using var connection = await storage.OpenAsync(http.RequestAborted);
+            return await connection.QuerySingleOrDefaultAsync<AccountDeletionRow>(DeletionByKey, new { KeyHash = key });
         }
 
-        public static async Task CleanOperationsAsync(IDbContextFactory<DashboardDbContext> storage, IDashboardIdentity identity, string subject, TimeProvider clock,
+        public static async Task CleanOperationsAsync(DashboardDb storage, IDashboardIdentity identity, string subject, TimeProvider clock,
             CancellationToken cancellationToken)
         {
             var now = clock.GetUtcNow().UtcDateTime;
-            await using var db = await storage.CreateDbContextAsync(cancellationToken);
-            await db.AccountDeletions.Where(row => row.CompletedUntil <= now).ExecuteDeleteAsync(cancellationToken);
-            foreach (var row in await db.AccountDeletions.AsNoTracking().Where(row => row.UserId == subject).ToListAsync(cancellationToken))
+            await using var connection = await storage.OpenAsync(cancellationToken);
+            await connection.ExecuteAsync(RemoveCompleted, new { Now = now });
+            foreach (var row in await connection.QueryAsync<AccountDeletionRow>(DeletionsOf, new { UserId = subject }))
             {
                 var operation = await OpenAsync(row, identity, cancellationToken);
                 if (operation.Session.UserId != subject)
@@ -349,13 +345,7 @@ namespace TerraScale.Dashboard.Features.Profile
                     throw new IOException("Deletion operation ownership changed.");
                 }
 
-                await db.AccountDeletions.Where(saved => saved.Id == row.Id && saved.Version == row.Version).ExecuteUpdateAsync(saved => saved
-                    .SetProperty(item => item.UserId, (string?)null)
-                    .SetProperty(item => item.Nonce, (byte[]?)null)
-                    .SetProperty(item => item.Ciphertext, (byte[]?)null)
-                    .SetProperty(item => item.Tag, (byte[]?)null)
-                    .SetProperty(item => item.CompletedUntil, now + CompletionKept)
-                    .SetProperty(item => item.Version, AccountService.NewId()), cancellationToken);
+                await connection.ExecuteAsync(Complete, new { row.Id, OriginalVersion = row.Version, CompletedUntil = now + CompletionKept, Version = AccountService.NewId() });
             }
         }
 
@@ -382,10 +372,10 @@ namespace TerraScale.Dashboard.Features.Profile
             finally { CryptographicOperations.ZeroMemory(plaintext); }
         }
 
-        private static async Task DropAsync(IDbContextFactory<DashboardDbContext> storage, string key, CancellationToken cancellationToken)
+        private static async Task DropAsync(DashboardDb storage, string key, CancellationToken cancellationToken)
         {
-            await using var db = await storage.CreateDbContextAsync(cancellationToken);
-            await db.AccountDeletions.Where(row => row.KeyHash == key).ExecuteDeleteAsync(cancellationToken);
+            await using var connection = await storage.OpenAsync(cancellationToken);
+            await connection.ExecuteAsync(RemoveKey, new { KeyHash = key });
         }
 
         private static bool Transient(Exception error, HttpContext http)

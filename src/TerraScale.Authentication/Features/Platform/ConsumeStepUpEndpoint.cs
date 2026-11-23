@@ -3,10 +3,8 @@ using TerraScale.Authentication.Errors;
 
 namespace TerraScale.Authentication.Features.Platform;
 
-/// <summary>Consumes a dashboard authorization before its irreversible side effects.</summary>
 public sealed class ConsumeStepUpEndpoint(StepUpProofs proofs, PlatformAuthentication authentication) : PlatformEndpoint(authentication)
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Post("/v1/terrascale/step-up/consume");
@@ -15,7 +13,6 @@ public sealed class ConsumeStepUpEndpoint(StepUpProofs proofs, PlatformAuthentic
         Produces<StepUpGrantBody>(StatusCodes.Status200OK);
     }
 
-    /// <inheritdoc />
     protected override async Task<IResult> HandleAsync(UserRecord caller, CancellationToken cancellationToken)
     {
         var body = await this.BodyAsync(StepUpJson.Default.ConsumeStepUpRequest, cancellationToken);
@@ -45,8 +42,8 @@ public sealed class ConsumeStepUpEndpoint(StepUpProofs proofs, PlatformAuthentic
         await proofs.ConsumeAsync(caller, body.Proof, body.Purpose, body.Audience, receiptHash, cancellationToken, body.OrganizationId) switch
         {
             StepUpConsumption consumed => consumed.OperationGrant is { } grant
-                ? Results.Json(new StepUpGrantBody(grant), StepUpJson.Default.StepUpGrantBody)
-                : Results.NoContent(),
+                ? TypedResults.Json(new StepUpGrantBody(grant), StepUpJson.Default.StepUpGrantBody)
+                : TypedResults.NoContent(),
             Forbidden failure => ErrorResults.ToResult(failure),
         };
 }

@@ -1,15 +1,21 @@
-using Microsoft.EntityFrameworkCore;
+using Dapper;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Mcp;
 
 namespace TerraScale.Dashboard.Platform.Persistence;
 
-public sealed class StorageSweeper(IDbContextFactory<DashboardDbContext> storage, DashboardStateInitializer initializer, DashboardSessions sessions, TimeProvider time,
+public sealed class StorageSweeper(DashboardDb storage, DashboardDbUpRunner initializer, DashboardSessions sessions, TimeProvider time,
     ILogger<StorageSweeper> logger, BackgroundJobs jobs, BillingSchemaGate gate) : BackgroundService
 {
     public static readonly TimeSpan Interval = TimeSpan.FromMinutes(10);
 
     private const int BatchSize = 500;
+
+    private const string Sweep = """
+        DELETE FROM auth_flows WHERE expires_at <= @Now;
+        DELETE FROM sessions WHERE kind = @Credential AND expires_at <= @Now;
+        DELETE FROM mcp_codes WHERE expires_at <= @Now
+        """;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -21,15 +27,20 @@ public sealed class StorageSweeper(IDbContextFactory<DashboardDbContext> storage
             {
                 try
                 {
-                    if (!await gate.AllowsAsync(stoppingToken)) { continue; }
+                    if (!await gate.AllowsAsync(stoppingToken))
+                    {
+                        continue;
+                    }
+
                     await jobs.RunAsync("storage-sweep", Interval, async (claim, token) =>
                     {
                         var now = time.GetUtcNow().UtcDateTime;
-                        await using var db = await storage.CreateDbContextAsync(token);
-                        await db.AuthFlows.Where(flow => flow.ExpiresAt <= now).ExecuteDeleteAsync(token);
-                        await db.Sessions.Where(session => session.Kind == SessionRow.Credential && session.ExpiresAt <= now).ExecuteDeleteAsync(token);
-                        await db.McpCodes.Where(code => code.ExpiresAt <= now).ExecuteDeleteAsync(token);
-                        await McpRegistrations.ReclaimUnfinishedAsync(db, now, token);
+                        await using (var connection = await storage.OpenAsync(token))
+                        {
+                            await connection.ExecuteAsync(Sweep, new { Now = now, SessionRow.Credential });
+                        }
+
+                        await McpRegistrations.ReclaimUnfinishedAsync(storage, now, token);
                         await sessions.ExpireBrowserSessionsAsync(BatchSize, token);
                     }, stoppingToken);
                 }
@@ -37,7 +48,8 @@ public sealed class StorageSweeper(IDbContextFactory<DashboardDbContext> storage
                 {
                     logger.ExpiredRowsWereNotSwept(error.GetType().Name);
                 }
-            } while (await timer.WaitForNextTickAsync(stoppingToken));
+            }
+            while (await timer.WaitForNextTickAsync(stoppingToken));
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {

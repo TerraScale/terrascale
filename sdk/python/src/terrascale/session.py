@@ -1,10 +1,12 @@
-"""SQL WebSocket sessions (``terrascale.sql.v1``): interactive transactions, sync and asyncio.
+"""SQL WebSocket sessions (``terrascale.sql.v2``): interactive transactions, sync and asyncio.
 
 Outside a transaction every call runs as its own transaction; ``begin()`` opens one
 that lasts at most 5 seconds. Nothing on a session is resent. When the socket drops,
 an unanswered committing request closes the session with ``CommitUncertainError``;
 every later call raises that error. Without a committing request, a lost open
 transaction raises ``transaction_rolled_back`` until ``rollback()`` clears it.
+Every answer carries the session's causal bookmark, which the database handle keeps
+so later REST calls and sessions read these writes in any region.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from websockets.protocol import State
 from websockets.sync.client import ClientConnection, connect
 from websockets.typing import Subprotocol
 
+from . import _spec
 from . import sql as _sql
 from ._sql_connect_retry import ConnectRetry
 from .errors import (
@@ -35,6 +38,7 @@ from .errors import (
     SqlErrorCodes,
     TerraScaleError,
     error_for,
+    sql_error_class,
 )
 from .sql import Args, Row, Statement, StatementResult
 
@@ -44,7 +48,7 @@ if TYPE_CHECKING:
 
 __all__ = ["SUBPROTOCOL", "AsyncSqlSession", "SqlSession"]
 
-SUBPROTOCOL = "terrascale.sql.v1"
+SUBPROTOCOL = "terrascale.sql.v2"
 MAX_FRAME_BYTES = 1 << 20
 T = TypeVar("T")
 Statements = Sequence[str | tuple[str, Args] | Statement]
@@ -99,10 +103,19 @@ def _closed(exc: BaseException) -> TerraScaleError:
     return TerraScaleError(text)
 
 
-class _State:
-    """Protocol state shared by both sessions: frame ids, the transaction flag and a lost transaction."""
+def _handshake(db: Database | AsyncDatabase, consistency: str | None) -> dict[str, str]:
+    headers = _spec.causality(consistency, None)
+    known = db.bookmark
+    if known:
+        headers[_spec.BOOKMARK] = known
+    return headers
 
-    def __init__(self) -> None:
+
+class _State:
+    """Protocol state shared by both sessions: frame ids, the transaction flag, a lost transaction and the bookmark."""
+
+    def __init__(self, observe: Callable[[str], object]) -> None:
+        self.observe = observe
         self.next_id = 0
         self.transaction = False
         self.lost = False
@@ -128,11 +141,18 @@ class _State:
                        "the SQL session dropped and TerraBase rolled back the open transaction; call rollback()",
                        sqlstate="40000")
 
-    def frame(self, kind: str, statements: list[dict[str, Any]] | None) -> tuple[int, str]:
+    def frame(self, kind: str, statements: list[dict[str, Any]] | None, consistency: str | None = None,
+              bookmark: str | None = None) -> tuple[int, str]:
+        mode = _spec.consistency(consistency)
+        checked = _spec.bookmark(bookmark) if bookmark is not None else None
         self.next_id += 1
         body: dict[str, Any] = {"id": self.next_id, "type": kind}
         if statements is not None:
             body["statements"] = statements
+        if mode is not None:
+            body["consistency"] = mode
+        if checked is not None:
+            body["bookmark"] = checked
         text = json.dumps(body, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
         if len(text.encode()) > MAX_FRAME_BYTES:
             raise ValueError("a SQL frame is at most 1 MiB")
@@ -168,17 +188,23 @@ class _State:
                 not isinstance(body.get("error"), dict) or not isinstance(body["error"].get("code"), str)
             ):
                 raise ValueError("invalid SQL error")
+            bookmark = body.get("bookmark")
+            if bookmark is not None and not isinstance(bookmark, str):
+                raise ValueError("invalid bookmark")
+            if bookmark:
+                self.observe(bookmark)
         except ValueError:
             raise InvalidResponseError(0, "invalid_response", "TerraBase sent an invalid SQL frame") from None
-        frame_id = body.get("id")
-        if type(frame_id) is int:
+        raw_id = body.get("id")
+        frame_id = raw_id if type(raw_id) is int and raw_id > 0 else None
+        if frame_id is not None:
             self.pending.pop(frame_id, None)
             self.controls.discard(frame_id)
         self.transaction = body["transaction"]
         error = body.get("error")
         if isinstance(error, dict) and error.get("code") in {"commit_uncertain", "write_outcome_unknown"}:
             self.failure = CommitUncertainError(0, str(error["code"]), "the server reported an uncertain write outcome")
-        return (frame_id if type(frame_id) is int else None), body
+        return frame_id, body
 
 
 def _raise_error(body: dict[str, Any]) -> None:
@@ -188,16 +214,16 @@ def _raise_error(body: dict[str, Any]) -> None:
     if not isinstance(err, dict) or not isinstance(err.get("code"), str):
         raise InvalidResponseError(0, "invalid_response", "TerraBase sent an invalid SQL error frame")
     statement = err.get("statement")
-    sqlstate = err.get("sqlstate")
+    sqlstate = err.get("sqlState")
     message = err.get("message")
-    raise SqlError(0, err["code"], message if isinstance(message, str) else "",
-                   statement=statement if type(statement) is int else None,
-                   sqlstate=sqlstate if isinstance(sqlstate, str) and sqlstate else None)
+    raise sql_error_class(err["code"])(0, err["code"], message if isinstance(message, str) else "",
+                                       statement=statement if type(statement) is int else None,
+                                       sqlstate=sqlstate if isinstance(sqlstate, str) and sqlstate else None)
 
 
 def _results(body: dict[str, Any], expected: int, uncertain: bool) -> list[StatementResult]:
     try:
-        return _sql.results(body, expected)
+        return _sql.results(body, expected, frame=True)
     except (ValueError, KeyError, TypeError, AttributeError):
         cls = CommitUncertainError if uncertain else InvalidResponseError
         raise cls(0, "invalid_response", "invalid SQL answer; reconcile writes before retrying") from None
@@ -208,9 +234,10 @@ class SqlSession:
 
     Calls from several threads are sent one at a time."""
 
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, *, consistency: _spec.Consistency | None = None):
         self._db = db
-        self._state = _State()
+        self._consistency = _spec.consistency(consistency)
+        self._state = _State(lambda value: db._c._bookmarks.observe(db.name, value))
         self._lock = threading.Lock()
         self._ws: ClientConnection | None = self._open()
 
@@ -224,7 +251,8 @@ class SqlSession:
             token = client._bearer()
             try:
                 ws = connect(url, subprotocols=[Subprotocol(SUBPROTOCOL)], user_agent_header=None, max_size=None,
-                             additional_headers={**client._headers, "Authorization": f"Bearer {token}"},
+                             additional_headers={**client._headers, **_handshake(self._db, self._consistency),
+                                                 "Authorization": f"Bearer {token}"},
                              proxy=_proxy(url), open_timeout=retry.remaining())
             except InvalidStatus as exc:
                 err = _refusal(exc)
@@ -250,14 +278,15 @@ class SqlSession:
             with contextlib.suppress(Exception):
                 ws.close()
 
-    def _call(self, kind: str, statements: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    def _call(self, kind: str, statements: list[dict[str, Any]] | None = None, consistency: str | None = None,
+              bookmark: str | None = None) -> dict[str, Any]:
         with self._lock:
             state = self._state
             if self._ws is not None and self._ws.state is not State.OPEN:
                 self._drop()
             if state.local(kind):
                 return {"results": []}
-            frame_id, frame = state.frame(kind, statements)
+            frame_id, frame = state.frame(kind, statements, consistency, bookmark)
             if self._ws is None:
                 self._ws = self._open()
             ws = self._ws
@@ -287,30 +316,41 @@ class SqlSession:
         """Whether a transaction is open, as of the last answer."""
         return self._state.transaction
 
-    @overload
-    def query(self, sql: str, args: Args = None) -> builtins.list[Row]: ...
+    @property
+    def bookmark(self) -> str | None:
+        """The newest bookmark of this session's database, shared with its handle."""
+        return self._db.bookmark
 
     @overload
-    def query(self, sql: str, args: Args, mapper: Callable[..., T]) -> builtins.list[T]: ...
+    def query(self, sql: str, args: Args = None, *, consistency: _spec.Consistency | None = None,
+              bookmark: str | None = None) -> builtins.list[Row]: ...
 
-    def query(self, sql: str, args: Args = None, mapper: Callable[..., T] | None = None) -> builtins.list[Any]:
+    @overload
+    def query(self, sql: str, args: Args, mapper: Callable[..., T], *, consistency: _spec.Consistency | None = None,
+              bookmark: str | None = None) -> builtins.list[T]: ...
+
+    def query(self, sql: str, args: Args = None, mapper: Callable[..., T] | None = None, *,
+              consistency: _spec.Consistency | None = None, bookmark: str | None = None) -> builtins.list[Any]:
         """Run one statement and return its rows, or ``mapper(**row)`` for each row."""
-        result = self.execute(sql, args)
+        result = self.execute(sql, args, consistency=consistency, bookmark=bookmark)
         return result.rows if mapper is None else result.as_(mapper)
 
-    def execute(self, sql: str | Statement, args: Args = None) -> StatementResult:
+    def execute(self, sql: str | Statement, args: Args = None, *, consistency: _spec.Consistency | None = None,
+                bookmark: str | None = None) -> StatementResult:
         """Run one statement, in the open transaction or as its own."""
-        return self.batch([_sql.statement(sql, args)])[0]
+        return self.batch([_sql.statement(sql, args)], consistency=consistency, bookmark=bookmark)[0]
 
-    def batch(self, statements: Statements) -> builtins.list[StatementResult]:
-        """Run 1 to 256 statements, all or nothing outside a transaction; one result per statement."""
+    def batch(self, statements: Statements, *, consistency: _spec.Consistency | None = None,
+              bookmark: str | None = None) -> builtins.list[StatementResult]:
+        """Run 1 to 256 statements, all or nothing outside a transaction; one result per statement.
+        ``consistency`` is fast or strong for this frame; ``bookmark`` is merged into the session's bookmark first."""
         items = _sql.statements(statements)
         uncertain = self._state.uncertain("execute")
-        return _results(self._call("execute", items), len(items), uncertain)
+        return _results(self._call("execute", items, consistency, bookmark), len(items), uncertain)
 
-    def begin(self) -> None:
-        """Open a transaction of at most 5 seconds."""
-        self._call("begin")
+    def begin(self, *, consistency: _spec.Consistency | None = None) -> None:
+        """Open a transaction of at most 5 seconds; strong commits it through a region quorum."""
+        self._call("begin", None, consistency)
 
     def commit(self) -> None:
         """Commit; after a failed statement it rolls back and raises ``transaction_rolled_back``."""
@@ -319,9 +359,9 @@ class SqlSession:
     def rollback(self) -> None:
         self._call("rollback")
 
-    def transaction(self, fn: Callable[[SqlSession], T]) -> T:
+    def transaction(self, fn: Callable[[SqlSession], T], *, consistency: _spec.Consistency | None = None) -> T:
         """Begin, run ``fn(session)`` and commit; roll back and re-raise when ``fn`` raises."""
-        self.begin()
+        self.begin(consistency=consistency)
         try:
             result = fn(self)
         except BaseException:
@@ -362,9 +402,10 @@ class AsyncSqlSession:
     ``session = await db.connect()`` or ``async with db.connect() as session``.
     Calls may overlap; answers are matched by frame id."""
 
-    def __init__(self, db: AsyncDatabase):
+    def __init__(self, db: AsyncDatabase, *, consistency: _spec.Consistency | None = None):
         self._db = db
-        self._state = _State()
+        self._consistency = _spec.consistency(consistency)
+        self._state = _State(lambda value: db._c._bookmarks.observe(db.name, value))
         self._link: _Link | None = None
         self._opening = asyncio.Lock()
 
@@ -395,7 +436,8 @@ class AsyncSqlSession:
             token = await client._bearer()
             try:
                 ws = await aconnect(url, subprotocols=[Subprotocol(SUBPROTOCOL)], user_agent_header=None, max_size=None,
-                                    additional_headers={**client._headers, "Authorization": f"Bearer {token}"},
+                                    additional_headers={**client._headers, **_handshake(self._db, self._consistency),
+                                                        "Authorization": f"Bearer {token}"},
                                     proxy=_proxy(url), open_timeout=retry.remaining())
             except InvalidStatus as exc:
                 err = _refusal(exc)
@@ -438,13 +480,14 @@ class AsyncSqlSession:
                 waiter.set_exception(self._state.failure or exc)
         link.pending.clear()
 
-    async def _call(self, kind: str, statements: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    async def _call(self, kind: str, statements: list[dict[str, Any]] | None = None, consistency: str | None = None,
+                    bookmark: str | None = None) -> dict[str, Any]:
         state = self._state
         if self._link is not None and self._link.ws.state is not State.OPEN:
             self._drop(self._link, TerraScaleError("the SQL session closed"))
         if state.local(kind):
             return {"results": []}
-        frame_id, frame = state.frame(kind, statements)
+        frame_id, frame = state.frame(kind, statements, consistency, bookmark)
         link = await self._connected()
         state.local(kind)
         waiter = asyncio.get_running_loop().create_future()
@@ -476,30 +519,41 @@ class AsyncSqlSession:
         """Whether a transaction is open, as of the last answer."""
         return self._state.transaction
 
-    @overload
-    async def query(self, sql: str, args: Args = None) -> builtins.list[Row]: ...
+    @property
+    def bookmark(self) -> str | None:
+        """The newest bookmark of this session's database, shared with its handle."""
+        return self._db.bookmark
 
     @overload
-    async def query(self, sql: str, args: Args, mapper: Callable[..., T]) -> builtins.list[T]: ...
+    async def query(self, sql: str, args: Args = None, *, consistency: _spec.Consistency | None = None,
+              bookmark: str | None = None) -> builtins.list[Row]: ...
 
-    async def query(self, sql: str, args: Args = None, mapper: Callable[..., T] | None = None) -> builtins.list[Any]:
+    @overload
+    async def query(self, sql: str, args: Args, mapper: Callable[..., T], *, consistency: _spec.Consistency | None = None,
+              bookmark: str | None = None) -> builtins.list[T]: ...
+
+    async def query(self, sql: str, args: Args = None, mapper: Callable[..., T] | None = None, *,
+              consistency: _spec.Consistency | None = None, bookmark: str | None = None) -> builtins.list[Any]:
         """Run one statement and return its rows, or ``mapper(**row)`` for each row."""
-        result = await self.execute(sql, args)
+        result = await self.execute(sql, args, consistency=consistency, bookmark=bookmark)
         return result.rows if mapper is None else result.as_(mapper)
 
-    async def execute(self, sql: str | Statement, args: Args = None) -> StatementResult:
+    async def execute(self, sql: str | Statement, args: Args = None, *, consistency: _spec.Consistency | None = None,
+                bookmark: str | None = None) -> StatementResult:
         """Run one statement, in the open transaction or as its own."""
-        return (await self.batch([_sql.statement(sql, args)]))[0]
+        return (await self.batch([_sql.statement(sql, args)], consistency=consistency, bookmark=bookmark))[0]
 
-    async def batch(self, statements: Statements) -> builtins.list[StatementResult]:
-        """Run 1 to 256 statements, all or nothing outside a transaction; one result per statement."""
+    async def batch(self, statements: Statements, *, consistency: _spec.Consistency | None = None,
+              bookmark: str | None = None) -> builtins.list[StatementResult]:
+        """Run 1 to 256 statements, all or nothing outside a transaction; one result per statement.
+        ``consistency`` is fast or strong for this frame; ``bookmark`` is merged into the session's bookmark first."""
         items = _sql.statements(statements)
         uncertain = self._state.uncertain("execute")
-        return _results(await self._call("execute", items), len(items), uncertain)
+        return _results(await self._call("execute", items, consistency, bookmark), len(items), uncertain)
 
-    async def begin(self) -> None:
-        """Open a transaction of at most 5 seconds."""
-        await self._call("begin")
+    async def begin(self, *, consistency: _spec.Consistency | None = None) -> None:
+        """Open a transaction of at most 5 seconds; strong commits it through a region quorum."""
+        await self._call("begin", None, consistency)
 
     async def commit(self) -> None:
         """Commit; after a failed statement it rolls back and raises ``transaction_rolled_back``."""
@@ -508,9 +562,10 @@ class AsyncSqlSession:
     async def rollback(self) -> None:
         await self._call("rollback")
 
-    async def transaction(self, fn: Callable[[AsyncSqlSession], Awaitable[T]]) -> T:
+    async def transaction(self, fn: Callable[[AsyncSqlSession], Awaitable[T]], *,
+                          consistency: _spec.Consistency | None = None) -> T:
         """Begin, run ``await fn(session)`` and commit; roll back and re-raise when ``fn`` raises."""
-        await self.begin()
+        await self.begin(consistency=consistency)
         try:
             result = await fn(self)
         except BaseException:

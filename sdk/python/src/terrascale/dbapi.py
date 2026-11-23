@@ -4,6 +4,7 @@ import contextlib
 from collections.abc import Iterable, Sequence
 from typing import Any
 
+from . import _spec
 from .client import TerraScale
 from .errors import CommitUncertainError, SqlError, SqlErrorCodes, TerraScaleError
 from .session import SqlSession
@@ -77,7 +78,14 @@ _PROGRAMMING = frozenset(
     }
 )
 _OPERATIONAL = frozenset(
-    {SqlErrorCodes.UNAVAILABLE, SqlErrorCodes.QUERY_CANCELED, SqlErrorCodes.TENANT_BUSY, SqlErrorCodes.UNAUTHORIZED}
+    {
+        SqlErrorCodes.UNAVAILABLE,
+        SqlErrorCodes.QUERY_CANCELED,
+        SqlErrorCodes.TENANT_BUSY,
+        SqlErrorCodes.UNAUTHORIZED,
+        SqlErrorCodes.SERIALIZATION_CONFLICT,
+        SqlErrorCodes.SCHEMA_MISMATCH,
+    }
 )
 
 
@@ -189,7 +197,10 @@ class Connection:
         issuer: str | None = None,
         timeout: float = 30.0,
         http_client: Any = None,
+        consistency: _spec.Consistency | None = None,
+        bookmark: str | None = None,
     ) -> None:
+        self._consistency = _spec.consistency(consistency)
         self._client = TerraScale(
             project=project,
             api_key=api_key,
@@ -201,9 +212,24 @@ class Connection:
             http_client=http_client,
         )
         self._db = self._client.database(database)
+        if bookmark is not None:
+            self._db.bookmark = bookmark
         self._session: SqlSession | None = None
         self._failure: CommitUncertainError | None = None
         self._isolation_level: str | None = "SERIALIZABLE"
+
+    @property
+    def bookmark(self) -> str | None:
+        return self._db.bookmark
+
+    @property
+    def consistency(self) -> _spec.Consistency | None:
+        return self._consistency
+
+    @consistency.setter
+    def consistency(self, value: _spec.Consistency | None) -> None:
+        self._check_failure()
+        self._consistency = _spec.consistency(value)
 
     @property
     def isolation_level(self) -> str | None:
@@ -234,17 +260,17 @@ class Connection:
     def _ensure_session(self) -> SqlSession:
         self._check_failure()
         if self._session is None:
-            self._session = self._db.connect()
+            self._session = self._db.connect(consistency=self._consistency)
         return self._session
 
     def _begin(self, session: SqlSession) -> None:
         if not session.in_transaction:
-            session.begin()
+            session.begin(consistency=self._consistency)
 
     def _run(self, sql: str, args: list[Any] | None) -> StatementResult:
         self._check_failure()
         if self.isolation_level == "AUTOCOMMIT":
-            return self._db.execute(sql, args)
+            return self._db.execute(sql, args, consistency=self._consistency)
         session = self._ensure_session()
         self._begin(session)
         return session.execute(sql, args)
@@ -252,7 +278,7 @@ class Connection:
     def _run_many(self, statements: list[tuple[str, list[Any] | None]]) -> list[StatementResult]:
         self._check_failure()
         if self.isolation_level == "AUTOCOMMIT":
-            return self._db.batch(statements)
+            return self._db.batch(statements, consistency=self._consistency)
         session = self._ensure_session()
         self._begin(session)
         return session.batch(statements)

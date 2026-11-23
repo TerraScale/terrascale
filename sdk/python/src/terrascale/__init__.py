@@ -2,7 +2,7 @@
 
     from terrascale import TerraScale, new_id
 
-    db = TerraScale().database("app")  # TERRASCALE_API_KEY, TERRASCALE_PROJECT_ID
+    db = TerraScale().database("app")
     db.execute("CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, body TEXT)")
     db.execute("INSERT INTO notes VALUES (?, ?)", [new_id(), "hello"])
     print(db.query("SELECT * FROM notes"))
@@ -24,6 +24,8 @@ from .errors import (
     NotFoundError,
     PermissionDeniedError,
     RateLimitError,
+    SchemaMismatchError,
+    SerializationConflictError,
     ServiceUnavailableError,
     SqlError,
     SqlErrorCodes,
@@ -82,6 +84,8 @@ __all__ = [
     "NotFoundError",
     "ConflictError",
     "UniqueViolationError",
+    "SerializationConflictError",
+    "SchemaMismatchError",
     "RateLimitError",
     "ServiceUnavailableError",
     "CommitUncertainError",

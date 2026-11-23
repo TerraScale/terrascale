@@ -1,23 +1,21 @@
+using Microsoft.AspNetCore.Http.HttpResults;
+using Dapper;
+using System.Data;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.WebUtilities;
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Common.UI;
 
 namespace TerraScale.Dashboard.Platform.Mcp
 {
-    // MCP clients (Claude Code, claude.ai connectors, Cursor) sign in with the MCP authorization flow
-    // instead of a pasted personal access token. The dashboard is the authorization server for its own
-    // MCP resource: protected-resource metadata (RFC 9728), dynamic registration of public clients
-    // (RFC 7591), authorization code with PKCE S256 and resource indicators (RFC 8707). The user signs in
-    // on ts-auth's hosted pages, and the access token is a personal access token holding its own fresh
-    // ts-auth grant, so it is listed and revoked on Profile → Access tokens like any other.
     public static partial class McpOAuth
     {
+        private const string CodeByHash = DashboardSql.McpCodes.Select + " WHERE code_hash = @Hash";
+
         public const string McpHost = "mcp.terrascale.tech";
         private const int TokenDays = 90;
         private const int MaxRegistrationBytes = 16 * 1024;
@@ -29,7 +27,6 @@ namespace TerraScale.Dashboard.Platform.Mcp
         private static readonly string[] CodeChallengeMethods = ["S256"];
         private static readonly string[] TokenEndpointAuthMethods = ["none"];
 
-        // mcp.terrascale.tech serves only MCP; its sign-in and authorization pages live on the dashboard host.
         public static bool IsMcpHost(HttpContext context)
         {
             return context.Request.Host.Host.Equals(McpHost, StringComparison.OrdinalIgnoreCase);
@@ -57,7 +54,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
 
         internal static IResult ProtectedResource(HttpContext context)
         {
-            return Results.Json(new Dictionary<string, object>
+            return TypedResults.Json(new Dictionary<string, object>
             {
                 ["resource"] = Resource(context),
                 ["authorization_servers"] = new[] { Issuer(context) },
@@ -71,7 +68,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
         internal static IResult AuthorizationServer(HttpContext context)
         {
             var issuer = Issuer(context);
-            return Results.Json(new Dictionary<string, object>
+            return TypedResults.Json(new Dictionary<string, object>
             {
                 ["issuer"] = issuer,
                 ["authorization_endpoint"] = issuer + "/oauth/authorize",
@@ -87,9 +84,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
             });
         }
 
-        // Anyone may register: a client is only a name and its redirect URIs, and every authorization
-        // still needs the user's consent on the dashboard and a sign-in on ts-auth.
-        internal static async Task<IResult> RegisterAsync(HttpContext context, IDbContextFactory<DashboardDbContext> storage, TimeProvider time)
+        internal static async Task<IResult> RegisterAsync(HttpContext context, DashboardDb storage, TimeProvider time)
         {
             static IResult TooLarge()
             {
@@ -107,8 +102,6 @@ namespace TerraScale.Dashboard.Platform.Mcp
             {
                 return OAuthError("invalid_client_metadata", "Send client metadata as UTF-8 application/json.");
             }
-            // Like PlatformJson, read a fixed byte envelope plus one overflow byte before parsing.
-            // Content-Length is optional; neither chunked input nor JSON whitespace can bypass this bound.
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
             deadline.CancelAfter(TimeSpan.FromSeconds(30));
             var bytes = new byte[MaxRegistrationBytes + 1];
@@ -131,7 +124,6 @@ namespace TerraScale.Dashboard.Platform.Mcp
             JsonElement metadata;
             try
             {
-                // JsonElement decodes strings lazily: validate even ignored fields and property names before persistence.
                 var reader = new Utf8JsonReader(bytes.AsSpan(0, length));
                 while (reader.Read())
                 {
@@ -170,7 +162,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
 
             var client = await McpRegistrations.CreateAsync(storage, name.Length == 0 ? "MCP client" : name, [.. uris.EnumerateArray().Select(uri => uri.GetString()!)],
                 time.GetUtcNow(), context.RequestAborted);
-            return Results.Json(new Dictionary<string, object>
+            return TypedResults.Json(new Dictionary<string, object>
             {
                 ["client_id"] = client.ClientId,
                 ["client_id_issued_at"] = client.CreatedAt.ToUnixTimeSeconds(),
@@ -182,7 +174,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
             }, statusCode: StatusCodes.Status201Created);
         }
 
-        internal static async Task<IResult> AuthorizeAsync(HttpContext context, IDbContextFactory<DashboardDbContext> storage)
+        internal static async Task<IResult> AuthorizeAsync(HttpContext context, DashboardDb storage)
         {
             var request = await ReadRequestAsync(context, storage, context.Request.Query.ToDictionary(pair => pair.Key, pair => pair.Value.ToString()));
             if (request.Page is not null)
@@ -196,7 +188,6 @@ namespace TerraScale.Dashboard.Platform.Mcp
             }
 
             var authorization = request.Authorization!;
-            // The consent form's redirect chain can end at the client's redirect URI, so the page's form-action allows it.
             context.Items[FormActionKey] = FormActionSource(authorization.RedirectUri);
             return McpConsentView.Create(new(new("Connect an AI client", DocumentModel.NonceFor(context)), authorization.ClientName,
                 Display(authorization.RedirectUri), Fields(authorization), Csrf.Token(context), null));
@@ -204,17 +195,17 @@ namespace TerraScale.Dashboard.Platform.Mcp
 
         public const string FormActionKey = "TerraScale.Dashboard/form-action";
 
-        internal static async Task<IResult> ConsentAsync(HttpContext context, IDbContextFactory<DashboardDbContext> storage)
+        internal static async Task<IResult> ConsentAsync(HttpContext context, DashboardDb storage)
         {
             if (!context.Request.HasFormContentType)
             {
-                return Results.BadRequest();
+                return TypedResults.BadRequest();
             }
 
             var form = await context.Request.ReadFormAsync(context.RequestAborted);
             if (!Csrf.Validate(context, form))
             {
-                return RequestError.FormExpired(context, "/", Results.StatusCode(StatusCodes.Status403Forbidden));
+                return RequestError.FormExpired(context, "/", TypedResults.StatusCode(StatusCodes.Status403Forbidden));
             }
 
             var request = await ReadRequestAsync(context, storage, form.ToDictionary(pair => pair.Key, pair => pair.Value.ToString()));
@@ -245,12 +236,10 @@ namespace TerraScale.Dashboard.Platform.Mcp
         public static DateTimeOffset TokenExpiresAt(TimeProvider time) =>
             DateTimeOffset.FromUnixTimeSeconds(time.GetUtcNow().AddDays(TokenDays).ToUnixTimeSeconds());
 
-        // The ts-auth callback for an MCP authorization: the fresh grant waits in its own credential
-        // until the client redeems the single-use code with its PKCE verifier.
         public static async Task<IResult> GrantAsync(HttpContext context, McpAuthorization authorization, SessionRecord fresh, StepUpIntent? proof, DateTimeOffset tokenExpiresAt)
         {
             var sessions = context.RequestServices.GetRequiredService<DashboardSessions>();
-            var storage = context.RequestServices.GetRequiredService<IDbContextFactory<DashboardDbContext>>();
+            var storage = context.RequestServices.GetRequiredService<DashboardDb>();
             var time = context.RequestServices.GetRequiredService<TimeProvider>();
             var code = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
             string? credential = null;
@@ -280,8 +269,8 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 }
 
                 credential = await sessions.CreateCredentialAsync(fresh, tokenExpiresAt, context.RequestAborted);
-                await using var db = await storage.CreateDbContextAsync(context.RequestAborted);
-                db.McpCodes.Add(new McpCodeRow
+                await using var connection = await storage.OpenAsync(context.RequestAborted);
+                await connection.ExecuteAsync(DashboardSql.McpCodes.Insert, new McpCodeRow
                 {
                     Id = AccountService.NewId(),
                     CodeHash = Hash(code),
@@ -295,7 +284,6 @@ namespace TerraScale.Dashboard.Platform.Mcp
                     ExpiresAt = time.GetUtcNow().AddMinutes(5).UtcDateTime,
                     TokenExpiresAt = tokenExpiresAt.UtcDateTime,
                 });
-                await db.SaveChangesAsync(context.RequestAborted);
             }
             catch (Exception error)
             {
@@ -315,17 +303,17 @@ namespace TerraScale.Dashboard.Platform.Mcp
 
                 throw;
             }
-            return Results.Redirect(QueryHelpers.AddQueryString(authorization.RedirectUri, new Dictionary<string, string?>
+            return TypedResults.Redirect(QueryHelpers.AddQueryString(authorization.RedirectUri, new Dictionary<string, string?>
             { ["code"] = code, ["state"] = authorization.State, ["iss"] = authorization.Issuer }.Where(pair => pair.Value is not null)));
         }
 
         public static IResult Denied(McpAuthorization authorization)
         {
-            return Results.Redirect(QueryHelpers.AddQueryString(authorization.RedirectUri, new Dictionary<string, string?>
+            return TypedResults.Redirect(QueryHelpers.AddQueryString(authorization.RedirectUri, new Dictionary<string, string?>
             { ["error"] = "access_denied", ["state"] = authorization.State, ["iss"] = authorization.Issuer }.Where(pair => pair.Value is not null)));
         }
 
-        internal static async Task<IResult> TokenAsync(HttpContext context, IDbContextFactory<DashboardDbContext> storage, AccessTokens tokens, TimeProvider time)
+        internal static async Task<IResult> TokenAsync(HttpContext context, DashboardDb storage, AccessTokens tokens, TimeProvider time)
         {
             if (!context.Request.HasFormContentType)
             {
@@ -345,18 +333,13 @@ namespace TerraScale.Dashboard.Platform.Mcp
             }
 
             McpCodeRow? grant;
-            await using (var db = await storage.CreateDbContextAsync(context.RequestAborted))
+            await using (var connection = await storage.OpenAsync(context.RequestAborted))
             {
-                var hash = Hash(code);
-                grant = await db.McpCodes.SingleOrDefaultAsync(row => row.CodeHash == hash, context.RequestAborted);
-                if (grant is null)
+                grant = await connection.QuerySingleOrDefaultAsync<McpCodeRow>(CodeByHash, new { Hash = Hash(code) });
+                if (grant is null || await connection.ExecuteAsync(DashboardSql.McpCodes.Delete, grant) != 1)
                 {
                     return OAuthError("invalid_grant", "The authorization code is invalid or was already used.");
                 }
-
-                db.McpCodes.Remove(grant);
-                try { await db.SaveChangesAsync(context.RequestAborted); }
-                catch (DbUpdateConcurrencyException) { return OAuthError("invalid_grant", "The authorization code is invalid or was already used."); }
             }
 
             var verifier = form["code_verifier"].ToString();
@@ -365,11 +348,9 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 form["client_id"] != grant.ClientId ? "The authorization code belongs to another client." :
                 form["redirect_uri"] != grant.RedirectUri ? "redirect_uri does not match the authorization request." :
                 !VerifierMatches(verifier, grant.CodeChallenge) ? "code_verifier does not match the code challenge." : null;
-            // RFC 8707: the token request names the same resource the user consented to; the token serves only that MCP server.
             var resource = form["resource"];
             var target = failure is null && resource.Count != 1 ? "Send the resource the authorization request named." :
                 failure is null && (CanonicalResource(context, resource.ToString()) is not { } named || named != grant.Resource) ? "resource does not match the authorization request." : null;
-            // The code is spent: every path that does not issue the token forgets its grant, even when the client disconnects.
             async Task ForgetAsync()
             {
                 using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -395,7 +376,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
             try
             {
                 var created = await tokens.IssueGrantedAsync(grant.UserId, AccessTokenName(grant.ClientName), new DateTimeOffset(grant.TokenExpiresAt), grant.CredentialId, grant.ClientId, context.RequestAborted);
-                return Results.Json(new Dictionary<string, object>
+                return TypedResults.Json(new Dictionary<string, object>
                 {
                     ["access_token"] = created.Secret,
                     ["token_type"] = "Bearer",
@@ -406,7 +387,7 @@ namespace TerraScale.Dashboard.Platform.Mcp
             catch (AccountAccessException error) { return OAuthError("invalid_grant", error.Message); }
         }
 
-        private static async Task<AuthorizationRequest> ReadRequestAsync(HttpContext context, IDbContextFactory<DashboardDbContext> storage, Dictionary<string, string> parameters)
+        private static async Task<AuthorizationRequest> ReadRequestAsync(HttpContext context, DashboardDb storage, Dictionary<string, string> parameters)
         {
             var clientId = parameters.GetValueOrDefault("client_id", "");
             var client = await McpRegistrations.ReadActiveAsync(storage, context.RequestServices.GetRequiredService<TimeProvider>(), clientId, context.RequestAborted);
@@ -436,11 +417,9 @@ namespace TerraScale.Dashboard.Platform.Mcp
                 stateValue is { Length: > 1024 } ? Fail("invalid_request", "state is too long.") :
                 resource is null ? Fail("invalid_target", "Name a TerraScale MCP server as the resource.") :
                 !SupportedScope(parameters.GetValueOrDefault("scope")) ? Fail("invalid_scope", $"Request scope={Scope} or omit it.") : null;
-            return error is null ? new(Authorization: authorization) : new(Error: Results.Redirect(error));
+            return error is null ? new(Authorization: authorization) : new(Error: TypedResults.Redirect(error));
         }
 
-        // Both MCP addresses name the same server, and the access token works on both; a code stays bound to the
-        // canonical form of the address its authorization named, and only that address redeems it.
         private static string? CanonicalResource(HttpContext context, string resource)
         {
             if (!Uri.TryCreate(resource, UriKind.Absolute, out var uri) || uri.Query.Length != 0 || uri.Fragment.Length != 0 || uri.UserInfo.Length != 0)
@@ -457,7 +436,6 @@ namespace TerraScale.Dashboard.Platform.Mcp
             return authority.Equals(Issuer(context), StringComparison.OrdinalIgnoreCase) && uri.AbsolutePath.TrimEnd('/') == "/mcp" ? authority + "/mcp" : null;
         }
 
-        // The only scope is the whole MCP server; anything else would promise a narrower or wider grant than the token carries.
         private static bool SupportedScope(string? scope)
         {
             return scope is null || scope.Split(' ', StringSplitOptions.RemoveEmptyEntries).All(item => item == Scope);
@@ -478,7 +456,6 @@ namespace TerraScale.Dashboard.Platform.Mcp
             };
         }
 
-        // RFC 8252: native clients listen on an ephemeral loopback port, so the port may differ from registration.
         private static bool RedirectMatches(string registered, string requested)
         {
             if (registered == requested)
@@ -537,9 +514,9 @@ namespace TerraScale.Dashboard.Platform.Mcp
             return view;
         }
 
-        private static IResult OAuthError(string error, string description, int statusCode = StatusCodes.Status400BadRequest)
+        private static JsonHttpResult<Dictionary<string, string>> OAuthError(string error, string description, int statusCode = StatusCodes.Status400BadRequest)
         {
-            return Results.Json(new Dictionary<string, string> { ["error"] = error, ["error_description"] = description }, statusCode: statusCode);
+            return TypedResults.Json(new Dictionary<string, string> { ["error"] = error, ["error_description"] = description }, statusCode: statusCode);
         }
 
         private static string Hash(string value)

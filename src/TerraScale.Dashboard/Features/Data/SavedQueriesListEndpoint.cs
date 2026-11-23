@@ -13,13 +13,13 @@ namespace TerraScale.Dashboard.Features.Data
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             try
             {
                 var (limit, after) = CursorPaging.Read(http.Request);
-                return Results.Json(CursorPaging.Page((await saved.ListAsync(context, http.RequestAborted)).Select(DataEndpoints.PublicSavedQuery),
+                return TypedResults.Json(CursorPaging.Page((await saved.ListAsync(context, http.RequestAborted)).Select(DataEndpoints.PublicSavedQuery),
                     query => query.Id, CursorPaging.Scope(context, "saved-queries"), limit, after));
             }
             catch (Exception error) when (DatabaseResults.KnownFailure(error)) { return DatabaseResults.Failure(error); }

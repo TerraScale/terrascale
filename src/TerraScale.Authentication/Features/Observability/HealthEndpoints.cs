@@ -4,26 +4,18 @@ using TerraScale.Endpoints;
 
 namespace TerraScale.Authentication.Features.Observability;
 
-/// <summary>Liveness body.</summary>
-/// <param name="Status">Always <c>ok</c>.</param>
 public sealed record StatusBody(
     [property: JsonPropertyName("status")] string Status,
     [property: JsonPropertyName("version")] string Version);
 
-/// <summary>Readiness body.</summary>
-/// <param name="Status"><c>ready</c> or <c>not_ready</c>.</param>
-/// <param name="Region">Storage authority region, when it answered.</param>
-/// <param name="Error">Why it is not ready, when signing-key bootstrap is pending (<c>no signing keys: startup bootstrap pending …</c>).</param>
 public sealed record ReadyBody(
     [property: JsonPropertyName("status")] string Status,
     [property: JsonPropertyName("version")] string Version,
     [property: JsonPropertyName("region"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Region,
     [property: JsonPropertyName("error"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Error = null);
 
-/// <summary><c>GET /healthz</c>: the process is serving requests.</summary>
 public sealed class HealthzEndpoint : EndpointWithoutRequest<StatusBody>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/healthz");
@@ -33,7 +25,6 @@ public sealed class HealthzEndpoint : EndpointWithoutRequest<StatusBody>
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override ValueTask<StatusBody> HandleAsync(CancellationToken cancellationToken)
     {
         this.HttpContext.Response.Headers["X-TerraScale-Revision"] = ServiceVersion.Revision;
@@ -41,10 +32,8 @@ public sealed class HealthzEndpoint : EndpointWithoutRequest<StatusBody>
     }
 }
 
-/// <summary><c>GET /readyz</c>: storage, the signing-ring bootstrap and public signing metadata were usable at the latest background check.</summary>
 public sealed class ReadyzEndpoint(ReadinessProbe probe) : EndpointWithoutRequest<IResult>
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Get("/readyz");
@@ -57,7 +46,6 @@ public sealed class ReadyzEndpoint(ReadinessProbe probe) : EndpointWithoutReques
         AllowAnonymous();
     }
 
-    /// <inheritdoc />
     public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var observation = probe.Latest();

@@ -31,7 +31,7 @@ public sealed class SocialConnectEndpoint(SocialSignIn social, Sessions sessions
     {
         if (SignInFlow.WrongSlug(this.HttpContext) || !Tenancy.IsProject(SignInFlow.Tenant(this.HttpContext)))
         {
-            return Results.NotFound();
+            return TypedResults.NotFound();
         }
 
         if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)
@@ -43,7 +43,7 @@ public sealed class SocialConnectEndpoint(SocialSignIn social, Sessions sessions
         var configured = (await settings.GetAsync(tenant, cancellationToken)).Provider(this.HttpContext.Request.Form["provider"].ToString());
         if (configured is null)
         {
-            return Results.NotFound();
+            return TypedResults.NotFound();
         }
 
         if (await SecurityFlow.LiveAsync(this.HttpContext, sessions, cancellationToken) is not { } live)
@@ -60,7 +60,7 @@ public sealed class SocialConnectEndpoint(SocialSignIn social, Sessions sessions
 
         if (live.User.LinkedProviders.Any(identity => identity.Provider == configured.Provider))
         {
-            return Results.Redirect(SignInFlow.SecurityPath(tenant));
+            return TypedResults.Redirect(SignInFlow.SecurityPath(tenant));
         }
 
         if (await hosted.LimitIpAsync(SignInFlow.Ip(this.HttpContext), mails: false, cancellationToken) is { } wait)
@@ -73,7 +73,7 @@ public sealed class SocialConnectEndpoint(SocialSignIn social, Sessions sessions
             var (location, sealedState) = await social.StartAsync(tenant, configured, next, cancellationToken,
                 new SocialLink(live.User.Id, live.Session.TokenHash, live.User.AuthStamp, live.User.AuthEpoch));
             this.HttpContext.Response.Cookies.Append(SocialSignIn.Cookie(tenant), sealedState, SocialFlow.CookieOptions(tenant));
-            return Results.Redirect(location.AbsoluteUri);
+            return TypedResults.Redirect(location.AbsoluteUri);
         }
         catch (Exception error) when (error is HttpRequestException or InvalidOperationException or TaskCanceledException && !cancellationToken.IsCancellationRequested)
         {
@@ -121,7 +121,7 @@ public sealed class SocialUnlinkEndpoint(Sessions sessions, Users users, AuthOpt
 
         if (!live.User.LinkedProviders.Any(identity => identity.Provider == provider))
         {
-            return Results.Redirect(SignInFlow.SecurityPath(tenant));
+            return TypedResults.Redirect(SignInFlow.SecurityPath(tenant));
         }
 
         var next = SignInFlow.SafeNext(this.HttpContext, form.Next);

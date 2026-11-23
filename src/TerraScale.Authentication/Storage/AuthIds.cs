@@ -20,7 +20,7 @@ public static class AuthIds
         ArgumentException.ThrowIfNullOrWhiteSpace(key);
         var framed = string.Create(CultureInfo.InvariantCulture, $"{instanceId.Length}:{instanceId}{kind.Length}:{kind}{key.Length}:{key}");
         var hash = SHA256.HashData(StrictUtf8.GetBytes(framed));
-        return new NUlid.Ulid(hash[..16]).ToString();
+        return new Ulid(hash.AsSpan(0, 16)).ToString();
     }
 
     public static string NormalizeEmail(string email)

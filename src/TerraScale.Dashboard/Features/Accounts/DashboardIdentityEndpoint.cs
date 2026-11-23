@@ -23,10 +23,10 @@ namespace TerraScale.Dashboard.Features.Accounts
             var context = await AccountRequest.RequireAsync(http, sessions, accounts, organizationScoped: false);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
-            return Results.Json(new AccountIdentityResponse(context.UserId, context.Account.Id,
+            return TypedResults.Json(new AccountIdentityResponse(context.UserId, context.Account.Id,
                 context.Account.Name, context.Account.Email, context.Account.Phone, context.Account.Locale,
                 context.Account.OnboardingCompleted, context.Organization?.Id, context.Project?.Id, context.Role),
                 AccountContractJson.Default.AccountIdentityResponse);

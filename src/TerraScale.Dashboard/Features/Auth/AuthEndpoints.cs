@@ -1,5 +1,5 @@
+using System.Data;
 using System.Security.Cryptography;
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Features.Profile;
 using TerraScale.Dashboard.Platform.Mcp;
@@ -7,8 +7,6 @@ using TerraScale.Dashboard.Common.UI;
 
 namespace TerraScale.Dashboard.Features.Auth
 {
-    // The dashboard signs in only through ts-auth's hosted pages, as a confidential
-    // OIDC client: authorization code with PKCE, state and nonce.
     public static class AuthEndpoints
     {
         public static void AddAuth(this IServiceCollection services)
@@ -31,7 +29,6 @@ namespace TerraScale.Dashboard.Features.Auth
             services.AddHostedService<DeletionReconciler>();
         }
 
-        // A signed-in visitor continues; everyone else goes to ts-auth's hosted sign-in, or with signup=1 its hosted sign-up.
         internal static async Task<IResult> StartAsync(HttpContext context, DashboardSessions sessions)
         {
             var returnTo = Csrf.LocalRedirect(context.Request.Query["returnTo"].ToString());
@@ -55,14 +52,12 @@ namespace TerraScale.Dashboard.Features.Auth
             {
                 var flow = await context.RequestServices.GetRequiredService<AuthFlows>().StartOidcAsync(context, returnTo, tokenName, tokenDays, mcp, stepUp);
                 var authorize = await context.RequestServices.GetRequiredService<IAuthOidcGateway>().AuthorizationUrlAsync(flow, context.RequestAborted);
-                return Results.Redirect(signUp ? HostedSignUp(authorize) : authorize);
+                return TypedResults.Redirect(signUp ? HostedSignUp(authorize) : authorize);
             }
             catch (Exception error) when (DependencyFailure(error, context))
             { return Failure(context, returnTo, "Sign-in is unavailable right now. Try again in a moment.", 503, error.GetType().Name); }
         }
 
-        // ts-auth's hosted sign-up page takes the same next=/{slug}/oauth/authorize?... as its sign-in page, so a new
-        // customer lands on account creation instead of "Welcome back" and still returns through this flow.
         private static string HostedSignUp(string authorize)
         {
             var uri = new Uri(authorize);
@@ -128,8 +123,8 @@ namespace TerraScale.Dashboard.Features.Auth
             { return Failure(context, flow.ReturnTo, error.Message, error.StatusCode, nameof(AccountAccessException)); }
             catch (SignInRejectedException)
             { return Failure(context, flow.ReturnTo, "ts-auth could not confirm this sign-in. Sign in again.", 401, nameof(SignInRejectedException)); }
-            catch (DbUpdateConcurrencyException)
-            { return Failure(context, flow.ReturnTo, "Another sign-in to this account finished at the same moment. Select Try again.", 409, nameof(DbUpdateConcurrencyException)); }
+            catch (DBConcurrencyException)
+            { return Failure(context, flow.ReturnTo, "Another sign-in to this account finished at the same moment. Select Try again.", 409, nameof(DBConcurrencyException)); }
             catch (TerraScale.Dashboard.Platform.TsAuth.TsAuthException error) when (error.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
             {
                 var seconds = Math.Clamp((int)Math.Ceiling(error.RetryAfter?.TotalSeconds ?? 60), 1, 3600);
@@ -146,14 +141,12 @@ namespace TerraScale.Dashboard.Features.Auth
             var form = await FormRequests.ReadAsync(context, context.RequestAborted);
             if (!Csrf.Validate(context, form))
             {
-                return RequestError.FormExpired(context, "/", Results.StatusCode(403));
+                return RequestError.FormExpired(context, "/", TypedResults.StatusCode(403));
             }
 
             return await SignOutAsync(context);
         }
 
-        // Ends the dashboard session and ts-auth's own, so the next /login shows the hosted sign-in
-        // instead of silently signing the same account back in. The caller validates CSRF.
         public static async Task<IResult> SignOutAsync(HttpContext context)
         {
             var sessions = context.RequestServices.GetRequiredService<DashboardSessions>();
@@ -194,7 +187,6 @@ namespace TerraScale.Dashboard.Features.Auth
             return HttpRedirects.SeeOther(target);
         }
 
-        // The sign-in joins the audit history of the organization it opens; ts-auth validates the membership.
         private static Task RecordSignInAsync(HttpContext context, SessionRecord session, AccountRecord account)
         {
             if (account.ActiveOrganizationId.Length == 0)
@@ -223,7 +215,6 @@ namespace TerraScale.Dashboard.Features.Auth
             }
         }
 
-        // A fixed page with a manual retry link: a failed callback never redirects back into ts-auth by itself.
         private static RazorSlices.RazorSlice<AuthFailurePage> Failure(HttpContext context, string returnTo, string error, int status, string cause)
         {
             var reference = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(5));

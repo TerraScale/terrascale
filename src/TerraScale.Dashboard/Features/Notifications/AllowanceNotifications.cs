@@ -1,10 +1,11 @@
+using Dapper;
+using System.Data;
 using System.Globalization;
 using System.Text.Json;
 using TerraScale.Dashboard.Common.Formatting;
 using TerraScale.Dashboard.Features.Billing;
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.TerraBase.Contracts;
+using TerraScale.Dashboard.Platform.Clients;
 using TerraBaseSqlErrorCodes = TerraScale.DotNet.TerraBase.TerraBaseSqlErrorCodes;
 using TerraBaseSqlException = TerraScale.DotNet.TerraBase.TerraBaseSqlException;
 
@@ -41,8 +42,15 @@ namespace TerraScale.Dashboard.Features.Notifications
         Task<string> SendAsync(AllowanceAlert alert, CancellationToken cancellationToken);
     }
 
-    public sealed class AllowanceNotifications(IDbContextFactory<DashboardDbContext> storage, OrganizationStore organizations, IAllowanceNotificationBackend backend, TimeProvider clock, ILogger<AllowanceNotifications> logger, BackgroundJobs jobs, BillingSchemaGate gate)
+    public sealed class AllowanceNotifications(DashboardDb storage, OrganizationStore organizations, IAllowanceNotificationBackend backend, TimeProvider clock, ILogger<AllowanceNotifications> logger, BackgroundJobs jobs, BillingSchemaGate gate)
     {
+        private const string AlertsOf = DashboardSql.AllowanceAlerts.Select + " WHERE organization_id = @OrganizationId";
+        private const string RemoveJob = "DELETE FROM background_jobs WHERE id = @Id";
+        private const string PendingEmails = DashboardSql.AllowanceAlerts.Select
+            + " WHERE organization_id = @OrganizationId AND billing_month = @BillingMonth AND metric = 'operations' AND email_status = 'pending' ORDER BY id";
+        private const string PendingEmail = DashboardSql.AllowanceAlerts.Select + " WHERE id = @Id AND email_status = 'pending'";
+        private const string SetEmailStatus = "UPDATE allowance_alerts SET email_status = @EmailStatus WHERE id = @Id";
+
         public const string OperationsContract = "operation-units-writes-invocations-global-v3";
         public const string StorageContract = "stored-byte-hours-global-v1";
 
@@ -57,7 +65,7 @@ namespace TerraScale.Dashboard.Features.Notifications
                 foreach (var item in page.Items)
                 {
                     try { await ObserveAsync(item, month, cancellationToken); }
-                    catch (Exception error) when (error is TerraBaseException or DbUpdateException or HttpRequestException or IOException or JsonException or InvalidOperationException ||
+                    catch (Exception error) when (error is TerraBaseException or DBConcurrencyException or HttpRequestException or IOException or JsonException or InvalidOperationException ||
                         error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
                     {
                         logger.AnAllowanceNotificationForOrganizationCould(item.OrganizationId, error.GetType().Name);
@@ -106,11 +114,16 @@ namespace TerraScale.Dashboard.Features.Notifications
 
             var limits = PlanCatalog.Limits(organization);
             var billingMonth = month.ToString("yyyy-MM", CultureInfo.InvariantCulture);
-            await using var db = await storage.CreateDbContextAsync(cancellationToken);
             for (var attempt = 0; ; attempt++)
             {
-                var alerts = await db.AllowanceAlerts.Where(alert => alert.OrganizationId == item.OrganizationId).ToListAsync(cancellationToken);
-                db.AllowanceAlerts.RemoveRange(alerts.Where(alert => alert.BillingMonth != billingMonth));
+                List<AllowanceAlertRow> alerts;
+                await using (var connection = await storage.OpenAsync(cancellationToken))
+                {
+                    alerts = (await connection.QueryAsync<AllowanceAlertRow>(AlertsOf, new { item.OrganizationId })).AsList();
+                }
+
+                List<AllowanceAlertRow> removed = [.. alerts.Where(alert => alert.BillingMonth != billingMonth)];
+                List<AllowanceAlertRow> added = [];
                 var current = alerts.Where(alert => alert.BillingMonth == billingMonth).ToList();
                 if (item.Operations is { } used && limits.MonthlyOperations is > 0 and < long.MaxValue)
                 {
@@ -121,7 +134,7 @@ namespace TerraScale.Dashboard.Features.Notifications
                             continue;
                         }
 
-                        db.AllowanceAlerts.Add(Row(item.OrganizationId, billingMonth, "operations", threshold, used, limits.MonthlyOperations));
+                        added.Add(Row(item.OrganizationId, billingMonth, "operations", threshold, used, limits.MonthlyOperations));
                     }
                 }
 
@@ -131,25 +144,35 @@ namespace TerraScale.Dashboard.Features.Notifications
                     var monthToDateCents = OperationUnitOverage.Cents(OperationUnitOverage.Units(plan, spent));
                     if (monthToDateCents >= organization.SpendCapCents)
                     {
-                        db.AllowanceAlerts.RemoveRange(current.Where(alert => alert.Metric == "spend"));
-                        db.AllowanceAlerts.Add(Row(item.OrganizationId, billingMonth, "spend", 100, monthToDateCents, organization.SpendCapCents));
+                        removed.AddRange(current.Where(alert => alert.Metric == "spend"));
+                        added.Add(Row(item.OrganizationId, billingMonth, "spend", 100, monthToDateCents, organization.SpendCapCents));
                     }
                 }
 
-                var removed = db.ChangeTracker.Entries<AllowanceAlertRow>().Where(entry => entry.State == EntityState.Deleted)
-                    .Select(entry => "allowance/" + entry.Entity.Id).ToList();
-                if (removed.Count > 0)
+                if (removed.Count == 0 && added.Count == 0)
                 {
-                    db.BackgroundJobs.RemoveRange(await db.BackgroundJobs.Where(row => removed.Contains(row.Id)).ToListAsync(cancellationToken));
-                }
-                try
-                {
-                    await db.SaveChangesAsync(cancellationToken);
                     break;
                 }
-                catch (DbUpdateException error) when (attempt < 2 && (error is DbUpdateConcurrencyException || error.InnerException is TerraBaseSqlException { Code: TerraBaseSqlErrorCodes.UniqueViolation }))
+
+                try
                 {
-                    db.ChangeTracker.Clear();
+                    await storage.WriteAsync(async (connection, transaction) =>
+                    {
+                        foreach (var alert in removed)
+                        {
+                            await connection.ExecuteAsync(DashboardSql.AllowanceAlerts.Delete, alert, transaction);
+                            await connection.ExecuteAsync(RemoveJob, new { Id = "allowance/" + alert.Id }, transaction);
+                        }
+
+                        foreach (var alert in added)
+                        {
+                            await connection.ExecuteAsync(DashboardSql.AllowanceAlerts.Insert, alert, transaction);
+                        }
+                    }, cancellationToken);
+                    break;
+                }
+                catch (Exception error) when (attempt < 2 && (error is DBConcurrencyException || DashboardDb.IsDuplicate(error)))
+                {
                 }
             }
 
@@ -158,25 +181,30 @@ namespace TerraScale.Dashboard.Features.Notifications
                 return;
             }
 
-            var pending = await db.AllowanceAlerts.AsNoTracking()
-                .Where(alert => alert.OrganizationId == item.OrganizationId && alert.BillingMonth == billingMonth && alert.Metric == "operations" && alert.EmailStatus == "pending")
-                .OrderBy(alert => alert.Id).ToListAsync(cancellationToken);
+            List<AllowanceAlertRow> pending;
+            await using (var connection = await storage.OpenAsync(cancellationToken))
+            {
+                pending = (await connection.QueryAsync<AllowanceAlertRow>(PendingEmails, new { item.OrganizationId, BillingMonth = billingMonth })).AsList();
+            }
+
             foreach (var alert in pending)
             {
                 await jobs.RunAsync("allowance/" + alert.Id, TimeSpan.Zero, async (claim, token) =>
                 {
-                    var current = await claim.Database.AllowanceAlerts.SingleOrDefaultAsync(row => row.Id == alert.Id && row.EmailStatus == "pending", token);
+                    var current = await claim.Connection.QuerySingleOrDefaultAsync<AllowanceAlertRow>(PendingEmail, new { alert.Id });
                     if (current is null)
                     {
-                        claim.Database.BackgroundJobs.Remove(claim.State);
-                        await claim.Database.SaveChangesAsync(token);
+                        await claim.ForgetAsync(null, token);
                         return;
                     }
+
                     var outcome = await backend.SendAsync(Alert(current), token);
                     if (outcome != "retryable")
                     {
-                        current.EmailStatus = outcome;
-                        await claim.SaveAsync(token);
+                        await using var transaction = await claim.Connection.BeginTransactionAsync(token);
+                        await claim.Connection.ExecuteAsync(SetEmailStatus, new { current.Id, EmailStatus = outcome }, transaction);
+                        await claim.SaveAsync(transaction, token);
+                        await transaction.CommitAsync(token);
                     }
                 }, cancellationToken);
             }
@@ -207,7 +235,9 @@ namespace TerraScale.Dashboard.Features.Notifications
 
     public static class AllowanceNotificationInbox
     {
-        public static async Task HydrateAsync(IDbContextFactory<DashboardDbContext> storage, AccountStore accounts, AccountContext context, CancellationToken cancellationToken)
+        private const string Ordered = DashboardSql.AllowanceAlerts.Select + " WHERE organization_id = @OrganizationId ORDER BY id";
+
+        public static async Task HydrateAsync(DashboardDb storage, AccountStore accounts, AccountContext context, CancellationToken cancellationToken)
         {
             if (context.Organization is not { } organization || organization.RoleFor(context.UserId) != "owner")
             {
@@ -215,9 +245,9 @@ namespace TerraScale.Dashboard.Features.Notifications
             }
 
             List<AllowanceAlertRow> alerts;
-            await using (var db = await storage.CreateDbContextAsync(cancellationToken))
+            await using (var connection = await storage.OpenAsync(cancellationToken))
             {
-                alerts = await db.AllowanceAlerts.AsNoTracking().Where(alert => alert.OrganizationId == organization.Id).OrderBy(alert => alert.Id).ToListAsync(cancellationToken);
+                alerts = (await connection.QueryAsync<AllowanceAlertRow>(Ordered, new { OrganizationId = organization.Id })).AsList();
             }
 
             if (alerts.Count == 0)
@@ -244,7 +274,7 @@ namespace TerraScale.Dashboard.Features.Notifications
                     context.Account.Notifications = account.Notifications;
                     return;
                 }
-                catch (DbUpdateConcurrencyException) when (attempt < 7) { }
+                catch (DBConcurrencyException) when (attempt < 7) { }
             }
         }
     }

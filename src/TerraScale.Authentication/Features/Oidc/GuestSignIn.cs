@@ -107,7 +107,7 @@ public sealed class GuestSignInEndpoint(Users users, AttemptLimiter limiter, Pro
         }
         catch (ApiException error) when (error.Status == StatusCodes.Status503ServiceUnavailable)
         {
-            return Results.Json(new OAuthErrorBody(OidcErrors.TemporarilyUnavailable, error.Message), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status503ServiceUnavailable);
+            return TypedResults.Json(new OAuthErrorBody(OidcErrors.TemporarilyUnavailable, error.Message), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status503ServiceUnavailable);
         }
     }
 
@@ -115,7 +115,7 @@ public sealed class GuestSignInEndpoint(Users users, AttemptLimiter limiter, Pro
     {
         if (this.HttpContext.GetOpenIddictServerRequest() is not { GrantType: GuestSignIn.GrantType, ClientId: { } clientId })
         {
-            return Results.NotFound();
+            return TypedResults.NotFound();
         }
 
         var tenant = Tenancy.Current(this.HttpContext);
@@ -126,7 +126,7 @@ public sealed class GuestSignInEndpoint(Users users, AttemptLimiter limiter, Pro
 
         if ((await settings.GetAsync(tenant, cancellationToken)).SignUpMode != "public")
         {
-            return Results.Json(new OAuthErrorBody(OidcErrors.AccessDenied, "This project does not admit guests."), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status403Forbidden);
+            return TypedResults.Json(new OAuthErrorBody(OidcErrors.AccessDenied, "This project does not admit guests."), OidcJson.Default.OAuthErrorBody, statusCode: StatusCodes.Status403Forbidden);
         }
 
         var address = HostedAuth.Subject(this.HttpContext.Connection.RemoteIpAddress?.ToString()) ?? "unknown";

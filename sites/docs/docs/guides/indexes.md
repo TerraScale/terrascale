@@ -5,7 +5,7 @@ description: Speed up queries on TerraScale databases with secondary indexes.
 
 # Indexes
 
-TerraScale SQL keeps secondary indexes on ordinary tables. `CREATE INDEX` and `DROP INDEX` are schema changes, so they run inside the request's transaction, routed to the region that orders the database's writes, and they need the `sql:write` scope. Every index type the SQLite dialect supports is available: plain, `UNIQUE`, partial (`WHERE …`) and expression indexes.
+TerraScale SQL keeps secondary indexes on ordinary tables. `CREATE INDEX` and `DROP INDEX` are schema changes, so they run inside the request's transaction in [strong mode](/concepts/replication#strong-mode), agreed by every region of the set, and they need the `sql:write` scope. Every index type the SQLite dialect supports is available: plain, `UNIQUE`, partial (`WHERE …`) and expression indexes.
 
 ## Create and query
 
@@ -39,5 +39,3 @@ Indexes follow the SQL request limits: 1 to 256 statements per request, each at 
 ## Tip
 
 Use `EXPLAIN QUERY PLAN` before and after adding an index: if the detail field still says `SCAN` on the table rather than `SEARCH … USING INDEX`, the query cannot use it — usually a type mismatch or a leading column that is not constrained.
-
-A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.

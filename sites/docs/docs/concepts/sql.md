@@ -4,7 +4,7 @@ title: SQL
 
 # SQL
 
-Each TerraScale database is a SQL database in the SQLite dialect. It lives in a set of regions you choose, at least one of São Paulo (`gru`), the San Francisco Bay Area (`sjc`) and Frankfurt (`fra`). Every region of the set accepts reads and writes. A write sent to another region is forwarded, or committed locally and confirmed. One region of the set orders the writes; TerraBase picks it. The default `TerraScale-Durability` is `local`. The server forwards a timed-out local publish with `TerraBase-Publish-Id` set to the same transaction id, and that region applies the write once. A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has. See [regions](/concepts/regions) and [replication](/concepts/replication).
+Each TerraScale database is a SQL database in the SQLite dialect. It lives in a set of regions you choose, at least one of São Paulo (`gru`), the San Francisco Bay Area (`sjc`) and Frankfurt (`fra`). Every region of the set is an equal peer that commits reads and writes where you called; there is no home region. Writes run in fast mode by default (committed locally in about a millisecond and replicated to the other regions) or in strong mode (serializable across regions on two of three regions). Every response carries a `TerraScale-Bookmark` that gives read-your-writes in any region. See [regions](/concepts/regions) and [replication and consistency](/concepts/replication).
 
 ## Quickstart
 
@@ -36,7 +36,7 @@ psql "postgresql://app@pg.terrascale.tech:5432/app?sslmode=verify-full&sslrootce
 SELECT email, seats FROM customers WHERE seats >= 10;
 ```
 
-Any Postgres driver connects the same way. Statements still use the SQLite dialect, so Postgres-only syntax and functions are refused.
+Any Postgres driver connects the same way. The Postgres wire also accepts the common Postgres syntax drivers and ORMs send: `$1` parameters, `::type` casts, `SERIAL`, `ILIKE`, `RETURNING`, `ON CONFLICT`, `NOW()` and the `pg_catalog` and `information_schema` views. See [Postgres clients](/guides/postgres-clients).
 
 ### HTTP
 
@@ -69,10 +69,11 @@ The C#, TypeScript, Go, Python and Rust SDKs call the same endpoint; see [SDKs](
 
 ## Transactions
 
-- HTTP: each request is one transaction of 1 to 256 statements, all or nothing. `BEGIN`, `COMMIT` and `ROLLBACK` are refused.
-- WebSocket: `GET /v1/projects/{project}/databases/{database}/sql/ws` with subprotocol `terrascale.sql.v1`. Send the access token as an `Authorization` header or, from a browser, as a first `{"type":"auth","token":"…"}` frame. `execute` frames run statements as over HTTP; `begin`, `commit` and `rollback` frames hold a transaction of at most 5 seconds.
-- Postgres wire: `BEGIN`, `COMMIT`, `ROLLBACK` and savepoints work. A transaction lives at most 5 seconds, then rolls back.
+- HTTP: each request is one transaction of 1 to 256 statements, all or nothing. `BEGIN STRONG` (or `BEGIN ISOLATION LEVEL SERIALIZABLE`) and `COMMIT` may wrap the whole batch to run it in strong mode; any other `BEGIN`, `COMMIT` or `ROLLBACK` is refused.
+- WebSocket: `GET /v1/projects/{project}/databases/{database}/sql/ws` with subprotocol `terrascale.sql.v2`. Send the access token as an `Authorization` header or, from a browser, as a first `{"type":"auth","token":"…"}` frame. `execute` frames run statements as over HTTP; `begin`, `commit` and `rollback` frames hold a transaction of at most 5 seconds. A `begin` frame takes `consistency` (`fast` or `strong`) and `bookmark`, and result frames return the new `bookmark`.
+- Postgres wire: `BEGIN`, `COMMIT`, `ROLLBACK` and savepoints work; `BEGIN ISOLATION LEVEL SERIALIZABLE` or `BEGIN STRONG` opens a strong transaction. A transaction lives at most 5 seconds, then rolls back.
 - Without a transaction, each statement commits on its own.
+- Schema changes, and writes to tables with a `UNIQUE` constraint other than the primary key, always run in strong mode. See [replication and consistency](/concepts/replication).
 
 ## Limits
 

@@ -5,26 +5,24 @@
     <Version>0.1.0-alpha.ttd.3</Version>
     <SourceRevisionId Condition="'$(TS_AUTH_REVISION)' != ''">$(TS_AUTH_REVISION)</SourceRevisionId>
     <UserSecretsId />
-    <!-- Tiered PGO optimizes frequently executed methods after startup. -->
     <TieredPGO>true</TieredPGO>
-    <!-- ReadyToRun precompiles on publish for a faster cold start; hot methods still tier up on the JIT. -->
     <PublishReadyToRun>true</PublishReadyToRun>
     <ServerGarbageCollection>true</ServerGarbageCollection>
     <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
     <GarbageCollectionAdaptationMode>1</GarbageCollectionAdaptationMode>
-    <!-- TerraScale.Endpoints (src/TerraScale.Endpoints) and its generator, referenced by Directory.Build.targets. -->
     <UseTerraScaleEndpoints>true</UseTerraScaleEndpoints>
+    <InterceptorsNamespaces>$(InterceptorsNamespaces);Dapper.AOT</InterceptorsNamespaces>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="../TerraScale.Authentication.Contracts/TerraScale.Authentication.Contracts.csproj" />
     <ProjectReference Include="../TerraScale.Authentication.Security/TerraScale.Authentication.Security.csproj" />
-    <ProjectReference Include="../../sdk/dotnet/src/TerraScale.EntityFrameworkCore/TerraScale.EntityFrameworkCore.csproj" />
+    <ProjectReference Include="../../sdk/dotnet/src/TerraScale.DotNet/TerraScale.DotNet.csproj" />
+    <ProjectReference Include="../TerraScale.Contracts/TerraScale.Contracts.csproj" />
     <ProjectReference Include="../TerraScale.Logging/TerraScale.Logging.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Direct references pin newer patches than the TerraScale packages' own central versions. -->
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
     <PackageReference Include="Scalar.AspNetCore" />
     <PackageReference Include="RazorSlices" />
@@ -37,9 +35,6 @@
     <PackageReference Include="ZLogger" />
     <PackageReference Include="ZString" />
     <PackageReference Include="Sentry.AspNetCore" />
-    <!-- Only the server stack: the OpenIddict.AspNetCore metapackage also brings the unused client and
-         validation HTTP stacks, whose Microsoft.Extensions.Telemetry dependency reorders log state, which
-         SafeLogging renders positionally. -->
     <PackageReference Include="OpenIddict.Core" />
     <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" />
     <PackageReference Include="OpenIddict.Server.AspNetCore" />
@@ -47,6 +42,14 @@
     <PackageReference Include="MailKit" />
     <PackageReference Include="QRCoder" />
     <PackageReference Include="Fido2" />
+    <PackageReference Include="Dapper" />
+    <PackageReference Include="Dapper.AOT" />
+    <PackageReference Include="dbup-core" />
+    <PackageReference Include="Ulid" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="TerraScale.Results" />
   </ItemGroup>
 
   <ItemGroup>
@@ -64,5 +67,6 @@
     <EmbeddedResource Include="Assets/fonts/GeistMono-Variable.woff2" LogicalName="assets/fonts/GeistMono-Variable.woff2" />
     <EmbeddedResource Include="Assets/disposable-email-domains.txt.gz" LogicalName="assets/disposable-email-domains.txt.gz" />
     <EmbeddedResource Include="Assets/passwords/common.txt.gz" LogicalName="assets/passwords/common.txt.gz" />
+    <EmbeddedResource Include="Storage/Schema/*.sql" LogicalName="schema/%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

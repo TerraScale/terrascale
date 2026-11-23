@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+using System.Data;
 using System.Text.Json;
 using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Features.Auth;
@@ -32,8 +32,6 @@ namespace TerraScale.Dashboard.Features.Organizations
             return new Done();
         }
 
-        // Completes on the owner's confirmed request. An organization already marked by the earlier
-        // deletion request reaches the same path, so its owner can finish it.
         public async Task DeleteAsync(AccountContext context, string confirmation, string stepUpProof, CancellationToken cancellationToken)
         {
             context = await FreshAsync(context, cancellationToken);
@@ -51,7 +49,6 @@ namespace TerraScale.Dashboard.Features.Organizations
             try { await stepUp.ConsumeAsync(context.Session, stepUpProof, "delete_organization", "ts-auth", null, org.Id, cancellationToken); }
             catch (Exception error) when (error is HttpRequestException or IOException or TimeoutException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
             { throw new AccountAccessException("The confirmation could not be checked. Start the deletion again.", StatusCodes.Status503ServiceUnavailable); }
-            // The mark stops new projects and billing changes while the deletion runs.
             await accounts.UpdateOrganizationAsync(context, current =>
             {
                 if (current.Kind == "personal" || current.RoleFor(context.UserId) != "owner" || current.OwnerUserId != context.UserId)
@@ -77,7 +74,6 @@ namespace TerraScale.Dashboard.Features.Organizations
                 current.DeletionRequested = true;
                 current.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, "organization.deletion_requested", current.Name, "organization", time.GetUtcNow()));
             }, cancellationToken);
-            // ts-auth refuses an organization that still has projects; a 404 is a delete an interrupted request already made.
             foreach (var projectId in org.Projects.Keys)
             {
                 try
@@ -158,10 +154,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                     throw PendingDeletion();
                 }
             }
-            // A completed provider delete can outlive an interrupted dashboard write;
-            // the exact project and current role were authorized above.
             catch (AccountAccessException error) when (error.StatusCode == StatusCodes.Status404NotFound) { }
-            // ts-auth no longer lists the project, so this write drops its dashboard settings.
             await accounts.UpdateOrganizationAsync(context, org =>
             {
                 if (!org.CanManage(context.UserId))
@@ -209,8 +202,6 @@ namespace TerraScale.Dashboard.Features.Organizations
             }, cancellationToken);
         }
 
-        // The remote mutation has removed the actor's membership already. This
-        // narrow projection cannot require the membership it has just deleted.
         private async Task ProjectAfterRemovalAsync(AccountContext context, bool deleted, CancellationToken cancellationToken)
         {
             for (var attempt = 0; ; attempt++)
@@ -235,7 +226,7 @@ namespace TerraScale.Dashboard.Features.Organizations
                     await organizations.ReplaceAsync(stored, cancellationToken);
                     return;
                 }
-                catch (DbUpdateConcurrencyException) when (attempt < 3) { }
+                catch (DBConcurrencyException) when (attempt < 3) { }
             }
         }
     }

@@ -153,6 +153,10 @@ Every error body carries a `docsUrl` pointing at the entry below for its `code`.
 
 500, SQLSTATE XX000 — an unexpected server fault. Quote the `requestId` to support. Retry: yes, once.
 
+### `invalid_bookmark`
+
+400, SQLSTATE 22023 — `TerraScale-Bookmark` (or a WebSocket frame's `bookmark`) is not a bookmark TerraScale returned. Send the value from an earlier response unchanged, or omit it. Retry: no.
+
 ### `invalid_cursor`
 
 400 — `after` is not one canonical uppercase ULID. Send a cursor from a previous page. Retry: no.
@@ -207,7 +211,7 @@ Every error body carries a `docsUrl` pointing at the entry below for its `code`.
 
 ### `move_aborted`
 
-409 — a change of the region that orders this database's writes, which this operation depended on, was abandoned. Re-check the database's placement. Retry: yes.
+409 — a region change this operation depended on was abandoned. Re-check the database's placement. Retry: yes.
 
 ### `move_in_progress`
 
@@ -279,7 +283,7 @@ Not an API answer: a TerraBase server logs this code at startup when another rec
 
 ### `platform_placement_locked`
 
-409 — the request would move the home region of one of the databases TerraScale's own services run on. Their home cannot move. Retry: no.
+409 — the request would change the regions of one of the databases TerraScale's own services run on. Their placement cannot change. Retry: no.
 
 ### `platform_plan_locked`
 
@@ -359,7 +363,7 @@ Not an API answer: a TerraBase server logs this code at startup when another org
 
 ### `serialization_conflict`
 
-409, SQLSTATE 40001 — the transaction's write set conflicted with a concurrent one. Rerun the transaction; SDKs resend it at most twice. Retry: yes.
+409, SQLSTATE 40001 — a [strong](/concepts/replication#strong-mode) transaction lost a race: a row it read or wrote changed after it started, or an older transaction took priority. Nothing was applied. Rerun the whole transaction; SDKs resend it at most twice. Fast-mode writes never answer this code. Retry: yes.
 
 ### `shape_busy`
 
@@ -419,7 +423,7 @@ Not an API answer: a TerraBase server logs this code at startup when another org
 
 ### `transaction_state`
 
-400, SQLSTATE 25000 — the batch's durability or transaction-state setting is invalid for this transaction. Fix the setting. Retry: no.
+400, SQLSTATE 25000 — `BEGIN`, `COMMIT` or `ROLLBACK` appears somewhere other than around the whole batch, or the transaction-state setting is invalid for this transaction. Fix the setting. Retry: no.
 
 ### `unavailable`
 
@@ -479,27 +483,23 @@ Not an API answer: a TerraBase server logs this code at startup when another org
 
 ### `write_outcome_unknown`
 
-503, SQLSTATE 08007 — a write committed or may have committed: its durable copy in another region was not confirmed in time, or the region you called forwarded it, or a SQL session's commit, to the database's writer and got no answer. Read what the write would have produced before repeating it, above all for a non-idempotent write. This classification depends on sending the request, not its transaction age. A delayed commit answer remains the commit's real result. An old server forwarding this unfamiliar code preserves its code and message but uses its unknown-code mapping, SQLSTATE 0A000 and HTTP 400. Mixed builds do not guarantee the new mapping or transaction-wait behaviour end to end. Retry: not blindly.
+503, SQLSTATE 08007 — a write committed or may have committed, but its answer was lost: for example the connection dropped after the commit started, or a strong transaction's peer regions did not answer in time. Read what the write would have produced before repeating it, above all for a non-idempotent write. A delayed commit answer remains the commit's real result. Retry: not blindly.
 
-Relayed answers use the same progress rule as input. Once an answer starts arriving, its deadline is its start plus 30 seconds plus the bytes received divided by 16 KiB/s. Before the first answer byte, the entry waits at most ten minutes, then closes without cancelling accepted execution or commit at the home. A close drain shares the two-second closing budget from the start of closing. Transaction age limits govern waiting for input; there is no hard wall-clock lifetime for a transaction. There is no end-to-end guarantee while old and new builds serve together.
-
-A session closes after a `write_outcome_unknown` answer (SQLSTATE 08007, HTTP 503). WebSocket uses close reason `write_outcome_unknown`; PostgreSQL sends a fatal error stating that the session is closed. The outcome is unknown, not rolled back or retryable. Reconcile by reading back the expected data from a new session before writing again.
+A session closes after a `write_outcome_unknown` answer. WebSocket uses close reason `write_outcome_unknown`; PostgreSQL sends a fatal error stating that the session is closed. The outcome is unknown, not rolled back or retryable. Reconcile by reading back the expected data from a new session before writing again.
 
 ### `wrong_region`
 
-421, SQLSTATE 08004 — the region you called does not serve the database, or could not get the request to its writer; nothing was written. Resend to the region named in the response. Retry: yes.
+421, SQLSTATE 08004 — the region you called does not hold the database; nothing was written. Resend to a region of the database's set. Retry: yes.
 
 ## Wrong region
 
-A `421` with code `wrong_region` means the called region does not serve this database. The response names a region of the set in the `X-TerraBase-Database-Home` header, its `Location` header carries the same request URL in that region, and the message reads `the database is served in <region>: send it to https://<host>`. Send the request to a region of the database's set. `ts db info <name>` prints a database's metadata, including its regions. The SDKs do not retry a `421` automatically: the .NET SDK raises `TerraBaseWrongRegionException` and the Go SDK returns an `*tb.APIError`, both carrying the regions that serve the database, so your code can resend there.
+A `421` with code `wrong_region` means the called region does not hold this database. Every region of the database's set accepts reads and writes, so send the request to any of them. `ts db info <name>` prints a database's metadata, including its regions. The SDKs do not retry a `421` automatically.
 
 ## Retry behavior
 
 A `serialization_conflict` is resent at most twice; nothing else is.
 
 For a repeatable read, wait as directed by the server, bound attempts and honor cancellation. Validation, authorization and conflict failures need a fix before another attempt. Do not hide those failures in an infinite retry loop.
-
-A push stream that returns NATS error 10074 is not retried, because the stream wants more replicas than the cluster has.
 
 ## Uncertain writes
 

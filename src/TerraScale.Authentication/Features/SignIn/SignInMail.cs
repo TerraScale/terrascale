@@ -1,3 +1,4 @@
+using Dapper;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
@@ -12,62 +13,38 @@ using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.ProjectTenants;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Security;
-using Microsoft.EntityFrameworkCore;
 using TerraScale.Authentication.Storage;
 using TerraScale.DotNet.TerraBase;
 using ZLogger;
 
 namespace TerraScale.Authentication.Features.SignIn;
 
-/// <summary>
-/// Delivers emailed codes (sign-in, password reset, sign-up, step-up), invitations and email change mail after the response,
-/// through a durable outbox in TerraBase, so request timing never tells an account from a stranger and a crash or restart
-/// loses no accepted work. A request persists only what was asked, sealed under the master key; the worker issues the code,
-/// binds the row to that issuance, and right before sending checks that the code still redeems, so an expired or superseded
-/// code is never delivered. The row is marked sending before the provider call: a crash then, or an ambiguous provider
-/// outcome, ends as unknown and is never resent; an explicit retryable refusal is retried with backoff. Rows a stopped
-/// replica leased are taken over by any replica once the lease lapses, and finished rows keep no payload and are deleted
-/// after <see cref="Retention"/>. Lockout notices stay a best-effort in-memory queue on their own worker, so refused
-/// attempts cannot crowd out recovery mail. Admission refuses a full replica before accepting an authentication start or
-/// persisting an invitation.
-/// </summary>
 public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSettings settings, ProjectAuthSettings projects, PlatformDirectory platform,
     AuthSchema schema, AuthData data, Passcodes passcodes, Users users, AuthOptions options, TimeProvider clock, ILogger<SignInMail> logger) : BackgroundService
 {
-    /// <summary>Accepted but not yet claimed deliveries, plus reservations, allowed per replica before new requests are refused.</summary>
     public const int Capacity = 256;
 
-    /// <summary>Provider refusals known not to have sent that one email survives before it is given up.</summary>
     public const int MaxAttempts = 5;
 
-    /// <summary>How long the email configuration may take before a code goes out with the defaults.</summary>
     public static readonly TimeSpan ConfigTimeout = TimeSpan.FromSeconds(3);
 
-    /// <summary>After a failed configuration read, codes go out with the defaults this long without trying again.</summary>
     public static readonly TimeSpan ConfigBackoff = TimeSpan.FromSeconds(30);
 
-    /// <summary>How long a replica owns a claimed row; after it any replica takes the row over.</summary>
     public static readonly TimeSpan Lease = TimeSpan.FromMinutes(2);
 
-    /// <summary>How often the worker looks for rows another replica left behind or deferred.</summary>
     public static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(5);
 
-    /// <summary>First retry delay after a retryable refusal; it doubles per attempt.</summary>
     public static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(30);
 
-    /// <summary>How long finished rows, without their payload, are kept.</summary>
     public static readonly TimeSpan Retention = TimeSpan.FromDays(1);
 
     private const string Instance = OidcIssuer.InstanceId;
-    /// <summary>Independent deliveries allowed in flight per replica.</summary>
     public const int DeliveryConcurrency = 8;
 
     private const int Batch = 64;
 
-    // Shared by both workers: after a failed read, every email on this replica skips the read until this instant.
     private long configRetryAt;
 
-    // One in-flight configuration read per tenant and copy scope; concurrent deliveries share it instead of each paying a timeout.
     private readonly ConcurrentDictionary<(string Tenant, bool Project), Lazy<Task<EmailConfig?>>> configReads = new();
 
     private readonly Lock admission = new();
@@ -81,10 +58,6 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
     private readonly Channel<(Func<Task<Outgoing?>> Prepare, string Locale)> notices =
         Channel.CreateBounded<(Func<Task<Outgoing?>>, string)>(new BoundedChannelOptions(Capacity) { SingleReader = true });
 
-    /// <summary>
-    /// Reserves bounded delivery capacity before any durable work. A full or stopping replica answers 503 regardless
-    /// of account existence. Dispose an unused reservation to release it; an enqueue consumes it exactly once.
-    /// </summary>
     public Reservation Reserve()
     {
         lock (this.admission)
@@ -100,14 +73,10 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         }
     }
 
-    /// <summary>
-    /// Queues account lookup and a persisted notice claim on the separate notice worker, then sends the claimed lockout notice. A null result
-    /// suppresses unknown accounts, duplicate episodes and expired lockouts without affecting the HTTP response.
-    /// </summary>
     public void EnqueueLockout(Func<Task<AuthEmailValues?>> claim, string locale = AuthEmails.English)
     {
         ArgumentNullException.ThrowIfNull(claim);
-        if (!this.notices.Writer.TryWrite((async () => await claim().ConfigureAwait(false) is { } values
+        if (!this.notices.Writer.TryWrite((async () => await claim() is { } values
             ? new Outgoing(AuthEmailKind.Lockout, values)
             : null, locale)))
         {
@@ -115,10 +84,8 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         }
     }
 
-    /// <inheritdoc />
     public override Task StopAsync(CancellationToken cancellationToken)
     {
-        // Accept nothing new; the worker delivers what this replica accepted and then ends. Anything left is recovered from the outbox.
         lock (this.admission)
         {
             this.accepting = false;
@@ -129,11 +96,10 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         return base.StopAsync(cancellationToken);
     }
 
-    /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await schema.Ready.WaitAsync(stoppingToken).ConfigureAwait(false);
-        await Task.WhenAll(this.DeliverOutboxAsync(), this.DeliverNoticesAsync()).ConfigureAwait(false);
+        await schema.Ready.WaitAsync(stoppingToken);
+        await Task.WhenAll(this.DeliverOutboxAsync(), this.DeliverNoticesAsync());
     }
 
     private bool Drained
@@ -151,7 +117,6 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
     {
         var pruneAt = DateTimeOffset.MinValue;
         var active = new List<Task>(DeliveryConcurrency);
-        // Not stoppingToken: accepted codes are still delivered while the host shuts down.
         while (true)
         {
             try
@@ -159,11 +124,9 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
                 foreach (var completed in active.Where(task => task.IsCompleted).ToArray())
                 {
                     active.Remove(completed);
-                    await completed.ConfigureAwait(false);
+                    await completed;
                 }
 
-                // Reconcile only reservations that existed before the query. A new enqueue
-                // must not be released just because it was written after this snapshot.
                 string[] pending;
                 lock (this.admission)
                 {
@@ -171,8 +134,8 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
                 }
                 if (pending.Length > 0)
                 {
-                    var open = await data.ReadAsync((db, token) => db.MailOutbox.Where(row => row.State == "queued" || row.State == "ready" || row.State == "sending")
-                        .OrderBy(row => row.Id).Select(row => row.Id).Take(Batch).ToListAsync(token), CancellationToken.None).ConfigureAwait(false);
+                    var open = (await data.ReadAsync(connection => connection.QueryAsync<string>(
+                        "SELECT id FROM mail_outbox WHERE state IN ('queued', 'ready', 'sending') ORDER BY id LIMIT @Batch", new { Batch }), CancellationToken.None)).AsList();
                     if (open.Count < Batch)
                     {
                         this.Release(id => pending.Contains(id, StringComparer.Ordinal) && !open.Contains(id, StringComparer.Ordinal));
@@ -181,13 +144,11 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
 
                 if (active.Count < DeliveryConcurrency)
                 {
-                    // Apply eligibility before LIMIT: leases and deferred retries must never
-                    // fill the first batch and starve newly accepted work or spin the worker.
                     var now = clock.GetUtcNow();
                     var take = DeliveryConcurrency - active.Count;
-                    var rows = await data.ReadAsync((db, token) => db.MailOutbox
-                        .Where(row => (row.State == "queued" || row.State == "ready" || row.State == "sending") && row.LeaseUntil <= now)
-                        .OrderBy(row => row.LeaseUntil).Take(take).WithVersion().ToListAsync(token), CancellationToken.None).ConfigureAwait(false);
+                    var rows = Versioned.All(await data.ReadAsync(connection => connection.QueryAsync<MailRow>(
+                        "SELECT * FROM mail_outbox WHERE state IN ('queued', 'ready', 'sending') AND lease_until <= @now ORDER BY lease_until LIMIT @take",
+                        new { now, take }), CancellationToken.None));
                     foreach (var row in rows)
                     {
                         active.Add(this.ProcessAsync(row));
@@ -196,13 +157,12 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
 
                 if (clock.GetUtcNow() >= pruneAt)
                 {
-                    await this.PruneAsync().ConfigureAwait(false);
+                    await this.PruneAsync();
                     pruneAt = clock.GetUtcNow() + Lease;
                 }
             }
             catch (Exception failure) when (failure is not OutOfMemoryException)
             {
-                // Storage unavailable (as during bootstrap): the next pass retries, and no row is lost. A failing log provider must not stop the worker.
                 try
                 {
                     logger.ZLogWarning(failure, $"Authentication email outbox pass failed; retrying");
@@ -213,26 +173,21 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
                 }
             }
 
-            // Processing can release the last accepted row while shutdown is waiting.
-            // Observe that release before entering the next polling interval.
             if (this.Drained && active.Count == 0)
             {
                 return;
             }
 
-            // A completion frees a slot immediately; a wake admits new mail even while
-            // older provider calls are still in flight. Cancel the unused read each pass.
             using var timeout = new CancellationTokenSource(PollInterval, clock);
             var awakened = this.wake.Reader.ReadAsync(timeout.Token).AsTask();
-            await Task.WhenAny(active.Append(awakened)).ConfigureAwait(false);
-            await timeout.CancelAsync().ConfigureAwait(false);
+            await Task.WhenAny(active.Append(awakened));
+            await timeout.CancelAsync();
             try
             {
-                await awakened.ConfigureAwait(false);
+                await awakened;
             }
             catch (OperationCanceledException)
             {
-                // Poll for rows other replicas left behind, or continue on completion.
             }
         }
     }
@@ -249,11 +204,10 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         AuthMetrics.EmailStage(row.Attempts == 0 ? "queue" : "retry_wait", (clock.GetUtcNow() - row.CreatedAt).TotalSeconds);
         try
         {
-            await this.AdvanceAsync(claimed.Row, claimed.Version).ConfigureAwait(false);
+            await this.AdvanceAsync(claimed.Row, claimed.Version);
         }
         catch (Exception failure) when (failure is not OutOfMemoryException)
         {
-            // The lease lapses and the row is retried; a row already marked sending ends as unknown.
             logger.ZLogError(failure, $"Authentication email delivery failed");
         }
     }
@@ -262,8 +216,7 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
     {
         if (row.State == "sending")
         {
-            // A replica stopped during the provider call, which may have sent: never send it again.
-            await this.SaveAsync(row with { State = "unknown", Payload = null }, version).ConfigureAwait(false);
+            await this.SaveAsync(row with { State = "unknown", Payload = null }, version);
             return;
         }
 
@@ -271,10 +224,9 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         var work = this.Open(row);
         if (row.State == "queued")
         {
-            if (await this.IssueAsync(work).ConfigureAwait(false) is not { } issued)
+            if (await this.IssueAsync(work) is not { } issued)
             {
-                // No account, a reached issue limit or a lost race: nothing to send, nothing to keep.
-                await data.SaveAsync(Change.Delete(row, version), CancellationToken.None).ConfigureAwait(false);
+                await data.SaveAsync(Change.Delete(row, version), CancellationToken.None);
                 return;
             }
 
@@ -315,14 +267,14 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         }
 
         if (row.ExpiresAt <= clock.GetUtcNow() || row.IssueId is not null
-            && !await passcodes.IsCurrentAsync(row.Tenant!, row.Purpose!.Value, row.CodeKey!, row.IssueId, CancellationToken.None).ConfigureAwait(false))
+            && !await passcodes.IsCurrentAsync(row.Tenant!, row.Purpose!.Value, row.CodeKey!, row.IssueId, CancellationToken.None))
         {
-            await this.SaveAsync(row with { State = "suppressed", Payload = null }, version).ConfigureAwait(false);
+            await this.SaveAsync(row with { State = "suppressed", Payload = null }, version);
             return;
         }
 
         var values = work.Values!;
-        var message = await emails.RenderAsync(work.Kind!.Value, row.Locale, values, await this.ConfigAsync(values.Tenant, work.Kind.Value), cancellationToken: CancellationToken.None).ConfigureAwait(false);
+        var message = await emails.RenderAsync(work.Kind!.Value, row.Locale, values, await this.ConfigAsync(values.Tenant, work.Kind.Value), cancellationToken: CancellationToken.None);
         if (await this.SaveAsync(row with { State = "sending" }, version) is not { } sending)
         {
             return;
@@ -333,7 +285,7 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         EmailDeliveryOutcome outcome;
         try
         {
-            outcome = await email.DeliverAsync(values.Email, message, CancellationToken.None).ConfigureAwait(false);
+            outcome = await email.DeliverAsync(values.Email, message, CancellationToken.None);
         }
         catch (Exception failure) when (failure is not OutOfMemoryException)
         {
@@ -357,38 +309,40 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
                     _ => "unknown",
                 },
                 Payload = null,
-            }, sending.Version).ConfigureAwait(false);
+            }, sending.Version);
     }
 
     private async Task<IssuedPasscode?> IssueAsync(MailWork work) => work.SocialLink is { } pending
-        ? await passcodes.RequestSocialAsync(work.Tenant, pending, CancellationToken.None).ConfigureAwait(false)
+        ? await passcodes.RequestSocialAsync(work.Tenant, pending, CancellationToken.None)
         : work.MagicBrowserHash is not null
-        ? await passcodes.RequestMagicLinkAsync(work.Tenant, work.Email, CancellationToken.None).ConfigureAwait(false)
+        ? await passcodes.RequestMagicLinkAsync(work.Tenant, work.Email, CancellationToken.None)
         : work.Purpose switch
         {
-            PasscodePurpose.SignUp when work.Resend => await passcodes.ResendSignUpAsync(work.Tenant, work.Email, CancellationToken.None).ConfigureAwait(false),
-            PasscodePurpose.SignUp => await passcodes.RequestSignUpAsync(work.Tenant, work.Email, work.PasswordHash!, work.PendingToken!, work.Username, CancellationToken.None).ConfigureAwait(false),
-            PasscodePurpose.StepUp => await users.GetAsync(work.Tenant, work.UserId!, CancellationToken.None).ConfigureAwait(false) is { } user
-                ? await passcodes.RequestStepUpAsync(user, work.RequestId!, CancellationToken.None).ConfigureAwait(false)
+            PasscodePurpose.SignUp when work.Resend => await passcodes.ResendSignUpAsync(work.Tenant, work.Email, CancellationToken.None),
+            PasscodePurpose.SignUp => await passcodes.RequestSignUpAsync(work.Tenant, work.Email, work.PasswordHash!, work.PendingToken!, work.Username, CancellationToken.None),
+            PasscodePurpose.StepUp => await users.GetAsync(work.Tenant, work.UserId!, CancellationToken.None) is { } user
+                ? await passcodes.RequestStepUpAsync(user, work.RequestId!, CancellationToken.None)
                 : null,
-            PasscodePurpose.EnrollmentInbox => await users.GetAsync(work.Tenant, work.UserId!, CancellationToken.None).ConfigureAwait(false) is { } enrolling
-                ? await passcodes.RequestEnrollmentInboxAsync(enrolling, work.RequestId!, CancellationToken.None).ConfigureAwait(false)
+            PasscodePurpose.EnrollmentInbox => await users.GetAsync(work.Tenant, work.UserId!, CancellationToken.None) is { } enrolling
+                ? await passcodes.RequestEnrollmentInboxAsync(enrolling, work.RequestId!, CancellationToken.None)
                 : null,
-            { } purpose => await passcodes.RequestAsync(work.Tenant, work.Email, purpose, CancellationToken.None).ConfigureAwait(false),
+            { } purpose => await passcodes.RequestAsync(work.Tenant, work.Email, purpose, CancellationToken.None),
             null => throw new InvalidOperationException("A queued outbox row names no code to issue."),
         };
 
     private async Task PruneAsync()
     {
         var cutoff = clock.GetUtcNow() - Retention;
-        await data.InBatchesAsync(SessionPruner.BatchSize, (db, token) => db.MailOutbox.Where(row => row.CreatedAt <= cutoff)
-            .OrderBy(row => row.CreatedAt).Take(SessionPruner.BatchSize).ExecuteDeleteAsync(token), CancellationToken.None).ConfigureAwait(false);
+        var batchSize = SessionPruner.BatchSize;
+        await data.InBatchesAsync(batchSize, connection => connection.ExecuteAsync(
+            "DELETE FROM mail_outbox WHERE id IN (SELECT id FROM mail_outbox WHERE created_at <= @cutoff ORDER BY created_at LIMIT @batchSize)", new { cutoff, batchSize }),
+            CancellationToken.None);
     }
 
     private async Task<(MailRow Row, string Version)?> SaveAsync(MailRow row, string version)
     {
         var saved = Change.Update(row, version);
-        return await data.SaveAsync(saved, CancellationToken.None).ConfigureAwait(false) ? (row, saved.Version!) : null;
+        return await data.SaveAsync(saved, CancellationToken.None) ? (row, saved.Version!) : null;
     }
 
     private string Seal(string id, MailWork work) =>
@@ -400,12 +354,11 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
 
     private async Task DeliverNoticesAsync()
     {
-        // Not stoppingToken: notices already claimed are still delivered while the host shuts down.
         await foreach (var (prepare, locale) in this.notices.Reader.ReadAllAsync(CancellationToken.None))
         {
             try
             {
-                if (await prepare().ConfigureAwait(false) is not { } outgoing)
+                if (await prepare() is not { } outgoing)
                 {
                     continue;
                 }
@@ -420,22 +373,13 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
             }
             catch (Exception failure) when (failure is not OutOfMemoryException)
             {
-                // Senders log and swallow their own failures; anything else must not stop delivery of the rest.
                 logger.ZLogError(failure, $"Authentication email delivery failed");
             }
         }
     }
 
-    /// <summary>
-    /// The instance's email configuration, read for every code so a change applies to the next email on every replica.
-    /// When it cannot be read the code still goes out, with the default branding and copy: delivering it matters more.
-    /// Each read waits at most <see cref="ConfigTimeout"/>, and after a failure the next
-    /// <see cref="ConfigBackoff"/> of emails skip the read. Deliveries that need the same configuration while a read is in
-    /// flight share that read, so a stalled store sees one request and a backlog pays one timeout.
-    /// </summary>
     private async Task<EmailConfig?> ConfigAsync(string tenant, AuthEmailKind kind)
     {
-        // Never inherit platform copy or a customer-controlled sender identity into project authentication mail.
         var defaults = Tenancy.IsProject(tenant) && tenant != "platform" && kind is AuthEmailKind.SignInCode or AuthEmailKind.SocialLinkCode or AuthEmailKind.MagicLink or AuthEmailKind.VerifyEmail or AuthEmailKind.PasswordReset or AuthEmailKind.Lockout or AuthEmailKind.NewDevice
             ? EmailConfig.Defaults(tenant) with
             {
@@ -452,18 +396,16 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         var read = this.configReads.GetOrAdd(key, _ => new Lazy<Task<EmailConfig?>>(() => this.ReadConfigAsync(tenant, defaults)));
         try
         {
-            return await read.Value.ConfigureAwait(false);
+            return await read.Value;
         }
         finally
         {
-            // The next email after this read finishes reads again, so a change still applies to it.
             this.configReads.TryRemove(new KeyValuePair<(string, bool), Lazy<Task<EmailConfig?>>>(key, read));
         }
     }
 
     private async Task<EmailConfig?> ReadConfigAsync(string tenant, EmailConfig? defaults)
     {
-        // A read that failed and left the map just before this one started has already set the backoff.
         if (clock.GetUtcNow().UtcTicks < Volatile.Read(ref this.configRetryAt))
         {
             return defaults;
@@ -498,7 +440,6 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         }
     }
 
-    // Persists one accepted email before the request answers; the same write for every address, account or not.
     private async Task WriteAsync(string state, MailWork work, string locale, TimeSpan? lifetime)
     {
         var now = clock.GetUtcNow();
@@ -507,7 +448,7 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         var written = false;
         try
         {
-            written = await data.SaveAsync(Change.Insert(row), CancellationToken.None).ConfigureAwait(false) ? true : throw ApiException.Unavailable();
+            written = await data.SaveAsync(Change.Insert(row), CancellationToken.None) ? true : throw ApiException.Unavailable();
         }
         catch (Exception failure) when (failure is not OutOfMemoryException)
         {
@@ -546,32 +487,27 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
         }
     }
 
-    /// <summary>A single delivery slot held across issuance or an invitation transaction.</summary>
     public sealed class Reservation : IDisposable
     {
         private SignInMail? owner;
 
         internal Reservation(SignInMail owner) => this.owner = owner;
 
-        /// <summary>Queues a sign-in or password-reset code; the worker issues it only if the address has an account.</summary>
         public Task EnqueueMagicLinkAsync(string tenant, string email, string browserHash, string? next, string locale) =>
             this.Consume().WriteAsync("queued", new MailWork(tenant, email) { Purpose = PasscodePurpose.SignIn, MagicBrowserHash = browserHash, MagicNext = next }, locale, MagicLinks.Lifetime);
 
         public Task EnqueueCodeAsync(string tenant, string email, PasscodePurpose purpose, string locale = AuthEmails.English) =>
             this.Consume().WriteAsync("queued", new MailWork(tenant, email) { Purpose = purpose }, locale, null);
 
-        /// <summary>Queues a sign-up code, or a sign-in code when the address already has an account.</summary>
         public Task EnqueueSocialAsync(string tenant, string email, string pending, string provider, string locale) =>
             this.Consume().WriteAsync("queued", new MailWork(tenant, email) { Purpose = PasscodePurpose.Social, SocialLink = pending, Provider = provider }, locale, null);
 
         public Task EnqueueSignUpAsync(string tenant, string email, string passwordHash, string pendingToken, string locale = AuthEmails.English, string? username = null) =>
             this.Consume().WriteAsync("queued", new MailWork(tenant, email) { Purpose = PasscodePurpose.SignUp, PasswordHash = passwordHash, PendingToken = pendingToken, Username = username }, locale, null);
 
-        /// <summary>Queues a resend of the pending sign-up's code, or a sign-in code when the address got an account.</summary>
         public Task EnqueueSignUpResendAsync(string tenant, string email, string locale = AuthEmails.English) =>
             this.Consume().WriteAsync("queued", new MailWork(tenant, email) { Purpose = PasscodePurpose.SignUp, Resend = true }, locale, null);
 
-        /// <summary>Queues the step-up code of hosted request <paramref name="requestId"/>.</summary>
         public Task EnqueueStepUpAsync(UserRecord user, string requestId, string locale = AuthEmails.English)
         {
             ArgumentNullException.ThrowIfNull(user);
@@ -582,32 +518,29 @@ public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSetti
             this.Consume().WriteAsync("queued", new MailWork(user.InstanceId, user.Email)
             { Purpose = PasscodePurpose.EnrollmentInbox, UserId = user.Id, RequestId = challenge }, locale, null);
 
-        /// <summary>Queues a committed <paramref name="kind"/> email using the slot reserved before its transaction.</summary>
         public Task EnqueueEmailAsync(AuthEmailKind kind, AuthEmailValues values, string locale = AuthEmails.English)
         {
             ArgumentNullException.ThrowIfNull(values);
             return this.Consume().WriteAsync("ready", new MailWork(values.Tenant, values.Email) { Kind = kind, Values = values }, locale, values.ExpiresIn);
         }
 
-        /// <inheritdoc />
         public void Dispose() => Interlocked.Exchange(ref this.owner, null)?.FinishReservation(null);
 
         private SignInMail Consume() => Interlocked.Exchange(ref this.owner, null)
             ?? throw new InvalidOperationException("The email reservation has already been consumed or released.");
     }
 
-    // One lockout notice to render and send; Values never formats its code or link.
     private sealed record Outgoing(AuthEmailKind Kind, AuthEmailValues Values);
 }
 
-/// <summary>One outbox row; <see cref="Payload"/> is the sealed <see cref="MailWork"/> and is dropped once the row finishes.</summary>
 public sealed record MailRow(string Id, string State, string Locale, DateTimeOffset CreatedAt, DateTimeOffset LeaseUntil, string? Payload)
 {
+    public string? Version { get; init; }
+
     public int Attempts { get; init; }
 
     public DateTimeOffset? ExpiresAt { get; init; }
 
-    // The issued code the row delivers; it is sent only while that code still redeems.
     public string? Tenant { get; init; }
 
     public PasscodePurpose? Purpose { get; init; }
@@ -619,7 +552,6 @@ public sealed record MailRow(string Id, string State, string Locale, DateTimeOff
     public override string ToString() => nameof(MailRow);
 }
 
-/// <summary>A code to issue (<see cref="Purpose"/>) or an email to send (<see cref="Kind"/>).</summary>
 internal sealed record MailWork(string Tenant, string Email)
 {
     public string? SocialLink { get; init; }
@@ -638,7 +570,6 @@ internal sealed record MailWork(string Tenant, string Email)
 
     public string? PendingToken { get; init; }
 
-    /// <summary>A sign-up resend re-issues the pending sign-up's code from its stored password and token.</summary>
     public bool Resend { get; init; }
 
     public string? UserId { get; init; }

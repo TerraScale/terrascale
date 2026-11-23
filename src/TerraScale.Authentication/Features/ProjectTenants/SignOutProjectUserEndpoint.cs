@@ -17,6 +17,6 @@ public sealed class SignOutProjectUserEndpoint(TenantDirectory tenants, Sessions
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         return await sessions.RevokeAllAsync(project, this.RouteId("user"), cancellationToken)
-            ? Results.NoContent() : throw PlatformDirectory.NotFound();
+            ? TypedResults.NoContent() : throw PlatformDirectory.NotFound();
     }
 }

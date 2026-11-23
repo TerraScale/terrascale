@@ -203,13 +203,16 @@ class StatementResult:
         return [mapper(**row) for row in self.rows]
 
     @classmethod
-    def from_json(cls, body: dict[str, Any]) -> StatementResult:
+    def from_json(cls, body: dict[str, Any], *, frame: bool = False) -> StatementResult:
+        """Decode a REST result, or a ``terrascale.sql.v2`` frame result when ``frame`` is true."""
+        type_key, affected_key, rowid_key = (
+            ("type", "rowsAffected", "lastInsertRowId") if frame else ("decltype", "rows_affected", "last_insert_rowid"))
         raw_columns, raw_rows = body["columns"], body["rows"]
         if not isinstance(raw_columns, list) or not isinstance(raw_rows, list):
             raise ValueError("expected SQL columns and rows arrays")
         columns = []
         for c in raw_columns:
-            name, decltype = c["name"], c.get("decltype")
+            name, decltype = c["name"], c.get(type_key)
             if not isinstance(name, str) or decltype is not None and not isinstance(decltype, str):
                 raise ValueError("invalid SQL column")
             columns.append(Column(name, decltype))
@@ -221,15 +224,15 @@ class StatementResult:
             if not isinstance(raw, list) or len(raw) != len(columns):
                 raise ValueError("invalid SQL row")
             rows.append(Row(columns, ordinals, [_decode(cell) for cell in raw]))
-        affected = _integer(body["rows_affected"])
+        affected = _integer(body[affected_key])
         if affected < 0:
             raise ValueError("negative rows affected")
-        rowid = body.get("last_insert_rowid")
+        rowid = body.get(rowid_key)
         return cls(columns, rows, affected, _integer(rowid) if rowid is not None else None)
 
 
-def results(body: Any, expected: int) -> list[StatementResult]:
+def results(body: Any, expected: int, *, frame: bool = False) -> list[StatementResult]:
     items = body.get("results") if isinstance(body, dict) else None
     if not isinstance(items, list) or len(items) != expected:
         raise ValueError("result count does not match the statements")
-    return [StatementResult.from_json(item) for item in items]
+    return [StatementResult.from_json(item, frame=frame) for item in items]

@@ -23,7 +23,7 @@ public sealed class StartImpersonationEndpoint(TenantDirectory tenants, Platform
         person = await proofs.ConsumeHeaderAsync(person, this.HttpContext.Request, "start_impersonation", project + ":" + this.RouteId("user"), cancellationToken);
         return await impersonations.StartAsync(person, project, this.RouteId("user"), request, cancellationToken) switch
         {
-            ImpersonationTicket issued => Results.Json(issued, ImpersonationJson.Default.ImpersonationTicket, statusCode: 201),
+            ImpersonationTicket issued => TypedResults.Json(issued, ImpersonationJson.Default.ImpersonationTicket, statusCode: 201),
             Validation error => ErrorResults.ToResult(error),
             NotFound error => ErrorResults.ToResult(error),
             Forbidden error => ErrorResults.ToResult(error),

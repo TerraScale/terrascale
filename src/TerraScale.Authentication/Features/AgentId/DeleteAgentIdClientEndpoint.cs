@@ -25,7 +25,7 @@ public sealed class DeleteAgentIdClientEndpoint(PlatformAuthentication authentic
 
         return await clients.DeleteAsync(proof, clientId, cancellationToken) switch
         {
-            Done => Results.NoContent(),
+            Done => TypedResults.NoContent(),
             NotFound notFound => ErrorResults.ToResult(notFound),
             Conflict conflict => ErrorResults.ToResult(conflict),
             Forbidden forbidden => ErrorResults.ToResult(forbidden),

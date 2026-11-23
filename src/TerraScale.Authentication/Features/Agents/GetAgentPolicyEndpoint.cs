@@ -14,6 +14,6 @@ public sealed class GetAgentPolicyEndpoint(TenantDirectory tenants, PlatformAuth
     protected override async Task<IResult> HandleAsync(ProjectCaller caller, CancellationToken cancellationToken)
     {
         var project = await this.AccessAsync(caller, Roles.Viewer, cancellationToken);
-        return Results.Json(await agents.PolicyAsync(project, cancellationToken), AgentJson.Default.AgentPolicyBody);
+        return TypedResults.Json(await agents.PolicyAsync(project, cancellationToken), AgentJson.Default.AgentPolicyBody);
     }
 }

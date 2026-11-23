@@ -1,4 +1,5 @@
-using Microsoft.EntityFrameworkCore;
+using TerraScale.Dashboard.Platform.Persistence;
+using Dapper;
 using AccountService = TerraScale.Dashboard.Common.Accounts.AccountService;
 
 namespace TerraScale.Dashboard.Features.Billing
@@ -57,14 +58,12 @@ namespace TerraScale.Dashboard.Features.Billing
 
         private async Task<StripeCheckoutRow?> CheckoutAsync(string checkoutId, CancellationToken cancellationToken)
         {
-            await using var db = await storage.CreateDbContextAsync(cancellationToken);
-            return await db.StripeCheckouts.AsNoTracking().SingleOrDefaultAsync(row => row.CheckoutId == checkoutId, cancellationToken);
+            await using var connection = await storage.OpenAsync(cancellationToken);
+            return await connection.QuerySingleOrDefaultAsync<StripeCheckoutRow>(DashboardSql.StripeCheckouts.Select + " WHERE checkout_id = @CheckoutId", new { CheckoutId = checkoutId });
         }
 
         private async Task RestoreCheckoutScopeAsync(AccountContext context, BillingBinding binding, CancellationToken cancellationToken)
         {
-            // Reauthorize after the vendor read and reject a replaced reservation
-            // before restoring any account selection.
             var bound = await BoundCheckoutAsync(context, binding.CheckoutId, cancellationToken);
             if (bound.Binding.RequestId != binding.RequestId)
             {

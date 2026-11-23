@@ -19,7 +19,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Audit
 
             if (!context.CanManage)
             {
-                return Results.StatusCode(403);
+                return TypedResults.StatusCode(403);
             }
 
             var filter = OrganizationFilters.For(http);
@@ -30,7 +30,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Audit
             var format = http.Request.Query["format"].ToString();
             if (format == "json")
             {
-                return Results.File(JsonSerializer.SerializeToUtf8Bytes(new
+                return TypedResults.File(JsonSerializer.SerializeToUtf8Bytes(new
                 {
                     projectId = context.Project?.Id,
                     exportedAt = time.GetUtcNow(),
@@ -49,7 +49,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Audit
                     lines.Append(JsonSerializer.Serialize(AuditEventRow.From(item), OrganizationAudit.Json)).Append('\n');
                 }
 
-                return Results.File(Encoding.UTF8.GetBytes(lines.ToString()), "application/x-ndjson", name + ".ndjson");
+                return TypedResults.File(Encoding.UTF8.GetBytes(lines.ToString()), "application/x-ndjson", name + ".ndjson");
             }
             var body = new StringBuilder("auditEventId,occurredAt,actor,actorType,action,target,source,severity,outcome,ip\r\n");
             foreach (var item in events.Select(AuditEventRow.From))
@@ -58,7 +58,7 @@ namespace TerraScale.Dashboard.Features.Organizations.Audit
                 item.Severity, item.Outcome, item.Ip }.Select(OrganizationAudit.Csv)).Append("\r\n");
             }
 
-            return Results.File(Encoding.UTF8.GetBytes(body.ToString()), "text/csv; charset=utf-8", name + ".csv");
+            return TypedResults.File(Encoding.UTF8.GetBytes(body.ToString()), "text/csv; charset=utf-8", name + ".csv");
         }
     }
 }

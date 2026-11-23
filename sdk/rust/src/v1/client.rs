@@ -1,9 +1,10 @@
 //! The v1 HTTPS client: configuration, retry policy and the request loop.
 
+use std::collections::HashMap;
 use std::env;
 use std::fmt;
 use std::net::IpAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::StreamExt;
@@ -17,6 +18,7 @@ use tokio_tungstenite::tungstenite;
 use super::auth::{Auth, Credential};
 use super::database::Database;
 use super::errors::{self, Error, Result};
+use crate::consistency::{BookmarkTracker, ConsistencyMode};
 use crate::origin::{service_origin, API, AUTH};
 
 /// The public TerraBase API origin used by [`Client::for_project`].
@@ -89,6 +91,7 @@ pub struct ClientBuilder {
     access_token: bool,
     region_pin: Option<String>,
     auth_base_url: Option<String>,
+    consistency: Option<ConsistencyMode>,
 }
 
 impl fmt::Debug for ClientBuilder {
@@ -122,6 +125,7 @@ impl ClientBuilder {
             access_token: false,
             region_pin: None,
             auth_base_url: None,
+            consistency: None,
         }
     }
 
@@ -192,6 +196,15 @@ impl ClientBuilder {
     #[must_use]
     pub fn user_agent(mut self, user_agent: impl Into<String>) -> Self {
         self.user_agent = Some(user_agent.into());
+        self
+    }
+
+    /// Default `TerraScale-Consistency` for SQL from this client. Unset, each
+    /// database uses its own configured default (normally
+    /// [`ConsistencyMode::Fast`]).
+    #[must_use]
+    pub fn consistency(mut self, mode: ConsistencyMode) -> Self {
+        self.consistency = Some(mode);
         self
     }
 
@@ -276,6 +289,8 @@ impl ClientBuilder {
                 socket_tls,
                 timeout: self.timeout,
                 user_agent,
+                consistency: self.consistency,
+                bookmarks: Mutex::default(),
             }),
         })
     }
@@ -327,6 +342,8 @@ struct Inner {
     socket_tls: Arc<rustls::ClientConfig>,
     timeout: Option<Duration>,
     user_agent: String,
+    consistency: Option<ConsistencyMode>,
+    bookmarks: Mutex<HashMap<String, BookmarkTracker>>,
 }
 
 /// TLS for WebSockets: the roots REST trusts (Mozilla's, plus any added CA),
@@ -429,6 +446,38 @@ impl Client {
     #[must_use]
     pub fn base_url(&self) -> &Url {
         &self.inner.base
+    }
+
+    /// The default consistency mode set with [`ClientBuilder::consistency`].
+    #[must_use]
+    pub fn consistency(&self) -> Option<ConsistencyMode> {
+        self.inner.consistency
+    }
+
+    /// The newest causal bookmark this client observed for `database`, as
+    /// named by its handle selector.
+    #[must_use]
+    pub fn bookmark(&self, database: &str) -> Option<String> {
+        self.bookmark_tracker(database).get()
+    }
+
+    /// Forgets every tracked causal bookmark.
+    pub fn clear_bookmarks(&self) {
+        self.inner
+            .bookmarks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
+    }
+
+    pub(crate) fn bookmark_tracker(&self, database: &str) -> BookmarkTracker {
+        self.inner
+            .bookmarks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .entry(database.to_owned())
+            .or_default()
+            .clone()
     }
 }
 
@@ -797,20 +846,23 @@ impl Client {
     /// `subprotocol`, which the server must select. A refused upgrade maps
     /// to the same errors as a REST response with that status; a `401` to
     /// an API-key client is retried once with a fresh token, as on REST.
-    pub(crate) async fn open_socket(
-        &self,
-        segments: Vec<&str>,
-        subprotocol: &'static str,
-        max_message: usize,
-    ) -> Result<WebSocket> {
-        self.open_socket_query(segments, &[], subprotocol, max_message)
-            .await
-    }
-
     pub(super) async fn open_socket_query(
         &self,
         segments: Vec<&str>,
         query: &[(&str, String)],
+        subprotocol: &'static str,
+        max_message: usize,
+    ) -> Result<WebSocket> {
+        self.open_socket_with(segments, query, &[], subprotocol, max_message)
+            .await
+    }
+
+    /// [`Self::open_socket_query`] with extra upgrade request headers.
+    pub(super) async fn open_socket_with(
+        &self,
+        segments: Vec<&str>,
+        query: &[(&str, String)],
+        extra_headers: &[(&'static str, String)],
         subprotocol: &'static str,
         max_message: usize,
     ) -> Result<WebSocket> {
@@ -852,6 +904,11 @@ impl Client {
                 if let Some(region) = &self.inner.region_pin {
                     if let Ok(region) = HeaderValue::from_str(region) {
                         headers.insert("X-TerraScale-Region-Pin", region);
+                    }
+                }
+                for (name, value) in extra_headers {
+                    if let Ok(value) = HeaderValue::from_str(value) {
+                        headers.insert(*name, value);
                     }
                 }
                 let config = tungstenite::protocol::WebSocketConfig::default()

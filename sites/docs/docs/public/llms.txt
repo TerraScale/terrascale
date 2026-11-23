@@ -1,9 +1,12 @@
 # TerraScale documentation
 
-> TerraScale hosts SQL databases in the SQLite dialect. A database lives in a set of
-> regions, at least one, and every region of the set accepts reads and writes. The default TerraScale-Durability is local.
-> Reads are served in the region you call. Postgres and WebSocket sessions preserve read-your-writes; REST reads are eventually consistent.
-> A read can lag behind writes ordered in another region of the set. A write sent to another region is forwarded, or committed locally and confirmed.
+> TerraScale hosts SQL databases with active-active multi-region writes. A database lives in a set of
+> regions, at least one, and every region of the set is an equal peer that commits reads and writes locally.
+> There is no home region and committed writes are never reverted. TerraScale-Consistency: fast (default)
+> commits in the called region and replicates to the others; strong runs a serializable transaction agreed
+> by two of three regions (also BEGIN STRONG or BEGIN ISOLATION LEVEL SERIALIZABLE; automatic for DDL and
+> secondary UNIQUE writes). Send the newest TerraScale-Bookmark response header back on later requests to read
+> your own writes in any region; the SDKs do this automatically.
 > Exchange a dashboard API key for a short-lived access token
 > at https://auth.terrascale.tech/terrascale/oauth/token (client credentials
 > grant), then reach the database three ways:
@@ -12,9 +15,9 @@
 >   with {"statements":[{"sql","args","named"}]}. One request is one
 >   transaction of 1 to 256 statements, all or nothing.
 > - WebSocket: GET .../databases/{database}/sql/ws, subprotocol
->   terrascale.sql.v1, for interactive transactions of at most 5 seconds.
+>   terrascale.sql.v2, for interactive transactions of at most 5 seconds.
 > - Postgres wire: postgresql://{database}@pg.terrascale.tech:5432/{database}
->   with the API key as the password. Statements stay in the SQLite dialect.
+>   with the API key as the password. Postgres syntax, pg_catalog, COPY and LISTEN work.
 
 > Live shapes support where filters and selected columns. End-user tokens read under database rules.
 > Agent databases support TTL, forks and database-scoped keys. Point-in-time recovery creates a new database;
@@ -26,7 +29,7 @@
 - [Getting started](https://docs.terrascale.tech/getting-started/)
 - [SQL overview](https://docs.terrascale.tech/concepts/sql)
 - [Regions](https://docs.terrascale.tech/concepts/regions)
-- [Replication](https://docs.terrascale.tech/concepts/replication)
+- [Replication and consistency](https://docs.terrascale.tech/concepts/replication)
 - [Multi-region writes and conflicts](https://docs.terrascale.tech/guides/multi-region-writes-and-conflicts)
 - [Agent databases](https://docs.terrascale.tech/guides/agent-databases)
 - [Pricing](https://docs.terrascale.tech/pricing)

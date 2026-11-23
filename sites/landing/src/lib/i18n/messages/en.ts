@@ -122,7 +122,7 @@ export const en = {
     items: [
       {
         q: 'What is TerraScale?',
-        a: 'A SQL database. Each database holds tables, indexes, views, and triggers in the SQLite dialect, with foreign keys always enforced. You reach it over the Postgres wire protocol, HTTP, the CLI, the SDKs, or MCP.',
+        a: 'An active-active multi-region SQL database with functions, file storage and live edge shapes. Each database holds tables, indexes, views, and triggers, with foreign keys always enforced. You reach it over the Postgres wire protocol, HTTP, the CLI, the SDKs, or MCP.',
       },
       {
         q: 'Which regions serve today?',
@@ -130,11 +130,11 @@ export const en = {
       },
       {
         q: 'Does every region I choose accept writes?',
-        a: 'Yes. Every region of the set accepts reads and writes. Reads are served in the region you call. A write sent to another region is forwarded, or committed locally and confirmed.',
+        a: 'Yes. Every region of the set is an equal peer: there is no home region, and a write commits in the region you call. Fast mode, the default, commits locally and replicates to the other regions without ever reverting a write. Strong mode runs serializable transactions agreed by two of three regions. A bookmark returned on every response gives you read-your-writes in any region.',
       },
       {
         q: 'Can I use my Postgres tools?',
-        a: 'Yes, through the Postgres wire protocol. psql and Postgres drivers connect to pg.terrascale.tech with an API key as the password. Statements use the SQLite dialect, so Postgres-only syntax is refused.',
+        a: 'Yes, through the Postgres wire protocol. psql, Postgres drivers and ORMs such as Prisma, Drizzle and EF Core connect to pg.terrascale.tech with an API key as the password. Common Postgres syntax works: $1 parameters, ::casts, SERIAL, ILIKE, RETURNING, ON CONFLICT, COPY, LISTEN and the pg_catalog views.',
       },
       {
         q: 'Is there an uptime commitment?',
@@ -319,7 +319,7 @@ export const en = {
           q: 'What does Enterprise include?',
           a: 'Enterprise has a ${enterprisePriceUsd} monthly support base plus usage. Contact sales for terms; Enterprise is not sold through checkout.',
         },
-        { q: 'How are extra regions billed?', a: 'Writes and stored bytes are metered once per database, in the region that orders its writes. Copies in the other regions you choose have no separate charge. Plan write caps and SQL read fair use apply.' },
+        { q: 'How are extra regions billed?', a: 'Writes and stored bytes are metered once per database, whichever region commits them. Copies in the other regions you choose have no separate charge. Plan write caps and SQL read fair use apply.' },
       ],
       contactSales: 'Contact Sales',
     },
@@ -388,9 +388,9 @@ export const en = {
       'TerraScale builds TerraBase, a SQL database service. The dashboard brings together databases, access management and usage.',
     databaseTitle: 'TerraBase',
     databaseText:
-      'The service has three regions. A database lives in the regions you choose, and every one of them accepts reads and writes.',
+      'The service has three regions. A database lives in the regions you choose, and every one of them is an equal peer that commits reads and writes locally.',
     integrationText:
-      'Use the SQLite SQL dialect through PostgreSQL-compatible clients, the HTTP API or the SDKs. Manage databases and API keys in the dashboard.',
+      'Use Postgres drivers and ORMs over the PostgreSQL wire, the HTTP API or the SDKs. Manage databases and API keys in the dashboard.',
     alphaTitle: 'Public Alpha',
     alphaText:
       'TerraScale is in Public Alpha. Features, limits and APIs may change. No SLA applies during Alpha.',

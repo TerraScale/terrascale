@@ -30,7 +30,6 @@ namespace TerraScale.Dashboard.Features.Support
         Task<SupportMailResult> SendAsync(SupportRequest request, CancellationToken cancellationToken);
     }
 
-    // ts-auth owns the support mailbox address, the requester's reply address and the per-user hourly limit.
     public sealed class SupportMail(IHttpClientFactory http, IDashboardIdentity identity) : ISupportMail
     {
         public async Task<SupportMailResult> SendAsync(SupportRequest request, CancellationToken cancellationToken)
@@ -73,13 +72,13 @@ namespace TerraScale.Dashboard.Features.Support
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, "/support", Results.BadRequest("Invalid form token."));
+                return RequestError.FormExpired(http, "/support", TypedResults.BadRequest("Invalid form token."));
             }
 
             var draft = new SupportDraft(form["organizationId"].ToString(), form["projectId"].ToString(), form["databaseId"].ToString(),
@@ -151,7 +150,7 @@ namespace TerraScale.Dashboard.Features.Support
                     {
                         Draft = new(draft.OrganizationId, draft.ProjectId, draft.DatabaseId, "normal", "", "", AccountService.NewId())
                     }));
-                    return Results.Empty;
+                    return TypedResults.Empty;
                 }
 
                 return HttpRedirects.SeeOther("/support?sent=" + draft.RequestId[^8..]);
@@ -174,7 +173,7 @@ namespace TerraScale.Dashboard.Features.Support
             if (http.Request.Headers["Datastar-Request"] == "true")
             {
                 await DatastarEvents.PatchElementsAsync(http, SupportContent.Create(page));
-                return Results.Empty;
+                return TypedResults.Empty;
             }
 
             var slice = SupportView.Create(page);

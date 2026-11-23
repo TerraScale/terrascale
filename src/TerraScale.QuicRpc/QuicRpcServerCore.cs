@@ -21,6 +21,7 @@ internal sealed class QuicRpcServerCore(
 {
     private readonly QuicCertificateValidator _validator = new(options.TrustedAuthorities, timeProvider);
     private readonly CancellationTokenSource _drain = new();
+    private readonly CancellationTokenSource _serverStreams = new();
     private readonly CancellationTokenSource _handlers = new();
     private readonly CancellationTokenSource _closing = new();
     private readonly InFlightTracker _streams = new();
@@ -59,6 +60,7 @@ internal sealed class QuicRpcServerCore(
         }
 
         Volatile.Write(ref _draining, 1);
+        await _serverStreams.CancelAsync().ConfigureAwait(false);
         lock (_pushGate)
         {
             foreach (var pushStream in _pushStreams)
@@ -88,6 +90,7 @@ internal sealed class QuicRpcServerCore(
         await _closing.CancelAsync().ConfigureAwait(false);
         await _connectionLoops.DrainAsync().ConfigureAwait(false);
         _drain.Dispose();
+        _serverStreams.Dispose();
         _handlers.Dispose();
         _closing.Dispose();
     }
@@ -343,9 +346,22 @@ internal sealed class QuicRpcServerCore(
         Complete(context, QuicPattern.Unary, started, written, outcome);
     }
 
-    private async Task RespondStreamAsync(QuicStream stream, QuicCallContext context, StreamDispatch streaming, ReadOnlyMemory<byte> payload, CallScope scope)
+    private async Task RespondStreamAsync(QuicStream stream, QuicCallContext context, StreamDispatch streaming, ReadOnlyMemory<byte> payload, CallScope callScope)
     {
         var started = timeProvider.GetTimestamp();
+        using var scope = new CallScope(Timeout.InfiniteTimeSpan, timeProvider, _serverStreams.Token, callScope.Token);
+        try
+        {
+            await StreamItemsAsync(stream, context, streaming, payload, scope, started).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (_serverStreams.IsCancellationRequested && !callScope.Token.IsCancellationRequested)
+        {
+            ServerStreamDrained(stream, context, started);
+        }
+    }
+
+    private async Task StreamItemsAsync(QuicStream stream, QuicCallContext context, StreamDispatch streaming, ReadOnlyMemory<byte> payload, CallScope scope, long started)
+    {
         await foreach (var item in streaming(context, payload, scope.Token).ConfigureAwait(false))
         {
             var (written, terminal) = item switch
@@ -353,6 +369,12 @@ internal sealed class QuicRpcServerCore(
                 FrameBuilder builder => (await WriteBuilderAsync(stream, context, builder, QuicProtocol.ControlNone, false, scope).ConfigureAwait(false), false),
                 QuicRemoteError error => (await WriteErrorAsync(stream, context, error, scope).ConfigureAwait(false), true),
             };
+            if (_serverStreams.IsCancellationRequested)
+            {
+                ServerStreamDrained(stream, context, started);
+                return;
+            }
+
             if (Fault(written) is not null)
             {
                 Complete(context, QuicPattern.ServerStream, started, written, QuicOutcome.Unavailable);
@@ -367,9 +389,21 @@ internal sealed class QuicRpcServerCore(
             }
         }
 
+        if (_serverStreams.IsCancellationRequested)
+        {
+            ServerStreamDrained(stream, context, started);
+            return;
+        }
+
         using var end = FrameBuilder.Empty();
         var ended = await WriteBuilderAsync(stream, context, end, QuicProtocol.ControlEndOfStream, true, scope).ConfigureAwait(false);
         Complete(context, QuicPattern.ServerStream, started, ended, QuicOutcome.Ok);
+    }
+
+    private void ServerStreamDrained(QuicStream stream, QuicCallContext context, long started)
+    {
+        metrics.Completed(QuicSide.Server, QuicPattern.ServerStream, context.MessageTypeId, QuicOutcome.Unavailable, timeProvider.GetElapsedTime(started));
+        stream.Abort(QuicAbortDirection.Both, QuicProtocol.PeerClosedErrorCode);
     }
 
     private async Task HandlePushStreamAsync(QuicStream stream, QuicPeerIdentity identity, CancellationToken cancellationToken)

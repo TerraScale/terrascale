@@ -15,35 +15,34 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
             var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null)
             {
-                return Results.Unauthorized();
+                return TypedResults.Unauthorized();
             }
 
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, "/auth/users", Results.StatusCode(403));
+                return RequestError.FormExpired(http, "/auth/users", TypedResults.StatusCode(403));
             }
 
             if (!context.CanManageProject || context.Project is null)
             {
-                return Results.StatusCode(403);
+                return TypedResults.StatusCode(403);
             }
 
             if (form["project_id"] != context.Project.Id)
             {
-                return Results.Text("The selected project changed. Reload Users before exporting.", statusCode: 409);
+                return TypedResults.Text("The selected project changed. Reload Users before exporting.", statusCode: 409);
             }
 
             var format = form["format"].ToString();
             var after = form["after"].ToString();
             if (format is not ("json" or "csv") || after.Length > 8192 || after.Any(char.IsControl))
             {
-                return Results.Text("Choose JSON or CSV and a valid resume cursor.", statusCode: 422);
+                return TypedResults.Text("Choose JSON or CSV and a valid resume cursor.", statusCode: 422);
             }
 
             try
             {
-                // Exactly one bounded SDK request. The cursor belongs to ts-auth; do not interpret or trim it.
                 var page = await projects.ExportUsersAsync(context.Session, context.Project.Id, after.Length == 0 ? null : after, http.RequestAborted);
                 if (page.Items.Count > 100)
                 {
@@ -61,15 +60,15 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
                 var content = format == "json"
                     ? JsonSerializer.SerializeToUtf8Bytes(export, DirectoryExportJson.Default.DirectoryExportPage)
                     : Encoding.UTF8.GetBytes(DirectoryCsv(export));
-                return Results.File(content, format == "json" ? "application/json" : "text/csv; charset=utf-8", $"users-{context.Project.Id}.{format}");
+                return TypedResults.File(content, format == "json" ? "application/json" : "text/csv; charset=utf-8", $"users-{context.Project.Id}.{format}");
             }
             catch (OperationCanceledException) when (!http.RequestAborted.IsCancellationRequested)
             {
-                return Results.Text(Unreachable, statusCode: 503);
+                return TypedResults.Text(Unreachable, statusCode: 503);
             }
             catch (Exception error) when (error is AccountAccessException or HttpRequestException or IOException)
             {
-                return Results.Text(error is AccountAccessException ? error.Message : Unreachable,
+                return TypedResults.Text(error is AccountAccessException ? error.Message : Unreachable,
                     statusCode: error is AccountAccessException access ? access.StatusCode : 503);
             }
         }
@@ -88,7 +87,6 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement
 
         private static string CsvCell(string value)
         {
-            // Quoting alone does not stop spreadsheet formulas, including those preceded by whitespace.
             var trimmed = value.TrimStart();
             if ((trimmed.Length > 0 && "'=+-@".Contains(trimmed[0])) || (value.Length > 0 && char.IsControl(value[0])))
             {

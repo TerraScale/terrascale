@@ -16,6 +16,6 @@ public sealed class DeleteProjectOrganizationDomainEndpoint(ProjectOrganizationD
     {
         var project = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         await organizations.ChangeDomainAsync(project, this.Org, (string)this.HttpContext.GetRouteValue("domain")!, true, cancellationToken);
-        return Results.NoContent();
+        return TypedResults.NoContent();
     }
 }

@@ -10,10 +10,8 @@ using static OpenIddict.Server.OpenIddictServerEvents;
 
 namespace TerraScale.Authentication.Features.Oidc;
 
-/// <summary>Caps new and rotated project refresh tokens after OpenIddict applies its fixed family expiry.</summary>
 public sealed class ProjectSessionPolicy(Sessions sessions, TimeProvider clock, IOpenIddictTokenManager tokens) : IOpenIddictServerHandler<ProcessSignInContext>
 {
-    /// <inheritdoc />
     public async ValueTask HandleAsync(ProcessSignInContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -29,10 +27,10 @@ public sealed class ProjectSessionPolicy(Sessions sessions, TimeProvider clock, 
             return;
         }
 
-        var lifetime = await sessions.GetLifetimeAsync(tenant, context.CancellationToken).ConfigureAwait(false);
+        var lifetime = await sessions.GetLifetimeAsync(tenant, context.CancellationToken);
         if (authenticatedAt > DateTimeOffset.MaxValue - lifetime || authenticatedAt + lifetime <= clock.GetUtcNow())
         {
-            await RevokeAsync(tokens, refresh, context.CancellationToken).ConfigureAwait(false);
+            await RevokeAsync(tokens, refresh, context.CancellationToken);
             context.Reject(OidcErrors.InvalidGrant, "The project's absolute session lifetime has elapsed.");
             return;
         }
@@ -53,8 +51,7 @@ public sealed class ProjectSessionPolicy(Sessions sessions, TimeProvider clock, 
     {
         if (principal.GetAuthorizationId() is { Length: > 0 } authorizationId)
         {
-            // The existing store revokes the authorization, including descendants created by concurrent redemption.
-            await tokens.RevokeByAuthorizationIdAsync(authorizationId, cancellationToken).ConfigureAwait(false);
+            await tokens.RevokeByAuthorizationIdAsync(authorizationId, cancellationToken);
         }
     }
 }

@@ -4,10 +4,8 @@ using TerraScale.Authentication.Features.Platform;
 
 namespace TerraScale.Authentication.Features.ProjectTenants;
 
-/// <summary><c>DELETE /v1/{project}/users/{user}</c>.</summary>
 public sealed class DeleteProjectUserEndpoint(TenantDirectory tenants, Users users, PlatformAuthentication authentication) : ProjectTenantEndpoint(tenants, authentication)
 {
-    /// <inheritdoc />
     public override void Configure()
     {
         Delete(Root + "/users/{user}");
@@ -19,6 +17,6 @@ public sealed class DeleteProjectUserEndpoint(TenantDirectory tenants, Users use
         var projectId = await this.AccessAsync(caller, Roles.Admin, cancellationToken);
         _ = await this.Tenants.UserAsync(projectId, this.RouteId("user"), cancellationToken);
         await users.DeleteAsync(projectId, this.RouteId("user"), cancellationToken);
-        return Results.NoContent();
+        return TypedResults.NoContent();
     }
 }

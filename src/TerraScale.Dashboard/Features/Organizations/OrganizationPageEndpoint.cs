@@ -68,7 +68,7 @@ namespace TerraScale.Dashboard.Features.Organizations
             if (http.Request.IsDatastarRequest && page.Tab is "members" or "invitations")
             {
                 await DatastarEvents.PatchElementsAsync(http, OrganizationAccessPage.Create(page));
-                return Results.Empty;
+                return TypedResults.Empty;
             }
             return OrganizationView.Create(page);
         }

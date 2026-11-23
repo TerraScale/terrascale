@@ -45,12 +45,12 @@ public sealed class PasskeyHostedRenameEndpoint(Sessions sessions, PasskeyCreden
         }
 
         var id = this.HttpContext.Request.Form["id"].ToString();
-        if ((await passkeys.ListAsync(live.User, cancellationToken).ConfigureAwait(false)).All(entry => entry.CredentialId != id))
+        if ((await passkeys.ListAsync(live.User, cancellationToken)).All(entry => entry.CredentialId != id))
         {
             return await SecurityFlow.RefusedAsync(this.HttpContext, sessions, mfa, live.User, ("Passkey not renamed", "Reload the page and try again."), StatusCodes.Status409Conflict, cancellationToken);
         }
 
-        return await passkeys.RenameAsync(live.User, id, name, cancellationToken).ConfigureAwait(false) switch
+        return await passkeys.RenameAsync(live.User, id, name, cancellationToken) switch
         {
             PasskeyCredentialEntry => await SecurityFlow.PageAsync(this.HttpContext, mfa, live.User, null, cancellationToken,
                 notice: "Passkey renamed.", next: SignInFlow.SafeNext(this.HttpContext, form.Next)),

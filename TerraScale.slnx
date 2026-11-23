@@ -8,7 +8,6 @@
   <Folder Name="/auth/">
     <Project Path="src/TerraScale.Authentication.Contracts/TerraScale.Authentication.Contracts.csproj" />
     <Project Path="src/TerraScale.Authentication.Security/TerraScale.Authentication.Security.csproj" />
-    <Project Path="src/TerraScale.Authentication.EntityFrameworkDesign/TerraScale.Authentication.EntityFrameworkDesign.csproj" />
     <Project Path="src/TerraScale.Authentication/TerraScale.Authentication.csproj" />
   </Folder>
   <Folder Name="/terrabase/">
@@ -20,7 +19,6 @@
     <Project Path="src/TerraScale.Contracts/TerraScale.Contracts.csproj" />
     <Project Path="src/TerraScale.QuicRpc/TerraScale.QuicRpc.csproj" />
     <Project Path="src/TerraScale.Platform/TerraScale.Platform.csproj" />
-    <Project Path="src/TerraScale.TerraBase.Contracts/TerraScale.TerraBase.Contracts.csproj" />
   </Folder>
   <Folder Name="/benchmark/">
     <Project Path="benchmark/csharp/TerraScale.Benchmark.csproj" />
@@ -34,7 +32,6 @@
   </Folder>
   <Folder Name="/dashboard/">
     <Project Path="src/TerraScale.Dashboard/TerraScale.Dashboard.csproj" />
-    <Project Path="src/TerraScale.Dashboard.EntityFrameworkDesign/TerraScale.Dashboard.EntityFrameworkDesign.csproj" />
   </Folder>
   <Folder Name="/aspire/">
     <Project Path="src/TerraScale.Aspire/TerraScale.Aspire.csproj" />

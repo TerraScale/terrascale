@@ -1,4 +1,4 @@
-using TerraScale.TerraBase.Contracts;
+using TerraScale.Dashboard.Platform.Clients;
 using Stripe;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
@@ -22,7 +22,7 @@ namespace TerraScale.Dashboard.Features.Billing
             var form = await FormRequests.ReadAsync(http, http.RequestAborted);
             if (!StepUpFlow.IsResuming(http) && !Csrf.Validate(http, form))
             {
-                return RequestError.FormExpired(http, "/organization?tab=billing", Results.Text("Invalid CSRF token.", statusCode: 403));
+                return RequestError.FormExpired(http, "/organization?tab=billing", TypedResults.Text("Invalid CSRF token.", statusCode: 403));
             }
 
             try
@@ -65,12 +65,12 @@ namespace TerraScale.Dashboard.Features.Billing
                 return DatabaseEndpoints.WantsHtml(http)
                 ? BillingRecoveryModel.Response(http, access.StatusCode, access.StatusCode == 404 ? "Checkout unavailable" : "Billing request not completed",
                     access.Message + " Return to billing to check your current plan before trying again.")
-                : Results.Text(access.Message, statusCode: access.StatusCode);
+                : TypedResults.Text(access.Message, statusCode: access.StatusCode);
             }
 
             if (error is OnboardingValidationException validation)
             {
-                return Results.Text(validation.Message, statusCode: 400);
+                return TypedResults.Text(validation.Message, statusCode: 400);
             }
 
             http.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("TerraScale.Dashboard.Features.Billing.BillingMutations").BillingChangeFailed(error.GetType().Name, Describe(error));
@@ -80,7 +80,7 @@ namespace TerraScale.Dashboard.Features.Billing
                 page.StatusCode = StatusCodes.Status502BadGateway;
                 return page;
             }
-            return Results.Text("Stripe could not complete this billing change. Reload billing and try again.", statusCode: 502);
+            return TypedResults.Text("Stripe could not complete this billing change. Reload billing and try again.", statusCode: 502);
         }
 
         internal static string Describe(Exception error)
