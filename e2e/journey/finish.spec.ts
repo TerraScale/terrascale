@@ -269,7 +269,7 @@ test.describe('database deletion', () => {
       expect(observations.status()).toBe(200);
       const status = await observations.json();
       expect(status.regions.map((region: { region: string }) => region.region)).toEqual([...selected].sort());
-      expect(status.regions.filter((region: { role: string | null }) => region.role === 'writer').map((region: { region: string }) => region.region)).toEqual([writer]);
+      expect(status.regions.every((region: { healthy: boolean; appliedBookmark: string }) => region.healthy && region.appliedBookmark.length > 0)).toBe(true);
       const removed = await request.patch(url, { headers, data: { regions: [writer] } });
       expect(removed.status()).toBe(200);
       expect((await removed.json()).regions).toEqual([writer]);

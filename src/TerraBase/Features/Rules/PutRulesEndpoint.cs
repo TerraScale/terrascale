@@ -4,7 +4,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Rules;
 
-public readonly union RulesWriteResponse(RulesResponse, InvalidRulesResponse, StaleRulesResponse, PreconditionFailed, Validation, Unauthorized, Forbidden, NotFound, Unavailable);
+public readonly union RulesWriteResponse(RulesResponse, InvalidRulesResponse, StaleRulesResponse, RulesPreconditionRequiredResponse, Validation, Unauthorized, Forbidden, NotFound, Unavailable);
 
 internal sealed class PutRulesEndpoint(RulesService rules) : Endpoint<RulesInput, RulesWriteResponse>
 {
@@ -13,7 +13,7 @@ internal sealed class PutRulesEndpoint(RulesService rules) : Endpoint<RulesInput
         Put(RulesRoute.Rules);
         Name("putDatabaseRules");
         Summary("Deploys a database's rules");
-        Description("Send If-Match: \"<current version>\", or If-None-Match: * when the database has no rules; a stale version answers 412 version_mismatch. "
+        Description("Send If-Match: \"<current version>\", or If-None-Match: * when the database has no rules; a missing precondition answers 428 precondition_required and a stale version answers 412 version_mismatch. "
             + "Every condition is compiled against the current schema; problems answer 400 invalid_rules with details.problems.");
         Tags("Rules");
         AllowAnonymous();
@@ -37,10 +37,10 @@ internal static class RulesWrites
 {
     public static RulesWriteResponse Map(RulesDeployResponse response) => response switch
     {
-        DeployedRules deployed => new RulesResponse(deployed.Rules, null),
+        DeployedRules deployed => new RulesResponse(deployed.Rules, [], deployed.Warnings),
         InvalidRules invalid => new InvalidRulesResponse(invalid),
         StaleRules stale => new StaleRulesResponse(stale),
-        PreconditionFailed failed => failed,
+        RulesPreconditionRequired required => new RulesPreconditionRequiredResponse(required),
         Validation invalid => invalid,
         Unauthorized unauthorized => unauthorized,
         Forbidden forbidden => forbidden,

@@ -15,7 +15,7 @@ internal sealed partial class PostgresConnection
         }
 
         Writer.Error(error);
-        MarkFailed();
+        await MarkFailedAsync().ConfigureAwait(false);
         await EndImplicitAsync(commit: false).ConfigureAwait(false);
         session.SkipUntilSync = true;
         if (error.Fatal)

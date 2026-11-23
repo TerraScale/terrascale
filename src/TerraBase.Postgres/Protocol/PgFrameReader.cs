@@ -59,10 +59,14 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
         }
     }
 
+    public long LastMessageStarted { get; private set; }
+
     public async ValueTask<PgMessageRead> ReadMessageAsync(TimeSpan timeout, CancellationToken cancellationToken)
     {
-        using var deadline = new CancellationTokenSource(timeout, timeProvider);
+        using var deadline = new CancellationTokenSource(timeout > TimeSpan.Zero ? timeout : TimeSpan.Zero, timeProvider);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+        long? started = null;
+        var seen = 0L;
         while (true)
         {
             ReadResult read;
@@ -72,10 +76,18 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
             }
             catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
             {
-                return new PgIdleExpired();
+                return started is null ? new PgIdleExpired() : new PgIncompleteExpired();
             }
 
             var buffer = read.Buffer;
+            if (buffer.Length > seen)
+            {
+                var first = started ??= timeProvider.GetTimestamp();
+                seen = buffer.Length;
+                var remaining = PostgresLimits.MessageBudget(seen) - timeProvider.GetElapsedTime(first);
+                deadline.CancelAfter(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero);
+            }
+
             if (buffer.Length >= 5)
             {
                 var type = (char)buffer.FirstSpan[0];
@@ -90,6 +102,7 @@ internal sealed class PgFrameReader(PipeReader input, TimeProvider timeProvider)
                 {
                     var message = Parse(buffer.Slice(5, length - 4), body => ParseMessage(type, body));
                     input.AdvanceTo(buffer.GetPosition(length + 1));
+                    LastMessageStarted = started ?? timeProvider.GetTimestamp();
                     return message;
                 }
             }

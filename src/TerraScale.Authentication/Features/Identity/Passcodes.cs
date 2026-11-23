@@ -435,7 +435,9 @@ public sealed class Passcodes(AuthData data, Credentials credentials, Users user
                     AuthEpoch = checked(current.AuthEpoch + 1),
                     AuthStamp = AuthIds.New(),
                 });
-                changes.Add(Change.Update(authenticated));
+                var updateUser = Change.Update(authenticated);
+                changes.Add(updateUser);
+                authenticated = authenticated with { Version = updateUser.Version };
             }
 
             UserRecord? created = null;

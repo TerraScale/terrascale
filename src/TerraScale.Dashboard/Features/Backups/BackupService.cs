@@ -18,7 +18,11 @@ namespace TerraScale.Dashboard.Features.Backups
                 throw new AccountAccessException("Use a cursor this list returned.", 422);
             }
 
-            var page = await backend.ListPageAsync(scope, home, databaseId, cursor, limit, ct);
+            BackupBackendPage page;
+            try { page = await backend.ListPageAsync(scope, home, databaseId, cursor, limit, ct); }
+            catch (Exception error) when (BackupEndpoints.KnownFailure(error) &&
+                (error is not OperationCanceledException || !ct.IsCancellationRequested))
+            { page = new([], null); }
             var items = new List<BackupView>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var backup in page.Items)
@@ -47,7 +51,11 @@ namespace TerraScale.Dashboard.Features.Backups
             var home = await databases.HomeAsync(context, database, ct);
             var backupsRead = backend.ListAsync(scope, home, databaseId, ct);
             var policyRead = backend.PolicyAsync(scope, home, databaseId, ct);
-            var backups = await backupsRead;
+            IReadOnlyList<ProducerBackup> backups;
+            try { backups = await backupsRead; }
+            catch (Exception error) when (BackupEndpoints.KnownFailure(error) &&
+                (error is not OperationCanceledException || !ct.IsCancellationRequested))
+            { backups = []; }
             var ids = new HashSet<string>(StringComparer.Ordinal);
             foreach (var backup in backups)
             {

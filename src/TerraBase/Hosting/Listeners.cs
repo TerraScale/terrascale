@@ -126,7 +126,33 @@ internal static class Listeners
                 var arrivedOn = ArrivedOn(context);
                 var endpoint = context.GetEndpoint();
                 var servedBy = endpoint?.Metadata.GetMetadata<ListenerMetadata>()?.Listeners ?? [];
-                if (arrivedOn is not { } listener || !servedBy.Contains(listener))
+                if (arrivedOn is not { } listener)
+                {
+                    context.Response.StatusCode = StatusCodes.Status404NotFound;
+                    return;
+                }
+
+                if (listener == TerraBaseListener.Internal
+                    && !ReferenceEquals(endpoint?.Metadata.GetMetadata<ListenerMetadata>(), ListenerMetadata.Probe))
+                {
+                    if (!await context.RequestServices.GetRequiredService<CallerAdmission>().AdmitAsync(context))
+                    {
+                        await ErrorResults.WriteAsync(context, StatusCodes.Status401Unauthorized, "unauthorized",
+                            "the internal listener needs X-TerraBase-Peer-Credential or a valid X-TerraScale-Caller token");
+                        return;
+                    }
+
+                    if (context.Features.Get<AdmittedCaller>() is { Identity: { } identity }
+                        && context.Request.Path.Value is { } path
+                        && !CallerAuthenticationExtensions.ServicePathAllowed(new ServiceCaller(identity.Key.Caller, identity.Grants), path))
+                    {
+                        await ErrorResults.WriteAsync(context, StatusCodes.Status403Forbidden, "forbidden_caller",
+                            "the service caller does not grant access to this route");
+                        return;
+                    }
+                }
+
+                if (!servedBy.Contains(listener))
                 {
                     context.Response.StatusCode = StatusCodes.Status404NotFound;
                     return;
@@ -141,15 +167,6 @@ internal static class Listeners
                         context.Response.Headers.TryAdd("X-TerraBase-Machine", options.MachineId);
                         return Task.CompletedTask;
                     });
-                }
-
-                if (listener == TerraBaseListener.Internal
-                    && !ReferenceEquals(endpoint?.Metadata.GetMetadata<ListenerMetadata>(), ListenerMetadata.Probe)
-                    && !await context.RequestServices.GetRequiredService<CallerAdmission>().AdmitAsync(context))
-                {
-                    await ErrorResults.WriteAsync(context, StatusCodes.Status401Unauthorized, "unauthorized",
-                        "the internal listener needs X-TerraBase-Peer-Credential or a valid X-TerraScale-Caller token");
-                    return;
                 }
 
                 await next(context);

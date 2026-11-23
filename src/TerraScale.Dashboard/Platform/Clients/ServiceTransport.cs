@@ -20,7 +20,7 @@ public sealed record ServiceCaller(string? AccessToken)
     public override string ToString() => AccessToken is null ? "Operator caller" : "User caller [REDACTED]";
 }
 
-public sealed record RawAnswer(int Status, string? ContentType, string Body);
+public sealed record RawAnswer(int Status, string? ContentType, string Body, bool FunctionResponse = false);
 
 public sealed class ServiceTransport(HttpClient http)
 {
@@ -136,7 +136,7 @@ public sealed class ServiceTransport(HttpClient http)
 
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
             var status = (int)response.StatusCode;
-            var answer = new RawAnswer(status, response.Content.Headers.ContentType?.ToString(), body);
+            var answer = new RawAnswer(status, response.Content.Headers.ContentType?.ToString(), body, FunctionResponse(response));
             return status is >= 200 and < 300 || RetryAfter(response) is not { } wait ? answer : Refusal(answer) with { RetryAfter = wait };
         }
         catch (HttpRequestException error)
@@ -151,6 +151,9 @@ public sealed class ServiceTransport(HttpClient http)
 
     private static TimeSpan? RetryAfter(HttpResponseMessage response) =>
         response.Headers.RetryAfter?.Delta;
+
+    private static bool FunctionResponse(HttpResponseMessage response) =>
+        response.Headers.Contains("X-TerraScale-Function-Response") || response.Headers.Contains("X-TerraScale-Function-Status") || response.Headers.Contains("X-TerraScale-Invocation-Id");
 
     private static string Fallback(int status) => status switch
     {

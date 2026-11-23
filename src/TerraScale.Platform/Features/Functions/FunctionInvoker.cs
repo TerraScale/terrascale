@@ -75,6 +75,7 @@ public sealed class FunctionInvoker(
         var clock = timeProvider.GetTimestamp();
         await using var sql = new FunctionSql(terraBase, target.Database, bookmark, timeProvider);
         var run = await FunctionRunner.RunAsync(source, eventJson, secrets, sql, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         var elapsed = timeProvider.GetElapsedTime(clock);
         var (answer, lines, error) = run switch
         {

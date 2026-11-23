@@ -7,7 +7,10 @@ using System.Text;
 
 namespace TerraBase.Storage;
 
-internal sealed record SqliteOpenOptions(string Path, bool ReadOnly, ReadOnlyMemory<byte> RawKey, int CacheSizeKib, Ulid DatabaseId, DeltaColumnRegistry DeltaColumns);
+internal sealed record SqliteOpenOptions(string Path, bool ReadOnly, ReadOnlyMemory<byte> RawKey, int CacheSizeKib, Ulid DatabaseId, DeltaColumnRegistry DeltaColumns)
+{
+    public TimeSpan StatementTimeout { get; init; } = Timeout.InfiniteTimeSpan;
+}
 
 internal readonly union SqliteOpenResult(SqliteConnection, SqliteStatus);
 
@@ -312,7 +315,13 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
 
     public SqliteStatus StepUser(nint statement, out SqlResultSet result, CancellationToken cancellationToken)
     {
-        using var interrupt = cancellationToken.Register(Interrupt);
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        if (_options.StatementTimeout != Timeout.InfiniteTimeSpan)
+        {
+            budget.CancelAfter(_options.StatementTimeout);
+        }
+
+        using var interrupt = budget.Token.Register(Interrupt);
         var columnCount = SqliteNative.ColumnCount(statement);
         var columns = new SqlColumn[columnCount];
         for (var index = 0; index < columnCount; index++)
@@ -328,7 +337,7 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         var status = SqliteStatus.Success;
         while (true)
         {
-            if (cancellationToken.IsCancellationRequested)
+            if (budget.IsCancellationRequested)
             {
                 status = Canceled;
                 break;
@@ -351,7 +360,39 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
 
         _userMode = false;
         result = new SqlResultSet(columns, rows, readOnly ? 0 : SqliteNative.Changes64(_db), SqliteNative.LastInsertRowId(_db));
-        return status;
+        return status.Code switch
+        {
+            SqliteNative.Interrupt when !cancellationToken.IsCancellationRequested => TimedOut,
+            SqliteNative.ConstraintUnique when ViolatesPrimaryKey(status.Message) => status with { Code = SqliteNative.ConstraintPrimaryKey },
+            _ => status,
+        };
+    }
+
+    private bool ViolatesPrimaryKey(string message)
+    {
+        var colon = message.IndexOf(": ", StringComparison.Ordinal);
+        if (colon < 0)
+        {
+            return false;
+        }
+
+        var names = message[(colon + 2)..];
+        var end = names.IndexOf(" (", StringComparison.Ordinal);
+        string? table = null;
+        HashSet<string> columns = new(StringComparer.OrdinalIgnoreCase);
+        foreach (var name in (end < 0 ? names : names[..end]).Split(", "))
+        {
+            var dot = name.LastIndexOf('.');
+            if (dot <= 0 || (table is not null && !string.Equals(table, name[..dot], StringComparison.OrdinalIgnoreCase)))
+            {
+                return false;
+            }
+
+            table = name[..dot];
+            _ = columns.Add(name[(dot + 1)..]);
+        }
+
+        return table is not null && Schema(table) is { UsesImplicitRowId: false } schema && columns.SetEquals(schema.PrimaryKeyColumnNames);
     }
 
     public static bool IsReadOnly(nint statement) => SqliteNative.StatementReadOnly(statement) != 0;
@@ -452,6 +493,8 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
     }
 
     private static readonly SqliteStatus Canceled = new(SqliteNative.Interrupt, "canceling statement due to user request");
+
+    private static readonly SqliteStatus TimedOut = new(SqliteNative.Interrupt, "canceling statement due to statement timeout");
 
     internal SqliteStatus Status(int rc)
     {

@@ -14,7 +14,7 @@ public sealed class FileStorageService(PlatformStore store, S3FileObjectStore ob
     private static readonly Conflict LiveFiles =
         new("delete the bucket's files and let uploads in progress complete or expire before deleting the bucket", "bucket_not_empty");
 
-    public async ValueTask<Result<FileBucket, Validation, Forbidden, Conflict, Unavailable>> CreateBucketAsync(
+    public async ValueTask<Result<FileBucket, Validation, Forbidden, NotFound, Conflict, Unavailable>> CreateBucketAsync(
         FileScope scope,
         string? name,
         FileAccessRules? rules,
@@ -40,11 +40,13 @@ public sealed class FileStorageService(PlatformStore store, S3FileObjectStore ob
         var bucketName = SqlValues.Text(name);
         IReadOnlyList<SqlHttpStatement> statements =
         [
+            SqlValues.Statement("SELECT 1 FROM platform_closed_file_projects WHERE project_id = ?", project),
             SqlValues.Statement("SELECT 1 FROM platform_buckets WHERE project_id = ? AND name = ?", project, bucketName),
             SqlValues.Statement(
                 "INSERT INTO platform_buckets (project_id, id, organization_id, name, region, rules) SELECT ?, ?, ?, ?, ?, ? "
                 + "WHERE (SELECT COUNT(*) FROM platform_buckets WHERE project_id = ?) < ? "
-                + "AND NOT EXISTS (SELECT 1 FROM platform_buckets WHERE project_id = ? AND name = ?)",
+                + "AND NOT EXISTS (SELECT 1 FROM platform_buckets WHERE project_id = ? AND name = ?) "
+                + "AND NOT EXISTS (SELECT 1 FROM platform_closed_file_projects WHERE project_id = ?)",
                 project,
                 SqlValues.Text(bucket.Id),
                 SqlValues.Text(scope.Organization.ToString()),
@@ -54,13 +56,15 @@ public sealed class FileStorageService(PlatformStore store, S3FileObjectStore ob
                 project,
                 SqlValues.Number(MaxBuckets),
                 project,
-                bucketName),
+                bucketName,
+                project),
         ];
         metrics.FileOperation("create_bucket");
         return await store.ExecuteAsync(statements, SqlContext.Strong, cancellationToken) switch
         {
-            IReadOnlyList<SqlHttpStatementResult> results when results[0].Rows.Count > 0 => new Conflict("a bucket with that name already exists"),
-            IReadOnlyList<SqlHttpStatementResult> results when results[1].RowsAffected == 0 => new Conflict($"a project may have at most {MaxBuckets} buckets"),
+            IReadOnlyList<SqlHttpStatementResult> results when results[0].Rows.Count > 0 => new NotFound("the project is closed", "project_not_found"),
+            IReadOnlyList<SqlHttpStatementResult> results when results[1].Rows.Count > 0 => new Conflict("a bucket with that name already exists"),
+            IReadOnlyList<SqlHttpStatementResult> results when results[2].RowsAffected == 0 => new Conflict($"a project may have at most {MaxBuckets} buckets"),
             IReadOnlyList<SqlHttpStatementResult> => bucket,
             Conflict conflict => conflict,
             Unavailable unavailable => unavailable,

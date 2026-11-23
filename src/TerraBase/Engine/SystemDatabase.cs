@@ -24,7 +24,7 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
         ("rules_current", "CREATE TABLE rules_current (database_id TEXT PRIMARY KEY, version TEXT NOT NULL)"),
         ("usage_counters", "CREATE TABLE usage_counters (scope TEXT NOT NULL, month TEXT NOT NULL, metric TEXT NOT NULL, value INTEGER NOT NULL, PRIMARY KEY (scope, month, metric))"),
         ("request_logs", "CREATE TABLE request_logs (database_id TEXT NOT NULL, id TEXT NOT NULL, at INTEGER NOT NULL, method TEXT NOT NULL, path TEXT NOT NULL, status INTEGER NOT NULL, duration_ms INTEGER NOT NULL, region TEXT NOT NULL, PRIMARY KEY (database_id, id))"),
-        ("backup_policies", "CREATE TABLE backup_policies (database_id TEXT PRIMARY KEY, retention_days INTEGER NOT NULL, updated_at INTEGER NOT NULL)"),
+        ("backup_policies", "CREATE TABLE backup_policies (database_id TEXT PRIMARY KEY, retention_days INTEGER NOT NULL, full_backup_cron TEXT, updated_at INTEGER NOT NULL)"),
     ];
 
     private ISqlDatabaseSession? _session;
@@ -87,7 +87,7 @@ internal sealed class SystemDatabase(TenantDatabases databases, DatabaseKeyring 
         return await coordinator.ExecuteWriteAsync(Session, request, cancellationToken) switch
         {
             SqlWriteResult written => written,
-            SqlError { Code: "unique_violation" or "constraint_violation" } error => new Conflict(error.Message, "already_exists"),
+            SqlError { Code: "primary_key_violation" or "unique_violation" or "constraint_violation" } error => new Conflict(error.Message, "already_exists"),
             SqlError error => new Unavailable(error.Message, "system_catalog_error"),
             SerializationConflict conflict => new Conflict(conflict.Reason, "serialization_conflict"),
             SchemaMismatch => new Unavailable("the system catalog schema is changing; retry", "system_catalog_busy"),

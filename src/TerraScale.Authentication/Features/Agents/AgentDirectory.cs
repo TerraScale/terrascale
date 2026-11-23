@@ -64,7 +64,7 @@ public sealed class AgentDirectory(AuthData data, PlatformDirectory platform, Ag
             "SELECT * FROM agent_policies WHERE project_id = @project", new { project }), cancellationToken));
 
     private async Task<Versioned<UserRecord>?> UserAsync(string project, string userId, CancellationToken cancellationToken) =>
-        Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
+        Versioned.Of(await data.ReadUserAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
             "SELECT * FROM users WHERE instance_id = @project AND id = @userId", new { project, userId }), cancellationToken));
 
     private async Task<Versioned<AgentRecord>?> AgentAsync(string project, string agentId, string? owner, CancellationToken cancellationToken) =>

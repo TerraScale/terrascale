@@ -26,7 +26,7 @@ internal sealed class GetRulesVersionEndpoint(RulesService rules, RulesStore sto
         {
             ResolvedDatabase resolved => await store.VersionAsync(resolved.Database.Id, request.Version, cancellationToken) switch
             {
-                StoredRules version => new RulesResponse(version, null),
+                StoredRules version => new RulesResponse(version, [], RulesService.Warnings(version.Rules)),
                 NotFound missing => missing,
                 Unavailable unavailable => unavailable,
             },

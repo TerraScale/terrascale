@@ -31,6 +31,7 @@ internal static class HostModules
             {
                 ReaderCount = Math.Clamp(options.StorageThreads, 1, 64),
                 BookmarkWaitTimeout = options.QueryBudget,
+                StatementTimeout = options.QueryBudget,
             };
             var engine = new SqliteStorageEngine(storage, TimeProvider.System);
             services.AddSingleton(deltaColumns);

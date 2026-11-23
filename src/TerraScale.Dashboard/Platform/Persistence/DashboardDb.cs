@@ -22,10 +22,13 @@ public sealed class DashboardDb(TerraBaseSqlDatabase database)
     public async Task WriteAsync(Func<TerraBaseDbConnection, DbTransaction, Task> work, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(work);
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        await work(connection, transaction);
-        await transaction.CommitAsync(cancellationToken);
+        await ServerTiming.StateWriteAsync(async () =>
+        {
+            await using var connection = await OpenAsync(cancellationToken);
+            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+            await work(connection, transaction);
+            await transaction.CommitAsync(cancellationToken);
+        });
     }
 
     public async Task<T> ReadAsync<T>(Func<TerraBaseDbConnection, Task<T>> read, CancellationToken cancellationToken)

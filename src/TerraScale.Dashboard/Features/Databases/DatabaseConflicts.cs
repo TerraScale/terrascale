@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraScale.Dashboard.Errors;
 using TerraScale.Dashboard.Features.Data;
+using SqlErrorCodes = TerraScale.DotNet.TerraBase.TerraBaseSqlErrorCodes;
 
 namespace TerraScale.Dashboard.Features.Databases;
 
@@ -54,7 +55,16 @@ public sealed class DatabaseConflicts(DataService data)
             + "loser_region, loser_node, loser_hlc, loser_transaction_id, loser_state, message, created_at FROM terrascale.conflicts"
             + (conditions.Count == 0 ? "" : " WHERE " + string.Join(" AND ", conditions))
             + " ORDER BY id DESC LIMIT " + (limit + 1).ToString(CultureInfo.InvariantCulture);
-        var result = await data.SqlAsync(context, databaseId, sql, false, cancellationToken);
+        DatabaseSqlResult result;
+        try
+        {
+            result = await data.SqlAsync(context, databaseId, sql, false, cancellationToken);
+        }
+        catch (DatabaseSqlException error) when (error.Code == SqlErrorCodes.UndefinedTable)
+        {
+            return new DatabaseConflictList([], null, false, limit);
+        }
+
         var indexes = result.Columns.Select((column, index) => (column.Name, index)).ToDictionary(item => item.Name, item => item.index, StringComparer.Ordinal);
         var items = result.Rows.Take(limit).Select(row => Read(row, indexes)).ToArray();
         return new DatabaseConflictList(items, result.Rows.Count > limit ? items[^1].Id : null, result.Rows.Count > limit, limit);

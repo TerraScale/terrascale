@@ -7,8 +7,12 @@ using Amazon.S3.Model;
 
 namespace TerraScale.Platform.Features.FileStorage;
 
+public readonly union ProjectPrefixErasure(Done, Unavailable);
+
 public sealed class S3FileObjectStore : IDisposable
 {
+    private const int ProjectPageSize = 100;
+    private const int ParallelDeletes = 16;
     private static readonly Unavailable Unconfigured = new("file object storage is not configured", "files_unconfigured");
     private readonly AmazonS3Client? _client;
     private readonly Protocol _protocol;
@@ -36,7 +40,9 @@ public sealed class S3FileObjectStore : IDisposable
 
     public static string Bucket(string region) => "terrascale-" + region + "-files";
 
-    public static string Key(Ulid organization, Ulid project, string bucket, string file) => $"app-files/{organization}/{project}/{bucket}/{file}";
+    private static string ProjectPrefix(Ulid organization, Ulid project) => $"app-files/{organization}/{project}/";
+
+    public static string Key(Ulid organization, Ulid project, string bucket, string file) => $"{ProjectPrefix(organization, project)}{bucket}/{file}";
 
     public Result<FileSignedUrl, Unavailable> Upload(string region, string key, FileObject file)
     {
@@ -171,6 +177,96 @@ public sealed class S3FileObjectStore : IDisposable
         }
     }
 
+    public async ValueTask<ProjectPrefixErasure> EraseProjectAsync(string region, Ulid organization, Ulid project, CancellationToken cancellationToken)
+    {
+        if (_client is not { } client)
+        {
+            return Unconfigured;
+        }
+
+        var prefix = ProjectPrefix(organization, project);
+        bool truncated;
+        do
+        {
+            var listed = await ListProjectObjectsAsync(client, region, prefix, cancellationToken);
+            var swept = await (listed switch
+            {
+                ProjectObjectPage page => ErasePageAsync(region, prefix, page, cancellationToken),
+                Unavailable unavailable => ValueTask.FromResult<(bool Truncated, Unavailable? Failure)>((false, unavailable)),
+            });
+            if (swept.Failure is { } failure)
+            {
+                return failure;
+            }
+
+            truncated = swept.Truncated;
+        }
+        while (truncated);
+
+        return new Done();
+    }
+
+    private async ValueTask<(bool Truncated, Unavailable? Failure)> ErasePageAsync(
+        string region, string prefix, ProjectObjectPage page, CancellationToken cancellationToken)
+    {
+        if (page.Keys.Any(key => !key.StartsWith(prefix, StringComparison.Ordinal)) || (page.Truncated && page.Keys.Count == 0))
+        {
+            return (false, new Unavailable("the object store returned an invalid project listing", "files_invalid_listing"));
+        }
+
+        Unavailable? failure = null;
+        await Parallel.ForEachAsync(page.Keys, new ParallelOptions { MaxDegreeOfParallelism = ParallelDeletes, CancellationToken = cancellationToken },
+            async (key, token) =>
+            {
+                var removed = await DeleteAsync(region, key, token);
+                if (removed switch { Done => null, Unavailable unavailable => unavailable } is { } deleteFailure)
+                {
+                    Interlocked.CompareExchange(ref failure, deleteFailure, null);
+                }
+            });
+        return (page.Truncated, failure);
+    }
+
+    private static async ValueTask<ListProjectObjectsResult> ListProjectObjectsAsync(
+        AmazonS3Client client, string region, string prefix, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var response = await client.ListObjectsV2Async(new ListObjectsV2Request
+            {
+                BucketName = Bucket(region),
+                Prefix = prefix,
+                MaxKeys = ProjectPageSize,
+            }, cancellationToken);
+            return new ProjectObjectPage(
+                response.S3Objects is { } objects ? [.. objects.Select(static item => item.Key)] : [], response.IsTruncated == true);
+        }
+        catch (AmazonS3Exception error) when (error.ErrorCode == "NoSuchBucket")
+        {
+            return new ProjectObjectPage([], false);
+        }
+        catch (AmazonServiceException error)
+        {
+            return Failed(error);
+        }
+        catch (AmazonClientException error)
+        {
+            return Failed(error);
+        }
+        catch (HttpRequestException error)
+        {
+            return Failed(error);
+        }
+        catch (IOException error)
+        {
+            return Failed(error);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return new Unavailable("the object store did not answer in time", "files_timeout");
+        }
+    }
+
     public void Dispose() => _client?.Dispose();
 
     private static Result<string, Unavailable> Presign(AmazonS3Client client, GetPreSignedUrlRequest request)
@@ -186,4 +282,8 @@ public sealed class S3FileObjectStore : IDisposable
     }
 
     private static Unavailable Failed(Exception error) => new($"file storage is unavailable; retry ({error.Message})", "files_unavailable");
+
+    private readonly record struct ProjectObjectPage(IReadOnlyList<string> Keys, bool Truncated);
+
+    private readonly union ListProjectObjectsResult(ProjectObjectPage, Unavailable);
 }

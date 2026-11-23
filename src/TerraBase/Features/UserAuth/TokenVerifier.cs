@@ -17,7 +17,9 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
 {
     public const string HttpClientName = "ts-auth";
 
-    private const string EndUserKind = "end_user";
+    private const string TenantUserUse = "user";
+
+    private const string TenantCustomUse = "custom";
 
     private const string ProjectDataPath = "/v1/projects/";
 
@@ -35,6 +37,8 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
     ];
 
     private static readonly string[] Types = ["at+jwt", "application/at+jwt", "JWT"];
+
+    private static readonly string[] TenantRefusedClaims = ["project_id", "instance_id", "token_kind", "platform_role", "key_id", "key_gen"];
 
     private readonly ConfigurationManager<OpenIdConnectConfiguration>? _platform = options.AuthIssuer is { } issuer ? Manager(http, issuer) : null;
 
@@ -77,7 +81,7 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
             return new Unauthorized("the bearer token is invalid or expired", "invalid_token");
         }
 
-        return Classify(jwt, trusted.EndUser);
+        return trusted.Tenant is { } tenant ? ClassifyTenant(jwt, tenant) : Classify(jwt);
     }
 
     public void Dispose() => _projects.Dispose();
@@ -86,23 +90,23 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
     {
         if (string.Equals(token.Issuer, platformIssuer, StringComparison.Ordinal) && _platform is { } platform)
         {
-            return new TrustedIssuer(platformIssuer, platform, options.AuthAudiences, EndUser: false);
+            return new TrustedIssuer(platformIssuer, platform, options.AuthAudiences, Tenant: null);
         }
 
-        if (!token.TryGetPayloadValue<string>("token_kind", out var kind) || kind != EndUserKind
-            || !token.TryGetPayloadValue<string>("project_id", out var project) || !IsCanonicalUlid(project))
+        if (!Uri.TryCreate(token.Issuer, UriKind.Absolute, out var issuer) || issuer.Segments is not [.., var last] || !IsCanonicalUlid(last)
+            || !Ulid.TryParse(last, out var project))
         {
             return null;
         }
 
-        var projectIssuer = new Uri(new Uri(platformIssuer), project).AbsoluteUri;
+        var projectIssuer = new Uri(new Uri(platformIssuer), last).AbsoluteUri;
         if (!string.Equals(token.Issuer, projectIssuer, StringComparison.Ordinal))
         {
             return null;
         }
 
-        var audiences = options.AuthAudiences.Select(audience => string.Concat(audience.TrimEnd('/'), ProjectDataPath, project)).ToArray();
-        return new TrustedIssuer(projectIssuer, ProjectManager(projectIssuer), audiences, EndUser: true);
+        var audiences = options.AuthAudiences.Select(audience => string.Concat(audience.TrimEnd('/'), ProjectDataPath, last)).ToArray();
+        return new TrustedIssuer(projectIssuer, ProjectManager(projectIssuer), audiences, project);
     }
 
     private ConfigurationManager<OpenIdConnectConfiguration> ProjectManager(string issuer)
@@ -141,7 +145,38 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
         }
     }
 
-    private static Result<Caller, Unauthorized, Unavailable> Classify(JsonWebToken jwt, bool endUser)
+    private static Result<Caller, Unauthorized, Unavailable> ClassifyTenant(JsonWebToken jwt, Ulid project)
+    {
+        var invalid = new Unauthorized("the project tenant token's claims are invalid", "invalid_token");
+        if (!jwt.TryGetPayloadValue<string>(JwtRegisteredClaimNames.Sub, out var subject) || !IsCanonicalUlid(subject)
+            || !jwt.TryGetPayloadValue<string>("token_use", out var use) || use is not (TenantUserUse or TenantCustomUse)
+            || TenantRefusedClaims.Any(name => jwt.TryGetPayloadValue<object>(name, out _)))
+        {
+            return invalid;
+        }
+
+        var custom = use == TenantCustomUse;
+        string? database = null;
+        if (jwt.TryGetPayloadValue<object>("database", out _)
+            && (!custom || !jwt.TryGetPayloadValue<string>("database", out database) || !IsCanonicalUlid(database)))
+        {
+            return invalid;
+        }
+
+        if (Payload(jwt) is not { } payload)
+        {
+            return invalid;
+        }
+
+        using (payload)
+        {
+            return RulesAuth.Read(subject, payload.RootElement, custom) is { } auth
+                ? new EndUserCaller(project, database, auth)
+                : invalid;
+        }
+    }
+
+    private static Result<Caller, Unauthorized, Unavailable> Classify(JsonWebToken jwt)
     {
         var invalid = new Unauthorized("the bearer token's claims are invalid", "invalid_token");
         if (!jwt.TryGetPayloadValue<string>(JwtRegisteredClaimNames.Sub, out var subject) || string.IsNullOrWhiteSpace(subject) || subject.Length > 128)
@@ -157,33 +192,19 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
             return invalid;
         }
 
-        var endUserKind = jwt.TryGetPayloadValue<string>("token_kind", out var kind) && kind == EndUserKind;
-        if (endUserKind != endUser)
+        if (projectUlid is { } scopedProject)
         {
-            return invalid;
-        }
-
-        if (endUser)
-        {
-            if (projectUlid is not { } endUserProject || Payload(jwt) is not { } payload)
+            var organizationId = jwt.TryGetPayloadValue<string>("org_id", out var org) ? org : null;
+            Ulid? organizationUlid = organizationId is not null && IsCanonicalUlid(organizationId) && Ulid.TryParse(organizationId, out var parsedOrg) ? parsedOrg : null;
+            if (organizationId is not null && organizationUlid is null)
             {
                 return invalid;
             }
 
-            using (payload)
-            {
-                return RulesAuth.Read(subject, payload.RootElement, custom: false) is { } auth
-                    ? new EndUserCaller(endUserProject, database, auth)
-                    : invalid;
-            }
-        }
-
-        if (projectUlid is { } scopedProject)
-        {
             var scopes = jwt.TryGetPayloadValue<string>("scope", out var scope) && scope.Length <= 4096
                 ? scope.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToFrozenSet(StringComparer.Ordinal)
                 : FrozenSet<string>.Empty;
-            return new ProjectCaller(subject, scopedProject, database, scopes);
+            return new ProjectCaller(subject, scopedProject, organizationUlid, database, scopes);
         }
 
         return subject.Length == 26 && Ulid.TryParse(subject, out _) ? new UserCaller(subject, ViaOperator: false) : invalid;
@@ -240,4 +261,4 @@ internal sealed class TokenVerifier(TerraBaseOptions options, IHttpClientFactory
     }
 }
 
-internal sealed record TrustedIssuer(string Issuer, ConfigurationManager<OpenIdConnectConfiguration> Manager, IReadOnlyList<string> Audiences, bool EndUser);
+internal sealed record TrustedIssuer(string Issuer, ConfigurationManager<OpenIdConnectConfiguration> Manager, IReadOnlyList<string> Audiences, Ulid? Tenant);

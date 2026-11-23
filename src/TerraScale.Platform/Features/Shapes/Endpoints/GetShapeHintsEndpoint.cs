@@ -8,7 +8,7 @@ public sealed class GetShapeHintsEndpoint(ShapeReader reader, ShapeNotifier noti
 {
     private static readonly TimeSpan AuthWindow = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan Recheck = TimeSpan.FromSeconds(20);
-    private static readonly TimeSpan Poll = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan Poll = TimeSpan.FromSeconds(2);
 
     public override void Configure()
     {

@@ -1,5 +1,7 @@
+using Microsoft.AspNetCore.Http.Features;
 using TerraBase.Features.Callers;
 using TerraBase.Features.Catalog;
+using TerraBase.Features.Qos;
 using TerraBase.Hosting;
 using TerraScale.Contracts.Cluster;
 using TerraScale.Contracts.Http;
@@ -55,7 +57,14 @@ internal sealed class SqlSocketEndpoint(SqlSockets sockets, DatabaseAccess acces
     }
 }
 
-internal sealed class SqlSockets(SqlRunner runner, DatabaseAccess access, CallerAuthentication authentication, IClusterCoordinator coordinator, TimeProvider time)
+internal sealed class SqlSockets(
+    SqlRunner runner,
+    DatabaseAccess access,
+    CallerAuthentication authentication,
+    IClusterCoordinator coordinator,
+    TenantDirectory tenants,
+    TenantSessions sessions,
+    TimeProvider time)
 {
     public const string LegacyProtocol = "terrascale.sql.v1";
 
@@ -68,12 +77,14 @@ internal sealed class SqlSockets(SqlRunner runner, DatabaseAccess access, Caller
         var offered = context.WebSockets.WebSocketRequestedProtocols;
         var v2 = offered.Contains(SqlWsFrameTypes.Subprotocol, StringComparer.Ordinal);
         var protocol = v2 ? SqlWsFrameTypes.Subprotocol : offered.Contains(LegacyProtocol, StringComparer.Ordinal) ? LegacyProtocol : null;
+        var input = context.Features.GetRequiredFeature<SocketInput>();
         using var socket = await context.WebSockets.AcceptWebSocketAsync(new WebSocketAcceptContext
         {
             SubProtocol = protocol,
             KeepAliveInterval = KeepAlive,
         });
-        await using var connection = new SqlSocket(socket, v2, project, database, runner, access, authentication, coordinator, time);
+        await using var connection = new SqlSocket(socket, input, v2, project, database,
+            new SocketServices(runner, access, authentication, coordinator, tenants, sessions, time));
         await connection.RunAsync(target, causality, cancellationToken);
         return new SocketClosed();
     }

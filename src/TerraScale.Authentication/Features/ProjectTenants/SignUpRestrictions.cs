@@ -1,6 +1,7 @@
-using Dapper;
 using System.Collections.Frozen;
 using System.IO.Compression;
+using System.Text.Json.Serialization;
+using Dapper;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
@@ -20,6 +21,7 @@ public sealed record ProjectInvitationRecord(string Id, string ProjectId, string
 
 public sealed record WaitlistRecord(string Id, string ProjectId, string Email, DateTimeOffset CreatedAt, string Status = "pending")
 {
+    [JsonIgnore]
     public string? Version { get; init; }
 }
 

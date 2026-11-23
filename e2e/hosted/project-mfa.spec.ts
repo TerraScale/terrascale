@@ -150,7 +150,7 @@ test.describe('project MFA and session policy', () => {
       const environment = Object.fromEntries(readFileSync('/proc/' + pid + '/environ', 'utf8').split('\0')
         .filter(Boolean).map((entry) => [entry.slice(0, entry.indexOf('=')), entry.slice(entry.indexOf('=') + 1)]));
       const legacyLog = openSync(join(stateDir, 'logs', 'ts-auth-upgrade.log'), 'a');
-      const legacy = spawn(join(process.env.DOTNET_ROOT!, 'dotnet'), [join(process.env.E2E_BUILD!, 'ts-auth-upgrade', 'ts-auth.dll')], {
+      const legacy = spawn(process.env.DOTNET_ROOT ? join(process.env.DOTNET_ROOT, 'dotnet') : 'dotnet', [join(process.env.E2E_BUILD ?? join(stateDir, 'build'), 'ts-auth-upgrade', 'ts-auth.dll')], {
         env: { ...environment, TS_AUTH_LISTEN: 'http://127.0.0.1:8091', TS_AUTH_METRICS_LISTEN: 'http://127.0.0.1:9094' },
         stdio: ['ignore', legacyLog, legacyLog],
       });

@@ -22,8 +22,13 @@ public sealed class CommitFinalizer(InRegionRaftRouter raft, DeltaReplicator rep
     public async ValueTask FinalizeStrongAsync(Ulid databaseId, CommitMetadata commit, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(commit);
-        databases.Observe(databaseId, commit.Bookmark);
         _ = locks.Release(databaseId, commit.TxId);
+        if (commit.Sequence == 0)
+        {
+            return;
+        }
+
+        databases.Observe(databaseId, commit.Bookmark);
         replicator.BroadcastStrongCommit(databaseId, commit);
         var durable = await raft.ReplicateAsync(databaseId, commit, CancellationToken.None).ConfigureAwait(false);
         var failure = durable switch

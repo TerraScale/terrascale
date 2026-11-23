@@ -88,10 +88,26 @@ internal sealed class RequestBinder<TRequest>
 
         if (hasBody && !hasJson)
         {
+            if (string.IsNullOrEmpty(request.ContentType) && request.ContentLength is null)
+            {
+                return BindEmptyOrUnsupportedAsync(request, cancellationToken);
+            }
+
             return ValueTask.FromResult<Bound<TRequest>>(new UnsupportedMediaType("Expected a JSON request body."));
         }
 
         return MergeAsync(request, hasJson, cancellationToken);
+    }
+
+    private async ValueTask<Bound<TRequest>> BindEmptyOrUnsupportedAsync(HttpRequest request, CancellationToken cancellationToken)
+    {
+        var probe = new byte[1];
+        if (await request.Body.ReadAsync(probe, cancellationToken).ConfigureAwait(false) > 0)
+        {
+            return new UnsupportedMediaType("Expected a JSON request body.");
+        }
+
+        return await MergeAsync(request, hasJson: false, cancellationToken).ConfigureAwait(false);
     }
 
     internal async ValueTask<bool> ValidateAsync(

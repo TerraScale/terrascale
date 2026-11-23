@@ -58,6 +58,23 @@ internal sealed class CatalogStore(SystemDatabase system)
             Unavailable unavailable => unavailable,
         };
 
+    public async ValueTask<Result<OrganizationRecord, Unavailable>> SetStorageOrganizationPlanAsync(
+        Ulid id, string plan, DateTimeOffset now, CancellationToken cancellationToken) =>
+        await system.WriteAsync(SqlBuild.Statement(
+            "INSERT INTO organizations (id, name, created_by, created_at, plan, suspended) VALUES (?, ?, 'operator', ?, ?, 0) "
+            + "ON CONFLICT (id) DO UPDATE SET plan = excluded.plan",
+            SqlBuild.Id(id), SqlBuild.Id(id), SqlBuild.Time(now), SqlBuild.Text(plan)), ConsistencyMode.Strong, cancellationToken) switch
+        {
+            SqlWriteResult => await GetOrganizationAsync(id, cancellationToken) switch
+            {
+                OrganizationRecord organization => organization,
+                NotFound => new OrganizationRecord(id, id.ToString(), "operator", now, plan, false),
+                Unavailable unavailable => unavailable,
+            },
+            Conflict conflict => new Unavailable(conflict.Message, conflict.Code),
+            Unavailable unavailable => unavailable,
+        };
+
     public async ValueTask<Result<Done, Conflict, Unavailable>> DeleteOrganizationAsync(Ulid id, CancellationToken cancellationToken) =>
         await system.WriteAsync(
         [
@@ -89,6 +106,28 @@ internal sealed class CatalogStore(SystemDatabase system)
             ConsistencyMode.Strong, cancellationToken) switch
         {
             SqlWriteResult => new Done(),
+            Conflict conflict => new Unavailable(conflict.Message, conflict.Code),
+            Unavailable unavailable => unavailable,
+        };
+
+    public async ValueTask<Result<ProjectRecord, NotFound, Unavailable>> EnrollProjectAsync(
+        Ulid projectId, Ulid organizationId, DateTimeOffset now, CancellationToken cancellationToken) =>
+        await system.WriteAsync(
+        [
+            SqlBuild.Statement(
+                "INSERT OR IGNORE INTO organizations (id, name, created_by, created_at, plan, suspended) VALUES (?, ?, 'operator', ?, 'hobby', 0)",
+                SqlBuild.Id(organizationId), SqlBuild.Id(organizationId), SqlBuild.Time(now)),
+            SqlBuild.Statement(
+                "INSERT OR IGNORE INTO projects (id, organization_id, name, created_at, plan) VALUES (?, ?, ?, ?, NULL)",
+                SqlBuild.Id(projectId), SqlBuild.Id(organizationId), SqlBuild.Id(projectId), SqlBuild.Time(now)),
+        ], ConsistencyMode.Strong, cancellationToken) switch
+        {
+            SqlWriteResult => await GetProjectAsync(projectId, cancellationToken) switch
+            {
+                ProjectRecord project when project.OrganizationId == organizationId => project,
+                ProjectRecord or NotFound => new NotFound("the project does not exist", "unknown_project"),
+                Unavailable unavailable => unavailable,
+            },
             Conflict conflict => new Unavailable(conflict.Message, conflict.Code),
             Unavailable unavailable => unavailable,
         };

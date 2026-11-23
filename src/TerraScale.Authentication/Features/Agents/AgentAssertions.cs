@@ -78,7 +78,7 @@ public sealed class AgentAssertions(AuthData data, TimeProvider clock)
         var agent = Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<AgentRecord>(
             "SELECT * FROM agents WHERE project_id = @project AND id = @agentId", new { project, agentId }), cancellationToken));
         var ownerId = agent?.Value.OwnerUserId;
-        var owner = agent is null ? null : Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
+        var owner = agent is null ? null : Versioned.Of(await data.ReadUserAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
             "SELECT * FROM users WHERE instance_id = @project AND id = @ownerId", new { project, ownerId }), cancellationToken));
         if (agent is null)
         {

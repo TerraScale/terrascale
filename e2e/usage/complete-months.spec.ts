@@ -29,7 +29,7 @@ test('usage is metered per UTC month, persisted under the month it was recorded 
     expect(stdout).toContain('usage complete-month journey: history 2028-01 writes=37, absent month=0, write at boundary-1tick in 2028-02, '
       + 'read at boundary in 2028-03, invalid month=400, flushed months 2028-01,2028-02,2028-03 passed');
     expect(stdout).toContain('usage sql metering journey: before=2028-03{requests=0,reads=0,writes=0,rows_read=0,rows_written=0,strong_commits=0} '
-      + 'after=2028-03{requests=4,reads=1,writes=3,rows_read=3,rows_written=4,strong_commits=2} refused=400 allowance hobby=10 refusal=429 database_limit');
+      + 'after=2028-03{requests=4,reads=1,writes=3,rows_read=3,rows_written=4,strong_commits=2} refused=400 allowance hobby=1 refusal=409 database_limit');
   } finally {
     await rm(data, { recursive: true, force: true });
   }

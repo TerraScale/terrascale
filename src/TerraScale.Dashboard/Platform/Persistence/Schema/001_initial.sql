@@ -218,7 +218,7 @@ CREATE TABLE billing (
     trial_used INTEGER NOT NULL,
     version TEXT NOT NULL,
     CONSTRAINT pk_billing PRIMARY KEY (organization_id),
-    CONSTRAINT ck_billing_customer CHECK (customer_id = '' OR customer_id LIKE 'cus\\_%' ESCAPE '\\'),
+    CONSTRAINT ck_billing_customer CHECK (customer_id = '' OR customer_id LIKE 'cus\_%' ESCAPE '\'),
     CONSTRAINT ck_billing_erasure CHECK (erasure_id IS NULL AND length(request_id) > 0 OR length(erasure_id) = 26 AND length(request_id) = 0),
     CONSTRAINT ck_billing_id CHECK (length(organization_id) = 26 AND length(version) = 26),
     CONSTRAINT ck_billing_internal CHECK ((kind = 'internal') = (internal_reservation IS NOT NULL) AND (kind = 'stripe' OR customer_id = '' AND checkout_id = '' AND subscription_id = '')),
@@ -379,10 +379,11 @@ CREATE TABLE stripe_customers (
     organization_id TEXT NOT NULL,
     CONSTRAINT pk_stripe_customers PRIMARY KEY (id),
     CONSTRAINT fk_stripe_customers_billing_organization_id FOREIGN KEY (organization_id) REFERENCES billing (organization_id) ON DELETE CASCADE,
-    CONSTRAINT ck_stripe_customers_customer CHECK (customer_id LIKE 'cus\\_%' ESCAPE '\\'),
+    CONSTRAINT ck_stripe_customers_customer CHECK (customer_id LIKE 'cus\_%' ESCAPE '\'),
     CONSTRAINT ck_stripe_customers_id CHECK (length(id) = 26 AND length(organization_id) = 26)
 );
 CREATE UNIQUE INDEX ix_stripe_customers_organization_id ON stripe_customers (organization_id);
+CREATE UNIQUE INDEX ix_stripe_customers_customer_id ON stripe_customers (customer_id);
 
 CREATE TABLE stripe_checkouts (
     id TEXT NOT NULL,
@@ -398,7 +399,7 @@ CREATE TABLE stripe_checkouts (
     CONSTRAINT pk_stripe_checkouts PRIMARY KEY (id),
     CONSTRAINT fk_stripe_checkouts_stripe_customers_customer_id FOREIGN KEY (customer_id) REFERENCES stripe_customers (customer_id) ON DELETE CASCADE,
     CONSTRAINT fk_stripe_checkouts_billing_organization_id FOREIGN KEY (organization_id) REFERENCES billing (organization_id) ON DELETE CASCADE,
-    CONSTRAINT ck_stripe_checkouts_checkout CHECK (checkout_id LIKE 'cs\\_%' ESCAPE '\\' AND length(request_id) > 0),
+    CONSTRAINT ck_stripe_checkouts_checkout CHECK (checkout_id LIKE 'cs\_%' ESCAPE '\' AND length(request_id) > 0),
     CONSTRAINT ck_stripe_checkouts_id CHECK (length(id) = 26 AND length(organization_id) = 26),
     CONSTRAINT ck_stripe_checkouts_project CHECK (length(project_id) IN (0, 26))
 );

@@ -68,29 +68,13 @@ namespace TerraScale.Dashboard.Features.Usage
                         return new(UsageSourceState.Measured, DatabaseReading(row, project, first, now, bucket));
                     }
                     var totals = TerraBaseResults.Require(await terraBase.GetProjectUsageAsync(ServiceCaller.User(token), project.Id, first, now, deadline.Token));
-                    if (totals.ProjectId != project.Id || Count(totals.Databases) != totals.Items.Count ||
-                        totals.Items.Select(item => item.DatabaseId).Distinct(StringComparer.Ordinal).Count() != totals.Items.Count)
+                    if (totals.ProjectId != project.Id)
                     {
-                        throw new JsonException("Usage returned a different project or repeated database.");
-                    }
-
-                    if (totals.Period is null || totals.Items.Any(item => item.Period is null))
-                    {
-                        throw new JsonException("Usage returned no metering period.");
-                    }
-
-                    if (Count(totals.StorageBytes) != checked(totals.Items.Sum(item => Count(item.StorageBytes)) + Count(totals.FileBytes)) ||
-                        Count(totals.Reads) != totals.Items.Sum(item => Count(item.Reads)) ||
-                        Count(totals.Writes) != totals.Items.Sum(item => Count(item.Writes)) ||
-                        totals.Period.Reads != totals.Items.Sum(item => Count(item.Period.Reads)) ||
-                        totals.Period.Writes != totals.Items.Sum(item => Count(item.Period.Writes)))
-                    {
-                        throw new JsonException("Project usage totals disagree with database usage.");
+                        throw new JsonException("Usage returned a different project.");
                     }
 
                     return new(UsageSourceState.Measured, new(project.Id, "", Count(totals.StorageBytes),
-                        Period(totals.Period, first, now, bucket), Points(totals.Series, totals.Period, bucket),
-                        [.. totals.Items.Select(item => DatabaseReading(item, project, first, now, bucket, true))], totals.Month is { } monthUsage ? new UsageMonth(monthUsage.Month is { Length: 7 } monthName ? monthName : throw new JsonException("Usage month is invalid."), Count(monthUsage.ReadUnits), Count(monthUsage.WriteUnits), Count(monthUsage.Units), selection.Member && monthUsage.OrganizationUnits is { } organizationUnits ? Count(organizationUnits) : null, selection.Member && monthUsage.OrganizationReadUnits is { } organizationReads ? Count(organizationReads) : null, Count(monthUsage.Invocations), selection.Member && monthUsage.OrganizationInvocations is { } organizationInvocations ? Count(organizationInvocations) : null) : null));
+                        Period(totals.Period, first, now, bucket), [], [], totals.Month is { } monthUsage ? new UsageMonth(monthUsage.Month is { Length: 7 } monthName ? monthName : throw new JsonException("Usage month is invalid."), Count(monthUsage.ReadUnits), Count(monthUsage.WriteUnits), Count(monthUsage.Units), selection.Member && monthUsage.OrganizationUnits is { } organizationUnits ? Count(organizationUnits) : null, selection.Member && monthUsage.OrganizationReadUnits is { } organizationReads ? Count(organizationReads) : null, Count(monthUsage.Invocations), selection.Member && monthUsage.OrganizationInvocations is { } organizationInvocations ? Count(organizationInvocations) : null) : null));
                 }
                 catch (HttpRequestException error) when (error.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
                 { return new(UsageSourceState.Unauthorized); }
@@ -103,7 +87,7 @@ namespace TerraScale.Dashboard.Features.Usage
                 catch (Exception error) when (Failure(error, cancellationToken)) { ServiceSloTelemetry.MarkFailure(error); return new(UsageSourceState.Unavailable); }
             }
         }
-        private static UsageReading DatabaseReading(TerraBaseDatabaseUsage row, ProjectRecord project, DateTimeOffset from, DateTimeOffset now, string bucket, bool child = false)
+        private static UsageReading DatabaseReading(TerraBaseDatabaseUsage row, ProjectRecord project, DateTimeOffset from, DateTimeOffset now, string bucket)
         {
             _ = Count(row.StorageBytes); _ = Count(row.Reads); _ = Count(row.Writes);
             if (!project.Databases.TryGetValue(row.DatabaseId, out var database) || database.ProjectId != project.Id)
@@ -111,49 +95,23 @@ namespace TerraScale.Dashboard.Features.Usage
                 throw new JsonException("Usage returned a foreign database.");
             }
 
-            return new(project.Id, row.DatabaseId, Count(row.StorageBytes), Period(row.Period, from, now, bucket),
-                Points(row.Series, row.Period, bucket, child), []);
+            return new(project.Id, row.DatabaseId, Count(row.StorageBytes), Period(row.Period, from, now, bucket), [], []);
         }
 
-        private static UsagePeriod Period(TerraBaseUsagePeriod? period, DateTimeOffset from, DateTimeOffset now, string bucket)
+        private static UsagePeriod Period(TerraBaseUsagePeriod period, DateTimeOffset from, DateTimeOffset now, string bucket)
         {
-            var roundedEnd = End(now, bucket);
-            if (period is null || period.From != from || period.To != roundedEnd || period.To <= period.From || period.Granularity != bucket)
+            if (period.From != from || period.Granularity != "month")
             {
                 throw new JsonException("Usage returned an invalid UTC period.");
             }
 
-            return new(period.From, period.To, bucket, Count(period.Reads), Count(period.Writes));
+            return new(from, End(now, bucket), bucket, Count(period.Reads), Count(period.Writes));
         }
 
         private static DateTimeOffset End(DateTimeOffset now, string bucket)
         {
             var ticks = bucket == "day" ? TimeSpan.TicksPerDay : TimeSpan.TicksPerHour;
             return new DateTimeOffset(checked((now.UtcTicks + ticks - 1) / ticks * ticks), TimeSpan.Zero);
-        }
-
-        private static ActivityPoint[] Points(IReadOnlyList<TerraBaseUsagePoint> series, TerraBaseUsagePeriod period, string bucket, bool child = false)
-        {
-            if (child && series.Count == 0)
-            {
-                return [];
-            }
-
-            var ticks = bucket == "day" ? TimeSpan.TicksPerDay : TimeSpan.TicksPerHour;
-            if (series.Any(point => point.Start < period.From || point.Start >= period.To || point.Start.Offset != TimeSpan.Zero ||
-                    point.Start.TimeOfDay.Ticks % ticks != 0) || series.Select(point => point.Start).Distinct().Count() != series.Count)
-            {
-                throw new JsonException("Usage returned invalid or repeated UTC buckets.");
-            }
-
-            var points = series.Select(point => new ActivityPoint(point.Start, Count(point.Reads), Count(point.Writes))).OrderBy(point => point.Start).ToArray();
-            if (points.Length != (period.To - period.From).Ticks / ticks ||
-                points.Sum(point => point.Reads) != period.Reads || points.Sum(point => point.Writes) != period.Writes)
-            {
-                throw new JsonException("Usage totals disagree with its UTC buckets.");
-            }
-
-            return points;
         }
 
         private static long Count(long count)

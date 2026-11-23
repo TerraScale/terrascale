@@ -43,7 +43,7 @@ public sealed class Impersonations(AuthData data, Credentials credentials, Tenan
         }
 
         await tenants.CheckAccessAsync(actor.Id, project, Roles.Admin, cancellationToken);
-        var user = await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
+        var user = await data.ReadUserAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
             "SELECT * FROM users WHERE instance_id = @project AND id = @target AND disabled = 0", new { project, target }), cancellationToken);
         if (user is null)
         {
@@ -227,7 +227,7 @@ public sealed class Impersonations(AuthData data, Credentials credentials, Tenan
     private async Task<UserRecord?> SubjectAsync(ImpersonationRecord record, CancellationToken cancellationToken)
     {
         var (platform, actorId) = (OidcIssuer.InstanceId, record.ActorId);
-        var actor = await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
+        var actor = await data.ReadUserAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
             "SELECT * FROM users WHERE instance_id = @platform AND id = @actorId", new { platform, actorId }), cancellationToken);
         if (actor is null || actor.Disabled || actor.AuthEpoch != record.ActorEpoch || actor.AuthStamp != record.ActorStamp)
         {
@@ -246,7 +246,7 @@ public sealed class Impersonations(AuthData data, Credentials credentials, Tenan
         }
 
         var (instance, userId) = (record.InstanceId, record.UserId);
-        var user = await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
+        var user = await data.ReadUserAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
             "SELECT * FROM users WHERE instance_id = @instance AND id = @userId", new { instance, userId }), cancellationToken);
         if (user is null || user.Disabled || user.AuthEpoch != record.UserEpoch || user.AuthStamp != record.UserStamp)
         {

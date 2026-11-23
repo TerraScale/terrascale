@@ -30,14 +30,14 @@ namespace TerraScale.Authentication.Storage;
 
 public static class AuthDb
 {
-    private const string InstantFormat = "yyyy'-'MM'-'dd' 'HH':'mm':'ss'.'fffffff";
+    private const string InstantFormat = "yyyy'-'MM'-'dd'T'HH':'mm':'ss'.'fffffff'Z'";
 
     public static string Instant(DateTimeOffset value) => value.UtcDateTime.ToString(InstantFormat, CultureInfo.InvariantCulture);
 
     public static string? Instant(DateTimeOffset? value) => value is { } instant ? Instant(instant) : null;
 
     public static DateTimeOffset ParseInstant(string text) =>
-        DateTimeOffset.ParseExact(text, InstantFormat, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);
+        DateTimeOffset.Parse(text, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);
 
     public static string? Json<T>(T? value, JsonTypeInfo<T> type) => value is null ? null : JsonSerializer.Serialize(value, type);
 }

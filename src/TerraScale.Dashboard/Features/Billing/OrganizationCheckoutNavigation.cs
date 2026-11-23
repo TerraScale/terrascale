@@ -1,5 +1,3 @@
-using System.Text.Json.Serialization;
-using System.Text.Json;
 using Dapper;
 using System.Data;
 using TerraScale.Dashboard.Platform.Datastar;
@@ -72,8 +70,6 @@ public sealed partial class StripeBilling
     private const string DraftForReturn = Drafts + " AND checkout_id = @CheckoutId";
     private const string DraftById = DashboardSql.PendingOrganizationCheckouts.Select + " WHERE draft_id = @DraftId";
     private const string CheckoutByRequest = DashboardSql.StripeCheckouts.Select + " WHERE request_id = @RequestId";
-    private const string OwnedBindings = DashboardSql.Billing.Select
-        + " WHERE organization_id IN (SELECT value FROM json_each(@Ids)) AND kind = 'stripe' AND erasure_id IS NULL AND state = 'active' AND length(request_id) = 26";
 
     internal Task<OrganizationCheckoutCompletion> ResumeOrganizationAsync(SessionRecord session, HttpContext http)
     {
@@ -141,13 +137,7 @@ public sealed partial class StripeBilling
         {
             var context = await accounts.GetContextAsync(session, cancellationToken);
             var owned = context.Organizations.Where(org => org.Kind == "business" && org.OwnerUserId == session.UserId).Select(org => org.Id).ToArray();
-            List<BillingBinding> bindings;
-            await using (var connection = await storage.OpenAsync(cancellationToken))
-            {
-                bindings = (await connection.QueryAsync<BillingBinding>(OwnedBindings, new { Ids = JsonSerializer.Serialize(owned, CheckoutNavigationJson.Default.StringArray) })).AsList();
-            }
-
-            foreach (var binding in bindings)
+            foreach (var binding in await OwnedBindingsAsync(owned, cancellationToken))
             {
                 await OptionalPanel.RunAsync(http, "organization checkout metadata", async () =>
                 {
@@ -176,6 +166,20 @@ public sealed partial class StripeBilling
             }
         });
         return result;
+    }
+
+    private async Task<List<BillingBinding>> OwnedBindingsAsync(string[] owned, CancellationToken cancellationToken)
+    {
+        List<BillingBinding> bindings = [];
+        foreach (var organizationId in owned)
+        {
+            if (await storage.BindingRowAsync(organizationId, cancellationToken) is { Kind: "stripe", ErasureId: null, State: "active", RequestId.Length: 26, SubscriptionId.Length: > 0 } binding)
+            {
+                bindings.Add(binding);
+            }
+        }
+
+        return bindings;
     }
 
     internal static async Task<OrganizationCheckoutCompletion?> OrganizationCheckoutNoticeAsync(HttpContext http, string userId)
@@ -367,5 +371,3 @@ public sealed partial class StripeBilling
     }
 }
 
-[JsonSerializable(typeof(string[]))]
-internal sealed partial class CheckoutNavigationJson : JsonSerializerContext;

@@ -26,10 +26,6 @@ public sealed record TerraBaseFileBucketPage(IReadOnlyList<TerraBaseFileBucket> 
 
 public sealed record TerraBaseStoredFilePage(IReadOnlyList<TerraBaseStoredFile> Items, string? Next);
 
-public sealed record TerraBaseBucketCreated(TerraBaseFileBucket Bucket);
-
-public sealed record TerraBaseUploadCreated(TerraBaseFileUrl Upload);
-
 public sealed record TerraBaseFunctionInfo(string Name, string? Source, string? Cron, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
 
 public sealed record TerraBaseFunctionInvocation(string Id, DateTimeOffset At, string Trigger, string Status, long DurationMs, IReadOnlyList<string> Lines, string? Error,
@@ -47,9 +43,3 @@ public sealed record TerraBaseFunctionCall(int Status, string? ContentType, stri
 public sealed record TerraBaseFunctionSecret(string Name, DateTimeOffset UpdatedAt);
 
 public sealed record TerraBaseFunctionSecretValue(string Value);
-
-public sealed record TerraBaseFunctionList(IReadOnlyList<TerraBaseFunctionInfo> Items);
-
-public sealed record TerraBaseFunctionLogList(IReadOnlyList<TerraBaseFunctionInvocation> Items);
-
-public sealed record TerraBaseFunctionSecretList(IReadOnlyList<TerraBaseFunctionSecret> Items);

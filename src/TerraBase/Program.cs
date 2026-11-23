@@ -14,6 +14,7 @@ using TerraBase.Features.Management.Logs;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Platform;
 using TerraBase.Features.Pressure;
+using TerraBase.Features.Qos;
 using TerraBase.Features.Regions;
 using TerraBase.Features.Rows;
 using TerraBase.Features.Rules;
@@ -69,6 +70,7 @@ static async Task<int> ServeAsync(PreparedStartup prepared)
     });
     builder.Services.AddHttpClient(TokenVerifier.HttpClientName, static client => client.Timeout = TimeSpan.FromSeconds(10));
     builder.Services.AddHttpClient(AtlasPublisher.HttpClientName, static client => client.Timeout = TimeSpan.FromSeconds(10));
+    builder.Services.AddHttpClient(CloseProjectEndpoint.HttpClientName, static client => client.Timeout = TimeSpan.FromSeconds(15));
     builder.Services.AddTerraScaleEndpoints(endpoints =>
     {
         endpoints.Title = "TerraBase API";
@@ -76,6 +78,7 @@ static async Task<int> ServeAsync(PreparedStartup prepared)
         endpoints.MapTerraBaseErrors();
     });
     builder.Services.AddTerraBaseTelemetry();
+    builder.Services.AddTerraBaseClientCors();
     builder.Services.AddTerraBaseNode(prepared);
     builder.Services.AddTerraBaseFeatures();
     builder.Services.AddTerraBasePostgres(new PostgresServerOptions(Tls: null));
@@ -83,12 +86,15 @@ static async Task<int> ServeAsync(PreparedStartup prepared)
     var app = builder.Build();
     prepared.Callers.Observe(app.Services.GetRequiredService<IMeterFactory>(), app.Services.GetRequiredService<TimeProvider>());
     app.UseRouting();
+    app.UseTerraBaseSocketInput();
     app.UseWebSockets();
+    app.UseTerraBaseClientCors();
     app.UseTerraBaseListeners();
     app.UseTerraScaleRequestIdentity(() => Ulid.NewUlid().ToString(), prepared.Credential.CorrelationKey);
     app.UseTerraBaseCallers();
     app.UseTerraBasePressure();
     app.UseTerraBaseRequestLogs();
+    app.UseTerraBaseTenantQos();
     app.MapTerraScaleEndpoints();
     app.MapTerraScaleOpenApi().WithMetadata(ListenerMetadata.Client);
     app.MapTerraBaseMetrics();

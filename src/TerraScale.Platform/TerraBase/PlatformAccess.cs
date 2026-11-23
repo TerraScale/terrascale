@@ -78,8 +78,8 @@ public sealed class PlatformAccess(TerraBaseClient terraBase, OidcTokens tokens,
             return new AccessContext(cached.Grant, credential);
         }
 
-        var screened = tokens.IsEnabled && credential.BearerToken is { } token && credential.IsJwt
-            ? await tokens.ValidateAsync(token, cancellationToken)
+        var screened = credential.BearerToken is { } token && credential.IsJwt
+            ? await tokens.ValidateAsync(token, authorize.Project, cancellationToken)
             : new Done();
         return screened switch
         {

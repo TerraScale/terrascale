@@ -38,8 +38,12 @@ internal sealed class PgPortal(PgPreparedStatement statement, IReadOnlyList<SqlV
     public IReadOnlyList<PgColumn>? Columns { get; set; }
 }
 
-internal sealed class PostgresTransactionBlock(ConsistencyMode mode, SqlAccess access, bool isImplicit)
+internal sealed class PostgresTransactionBlock(ConsistencyMode mode, SqlAccess access, bool isImplicit, long started)
 {
+    public long Started => started;
+
+    public bool Savepoints { get; set; }
+
     public ConsistencyMode Mode { get; set; } = mode;
 
     public SqlAccess Access { get; set; } = access;
@@ -62,6 +66,8 @@ internal sealed class PostgresSession(PostgresGrant grant, PostgresStartup start
     public int SecretKey { get; } = RandomNumberGenerator.GetInt32(int.MaxValue);
 
     public PostgresGrant Grant => grant;
+
+    public TimeProvider Time => timeProvider;
 
     public IPostgresDatabaseExecutor Executor => grant.Executor;
 

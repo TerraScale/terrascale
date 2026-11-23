@@ -39,6 +39,14 @@ public sealed class AuthData(AuthConnectionFactory connections)
         return await read(connection);
     }
 
+    public async Task<UserRecord?> ReadUserAsync(Func<DbConnection, Task<UserRecord?>> read, CancellationToken cancellationToken) =>
+        await ReadAsync(read, cancellationToken) is { } user ? Stored(user) : null;
+
+    public async Task<IReadOnlyList<UserRecord>> ReadUsersAsync(Func<DbConnection, Task<IEnumerable<UserRecord>>> read, CancellationToken cancellationToken) =>
+        [.. (await ReadAsync(read, cancellationToken)).Select(Stored)];
+
+    private static UserRecord Stored(UserRecord user) => user with { LinkedProviders = [], AuthenticationBindings = [], StepUpBindings = [] };
+
     public async Task<int> InBatchesAsync(int batchSize, Func<DbConnection, Task<int>> statement, CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
@@ -133,10 +141,10 @@ public sealed class AuthData(AuthConnectionFactory connections)
     {
         var all = currentAudit is { Committed: false } ? [.. changes, currentAudit.Success] : changes;
         var batch = new WriteBatch();
+        var writes = all.Where(change => !change.Assertion).ToList();
         var written = new Dictionary<string, string?>(StringComparer.Ordinal);
-        foreach (var change in all.Where(change => !change.Assertion))
+        foreach (var change in writes)
         {
-            change.Write(batch);
             written[change.Identity] = change.Expected;
         }
 
@@ -154,6 +162,11 @@ public sealed class AuthData(AuthConnectionFactory connections)
 
             assertion.Write(batch);
             written[assertion.Identity] = assertion.Expected;
+        }
+
+        foreach (var change in writes)
+        {
+            change.Write(batch);
         }
 
         return batch;

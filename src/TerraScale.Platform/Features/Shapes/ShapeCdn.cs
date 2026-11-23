@@ -1,6 +1,8 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
+using System.Threading.Channels;
+using ZLogger;
 
 namespace TerraScale.Platform.Features.Shapes;
 
@@ -10,38 +12,61 @@ public sealed record CdnPurgeRequest(IReadOnlyList<string> Files);
 [JsonSerializable(typeof(CdnPurgeRequest))]
 public sealed partial class CdnJsonContext : JsonSerializerContext;
 
-public sealed class ShapeCdn(IHttpClientFactory httpClients, PlatformOptions options, PlatformMetrics metrics)
+public sealed class ShapeCdn(IHttpClientFactory httpClients, PlatformOptions options, PlatformMetrics metrics, ILogger<ShapeCdn> logger) : BackgroundService
 {
     public const string HttpClientName = "cloudflare";
     private const int BatchUrls = 100;
-
-    public async ValueTask<Result<Done, Unavailable>> PurgeAsync(IReadOnlyList<string> urls, CancellationToken cancellationToken)
+    private const int QueuedUrls = 8192;
+    private readonly Channel<string> _urls = Channel.CreateBounded<string>(new BoundedChannelOptions(QueuedUrls)
     {
-        if (options.Shapes is not { } shapes || urls.Count == 0)
+        FullMode = BoundedChannelFullMode.Wait,
+        SingleReader = true,
+    });
+
+    public async ValueTask QueueAsync(IReadOnlyList<string> urls, CancellationToken cancellationToken)
+    {
+        if (options.Shapes is null)
         {
-            return new Done();
+            return;
         }
 
-        foreach (var batch in urls.Chunk(BatchUrls))
+        foreach (var url in urls)
         {
-            using var request = new HttpRequestMessage(HttpMethod.Post, $"zones/{Uri.EscapeDataString(shapes.CdnZone)}/purge_cache")
+            await _urls.Writer.WriteAsync(url, cancellationToken);
+        }
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        if (options.Shapes is not { } shapes)
+        {
+            return;
+        }
+
+        await foreach (var first in _urls.Reader.ReadAllAsync(stoppingToken))
+        {
+            List<string> batch = [first];
+            while (batch.Count < BatchUrls && _urls.Reader.TryRead(out var next))
             {
-                Content = JsonContent.Create(new CdnPurgeRequest(batch), CdnJsonContext.Default.CdnPurgeRequest),
-            };
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", shapes.CdnApiToken);
-            var accepted = await SendAsync(request, cancellationToken);
+                batch.Add(next);
+            }
+
+            var accepted = await PurgeAsync(shapes, batch, stoppingToken);
             metrics.ShapePurge(accepted);
             if (!accepted)
             {
-                return new Unavailable("Cloudflare refused the shape cache purge", "cdn_purge_failed");
+                logger.ZLogWarning($"Cloudflare refused purging {batch.Count} shape URLs");
             }
         }
-
-        return new Done();
     }
 
-    private async ValueTask<bool> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    private async ValueTask<bool> PurgeAsync(ShapeStorageOptions shapes, IReadOnlyList<string> urls, CancellationToken cancellationToken)
     {
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"zones/{Uri.EscapeDataString(shapes.CdnZone)}/purge_cache")
+        {
+            Content = JsonContent.Create(new CdnPurgeRequest(urls), CdnJsonContext.Default.CdnPurgeRequest),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", shapes.CdnApiToken);
         try
         {
             using var response = await httpClients.CreateClient(HttpClientName).SendAsync(request, cancellationToken);

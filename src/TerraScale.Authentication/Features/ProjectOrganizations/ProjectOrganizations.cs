@@ -134,7 +134,7 @@ public sealed partial class ProjectOrganizationDirectory(AuthData data, WebhookO
             """, new { project, userId }), cancellationToken)).AsList();
 
     private async Task<UserRecord> UserAsync(string project, string? id, CancellationToken cancellationToken) =>
-        await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
+        await data.ReadUserAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
             "SELECT * FROM users WHERE instance_id = @project AND id = @id AND disabled = 0", new { project, id }), cancellationToken)
              ?? throw Invalid("user_id must identify an active user in this project.");
 

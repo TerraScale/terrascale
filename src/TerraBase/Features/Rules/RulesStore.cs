@@ -42,7 +42,7 @@ internal sealed class RulesStore(SystemDatabase system, TimeProvider time)
 
     public async ValueTask<Result<RulesVersionsBody, Unavailable>> VersionsAsync(Ulid databaseId, string? after, int limit, CancellationToken cancellationToken) =>
         await system.QueryAsync(SqlBuild.Statement(
-            "SELECT version, updated_at, updated_by, digest FROM rules_versions WHERE database_id = ?1 AND (?2 IS NULL OR version > ?2) ORDER BY version LIMIT ?3",
+            "SELECT version, updated_at, updated_by, digest FROM rules_versions WHERE database_id = ?1 AND (?2 IS NULL OR version < ?2) ORDER BY version DESC LIMIT ?3",
             SqlBuild.Id(databaseId), SqlBuild.OptionalText(after), SqlBuild.Integer(limit + 1)), cancellationToken) switch
         {
             IReadOnlyList<IReadOnlyList<SqlValue>> rows => Versions(rows, limit),
@@ -55,15 +55,21 @@ internal sealed class RulesStore(SystemDatabase system, TimeProvider time)
         var now = time.GetUtcNow();
         var body = JsonSerializer.Serialize(rules, RulesJsonContext.Default.RulesSet);
         var stored = new StoredRules(Ulid.NewUlid(now).ToString(), rules, now, actor, Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(body))));
+        var insertVersion = ifMatch is { } matchExpected
+            ? SqlBuild.Statement(
+                "INSERT INTO rules_versions (database_id, version, body, updated_at, updated_by, digest) SELECT ?, ?, ?, ?, ?, ? "
+                + "WHERE EXISTS (SELECT 1 FROM rules_current WHERE database_id = ? AND version = ?)",
+                SqlBuild.Id(databaseId), SqlBuild.Text(stored.Version), SqlBuild.Text(body), SqlBuild.Time(now), SqlBuild.Text(actor), SqlBuild.Text(stored.Digest),
+                SqlBuild.Id(databaseId), SqlBuild.Text(matchExpected))
+            : SqlBuild.Statement(
+                "INSERT INTO rules_versions (database_id, version, body, updated_at, updated_by, digest) SELECT ?, ?, ?, ?, ?, ? "
+                + "WHERE NOT EXISTS (SELECT 1 FROM rules_current WHERE database_id = ?)",
+                SqlBuild.Id(databaseId), SqlBuild.Text(stored.Version), SqlBuild.Text(body), SqlBuild.Time(now), SqlBuild.Text(actor), SqlBuild.Text(stored.Digest),
+                SqlBuild.Id(databaseId));
         var pointer = ifMatch is { } expected
             ? SqlBuild.Statement("UPDATE rules_current SET version = ? WHERE database_id = ? AND version = ?", SqlBuild.Text(stored.Version), SqlBuild.Id(databaseId), SqlBuild.Text(expected))
             : SqlBuild.Statement("INSERT INTO rules_current (database_id, version) VALUES (?, ?)", SqlBuild.Id(databaseId), SqlBuild.Text(stored.Version));
-        var written = await system.WriteAsync(
-        [
-            SqlBuild.Statement("INSERT INTO rules_versions (database_id, version, body, updated_at, updated_by, digest) VALUES (?, ?, ?, ?, ?, ?)",
-                SqlBuild.Id(databaseId), SqlBuild.Text(stored.Version), SqlBuild.Text(body), SqlBuild.Time(now), SqlBuild.Text(actor), SqlBuild.Text(stored.Digest)),
-            pointer,
-        ], ConsistencyMode.Strong, cancellationToken);
+        var written = await system.WriteAsync([insertVersion, pointer], ConsistencyMode.Strong, cancellationToken);
         _cache.TryRemove(databaseId, out _);
         return written switch
         {

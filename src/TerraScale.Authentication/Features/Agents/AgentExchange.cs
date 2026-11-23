@@ -33,7 +33,7 @@ public sealed class LiveAgents(AuthData data, TimeProvider clock)
 
         var agent = Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<AgentRecord>(
             "SELECT * FROM agents WHERE project_id = @tenant AND id = @agentId AND owner_user_id = @ownerId", new { tenant, agentId, ownerId }), cancellationToken));
-        var owner = agent is null ? null : Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
+        var owner = agent is null ? null : Versioned.Of(await data.ReadUserAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
             "SELECT * FROM users WHERE instance_id = @tenant AND id = @ownerId", new { tenant, ownerId }), cancellationToken));
         var keyed = agent is not null && await data.ReadAsync(connection => connection.ExecuteScalarAsync<bool>(
             "SELECT EXISTS (SELECT 1 FROM agent_keys WHERE project_id = @tenant AND agent_id = @agentId AND revoked_at IS NULL)", new { tenant, agentId }), cancellationToken);

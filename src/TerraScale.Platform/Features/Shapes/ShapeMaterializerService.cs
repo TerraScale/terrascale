@@ -170,6 +170,11 @@ public sealed class ShapeMaterializerService(
 
             foreach (var shape in Volatile.Read(ref _owned).Where(shape => shape.Database == database))
             {
+                if (!Volatile.Read(ref _owned).Any(owned => owned.Handle == shape.Handle))
+                {
+                    continue;
+                }
+
                 try
                 {
                     await RefreshAsync(shape, bookmark, stoppingToken);
@@ -192,7 +197,11 @@ public sealed class ShapeMaterializerService(
                 ShapeSnapshot snapshot => await SealAsync(shape, snapshot, cancellationToken),
                 Unavailable unavailable => unavailable.Message,
             },
+            SqlFailure { Error.SqlState: "42P01" or "42703" } failure =>
+                await RetireAsync(shape, failure.Error.Message, await registry.RetireShapeAsync(shape.Handle, cancellationToken), cancellationToken),
             SqlFailure failure => failure.Error.Message,
+            NotFound { Code: "unknown_database" } missing =>
+                await RetireAsync(shape, missing.Message ?? "the database no longer exists", await registry.RetireDatabaseAsync(shape.Database, cancellationToken), cancellationToken),
             NotFound missing => missing.Message ?? "the database no longer exists",
             Unavailable unavailable => unavailable.Message,
         };
@@ -200,6 +209,27 @@ public sealed class ShapeMaterializerService(
         {
             logger.ZLogWarning($"Shape {shape.Handle} was not materialized: {outcome}");
         }
+    }
+
+    private async Task<string?> RetireAsync(ShapeRecord shape, string reason, Result<ShapeRetirement, Unavailable> outcome, CancellationToken cancellationToken) =>
+        outcome switch
+        {
+            ShapeRetirement retired => await RetiredAsync(shape, reason, retired, cancellationToken),
+            Unavailable unavailable => $"{reason}; retiring the shape failed: {unavailable.Message}",
+        };
+
+    private async Task<string?> RetiredAsync(ShapeRecord shape, string reason, ShapeRetirement retired, CancellationToken cancellationToken)
+    {
+        var handles = retired.Handles.ToHashSet(StringComparer.Ordinal);
+        Volatile.Write(ref _owned, [.. Volatile.Read(ref _owned).Where(owned => !handles.Contains(owned.Handle))]);
+        if (retired.Handles.Count == 0)
+        {
+            return null;
+        }
+
+        var kept = await sealer.RetireAsync(retired, cancellationToken);
+        logger.ZLogInformation($"Retired {retired.Handles.Count} shapes of {shape.Database} after {shape.Handle} failed permanently: {reason}");
+        return kept == 0 ? null : $"{reason}; {kept} retired shape objects could not be deleted";
     }
 
     private async Task<string?> SealAsync(ShapeRecord shape, ShapeSnapshot snapshot, CancellationToken cancellationToken) =>

@@ -24,6 +24,8 @@ public sealed record StorageEngineOptions(string RootDirectory, string Region, u
 
     public TimeSpan TransactionIdleTimeout { get; init; } = TimeSpan.FromSeconds(30);
 
+    public TimeSpan StatementTimeout { get; init; } = Timeout.InfiniteTimeSpan;
+
     public TimeSpan StagedWriteTtl { get; init; } = TimeSpan.FromMinutes(1);
 
     public int MaxPendingRemoteCommits { get; init; } = 65536;

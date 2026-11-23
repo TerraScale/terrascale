@@ -82,6 +82,10 @@ public sealed record ShapeRecord(
 
 public sealed record ShapeChunkInfo(long Offset, string Name, string Sha256, long Size, long Epoch, string Digest);
 
+public sealed record ShapeChunkObject(string Handle, string Name);
+
+public sealed record ShapeRetirement(IReadOnlyList<string> Handles, IReadOnlyList<ShapeChunkObject> Chunks);
+
 public closed record class ShapeOffset
 {
     public static ShapeOffset? Parse(string text)

@@ -31,6 +31,7 @@ internal static class FeatureRegistrations
             services.AddSingleton<CallerAdmission>();
             services.AddSingleton<CallerAuthentication>();
             services.AddSingleton<TokenVerifier>();
+            services.AddSingleton<ApiKeyExchange>();
             services.AddSingleton<ControlSnapshots>();
             services.AddSingleton<ControlSnapshotSync>();
             services.AddSingleton<CatalogStore>();
@@ -42,6 +43,10 @@ internal static class FeatureRegistrations
             services.AddSingleton<RulesEnforcer>();
             services.AddSingleton<RulesService>();
             services.AddSingleton<QosAdmission>();
+            services.AddSingleton<TenantAdmission>();
+            services.AddSingleton<TenantSessions>();
+            services.AddSingleton<TenantDirectory>();
+            services.AddSingleton<PostgresTenancy>();
             services.AddSingleton<SqlRunner>();
             services.AddSingleton<SqlFlow>();
             services.AddSingleton<SqlSockets>();

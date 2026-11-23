@@ -85,7 +85,7 @@ public sealed class UserApiKeys(AuthData data, PlatformDirectory platform, Webho
             throw Invalid();
         }
 
-        var user = Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
+        var user = Versioned.Of(await data.ReadUserAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
             "SELECT * FROM users WHERE instance_id = @project AND id = @userId", new { project, userId }), cancellationToken));
         if (user is null || user.Value.Disabled)
         {

@@ -213,14 +213,34 @@ namespace TerraScale.Dashboard.Platform.Http
             return status is 0 or 401 or 403 or 429 or >= 500 ? LogLevel.Information : LogLevel.Debug;
         }
 
-        public static void BeginStateWrite()
+        public static async Task<T> StateWriteAsync<T>(Func<Task<T>> write)
         {
-            Current.Value?.BeginWrite();
+            ArgumentNullException.ThrowIfNull(write);
+            var timing = Current.Value;
+            timing?.BeginWrite();
+            try
+            {
+                return await write();
+            }
+            finally
+            {
+                timing?.EndWrite();
+            }
         }
 
-        public static void EndStateWrite()
+        public static async Task StateWriteAsync(Func<Task> write)
         {
-            Current.Value?.EndWrite();
+            ArgumentNullException.ThrowIfNull(write);
+            var timing = Current.Value;
+            timing?.BeginWrite();
+            try
+            {
+                await write();
+            }
+            finally
+            {
+                timing?.EndWrite();
+            }
         }
 
         private void BeginWrite()

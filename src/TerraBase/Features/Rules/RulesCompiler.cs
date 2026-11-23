@@ -48,7 +48,7 @@ internal static class RulesCompiler
         }
 
         List<ConditionPart> parts = [new ConditionPart("((")];
-        var depth = 0;
+        List<bool> lists = [];
         for (var index = 0; index < tokens.Count; index++)
         {
             var token = tokens[index];
@@ -56,7 +56,7 @@ internal static class RulesCompiler
             var opens = index + 1 < tokens.Count && tokens[index + 1].Kind == SqlTokenKind.Open;
             if (token.Kind == SqlTokenKind.Word && index + 1 < tokens.Count && tokens[index + 1].Kind == SqlTokenKind.Dot)
             {
-                var failure = Reference(tokens, ref index, columns, operation, previous.Is("IN")) switch
+                var failure = Reference(tokens, ref index, columns, operation, previous.Is("IN"), lists.Contains(true)) switch
                 {
                     ConditionPart part => Append(parts, part),
                     Validation refused => refused,
@@ -67,6 +67,11 @@ internal static class RulesCompiler
                 }
 
                 continue;
+            }
+
+            if (previous.Is("IN") && token.Kind != SqlTokenKind.Open)
+            {
+                return Refused("IN takes a parenthesized list or one auth.claims list");
             }
 
             var piece = token.Kind switch
@@ -96,17 +101,18 @@ internal static class RulesCompiler
                 });
             }
 
-            depth += token.Kind switch
+            if (token.Kind == SqlTokenKind.Open)
             {
-                SqlTokenKind.Open => 1,
-                SqlTokenKind.Close => -1,
-                SqlTokenKind.Word or SqlTokenKind.Quoted or SqlTokenKind.String or SqlTokenKind.Blob or SqlTokenKind.Number or SqlTokenKind.Parameter
-                    or SqlTokenKind.Semicolon or SqlTokenKind.Dot or SqlTokenKind.Comma or SqlTokenKind.Symbol => 0,
-                _ => throw new UnreachableException(),
-            };
-            if (depth < 0)
+                lists.Add(previous.Is("IN"));
+            }
+            else if (token.Kind == SqlTokenKind.Close)
             {
-                return Refused("the condition has unbalanced parentheses");
+                if (lists.Count == 0)
+                {
+                    return Refused("the condition has unbalanced parentheses");
+                }
+
+                lists.RemoveAt(lists.Count - 1);
             }
 
             parts.Add(new ConditionPart(" "));
@@ -119,7 +125,7 @@ internal static class RulesCompiler
             string text => text.StartsWith("new.", StringComparison.Ordinal),
             ConditionParameter => false,
         });
-        return depth == 0 ? new CompiledCondition(parts, usesNew) : Refused("the condition has unbalanced parentheses");
+        return lists.Count == 0 ? new CompiledCondition(parts, usesNew) : Refused("the condition has unbalanced parentheses");
     }
 
     private static Validation? Append(List<ConditionPart> parts, ConditionPart part)
@@ -129,7 +135,7 @@ internal static class RulesCompiler
         return null;
     }
 
-    public static string Render(CompiledCondition condition, RulesAuth auth, DateTimeOffset now, string? newPrefix = null, string? rowPrefix = null)
+    public static string Render(CompiledCondition condition, RulesAuth auth, long? requestTime, string? newPrefix = null, string? rowPrefix = null)
     {
         var text = new StringBuilder();
         foreach (var part in condition.Parts)
@@ -140,7 +146,7 @@ internal static class RulesCompiler
                 string literal when literal.StartsWith("new.", StringComparison.Ordinal) => literal[4..],
                 string literal when literal.StartsWith("row.", StringComparison.Ordinal) => rowPrefix is null ? literal[4..] : string.Concat(rowPrefix, literal[4..]),
                 string literal => literal,
-                ConditionParameter parameter => Literal(parameter, auth, now),
+                ConditionParameter parameter => Literal(parameter, auth, requestTime),
             });
         }
 
@@ -151,17 +157,84 @@ internal static class RulesCompiler
 
     public static string Literal(string? text) => text is null ? "NULL" : string.Concat("'", text.Replace("'", "''", StringComparison.Ordinal), "'");
 
-    private static string Literal(ConditionParameter parameter, RulesAuth auth, DateTimeOffset now) => parameter.Source switch
+    public static bool IsSetValue(string value)
+    {
+        if (value is "auth.uid" or "auth.org_id" or "auth.org_role" or "auth.is_anonymous" or "request.time" or "request.ulid"
+            || (value.StartsWith(ClaimPrefix, StringComparison.Ordinal) && IsClaimName(value[ClaimPrefix.Length..])))
+        {
+            return true;
+        }
+
+        return SqlText.TryTokenize(value, out var tokens) && tokens switch
+        {
+            [{ Kind: SqlTokenKind.String or SqlTokenKind.Number }] => true,
+            [{ Kind: SqlTokenKind.Blob } blob] => IsHex(blob.Value),
+            [{ Kind: SqlTokenKind.Word } word] => word.Is("NULL") || word.Is("TRUE") || word.Is("FALSE"),
+            [{ Kind: SqlTokenKind.Symbol, Value: "-" }, { Kind: SqlTokenKind.Number }] => true,
+            _ => false,
+        };
+    }
+
+    public static SqlValue SetValue(string expression, RulesAuth auth, long? requestTime, Ulid requestUlid) => expression switch
+    {
+        "auth.uid" => SqlValue.FromText(auth.Uid),
+        "auth.org_id" => auth.OrgId is { } organization ? SqlValue.FromText(organization) : SqlValue.Null,
+        "auth.org_role" => auth.OrgRole is { } role ? SqlValue.FromText(role) : SqlValue.Null,
+        "auth.is_anonymous" => SqlValue.FromIntegral(auth.IsAnonymous ? 1 : 0),
+        "request.time" => requestTime is { } milliseconds ? SqlValue.FromIntegral(milliseconds) : SqlValue.Null,
+        "request.ulid" => SqlValue.FromText(requestUlid.ToString()),
+        _ when expression.StartsWith(ClaimPrefix, StringComparison.Ordinal) =>
+            auth.Claims.TryGetValue(expression[ClaimPrefix.Length..], out var claim) ? ClaimValue(claim) : SqlValue.Null,
+        _ => LiteralValue(expression),
+    };
+
+    private const string ClaimPrefix = "auth.claims.";
+
+    private static SqlValue ClaimValue(RulesClaim claim) => claim switch
+    {
+        string text => SqlValue.FromText(text),
+        long integer => SqlValue.FromIntegral(integer),
+        double real => SqlValue.FromReal(real),
+        IReadOnlyList<RulesScalar> => SqlValue.FromText(ClaimJson(claim)),
+    };
+
+    private static SqlValue LiteralValue(string expression)
+    {
+        if (!SqlText.TryTokenize(expression, out var tokens))
+        {
+            return SqlValue.Null;
+        }
+
+        return tokens switch
+        {
+            [{ Kind: SqlTokenKind.String } text] => SqlValue.FromText(text.Value),
+            [{ Kind: SqlTokenKind.Number } number] => Number(number.Value, negative: false),
+            [{ Kind: SqlTokenKind.Symbol, Value: "-" }, { Kind: SqlTokenKind.Number } number] => Number(number.Value, negative: true),
+            [{ Kind: SqlTokenKind.Blob } blob] when IsHex(blob.Value) => SqlValue.FromBlob(Convert.FromHexString(blob.Value)),
+            [{ Kind: SqlTokenKind.Word } word] when word.Is("TRUE") => SqlValue.FromIntegral(1),
+            [{ Kind: SqlTokenKind.Word } word] when word.Is("FALSE") => SqlValue.FromIntegral(0),
+            _ => SqlValue.Null,
+        };
+    }
+
+    private static bool IsHex(string text) => text.Length % 2 == 0 && text.All(char.IsAsciiHexDigit);
+
+    private static SqlValue Number(string text, bool negative) =>
+        long.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var integer) ? SqlValue.FromIntegral(negative ? -integer : integer)
+        : double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var real) ? SqlValue.FromReal(negative ? -real : real)
+        : SqlValue.Null;
+
+    private static string Literal(ConditionParameter parameter, RulesAuth auth, long? requestTime) => parameter.Source switch
     {
         ConditionSource.Uid => Literal(auth.Uid),
         ConditionSource.OrgId => Literal(auth.OrgId),
         ConditionSource.OrgRole => Literal(auth.OrgRole),
         ConditionSource.IsAnonymous => auth.IsAnonymous ? "1" : "0",
-        ConditionSource.RequestTime => now.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture),
+        ConditionSource.RequestTime => requestTime is { } milliseconds ? milliseconds.ToString(CultureInfo.InvariantCulture) : "NULL",
         ConditionSource.Claim => parameter.Key is { } key && auth.Claims.TryGetValue(key, out var claim) ? Claim(claim) : "NULL",
-        ConditionSource.ClaimList => parameter.Key is { } listKey && auth.Claims.TryGetValue(listKey, out var list)
+        ConditionSource.ClaimList => parameter.Key is { } listKey && auth.Claims.TryGetValue(listKey, out var list) && list is IReadOnlyList<RulesScalar>
             ? string.Concat("(SELECT value FROM json_each(", Literal(ClaimJson(list)), "))")
-            : "(SELECT NULL WHERE 0)",
+            : "(SELECT NULL)",
         _ => throw new UnreachableException(),
     };
 
@@ -170,7 +243,7 @@ internal static class RulesCompiler
         string text => Literal(text),
         long integer => integer.ToString(CultureInfo.InvariantCulture),
         double real => real.ToString("R", CultureInfo.InvariantCulture),
-        IReadOnlyList<RulesScalar> items => Literal(ClaimJson(claim)),
+        IReadOnlyList<RulesScalar> => Literal(ClaimJson(claim)),
     };
 
     private static string ClaimJson(RulesClaim claim) => claim switch
@@ -188,7 +261,8 @@ internal static class RulesCompiler
         double real => real.ToString("R", CultureInfo.InvariantCulture),
     };
 
-    private static Result<ConditionPart, Validation> Reference(List<SqlToken> tokens, ref int index, IReadOnlyList<string>? columns, RulesOperation operation, bool listPosition)
+    private static Result<ConditionPart, Validation> Reference(
+        List<SqlToken> tokens, ref int index, IReadOnlyList<string>? columns, RulesOperation operation, bool listPosition, bool inList)
     {
         var head = tokens[index].Value;
         List<SqlToken> path = [];
@@ -208,9 +282,9 @@ internal static class RulesCompiler
         var name = string.Join('.', path.Select(static token => token.Value));
         var reference = string.Concat(head, ".", name);
         var isClaim = head == "auth" && path is [{ Kind: SqlTokenKind.Word, Value: "claims" }, { Kind: SqlTokenKind.Word } claim] && IsClaimName(claim.Value);
-        if (listPosition && !isClaim)
+        if ((listPosition && !isClaim) || (inList && isClaim))
         {
-            return Refused("IN takes a parenthesized list or one auth.claims list");
+            return Refused(listPosition ? "IN takes a parenthesized list or one auth.claims list" : string.Concat(reference, " is a list only as the whole right side of IN"));
         }
 
         switch (head)
@@ -244,6 +318,8 @@ internal static class RulesCompiler
                 return operation == RulesOperation.Read
                     ? new Validation("request.time is not allowed in read", "reference_not_allowed")
                     : new ConditionPart(new ConditionParameter("request_time", ConditionSource.RequestTime));
+            case "request" when name == "ulid":
+                return new Validation("request.ulid is allowed only as a set.create value", "reference_not_allowed");
             default:
                 return Refused(string.Concat(reference, " is not a reference; use row.<column>, new.<column>, auth.<value> or request.time"));
         }
@@ -262,7 +338,7 @@ internal static class RulesCompiler
     private static bool IsClaimName(string name) => name is { Length: >= 1 and <= 63 } && name[0] is >= 'a' and <= 'z'
         && name.All(static character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '_');
 
-    private static Validation Refused(string message) => new(message, "unsafe_condition");
+    private static Validation Refused(string message) => new(message, "unsafe_where");
 }
 
 [JsonSerializable(typeof(string))]

@@ -35,7 +35,7 @@ public sealed class WebhookNotifications(AuthData data, IEmailSender sender, Tim
             var (endpointId, recipientId, platform) = (row.Value.Key, row.Value.Recipient, OidcIssuer.InstanceId);
             var endpoint = await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<WebhookEndpointRecord>(
                 "SELECT * FROM webhook_endpoints WHERE id = @endpointId", new { endpointId }), cancellationToken);
-            var recipient = await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
+            var recipient = await data.ReadUserAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
                 "SELECT * FROM users WHERE id = @recipientId AND instance_id = @platform", new { recipientId, platform }), cancellationToken);
             var claim = Change.Update(row, row.Value with { Status = "sending", LeaseUntil = clock.GetUtcNow().AddMinutes(2) });
             if (!await data.SaveAsync(claim, cancellationToken))

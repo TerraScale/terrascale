@@ -5,10 +5,11 @@ using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Rules;
 using TerraScale.Contracts.Cluster;
+using TerraScale.Contracts.Http;
 
 namespace TerraBase.Features.Sql;
 
-public sealed record SqlRun(IReadOnlyList<SqlResultSet> Results, CausalBookmark Bookmark, ConsistencyMode Mode);
+public sealed record SqlRun(IReadOnlyList<SqlResultSet> Results, CausalBookmark Bookmark, ConsistencyMode Mode, string? RulesVersion = null);
 
 public sealed record SqlCausality(ConsistencyMode? Mode, CausalBookmark After);
 
@@ -44,6 +45,11 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
         ArgumentNullException.ThrowIfNull(run);
         response.Headers[ConsistencyHeaders.Bookmark] = run.Bookmark.Encode();
         response.Headers[ConsistencyHeaders.Consistency] = ConsistencyHeaders.Format(run.Mode);
+        if (run.RulesVersion is { Length: > 0 } rulesVersion)
+        {
+            response.Headers[PlatformHeaders.RulesVersion] = rulesVersion;
+        }
+
         response.Headers.CacheControl = "no-store";
     }
 
@@ -65,8 +71,8 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
         };
     }
 
-    public async ValueTask<Result<IReadOnlyList<SqlStatement>, SqlRefusal>> PrepareAsync(
-        ResolvedDatabase target, IReadOnlyList<PlannedStatement> statements, CancellationToken cancellationToken)
+    public async ValueTask<Result<EnforcedSql, SqlRefusal>> PrepareAsync(
+        ResolvedDatabase target, IReadOnlyList<PlannedStatement> statements, CancellationToken cancellationToken, ISqlDatabaseSession? session = null)
     {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(statements);
@@ -77,8 +83,8 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
         }
 
         return target.EndUser is { } auth
-            ? await rules.ApplyAsync(target.Database.Id, auth, statements, cancellationToken)
-            : Prepared(statements);
+            ? await rules.ApplyAsync(target.Database.Id, auth, statements, cancellationToken, session)
+            : new EnforcedSql([.. statements.Select(static statement => statement.Statement)], null);
     }
 
     public async ValueTask<Result<Done, SqlRefusal>> WaitAsync(ResolvedDatabase target, CausalBookmark after, CancellationToken cancellationToken)
@@ -113,17 +119,24 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
 
     private async ValueTask<Result<SqlRun, SqlRefusal>> RunBatchAsync(ResolvedDatabase target, SqlBatch batch, SqlCausality causality, CancellationToken cancellationToken)
     {
-        var mode = batch.Mode ?? causality.Mode ?? target.Database.DefaultConsistency;
-        return await PrepareAsync(target, batch.Statements, cancellationToken) switch
+        var firstWrite = FirstWrite(batch.Statements);
+        if (firstWrite >= 0 && !target.CanWrite)
         {
-            IReadOnlyList<SqlStatement> statements => await WaitAsync(target, causality.After, cancellationToken) switch
+            return SqlRefusal.ForbiddenScope(firstWrite);
+        }
+
+        var mode = batch.Mode ?? causality.Mode ?? target.Database.DefaultConsistency;
+        var waited = await WaitAsync(target, causality.After, cancellationToken);
+        return waited switch
+        {
+            Done => await access.OpenAsync(target.Database, cancellationToken) switch
             {
-                Done => await access.OpenAsync(target.Database, cancellationToken) switch
+                ISqlDatabaseSession session => await PrepareAsync(target, batch.Statements, cancellationToken, session) switch
                 {
-                    ISqlDatabaseSession session => await ExecuteAsync(target, session, statements, batch.Writes, mode, causality.After, cancellationToken),
-                    Unavailable unavailable => SqlRefusal.From(unavailable),
+                    EnforcedSql enforced => await ExecuteAsync(target, session, enforced.Statements, batch.Writes, mode, causality.After, enforced.RulesVersion, cancellationToken),
+                    SqlRefusal refusal => refusal,
                 },
-                SqlRefusal refusal => refusal,
+                Unavailable unavailable => SqlRefusal.From(unavailable),
             },
             SqlRefusal refusal => refusal,
         };
@@ -131,14 +144,14 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
 
     private async ValueTask<Result<SqlRun, SqlRefusal>> ExecuteAsync(
         ResolvedDatabase target, ISqlDatabaseSession session, IReadOnlyList<SqlStatement> statements, bool writes, ConsistencyMode mode, CausalBookmark after,
-        CancellationToken cancellationToken)
+        string? rulesVersion, CancellationToken cancellationToken)
     {
         var request = new SqlStatementRequest(target.Database.Id, statements, writes ? SqlAccess.Write : SqlAccess.Read, mode, after);
         if (!writes)
         {
             return await session.ExecuteReadAsync(request, cancellationToken) switch
             {
-                SqlReadResult read => Finish(target, read.ResultSets, after.Merge(read.Observed), mode, wrote: false),
+                SqlReadResult read => Finish(target, read.ResultSets, after.Merge(read.Observed), mode, wrote: false, rulesVersion),
                 SqlError error => SqlRefusal.From(error),
                 StorageBusy busy => SqlRefusal.From(busy),
                 RequestTimeout timeout => SqlRefusal.From(timeout),
@@ -147,7 +160,7 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
 
         return await coordinator.ExecuteWriteAsync(session, request, cancellationToken) switch
         {
-            SqlWriteResult written => Finish(target, written.ResultSets, after.Merge(written.Commit.Bookmark).Merge(session.CurrentBookmark), written.Commit.Mode, wrote: true),
+            SqlWriteResult written => Finish(target, written.ResultSets, after.Merge(written.Commit.Bookmark).Merge(session.CurrentBookmark), written.Commit.Mode, wrote: true, rulesVersion),
             SqlError error => SqlRefusal.From(error),
             SerializationConflict conflict => SqlRefusal.From(conflict),
             SchemaMismatch mismatch => SqlRefusal.From(mismatch),
@@ -157,14 +170,11 @@ internal sealed class SqlRunner(DatabaseAccess access, IClusterCoordinator coord
         };
     }
 
-    private SqlRun Finish(ResolvedDatabase target, IReadOnlyList<SqlResultSet> results, CausalBookmark bookmark, ConsistencyMode mode, bool wrote)
+    private SqlRun Finish(ResolvedDatabase target, IReadOnlyList<SqlResultSet> results, CausalBookmark bookmark, ConsistencyMode mode, bool wrote, string? rulesVersion)
     {
         Meter(target, results, wrote, mode);
-        return new SqlRun(results, bookmark, mode);
+        return new SqlRun(results, bookmark, mode, rulesVersion);
     }
-
-    private static Result<IReadOnlyList<SqlStatement>, SqlRefusal> Prepared(IReadOnlyList<PlannedStatement> statements) =>
-        new([.. statements.Select(static statement => statement.Statement)]);
 
     private static int FirstWrite(IReadOnlyList<PlannedStatement> statements)
     {

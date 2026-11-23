@@ -101,8 +101,8 @@ public sealed class Credentials(AuthData data)
             identities.Add((binding, identity));
         }
 
-        var usersRead = userIds.Length == 0 ? Task.FromResult<IEnumerable<UserRecord>>([])
-            : data.ReadAsync(connection => connection.QueryAsync<UserRecord>("SELECT * FROM users WHERE instance_id = @instanceId AND id IN @userIds", new { instanceId, userIds }),
+        var usersRead = userIds.Length == 0 ? Task.FromResult<IReadOnlyList<UserRecord>>([])
+            : data.ReadUsersAsync(connection => connection.QueryAsync<UserRecord>("SELECT * FROM users WHERE instance_id = @instanceId AND id IN @userIds", new { instanceId, userIds }),
                 cancellationToken);
         var authorizationsRead = authorizationIds.Length == 0 ? Task.FromResult<IEnumerable<OidcAuthorization>>([])
             : data.ReadAsync(connection => connection.QueryAsync<OidcAuthorization>(

@@ -15,7 +15,7 @@ namespace TerraScale.Dashboard.Features.Logs
             };
 
             var batch = DatabaseLogBackend.Batch(result);
-            DatabaseLogBackend.Validate(batch, databaseId, "", cursor: true);
+            DatabaseLogBackend.Validate(batch, databaseId, cursor: true);
             return batch;
         }
     }

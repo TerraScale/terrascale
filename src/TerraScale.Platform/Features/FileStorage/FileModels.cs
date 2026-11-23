@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using TerraScale.Platform.Features.FileStorage.Endpoints;
 
 namespace TerraScale.Platform.Features.FileStorage;
 
@@ -77,4 +78,5 @@ public static partial class FileRoutes
 [JsonSerializable(typeof(CreateFileUploadRequest))]
 [JsonSerializable(typeof(ListBucketFilesRequest))]
 [JsonSerializable(typeof(BucketFileRequest))]
+[JsonSerializable(typeof(CloseFileProjectRequest))]
 public sealed partial class FileStorageJsonContext : JsonSerializerContext;

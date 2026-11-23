@@ -73,7 +73,7 @@ public sealed class TenantDirectory(AuthData data, Users users, Sessions session
         var needle = string.IsNullOrWhiteSpace(query) ? null : query.Trim().ToLowerInvariant();
         var end = needle + "\uffff";
         var take = limit + 1;
-        var users = (await data.ReadAsync(connection => connection.QueryAsync<UserRecord>(
+        var users = (await data.ReadUsersAsync(connection => connection.QueryAsync<UserRecord>(
             """
             SELECT * FROM users WHERE instance_id = @projectId AND id > @from AND (@needle IS NULL OR email >= @needle AND email < @end)
             ORDER BY id LIMIT @take
@@ -103,7 +103,7 @@ public sealed class TenantDirectory(AuthData data, Users users, Sessions session
             ORDER BY id LIMIT @take
             """, new { projectId, now, userId, from, take }), cancellationToken)).AsList();
         var owners = found.Select(session => session.UserId).Distinct(StringComparer.Ordinal).ToList();
-        var byId = (await data.ReadAsync(connection => connection.QueryAsync<UserRecord>("SELECT * FROM users WHERE id IN @owners", new { owners }), cancellationToken))
+        var byId = (await data.ReadUsersAsync(connection => connection.QueryAsync<UserRecord>("SELECT * FROM users WHERE id IN @owners", new { owners }), cancellationToken))
             .ToDictionary(user => user.Id, StringComparer.Ordinal);
         var rows = found.Where(session => byId.ContainsKey(session.UserId)).Select(session => (Session: session, User: byId[session.UserId])).ToList();
         var next = rows.Count > limit ? rows[limit - 1].Session.Id : null;

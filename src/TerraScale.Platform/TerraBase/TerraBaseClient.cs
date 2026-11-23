@@ -32,7 +32,9 @@ public static class TerraBaseProtocol
             : (HttpVersion.Version20, HttpVersionPolicy.RequestVersionExact);
 }
 
-public sealed record HttpAnswer(int Status, byte[] Body, string? Bookmark);
+public sealed record HttpAnswer(int Status, byte[] Body, string? Bookmark, string? RulesVersion);
+
+public sealed record CallerSqlResponse(SqlExecuteResponse Response, string? RulesVersion);
 
 public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOptions options, TerraBaseQuic quic, PlatformMetrics metrics)
 {
@@ -77,7 +79,7 @@ public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOpti
         CancellationToken cancellationToken) =>
         quic.IsEnabled ? quic.ExecuteAsync(database, statements, context, cancellationToken) : ExecuteAsync(database, statements, context, cancellationToken);
 
-    public async ValueTask<Result<SqlExecuteResponse, SqlFailure, Unauthorized, Forbidden, NotFound, Unavailable>> ExecuteAsCallerAsync(
+    public async ValueTask<Result<CallerSqlResponse, SqlFailure, Unauthorized, Forbidden, NotFound, Unavailable>> ExecuteAsCallerAsync(
         string project,
         string database,
         CallerCredential credential,
@@ -95,7 +97,7 @@ public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOpti
             HttpAnswer { Status: StatusCodes.Status403Forbidden } answer => AsForbidden(answer),
             HttpAnswer answer => TerraBaseAnswers.Sql(answer.Status, answer.Body) switch
             {
-                SqlExecuteResponse response => response,
+                SqlExecuteResponse response => new CallerSqlResponse(response, answer.RulesVersion),
                 SqlFailure failure => failure,
                 NotFound missing => missing,
                 Unavailable unavailable => unavailable,
@@ -123,6 +125,20 @@ public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOpti
             HttpAnswer { Status: StatusCodes.Status404NotFound } answer => AsNotFound(answer),
             HttpAnswer answer => AsUnavailable(answer),
             Unavailable unavailable => unavailable,
+        };
+    }
+
+    public async ValueTask RecordRequestLogAsync(InternalLogPayload payload, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(payload);
+        using var request = NewRequest(HttpMethod.Post, "/internal/logs");
+        request.Content = JsonContent.Create(payload, PlatformJsonContext.Default.InternalLogPayload);
+        request.Headers.TryAddWithoutValidation(PlatformOptions.PeerCredentialHeader, options.PeerSecret);
+        var outcome = await SendAsync(request, cancellationToken);
+        _ = outcome switch
+        {
+            HttpAnswer => true,
+            Unavailable => false,
         };
     }
 
@@ -217,7 +233,8 @@ public sealed class TerraBaseClient(IHttpClientFactory httpClients, PlatformOpti
             using var response = await Client().SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
             var body = await response.Content.ReadAsByteArrayAsync(cancellationToken);
             var bookmark = response.Headers.TryGetValues(ConsistencyHeaders.Bookmark, out var values) ? values.FirstOrDefault() : null;
-            return new HttpAnswer((int)response.StatusCode, body, bookmark);
+            var rulesVersion = response.Headers.TryGetValues(PlatformHeaders.RulesVersion, out var versions) ? versions.FirstOrDefault() : null;
+            return new HttpAnswer((int)response.StatusCode, body, bookmark, rulesVersion);
         }
         catch (HttpRequestException error)
         {

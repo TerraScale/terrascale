@@ -39,4 +39,5 @@ public sealed class RowValuesConverter : JsonConverter<IReadOnlyList<KeyValuePai
 [JsonSerializable(typeof(RowsBatchInput))]
 [JsonSerializable(typeof(RowAnswer))]
 [JsonSerializable(typeof(RowsBatchAnswer))]
+[JsonSerializable(typeof(RowsErrorEnvelope))]
 internal sealed partial class RowsJsonContext : JsonSerializerContext;

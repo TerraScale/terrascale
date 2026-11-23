@@ -10,6 +10,8 @@ internal static class PgErrors
 
     public static PgError StatementTimeout { get; } = new("57014", "canceling statement due to statement timeout");
 
+    public static PgError TransactionExpired { get; } = new("57014", "the transaction expired: it was open for more than 5 seconds and was rolled back", Fatal: true);
+
     public static PgError ReadOnlyCredential { get; } = new("42501", "permission denied: this credential can only read");
 
     public static PgError ReadOnlyTransaction { get; } = new("25006", "cannot execute a write in a read-only transaction");

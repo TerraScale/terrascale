@@ -160,7 +160,7 @@ public sealed class PostgresConnectionHandler(
                 PgQueryMessage or PgParseMessage or PgBindMessage or PgDescribeMessage or PgExecuteMessage or PgCloseMessage or PgSyncMessage or PgFlushMessage
                     or PgTerminateMessage or PgCopyDataMessage or PgCopyDoneMessage or PgCopyFailMessage or PgFunctionCallMessage or PgUnknownMessage => null,
             },
-            PgPeerClosed or PgIdleExpired or PgReadInterrupted or PgError => null,
+            PgPeerClosed or PgIdleExpired or PgIncompleteExpired or PgReadInterrupted or PgError => null,
         };
         if (password is null)
         {

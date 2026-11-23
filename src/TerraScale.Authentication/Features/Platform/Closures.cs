@@ -18,8 +18,7 @@ public sealed class Closures(
     internal const int ParkAfter = 65;
 
     public async Task<bool> DeleteProjectAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken) =>
-        await this.AdvanceAsync(await directory.RequestProjectClosureAsync(userId, organizationId, projectId, null, cancellationToken), cancellationToken)
-            ;
+        await this.AdvanceAsync(await directory.RequestProjectClosureAsync(userId, organizationId, projectId, null, cancellationToken), cancellationToken);
 
     internal async Task<bool> AdvanceAsync(Versioned<ClosureJob> job, CancellationToken cancellationToken)
     {
@@ -65,7 +64,7 @@ public sealed class Closures(
             return await this.WithoutIntentAsync(job, cancellationToken);
         }
 
-        if (!answer.Accepted || answer.EvidenceVersion != 2)
+        if (!answer.Accepted || answer.EvidenceVersion < job.Value.ProjectClosureVersion)
         {
             await this.DeferAsync(seen, answer.Accepted ? "terrabase_evidence_pending" : "terrabase_pending", cancellationToken);
             return false;

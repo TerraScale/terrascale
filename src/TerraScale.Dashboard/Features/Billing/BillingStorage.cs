@@ -39,7 +39,7 @@ internal static class BillingStorage
             await using var connection = await storage.OpenAsync(cancellationToken);
             try
             {
-                await InsertRowAsync(connection, row);
+                await ServerTiming.StateWriteAsync(() => InsertRowAsync(connection, row));
                 return true;
             }
             catch (Exception error) when (DashboardDb.IsDuplicate(error))
@@ -60,7 +60,7 @@ internal static class BillingStorage
             await using var connection = await storage.OpenAsync(cancellationToken);
             try
             {
-                if (await UpdateRowAsync(connection, row) == 1)
+                if (await ServerTiming.StateWriteAsync(() => UpdateRowAsync(connection, row)) == 1)
                 {
                     return true;
                 }
@@ -85,7 +85,7 @@ internal static class BillingStorage
             await using var connection = await storage.OpenAsync(cancellationToken);
             try
             {
-                return await DeleteRowAsync(connection, row) == 1;
+                return await ServerTiming.StateWriteAsync(() => DeleteRowAsync(connection, row)) == 1;
             }
             catch (TerraBaseException error)
             {

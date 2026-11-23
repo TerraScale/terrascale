@@ -12,26 +12,18 @@ public sealed class PlatformHttpClient(ServiceTransport transport)
 
     private static ClientJson Wire => ClientJson.Default;
 
-    public async Task<Result<IReadOnlyList<TerraBaseFunctionInfo>, TerraBaseRefusal>> ListFunctionsAsync(ServiceCaller caller, string projectId, string database,
+    public Task<Result<IReadOnlyList<TerraBaseFunctionInfo>, TerraBaseRefusal>> ListFunctionsAsync(ServiceCaller caller, string projectId, string database,
         CancellationToken cancellationToken) =>
-        await transport.SendAsync(caller, HttpMethod.Get, Functions(projectId, database), Wire.TerraBaseFunctionList, cancellationToken) switch
-        {
-            TerraBaseFunctionList list => new Result<IReadOnlyList<TerraBaseFunctionInfo>, TerraBaseRefusal>(list.Items),
-            TerraBaseRefusal refusal => refusal,
-        };
+        transport.SendAsync(caller, HttpMethod.Get, Functions(projectId, database), Wire.IReadOnlyListTerraBaseFunctionInfo, cancellationToken);
 
     public Task<Result<TerraBaseFunctionInfo, TerraBaseRefusal>> GetFunctionAsync(ServiceCaller caller, string projectId, string database, string name,
         CancellationToken cancellationToken) =>
         transport.SendAsync(caller, HttpMethod.Get, Function(projectId, database, name), Wire.TerraBaseFunctionInfo, cancellationToken);
 
-    public async Task<Result<IReadOnlyList<TerraBaseFunctionInvocation>, TerraBaseRefusal>> FunctionLogsAsync(ServiceCaller caller, string projectId, string database,
+    public Task<Result<IReadOnlyList<TerraBaseFunctionInvocation>, TerraBaseRefusal>> FunctionLogsAsync(ServiceCaller caller, string projectId, string database,
         string name, int? limit, CancellationToken cancellationToken) =>
-        await transport.SendAsync(caller, HttpMethod.Get, string.Concat(Function(projectId, database, name), "/logs",
-            Query(("limit", limit?.ToString(CultureInfo.InvariantCulture)))), Wire.TerraBaseFunctionLogList, cancellationToken) switch
-        {
-            TerraBaseFunctionLogList list => new Result<IReadOnlyList<TerraBaseFunctionInvocation>, TerraBaseRefusal>(list.Items),
-            TerraBaseRefusal refusal => refusal,
-        };
+        transport.SendAsync(caller, HttpMethod.Get, string.Concat(Function(projectId, database, name), "/logs",
+            Query(("limit", limit?.ToString(CultureInfo.InvariantCulture)))), Wire.IReadOnlyListTerraBaseFunctionInvocation, cancellationToken);
 
     public Task<Result<TerraBaseFunctionStats, TerraBaseRefusal>> FunctionStatsAsync(ServiceCaller caller, string projectId, string database, string name,
         string? window, CancellationToken cancellationToken) =>
@@ -47,14 +39,10 @@ public sealed class PlatformHttpClient(ServiceTransport transport)
         transport.SendAsync(caller, HttpMethod.Put, Function(projectId, database, name), Json(request, Wire.TerraBaseFunctionDeploy), Wire.TerraBaseFunctionInfo, null,
             cancellationToken);
 
-    public async Task<Result<IReadOnlyList<TerraBaseFunctionSecret>, TerraBaseRefusal>> ListSecretsAsync(ServiceCaller caller, string projectId, string database,
+    public Task<Result<IReadOnlyList<TerraBaseFunctionSecret>, TerraBaseRefusal>> ListSecretsAsync(ServiceCaller caller, string projectId, string database,
         string name, CancellationToken cancellationToken) =>
-        await transport.SendAsync(caller, HttpMethod.Get, string.Concat(Function(projectId, database, name), "/secrets"), Wire.TerraBaseFunctionSecretList,
-            cancellationToken) switch
-        {
-            TerraBaseFunctionSecretList list => new Result<IReadOnlyList<TerraBaseFunctionSecret>, TerraBaseRefusal>(list.Items),
-            TerraBaseRefusal refusal => refusal,
-        };
+        transport.SendAsync(caller, HttpMethod.Get, string.Concat(Function(projectId, database, name), "/secrets"), Wire.IReadOnlyListTerraBaseFunctionSecret,
+            cancellationToken);
 
     public Task<Result<TerraBaseFunctionSecret, TerraBaseRefusal>> SetSecretAsync(ServiceCaller caller, string projectId, string database, string name, string secret,
         TerraBaseFunctionSecretValue request, CancellationToken cancellationToken) =>
@@ -72,19 +60,17 @@ public sealed class PlatformHttpClient(ServiceTransport transport)
         var content = new StringContent(body, Encoding.UTF8, new MediaTypeHeaderValue("application/json"));
         return await transport.SendRawAsync(caller, HttpMethod.Post, path, content, null, cancellationToken) switch
         {
-            RawAnswer answer => new TerraBaseFunctionCall(answer.Status, answer.ContentType, answer.Body),
+            RawAnswer { FunctionResponse: true } answer => new TerraBaseFunctionCall(answer.Status, answer.ContentType, answer.Body),
+            RawAnswer { Status: >= 200 and < 300 } answer => new TerraBaseFunctionCall(answer.Status, answer.ContentType, answer.Body),
+            RawAnswer answer => ServiceTransport.Refusal(answer),
             TerraBaseRefusal refusal => refusal,
         };
     }
 
-    public async Task<Result<TerraBaseFileBucket, TerraBaseRefusal>> CreateBucketAsync(ServiceCaller caller, string projectId, string name, TerraBaseFileRules rules,
+    public Task<Result<TerraBaseFileBucket, TerraBaseRefusal>> CreateBucketAsync(ServiceCaller caller, string projectId, string name, TerraBaseFileRules rules,
         CancellationToken cancellationToken) =>
-        await transport.SendAsync(caller, HttpMethod.Post, Buckets(projectId), Json(new TerraBaseFileBucketRequest(name, rules), Wire.TerraBaseFileBucketRequest),
-            Wire.TerraBaseBucketCreated, null, cancellationToken) switch
-        {
-            TerraBaseBucketCreated created => created.Bucket,
-            TerraBaseRefusal refusal => refusal,
-        };
+        transport.SendAsync(caller, HttpMethod.Post, Buckets(projectId), Json(new TerraBaseFileBucketRequest(name, rules), Wire.TerraBaseFileBucketRequest),
+            Wire.TerraBaseFileBucket, null, cancellationToken);
 
     public Task<Result<TerraBaseFileBucketPage, TerraBaseRefusal>> ListBucketsAsync(ServiceCaller caller, string projectId, string? after,
         CancellationToken cancellationToken) =>
@@ -98,14 +84,10 @@ public sealed class PlatformHttpClient(ServiceTransport transport)
     public Task<Result<Done, TerraBaseRefusal>> DeleteBucketAsync(ServiceCaller caller, string projectId, string bucketId, CancellationToken cancellationToken) =>
         transport.SendAsync(caller, HttpMethod.Delete, Bucket(projectId, bucketId), null, cancellationToken);
 
-    public async Task<Result<TerraBaseFileUrl, TerraBaseRefusal>> CreateUploadAsync(ServiceCaller caller, string projectId, string bucketId,
+    public Task<Result<TerraBaseFileUrl, TerraBaseRefusal>> CreateUploadAsync(ServiceCaller caller, string projectId, string bucketId,
         TerraBaseFileUpload upload, CancellationToken cancellationToken) =>
-        await transport.SendAsync(caller, HttpMethod.Post, string.Concat(Bucket(projectId, bucketId), "/files/upload"), Json(upload, Wire.TerraBaseFileUpload),
-            Wire.TerraBaseUploadCreated, null, cancellationToken) switch
-        {
-            TerraBaseUploadCreated created => created.Upload,
-            TerraBaseRefusal refusal => refusal,
-        };
+        transport.SendAsync(caller, HttpMethod.Post, string.Concat(Bucket(projectId, bucketId), "/files/upload"), Json(upload, Wire.TerraBaseFileUpload),
+            Wire.TerraBaseFileUrl, null, cancellationToken);
 
     public Task<Result<TerraBaseStoredFile, TerraBaseRefusal>> CompleteUploadAsync(ServiceCaller caller, string projectId, string bucketId, string fileId,
         CancellationToken cancellationToken) =>

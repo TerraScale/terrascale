@@ -3,6 +3,7 @@ import { port } from './ports.mjs';
 
 const messages = [];
 const send = /^\/client\/v4\/accounts\/[^/]+\/email\/sending\/send$/;
+const purge = /^\/client\/v4\/zones\/[^/]+\/purge_cache$/;
 
 function reply(response, status, body) {
   const text = JSON.stringify(body);
@@ -19,6 +20,11 @@ createServer((request, response) => {
       messages.push({ at: new Date().toISOString(), bytes: Buffer.concat(chunks).length });
       reply(response, 200, { success: true, errors: [], messages: [], result: { delivered: [], queued: [], permanent_bounces: [], suppressed_recipients: [] } });
     });
+    return;
+  }
+  if (request.method === 'POST' && purge.test(url.pathname)) {
+    request.resume();
+    request.on('end', () => reply(response, 200, { success: true, errors: [], messages: [], result: { id: 'journey' } }));
     return;
   }
   if (request.method === 'GET' && url.pathname === '/messages') return reply(response, 200, messages);

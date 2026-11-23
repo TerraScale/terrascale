@@ -32,8 +32,8 @@ public sealed record RulesVersionItem(string Version, DateTimeOffset UpdatedAt, 
 public sealed record RulesBody(
     string Version,
     IReadOnlyDictionary<string, RulesTable> Tables,
-    IReadOnlyList<RulesProblem>? Problems,
-    IReadOnlyList<RulesProblem>? Warnings,
+    IReadOnlyList<RulesProblem> Problems,
+    IReadOnlyList<RulesProblem> Warnings,
     DateTimeOffset UpdatedAt,
     string UpdatedBy);
 
@@ -47,19 +47,33 @@ public sealed record RulesErrorBody(RulesErrorDetail Error);
 
 public sealed record RulesInput(string? Project, string? Database, IReadOnlyDictionary<string, RulesTable>? Tables);
 
-public sealed record RulesTestAuth(string? Uid, JsonElement? Claims, string? OrgId, string? OrgRole, bool IsAnonymous = false);
+public sealed record RulesTestAuth(
+    string? Uid,
+    JsonElement? Claims,
+    [property: JsonPropertyName("org_id")] string? OrgId,
+    [property: JsonPropertyName("org_role")] string? OrgRole,
+    [property: JsonPropertyName("is_anonymous")] bool IsAnonymous = false);
 
 public sealed record RulesTestInput(
     string? Project,
     string? Database,
-    IReadOnlyDictionary<string, RulesTable>? Tables,
+    RulesSet? Rules,
     RulesTestAuth? Auth,
     string? Table,
     string? Operation,
     IReadOnlyDictionary<string, JsonElement>? Row,
-    IReadOnlyDictionary<string, JsonElement>? New);
+    IReadOnlyDictionary<string, JsonElement>? New,
+    long? Time);
 
-public sealed record RulesTestBody(bool Allowed, string? Condition, IReadOnlyList<RulesProblem> Problems);
+public sealed record RulesTestValue(string Rule, bool Value);
+
+public sealed record RulesTestBody(
+    bool Allowed,
+    string DecidedBy,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Clause,
+    IReadOnlyList<RulesTestValue> Results,
+    IReadOnlyList<string> Columns,
+    IReadOnlyList<RulesProblem> Problems);
 
 public sealed record InvalidRules(IReadOnlyList<RulesProblem> Problems);
 
@@ -95,7 +109,7 @@ internal static class RulesRoute
 
     public const string Restore = Version + "/restore";
 
-    public static IResult Body(HttpContext context, StoredRules rules, IReadOnlyList<RulesProblem>? problems, IReadOnlyList<RulesProblem>? warnings)
+    public static IResult Body(HttpContext context, StoredRules rules, IReadOnlyList<RulesProblem> problems, IReadOnlyList<RulesProblem> warnings)
     {
         context.Response.Headers.ETag = string.Concat("\"", rules.Version, "\"");
         context.Response.Headers.CacheControl = "no-store";

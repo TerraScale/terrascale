@@ -66,14 +66,28 @@ public sealed record DatabaseInput(
     string? Database,
     string? ExpectedId,
     string? Name,
-    IReadOnlyList<string>? Regions,
+    string? HomeRegion,
     IReadOnlyList<string>? ReplicaRegions,
     bool? AllRegions,
     string? DefaultConsistency,
     bool? Strict,
     long? TtlSeconds,
     string? Region,
-    JsonElement? Target);
+    JsonElement? Target)
+{
+    public IReadOnlyList<string>? Regions
+    {
+        get;
+        init
+        {
+            field = value;
+            HasRegions = true;
+        }
+    }
+
+    [JsonIgnore]
+    public bool HasRegions { get; private init; }
+}
 
 public sealed record RegionReplicationBody(string Region, string AppliedBookmark, long LagMs, bool Healthy);
 
@@ -84,6 +98,8 @@ public sealed record CountBody(long Count);
 public sealed record ProjectClosureInput(string? Project, int? Version, string? ClosureId, string? AuthorityOrganizationId);
 
 public sealed record ProjectClosureBody(string Status, string ClosureId, int PendingHolders, int EvidenceVersion);
+
+public sealed record PlatformCloseProjectBody(string OrganizationId);
 
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(OrganizationBody))]
@@ -103,4 +119,5 @@ public sealed record ProjectClosureBody(string Status, string ClosureId, int Pen
 [JsonSerializable(typeof(AdminInput))]
 [JsonSerializable(typeof(ProjectClosureInput))]
 [JsonSerializable(typeof(ProjectClosureBody))]
+[JsonSerializable(typeof(PlatformCloseProjectBody))]
 internal sealed partial class ManagementJsonContext : JsonSerializerContext;

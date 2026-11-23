@@ -15,7 +15,7 @@ internal sealed partial class PostgresConnection
         }
 
         var access = session.Grant.MaxAccess == SqlAccess.Read ? SqlAccess.Read : begin.Access ?? session.Settings.DefaultAccess;
-        session.Transaction = new PostgresTransactionBlock(begin.Mode ?? session.Settings.DefaultMode, access, isImplicit: false);
+        session.Transaction = new PostgresTransactionBlock(begin.Mode ?? session.Settings.DefaultMode, access, isImplicit: false, session.Time.GetTimestamp());
         return PgResult.Command("BEGIN");
     }
 
@@ -147,6 +147,7 @@ internal sealed partial class PostgresConnection
             return new PgError("25P01", $"{tag} can only be used in transaction blocks");
         }
 
+        block.Savepoints = true;
         return await ExecuteStatementAsync(new SqlStatement(sql, [], NoNamed), block.Access, cancellationToken).ConfigureAwait(false) switch
         {
             SqlResultSet => PgResult.Command(tag),

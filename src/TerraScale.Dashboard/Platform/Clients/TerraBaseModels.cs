@@ -31,9 +31,7 @@ public sealed record TerraBaseRegionReplication(string Region, string AppliedBoo
 
 public sealed record TerraBaseDatabaseRegions(string DatabaseId, DateTimeOffset ObservedAtUtc, IReadOnlyList<TerraBaseRegionReplication> Regions);
 
-public sealed record TerraBaseRegionInfo(string Id, string Name, string? PublicHost, bool AcceptingWrites, bool Local, int Nodes);
-
-public sealed record TerraBaseRegions(string Region, string Machine, IReadOnlyList<TerraBaseRegionInfo> Regions);
+public sealed record TerraBaseRegions(string Region, string Machine, IReadOnlyList<string> Regions);
 
 public sealed record TerraBaseHealth(string Status, string Version, string Region);
 
@@ -50,16 +48,8 @@ public sealed record TerraBaseRulesVersionPage(IReadOnlyList<TerraBaseRulesVersi
 
 public sealed record TerraBaseRulesTestValue(string Rule, bool Value);
 
-public sealed record TerraBaseRulesTestResult(bool Allowed, string? Condition, IReadOnlyList<TerraBaseRulesProblem> Problems)
-{
-    public string DecidedBy => Condition is null ? "default" : "rule";
-
-    public string? Clause => Condition;
-
-    public IReadOnlyList<TerraBaseRulesTestValue> Results => Condition is null ? [] : [new(Condition, Allowed)];
-
-    public IReadOnlyList<string> Columns => [];
-}
+public sealed record TerraBaseRulesTestResult(bool Allowed, string DecidedBy, string? Clause, IReadOnlyList<TerraBaseRulesTestValue> Results,
+    IReadOnlyList<string> Columns, IReadOnlyList<TerraBaseRulesProblem> Problems);
 
 public sealed record TerraBaseRulesErrorDetails(IReadOnlyList<TerraBaseRulesProblem> Problems);
 
@@ -104,7 +94,7 @@ public sealed record TerraBaseRequestLogPage(string DatabaseId, IReadOnlyList<Te
 
 public sealed record TerraBaseLogEntry(string Id, string DatabaseId, DateTimeOffset At, string Method, string Path, int Status, long DurationMs, string Region);
 
-public sealed record TerraBaseLogsBody(IReadOnlyList<TerraBaseLogEntry> Items, string? Next);
+public sealed record TerraBaseLogsBody(IReadOnlyList<TerraBaseLogEntry> Items, string? Next, bool Gap = false);
 
 public sealed record TerraBasePlanBody(string Plan);
 

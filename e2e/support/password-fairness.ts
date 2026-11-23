@@ -7,7 +7,8 @@ import { prepareAuthManagement, closeAuthManagement } from './auth-management';
 import { auth, onLocalStack } from './stack';
 import { journey, ownerSession, saveCookies, saveSecret } from './state';
 
-const tenantConcurrency = Math.max(2, Math.min(Math.floor(availableParallelism() / 2), 4)) - 1;
+const processors = Number(process.env.DOTNET_PROCESSOR_COUNT) || availableParallelism();
+const tenantConcurrency = Math.max(2, Math.min(Math.floor(processors / 2), 4)) - 1;
 
 const median = (samples: number[]) => [...samples].sort((left, right) => left - right)[Math.floor(samples.length / 2)];
 

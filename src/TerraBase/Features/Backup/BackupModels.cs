@@ -60,11 +60,16 @@ public sealed record BackupInput(
     RestoreTargetInput? Target,
     DateTimeOffset? PointInTime,
     string? Bookmark,
-    int? RetentionDays);
+    int? RetentionDays,
+    string? FullBackupCron);
 
 public sealed record RestoreWindowBody(string DatabaseId, DateTimeOffset EarliestRestorePointUtc, DateTimeOffset LatestRestorePointUtc, bool Feasible);
 
-public sealed record BackupPolicyBody(string DatabaseId, int RetentionDays, DateTimeOffset UpdatedAt);
+public sealed record BackupPolicyBody(
+    string DatabaseId,
+    int RetentionDays,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? FullBackupCron,
+    DateTimeOffset UpdatedAt);
 
 public sealed record NoTarget;
 

@@ -31,4 +31,6 @@ public static class PlatformHeaders
     public const string CallerPeer = "X-TerraScale-Caller-Peer";
 
     public const string Changefeed = "application/x-ndjson";
+
+    public const string RulesVersion = "TB-Rules-Version";
 }

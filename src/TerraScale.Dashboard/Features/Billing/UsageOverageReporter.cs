@@ -40,12 +40,16 @@ namespace TerraScale.Dashboard.Features.Billing
         private const int DispatchesPerPass = 500;
         private const int PageSize = 200;
 
-        public async Task<long> OperationUnitOverageAsync(BillingBinding binding, CancellationToken cancellationToken)
+        public async Task<long?> OperationUnitOverageAsync(BillingBinding binding, CancellationToken cancellationToken)
         {
             string? after = null;
             do
             {
-                var page = await usage.ReadAsync(after, null, cancellationToken);
+                if (await usage.ReadAsync(after, null, cancellationToken) is not { } page)
+                {
+                    return null;
+                }
+
                 AllowanceNotifications.ValidatedMonth(page, after, clock.GetUtcNow(), null);
                 var item = page.Items.FirstOrDefault(item => item.OrganizationId == binding.OrganizationId);
                 if (item is not null)
@@ -117,17 +121,26 @@ namespace TerraScale.Dashboard.Features.Billing
                 string? after = claim.State.Cursor is { } resumed && resumed.StartsWith(prefix, StringComparison.Ordinal) ? resumed[prefix.Length..] : null;
                 while (pages < UsagePagesPerPass)
                 {
-                    AllowanceUsagePage page;
+                    AllowanceUsagePage? read;
                     try
                     {
-                        page = await usage.ReadAsync(after, month, cancellationToken);
-                        AllowanceNotifications.ValidatedMonth(page, after, clock.GetUtcNow(), month);
+                        read = await usage.ReadAsync(after, month, cancellationToken);
+                        if (read is not null)
+                        {
+                            AllowanceNotifications.ValidatedMonth(read, after, clock.GetUtcNow(), month);
+                        }
                     }
                     catch (Exception error) when (IsReportingFailure(error, cancellationToken))
                     {
                         logger.UsageOverageReportingIsUnavailableRetrying(error.GetType().Name);
                         break;
                     }
+
+                    if (read is not { } page)
+                    {
+                        break;
+                    }
+
                     pages++;
                     var measured = page.Items.ToDictionary(item => item.OrganizationId, StringComparer.Ordinal);
                     var storageKnown = page.StorageContract == AllowanceNotifications.StorageContract;

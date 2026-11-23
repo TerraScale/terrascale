@@ -41,7 +41,11 @@ namespace TerraScale.Dashboard.Features.Notifications
             string? after = null;
             do
             {
-                var page = await allowances.ReadAsync(after, null, cancellationToken);
+                if (await allowances.ReadAsync(after, null, cancellationToken) is not { } page)
+                {
+                    return units;
+                }
+
                 if (page.OperationsContract != AllowanceNotifications.OperationsContract)
                 {
                     throw new IOException("Operation units are not authoritative.");

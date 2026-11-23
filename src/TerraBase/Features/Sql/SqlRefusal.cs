@@ -3,16 +3,48 @@ using TerraScale.Contracts.Http;
 
 namespace TerraBase.Features.Sql;
 
-public sealed record SqlRefusal(string Code, string Message, string SqlState, int Statement, int Status, TimeSpan? RetryAfter = null)
+public sealed record SqlRefusal(
+    string Code,
+    string Message,
+    string SqlState,
+    int Statement,
+    int Status,
+    TimeSpan? RetryAfter = null,
+    IReadOnlyDictionary<string, string>? Details = null)
 {
-    public ApiErrorBody Body => new(Code, Message, SqlState, Statement, null);
+    public ApiErrorBody Body => new(Code, Message, SqlState, Statement, Details);
 
     public static SqlRefusal Invalid(string message, int statement) => new("invalid_request", message, "22023", statement, StatusCodes.Status400BadRequest);
 
     public static SqlRefusal ForbiddenScope(int statement) =>
         new("forbidden_scope", "writes and schema changes need the sql:write scope", "42501", statement, StatusCodes.Status403Forbidden);
 
-    public static SqlRefusal RuleDenied(string message, int statement) => new("rule_denied", message, "42501", statement, StatusCodes.Status403Forbidden);
+    public static SqlRefusal RuleDenied(string message, int statement, string? operation = null, string? table = null)
+    {
+        Dictionary<string, string>? details = null;
+        if (operation is not null || table is not null)
+        {
+            details = new(StringComparer.Ordinal);
+            if (operation is not null)
+            {
+                details["operation"] = operation;
+            }
+
+            if (table is not null)
+            {
+                details["table"] = table;
+            }
+        }
+
+        return new("rule_denied", message, "42501", statement, StatusCodes.Status403Forbidden, Details: details);
+    }
+
+    public static SqlRefusal ColumnNotReadable(string column, int statement) =>
+        new("column_not_readable", string.Concat(column, " is not readable"), "42501", statement, StatusCodes.Status403Forbidden,
+            Details: new Dictionary<string, string>(StringComparer.Ordinal) { ["column"] = column });
+
+    public static SqlRefusal RulesInvalid(string message, int statement) =>
+        new("rules_invalid", message, "42501", statement, StatusCodes.Status403Forbidden);
 
     public static SqlRefusal From(SqlError error) => new(MapCode(error.Code, error.SqlState), error.Message, error.SqlState, error.StatementIndex, MapStatus(error.Code));
 

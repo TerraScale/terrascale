@@ -15,7 +15,7 @@ try
     builder.Logging.ClearProviders().AddTerraScaleLogging("ts-platform");
     builder.WebHost.ConfigureKestrel(kestrel =>
     {
-        kestrel.ListenAnyIP(options.Port, listen => listen.Protocols = HttpProtocols.Http1AndHttp2);
+        kestrel.ListenAnyIP(options.Port, listen => listen.Protocols = HttpProtocols.Http1);
         kestrel.ListenAnyIP(options.MetricsPort, listen => listen.Protocols = HttpProtocols.Http1);
     });
 
@@ -61,6 +61,7 @@ try
         .AddSingleton<FunctionInvoker>()
         .AddSingleton<S3FileObjectStore>()
         .AddSingleton<FileStorageService>()
+        .AddSingleton<ProjectFileErasure>()
         .AddSingleton<ShapeCrypto>()
         .AddSingleton<ShapeObjectStore>()
         .AddSingleton<ShapeCdn>()
@@ -70,16 +71,25 @@ try
         .AddSingleton<ShapeReader>()
         .AddHostedService<PlatformSchema>()
         .AddHostedService<FileSweeper>()
+        .AddHostedService<ProjectFileSweepWorker>()
         .AddHostedService<FunctionScheduler>()
-        .AddHostedService<ShapeMaterializerService>();
+        .AddHostedService<ShapeMaterializerService>()
+        .AddHostedService(static provider => provider.GetRequiredService<ShapeCdn>());
     services.AddOpenTelemetry().WithMetrics(metrics => metrics
         .AddMeter(PlatformMetrics.MeterName, QuicMeshMetrics.MeterName)
         .AddRuntimeInstrumentation()
         .AddPrometheusExporter());
+    services.AddCors(cors => cors.AddDefaultPolicy(policy => policy.AllowAnyOrigin()
+        .WithMethods("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE")
+        .WithHeaders("Authorization", "Content-Type", "If-None-Match", "TB-Shape-Resume", "X-TerraScale-Region-Pin", "TerraScale-Consistency", "TerraScale-Bookmark")
+        .WithExposedHeaders("ETag", "Location", "Retry-After", "TerraScale-Bookmark", "TerraScale-Consistency", "TB-Shape-Hints", "TB-Shape-Cursor", "TB-Shape-Handle",
+            "TB-Shape-Next-Offset", "TB-Shape-Up-To-Date", "X-TerraBase-Region", "X-TerraBase-Machine", "X-Request-ID")));
     services.AddTerraScaleEndpoints(PlatformResponses.Configure);
 
     var app = builder.Build();
+    app.UseTerraScaleRequestIdentity(() => Ulid.NewUlid().ToString(), options.PeerSecret);
     app.UseMiddleware<CrashBarrier>();
+    app.UseCors();
     app.Use(static (context, next) =>
     {
         context.Response.Headers.CacheControl = "no-store";

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Dapper;
 
 namespace TerraScale.Dashboard.Features.Data;
 
@@ -38,6 +39,7 @@ public sealed record SqlWorkspaceRow
 
     public required string History { get; set; }
 
+    [DbValue(Ignore = true)]
     public string[] HistoryItems
     {
         get => JsonSerializer.Deserialize(History, DataRowJson.Default.StringArray) ?? [];
@@ -48,6 +50,7 @@ public sealed record SqlWorkspaceRow
 
     public string? Receipt { get; set; }
 
+    [DbValue(Ignore = true)]
     public SqlRunReceipt? RunReceipt
     {
         get => Receipt is null ? null : JsonSerializer.Deserialize(Receipt, DataRowJson.Default.SqlRunReceipt);

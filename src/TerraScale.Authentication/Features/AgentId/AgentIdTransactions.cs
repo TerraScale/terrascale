@@ -195,7 +195,7 @@ public sealed class AgentIdTransactions(AuthData data, AgentAssertions assertion
             "SELECT * FROM agent_keys WHERE project_id = @tenant AND kid = @kid AND agent_id = @agentId", new { tenant, kid, agentId }), cancellationToken));
         var agent = Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<AgentRecord>(
             "SELECT * FROM agents WHERE project_id = @tenant AND id = @agentId AND owner_user_id = @ownerId", new { tenant, agentId, ownerId }), cancellationToken));
-        var owner = Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
+        var owner = Versioned.Of(await data.ReadUserAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
             "SELECT * FROM users WHERE instance_id = @tenant AND id = @ownerId", new { tenant, ownerId }), cancellationToken));
         return key is not null && agent is not null && owner is not null && AgentAssertions.Active(key.Value, agent.Value, owner.Value, clock.GetUtcNow())
             ? (key, agent, owner)

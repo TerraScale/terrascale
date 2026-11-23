@@ -1,18 +1,28 @@
+using System.Diagnostics;
 using ZLogger;
 
 namespace TerraScale.Platform.Hosting;
 
-public sealed class CrashBarrier(RequestDelegate next, ILogger<CrashBarrier> logger)
+public sealed class CrashBarrier(RequestDelegate next, TerraBaseClient terraBase, ILogger<CrashBarrier> logger)
 {
     public async Task InvokeAsync(HttpContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
+        var started = Stopwatch.GetTimestamp();
         try
         {
             await next(context);
         }
         catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
         {
+            if (DatabaseTarget(context.Request.Path.Value) is { } target)
+            {
+                var elapsedMs = (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+                await terraBase.RecordRequestLogAsync(
+                    new InternalLogPayload(target.Project, target.Database, context.TraceIdentifier, context.Request.Method, target.Path, 499, elapsedMs),
+                    CancellationToken.None);
+            }
+
             context.Abort();
         }
         catch (Exception error)
@@ -24,5 +34,18 @@ public sealed class CrashBarrier(RequestDelegate next, ILogger<CrashBarrier> log
                 await ErrorResults.Internal().ExecuteAsync(context);
             }
         }
+    }
+
+    private static (string Project, string Database, string Path)? DatabaseTarget(string? path)
+    {
+        if (string.IsNullOrEmpty(path))
+        {
+            return null;
+        }
+
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return segments is ["v1", "projects", { Length: > 0 } project, "databases", { Length: > 0 } database, ..]
+            ? (project, database, path)
+            : null;
     }
 }

@@ -38,7 +38,7 @@ public sealed record TerraBaseSqlColumn(string Name, string? Decltype = null);
 /// <param name="Rows">Rows in result order.</param>
 /// <param name="RowsAffected">Rows a write changed.</param>
 /// <param name="LastInsertRowid">The integer key of the last inserted row, when the table has one.</param>
-public sealed record TerraBaseSqlStatementResult(IReadOnlyList<TerraBaseSqlColumn> Columns, IReadOnlyList<TerraBaseSqlRecord> Rows, long RowsAffected, long? LastInsertRowid)
+public sealed record TerraBaseSqlStatementResult(IReadOnlyList<TerraBaseSqlColumn> Columns, IReadOnlyList<TerraBaseSqlRecord> Rows, long RowsAffected, long? LastInsertRowid = null)
 {
     /// <summary>Maps every row to <typeparamref name="T"/>; see <see cref="TerraBaseSqlRecord.As{T}"/>.</summary>
     public IReadOnlyList<T> As<T>(JsonTypeInfo<T> typeInfo)

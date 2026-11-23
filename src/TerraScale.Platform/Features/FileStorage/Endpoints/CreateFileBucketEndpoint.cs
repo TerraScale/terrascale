@@ -23,6 +23,7 @@ public sealed class CreateFileBucketEndpoint(PlatformAccess access, FileStorageS
                 FileBucket bucket => new BucketCreated(bucket),
                 Validation invalid => invalid,
                 Forbidden forbidden => forbidden,
+                NotFound missing => missing,
                 Conflict conflict => conflict,
                 Unavailable unavailable => unavailable,
             },

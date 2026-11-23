@@ -726,11 +726,6 @@ internal static class OidcResults
             .SetClaim(OidcIssuer.OrganizationPickerClaim, organizationPicker ? "true" : null)
             .SetScopes(scopes)
             .SetResources(dataAccess ? [.. audiences, .. options.ProjectDataAudiences(user.InstanceId)] : audiences);
-        if (dataAccess)
-        {
-            identity.SetClaim(EndUserTokens.KindClaim, EndUserTokens.Kind).SetClaim(EndUserTokens.ProjectClaim, user.InstanceId);
-        }
-
         if (dataAccess && user.CustomClaims is { } trusted)
         {
             identity.SetClaim(TrustedClaims.Claim, JsonElement.Parse(trusted));
@@ -766,8 +761,7 @@ internal static class OidcResults
             Claims.GivenName or Claims.FamilyName or Claims.Picture or "public_metadata" => profile ? [Destinations.IdentityToken] : [],
             Claims.Email or Claims.EmailVerified => email ? [Destinations.AccessToken, Destinations.IdentityToken] : [Destinations.AccessToken],
             Claims.AuthenticationTime or "org_id" or "org_slug" or "org_role" or GuestSignIn.Claim => [Destinations.AccessToken, Destinations.IdentityToken],
-            "ts_auth_session" or "token_use" or LiveAgents.Claim or TrustedClaims.Claim or OidcIssuer.EpochClaim or OidcIssuer.StateClaim or OidcIssuer.MfaClaim or PlatformRoleClaim
-                or EndUserTokens.KindClaim or EndUserTokens.ProjectClaim => [Destinations.AccessToken],
+            "ts_auth_session" or "token_use" or LiveAgents.Claim or TrustedClaims.Claim or OidcIssuer.EpochClaim or OidcIssuer.StateClaim or OidcIssuer.MfaClaim or PlatformRoleClaim => [Destinations.AccessToken],
             OidcIssuer.OrganizationPickerClaim => [Destinations.IdentityToken],
             _ => [],
         });

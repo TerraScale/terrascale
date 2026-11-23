@@ -11,15 +11,13 @@ test.skip(production || process.env.E2E_REGIONS !== '2', 'placement requires the
 test.describe.configure({ mode: 'default', timeout: 180_000 });
 
 type Signed = { id: string; url: string; headers: Record<string, string> };
-type Discovery = { region: string; machine: string; regions: { id: string; name: string; publicHost: string | null; acceptingWrites: boolean; local: boolean; nodes: number }[] };
+type Discovery = { region: string; machine: string; regions: string[] };
 
 test('discovery lists both active-active regions through both listeners', async ({ request }) => {
   for (const origin of [gru, fra]) {
     const discovery = await json<Discovery>(await request.get(`${origin}/v1/regions`));
     expect(discovery.region).toBe(regionOf(origin));
-    expect(discovery.regions.map(region => [region.id, region.acceptingWrites, region.local]))
-      .toEqual([['fra', true, regionOf(origin) === 'fra'], ['gru', true, regionOf(origin) === 'gru']]);
-    expect(discovery.regions.every(region => region.nodes >= 1)).toBe(true);
+    expect(discovery.regions).toEqual(['fra', 'gru']);
   }
 });
 

@@ -108,22 +108,25 @@ internal sealed class ManagementService(
             return new Validation("defaultConsistency is fast or strong", "invalid_consistency");
         }
 
-        var limit = await catalog.GetOrganizationAsync(project.OrganizationId, cancellationToken) switch
+        if (project.OrganizationId != PlatformCatalog.OrganizationId)
         {
-            OrganizationRecord organization => Plans.DatabaseLimit(project.Plan ?? organization.Plan),
-            NotFound or Unavailable => Plans.DatabaseLimit(project.Plan ?? Plans.Hobby),
-        };
-        var count = await catalog.CountOrganizationDatabasesAsync(project.OrganizationId, cancellationToken) switch
-        {
-            long value => value,
-            Unavailable => 0,
-        };
-        if (count >= limit)
-        {
-            return new QuotaExceeded("the organization's plan allows no more databases", "database_limit");
+            var limit = await catalog.GetOrganizationAsync(project.OrganizationId, cancellationToken) switch
+            {
+                OrganizationRecord organization => Plans.DatabaseLimit(project.Plan ?? organization.Plan),
+                NotFound or Unavailable => Plans.DatabaseLimit(project.Plan ?? Plans.Hobby),
+            };
+            var count = await catalog.CountOrganizationDatabasesAsync(project.OrganizationId, cancellationToken) switch
+            {
+                long value => value,
+                Unavailable => 0,
+            };
+            if (count >= limit)
+            {
+                return new Conflict("the organization's plan allows no more databases", "database_limit");
+            }
         }
 
-        return regions.Check(input.Regions ?? input.ReplicaRegions) switch
+        return regions.Check(input.Regions ?? (input.HomeRegion is { } home ? [home, .. input.ReplicaRegions ?? []] : input.ReplicaRegions)) switch
         {
             IReadOnlyList<string> placed => await CreatePlacedAsync(
                 Record(project, input.Name, placed, input.AllRegions ?? false, mode, input.Strict ?? false, input.TtlSeconds, null, 0), cancellationToken),
@@ -166,25 +169,62 @@ internal sealed class ManagementService(
             Unavailable unavailable => unavailable,
         };
 
-    public async ValueTask<Result<Done, Conflict, Unavailable>> CloseProjectAsync(Ulid projectId, Ulid authorityOrganizationId, CancellationToken cancellationToken)
+    public async ValueTask<Result<Done, Conflict, Unavailable>> CloseProjectAsync(Ulid projectId, Ulid authorityOrganizationId, bool erase, CancellationToken cancellationToken)
     {
         if (PlatformCatalog.IsPlatformProject(projectId))
         {
             return new Conflict("TerraScale's own projects hold its services' databases and cannot be closed", "platform_project_protected");
         }
 
-        return await catalog.GetProjectAsync(projectId, cancellationToken) switch
+        var found = await catalog.GetProjectAsync(projectId, cancellationToken);
+        return found switch
         {
             ProjectRecord project when project.OrganizationId != authorityOrganizationId =>
                 new Conflict("the project belongs to another organization in TerraBase", "binding_conflict"),
-            ProjectRecord project => await catalog.DeleteProjectAsync(project.Id, cancellationToken) switch
-            {
-                Done done => done,
-                Conflict { Code: "project_not_empty" } => new Conflict("delete the project's databases first", "not_empty"),
-                Conflict conflict => conflict,
-                Unavailable unavailable => unavailable,
-            },
+            ProjectRecord project => await CloseFoundProjectAsync(project, erase, cancellationToken),
             NotFound => new Done(),
+            Unavailable unavailable => unavailable,
+        };
+    }
+
+    private async ValueTask<Result<Done, Conflict, Unavailable>> CloseFoundProjectAsync(ProjectRecord project, bool erase, CancellationToken cancellationToken)
+    {
+        if (erase)
+        {
+            string? after = null;
+            while (true)
+            {
+                var pageOutcome = await catalog.ListDatabasesAsync(project.Id, after, MaxLimit, cancellationToken);
+                if (pageOutcome switch { CatalogPage<DatabaseRecord> => null, Unavailable unavailable => unavailable } is { } listFailure)
+                {
+                    return listFailure;
+                }
+
+                var page = pageOutcome switch { CatalogPage<DatabaseRecord> listed => listed, Unavailable => new CatalogPage<DatabaseRecord>([], null) };
+                foreach (var database in page.Items)
+                {
+                    var deleted = await DeleteDatabaseAsync(database, cancellationToken);
+                    if (deleted switch { Done => null, Unavailable unavailable => unavailable } is { } deleteFailure)
+                    {
+                        return deleteFailure;
+                    }
+                }
+
+                if (page.Next is not { } next)
+                {
+                    break;
+                }
+
+                after = next;
+            }
+        }
+
+        var removed = await catalog.DeleteProjectAsync(project.Id, cancellationToken);
+        return removed switch
+        {
+            Done done => done,
+            Conflict { Code: "project_not_empty" } => new Conflict("delete the project's databases first", "not_empty"),
+            Conflict conflict => conflict,
             Unavailable unavailable => unavailable,
         };
     }
@@ -210,7 +250,18 @@ internal sealed class ManagementService(
             return new Validation("ttlSeconds is at least 60", "invalid_ttl");
         }
 
-        var requested = input.Regions ?? input.ReplicaRegions ?? (input.Region is { } single ? [.. current.Regions, single] : null);
+        if (input.HasRegions)
+        {
+            return input.HomeRegion is not null || input.ReplicaRegions is not null || input.AllRegions is not null || input.Region is not null
+                ? new Validation("send regions or homeRegion, replicaRegions and allRegions, not both")
+                : regions.CheckSet(input.Regions) switch
+                {
+                    IReadOnlyList<string> placed => await SaveAsync(current, Changed(current, input, placed, mode), cancellationToken),
+                    Validation invalid => invalid,
+                };
+        }
+
+        var requested = input.ReplicaRegions ?? (input.Region is { } single ? [.. current.Regions, single] : null);
         return requested is null
             ? await SaveAsync(current, Changed(current, input, current.Regions, mode), cancellationToken)
             : regions.Check(requested) switch

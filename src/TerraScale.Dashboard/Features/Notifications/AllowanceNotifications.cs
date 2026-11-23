@@ -38,7 +38,7 @@ namespace TerraScale.Dashboard.Features.Notifications
     }
     public interface IAllowanceNotificationBackend
     {
-        Task<AllowanceUsagePage> ReadAsync(string? after, DateTimeOffset? month, CancellationToken cancellationToken);
+        Task<AllowanceUsagePage?> ReadAsync(string? after, DateTimeOffset? month, CancellationToken cancellationToken);
         Task<string> SendAsync(AllowanceAlert alert, CancellationToken cancellationToken);
     }
 
@@ -60,7 +60,11 @@ namespace TerraScale.Dashboard.Features.Notifications
             string? after = null;
             do
             {
-                var page = await backend.ReadAsync(after, null, cancellationToken);
+                if (await backend.ReadAsync(after, null, cancellationToken) is not { } page)
+                {
+                    return;
+                }
+
                 var month = ValidatedMonth(page, after, clock.GetUtcNow());
                 foreach (var item in page.Items)
                 {

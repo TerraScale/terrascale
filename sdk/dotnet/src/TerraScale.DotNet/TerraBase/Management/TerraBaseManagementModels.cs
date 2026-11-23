@@ -28,7 +28,7 @@ internal sealed class TerraBaseStringEnumConverter<T> : JsonStringEnumConverter<
 /// <typeparam name="T">Item type.</typeparam>
 /// <param name="Items">Items of this page.</param>
 /// <param name="Next">Pass as <c>after</c> to read the next page; <see langword="null"/> on the last page.</param>
-public sealed record TerraBasePage<T>(IReadOnlyList<T> Items, string? Next) : IJsonOnDeserialized
+public sealed record TerraBasePage<T>(IReadOnlyList<T> Items, string? Next = null) : IJsonOnDeserialized
 {
     void IJsonOnDeserialized.OnDeserialized() => TerraBaseJsonContext.RequireNonNullItems(Items);
 }
@@ -67,6 +67,12 @@ public sealed record TerraBaseProjectClosure(string Status, string ClosureId, in
 /// <param name="CreatedAt">Creation time.</param>
 public sealed record TerraBaseManagedDatabase(string Id, string ProjectId, string Name, string? BranchedFrom, DateTimeOffset CreatedAt)
 {
+    [JsonConstructor]
+    internal TerraBaseManagedDatabase(string Id, string ProjectId, string Name, DateTimeOffset CreatedAt, string? BranchedFrom = null)
+        : this(Id, ProjectId, Name, BranchedFrom, CreatedAt)
+    {
+    }
+
     /// <summary>The expiry instant, or null without a TTL. Expiry deletes the database, backups and data keys.</summary>
     public DateTimeOffset? ExpiresAt { get; init; }
 

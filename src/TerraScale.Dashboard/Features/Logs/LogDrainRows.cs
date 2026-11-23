@@ -1,3 +1,4 @@
+using Dapper;
 
 namespace TerraScale.Dashboard.Features.Logs;
 
@@ -33,6 +34,7 @@ public sealed record LogDrainRow
 
     public DateTime? LastGapAt { get; set; }
 
+    [DbValue(Ignore = true)]
     public List<LogDrainCursorRow> Cursors { get; init; } = [];
 }
 

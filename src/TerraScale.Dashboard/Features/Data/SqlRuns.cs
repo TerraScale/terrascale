@@ -49,7 +49,7 @@ namespace TerraScale.Dashboard.Features.Data
                 {
                     if (row is null)
                     {
-                        await connection.ExecuteAsync(DashboardSql.SqlWorkspaces.Insert, new SqlWorkspaceRow
+                        DashboardDb.Expect(await connection.ExecuteAsync(DashboardSql.SqlWorkspaces.Insert, new SqlWorkspaceRow
                         {
                             Id = AccountService.NewId(),
                             OrganizationId = scope.OrganizationId,
@@ -61,7 +61,7 @@ namespace TerraScale.Dashboard.Features.Data
                             HistoryEpoch = "",
                             RunReceipt = receipt,
                             Version = AccountService.NewId(),
-                        });
+                        }));
                         return receipt;
                     }
 

@@ -80,7 +80,7 @@ public sealed class ExportProjectUsersEndpoint(TenantDirectory tenants, Platform
 
         var from = position ?? string.Empty;
         var take = limit + 1;
-        var users = (await data.ReadAsync(connection => connection.QueryAsync<UserRecord>(
+        var users = (await data.ReadUsersAsync(connection => connection.QueryAsync<UserRecord>(
             "SELECT * FROM users WHERE instance_id = @projectId AND created_at < @cutoff AND id > @from ORDER BY id LIMIT @take", new { projectId, cutoff, from, take }),
             cancellationToken)).AsList();
         var ids = users.Select(user => user.Id).ToList();

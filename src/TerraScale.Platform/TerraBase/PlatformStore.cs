@@ -27,7 +27,12 @@ public sealed class PlatformStore(TerraBaseClient terraBase, PlatformOptions opt
     private static Result<IReadOnlyList<SqlHttpStatementResult>, Conflict, Unavailable> Results(SqlExecuteResponse response) => response.Results;
 }
 
-public sealed class PlatformSchema(PlatformStore store, PlatformReadiness readiness, TimeProvider timeProvider, ILogger<PlatformSchema> logger) : BackgroundService
+public sealed class PlatformSchema(
+    PlatformStore store,
+    PlatformReadiness readiness,
+    PlatformOptions options,
+    TimeProvider timeProvider,
+    ILogger<PlatformSchema> logger) : BackgroundService
 {
     private static readonly string[] Tables =
     [
@@ -62,6 +67,14 @@ public sealed class PlatformSchema(PlatformStore store, PlatformReadiness readin
             PRIMARY KEY (project_id, bucket_id, id))
         """,
         """
+        CREATE TABLE IF NOT EXISTS platform_closed_file_projects (
+            project_id TEXT NOT NULL PRIMARY KEY, organization_id TEXT NOT NULL)
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS platform_file_regions (region TEXT NOT NULL PRIMARY KEY)
+        """,
+        "INSERT OR IGNORE INTO platform_file_regions (region) SELECT DISTINCT region FROM platform_buckets",
+        """
         CREATE TABLE IF NOT EXISTS platform_shapes (
             handle TEXT NOT NULL PRIMARY KEY, shape_id TEXT NOT NULL, organization_id TEXT NOT NULL, project_id TEXT NOT NULL,
             database_id TEXT NOT NULL, project_route TEXT NOT NULL, database_route TEXT NOT NULL, table_name TEXT NOT NULL,
@@ -78,10 +91,15 @@ public sealed class PlatformSchema(PlatformStore store, PlatformReadiness readin
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        List<SqlHttpStatement> statements = [.. Tables.Select(static sql => SqlValues.Statement(sql))];
+        if (options.Files is not null)
+        {
+            statements.Add(SqlValues.Statement("INSERT OR IGNORE INTO platform_file_regions (region) VALUES (?)", SqlValues.Text(options.Region)));
+        }
+
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2), timeProvider);
         do
         {
-            var statements = Tables.Select(static sql => SqlValues.Statement(sql)).ToArray();
             var applied = await store.ExecuteAsync(statements, SqlContext.Strong, stoppingToken) switch
             {
                 IReadOnlyList<SqlHttpStatementResult> => true,

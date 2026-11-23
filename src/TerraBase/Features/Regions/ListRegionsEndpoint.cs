@@ -15,7 +15,7 @@ internal sealed class ListRegionsEndpoint(RegionDirectory regions, TerraBaseOpti
     {
         Get("/v1/regions");
         Name("listRegions");
-        Summary("Lists the regions; every region accepts reads and writes");
+        Summary("Lists the ids of the regions TerraBase serves, ordered; every region accepts reads and writes");
         Tags("Regions");
         AllowAnonymous();
         Metadata(ListenerMetadata.Client);

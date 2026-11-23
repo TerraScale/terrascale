@@ -48,6 +48,8 @@ internal sealed record PgIdleExpired;
 
 internal sealed record PgReadInterrupted;
 
+internal sealed record PgIncompleteExpired;
+
 internal readonly union PgStartupRead(PgStartupPacket, PgPeerClosed, PgIdleExpired, PgError);
 
-internal readonly union PgMessageRead(PgFrontendMessage, PgPeerClosed, PgIdleExpired, PgReadInterrupted, PgError);
+internal readonly union PgMessageRead(PgFrontendMessage, PgPeerClosed, PgIdleExpired, PgIncompleteExpired, PgReadInterrupted, PgError);

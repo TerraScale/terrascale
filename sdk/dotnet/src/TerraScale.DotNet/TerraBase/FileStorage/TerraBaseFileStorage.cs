@@ -1,11 +1,19 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace TerraScale.DotNet.TerraBase;
 
 /// <summary>Owner, public and trusted-role grants for one file operation.</summary>
 public sealed record TerraBaseFilePolicy(bool Owner, bool Public, IReadOnlyList<string> Roles);
 /// <summary>Access rules evaluated against immutable file metadata. Owner is a JSON Pointer.</summary>
-public sealed record TerraBaseFileRules(string? Owner, TerraBaseFilePolicy Read, TerraBaseFilePolicy Write);
+public sealed record TerraBaseFileRules(string? Owner, TerraBaseFilePolicy Read, TerraBaseFilePolicy Write)
+{
+    [JsonConstructor]
+    internal TerraBaseFileRules(TerraBaseFilePolicy Read, TerraBaseFilePolicy Write, string? Owner = null)
+        : this(Owner, Read, Write)
+    {
+    }
+}
 /// <summary>A project's logical file bucket. Region identifies its object backing.</summary>
 public sealed record TerraBaseFileBucket(string Id, string Name, string Region, TerraBaseFileRules Rules);
 /// <summary>A file's immutable metadata. Pending files cannot be downloaded.</summary>

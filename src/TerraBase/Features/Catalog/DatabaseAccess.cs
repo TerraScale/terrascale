@@ -9,11 +9,13 @@ public sealed record ResolvedProject(ProjectRecord Project, Caller Caller);
 
 public sealed record ResolvedDatabase(ProjectRecord Project, DatabaseRecord Database, Caller Caller, bool CanWrite, RulesAuth? EndUser);
 
-internal sealed class DatabaseAccess(CatalogStore catalog, TenantDatabases databases)
+internal sealed class DatabaseAccess(CatalogStore catalog, TenantDatabases databases, TimeProvider time)
 {
     public static readonly NotFound UnknownDatabase = new("the database does not exist", "unknown_database");
 
     private static readonly NotFound UnknownProject = new("the project does not exist", "unknown_project");
+
+    private static readonly Forbidden ServiceDenied = new("the caller holds no grant for this project", "forbidden_caller");
 
     public async ValueTask<Result<ResolvedDatabase, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> DataAsync(
         Caller caller, string? projectReference, string? databaseReference, CancellationToken cancellationToken)
@@ -31,6 +33,16 @@ internal sealed class DatabaseAccess(CatalogStore catalog, TenantDatabases datab
         if (databaseReference is null || (!DatabaseNames.IsValid(databaseReference) && !IsId(databaseReference)))
         {
             return new Validation("database must be a canonical uppercase ULID or a lowercase name of at most 63 characters", "invalid_database");
+        }
+
+        if (Foreign(caller, projectId) is { } refusal)
+        {
+            return refusal;
+        }
+
+        if (caller is ServiceCaller service && !ServiceAllows(service, projectId, Scopes.SqlRead))
+        {
+            return ServiceDenied;
         }
 
         return await catalog.GetProjectAsync(projectId, cancellationToken) switch
@@ -63,6 +75,16 @@ internal sealed class DatabaseAccess(CatalogStore catalog, TenantDatabases datab
             return new Validation("project must be a canonical uppercase ULID", "invalid_project");
         }
 
+        if (Foreign(caller, projectId) is { } refusal)
+        {
+            return refusal;
+        }
+
+        if (caller is ServiceCaller service && !ServiceAllows(service, projectId, scope))
+        {
+            return ServiceDenied;
+        }
+
         return await catalog.GetProjectAsync(projectId, cancellationToken) switch
         {
             ProjectRecord project => await AuthorizeProjectAsync(caller, project, null, scope, cancellationToken) switch
@@ -72,6 +94,28 @@ internal sealed class DatabaseAccess(CatalogStore catalog, TenantDatabases datab
                 NotFound => UnknownProject,
                 Unavailable unavailable => unavailable,
             },
+            NotFound => await EnrollProjectAsync(caller, projectId, scope, cancellationToken),
+            Unavailable unavailable => unavailable,
+        };
+    }
+
+    private async ValueTask<Result<ResolvedProject, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> EnrollProjectAsync(
+        Caller caller, Ulid projectId, string scope, CancellationToken cancellationToken)
+    {
+        if (caller is not ProjectCaller { OrganizationId: { } organizationId } token || token.ProjectId != projectId
+            || PlatformCatalog.IsPlatformProject(projectId) || organizationId == PlatformCatalog.OrganizationId)
+        {
+            return UnknownProject;
+        }
+
+        if (!token.Scopes.Contains(scope))
+        {
+            return MissingScope(scope);
+        }
+
+        return await catalog.EnrollProjectAsync(projectId, organizationId, time.GetUtcNow(), cancellationToken) switch
+        {
+            ProjectRecord enrolled => new ResolvedProject(enrolled, caller),
             NotFound => UnknownProject,
             Unavailable unavailable => unavailable,
         };
@@ -118,7 +162,7 @@ internal sealed class DatabaseAccess(CatalogStore catalog, TenantDatabases datab
                 OrganizationRecord or NotFound => UnknownProject,
                 Unavailable unavailable => unavailable,
             },
-            ProjectCaller token when token.ProjectId != project.Id => UnknownProject,
+            ProjectCaller token when token.ProjectId != project.Id || (token.OrganizationId is { } org && org != project.OrganizationId) => UnknownProject,
             ProjectCaller token => token.Scopes.Contains(scope) ? new Done() : MissingScope(scope),
             EndUserCaller endUser when endUser.ProjectId != project.Id => UnknownProject,
             EndUserCaller => scope is Scopes.SqlRead or Scopes.SqlWrite ? new Done() : MissingScope(scope),
@@ -167,24 +211,33 @@ internal sealed class DatabaseAccess(CatalogStore catalog, TenantDatabases datab
         AnonymousCaller or PeerCaller or ServiceCaller or ApiKeyCaller or UserCaller or ProjectCaller => null,
     };
 
-    private static Result<Done, Forbidden, NotFound, Unavailable> Service(ServiceCaller service, ProjectRecord project, string scope)
+    private static Result<Done, Forbidden, NotFound, Unavailable> Service(ServiceCaller service, ProjectRecord project, string scope) =>
+        ServiceAllows(service, project.Id, scope) ? new Done() : ServiceDenied;
+
+    private static bool ServiceAllows(ServiceCaller service, Ulid projectId, string scope)
     {
         if (service.Grants.Contains("admin"))
         {
-            return new Done();
+            return true;
         }
 
-        var data = service.Grants.Contains(string.Concat("data:", project.Id.ToString()));
-        var platform = PlatformCatalog.IsPlatformProject(project.Id);
-        var allowed = scope switch
+        var data = service.Grants.Contains(string.Concat("data:", projectId.ToString()));
+        var platform = PlatformCatalog.IsPlatformProject(projectId);
+        return scope switch
         {
             Scopes.SqlRead => data || (platform && (service.Grants.Contains("platform.read") || service.Grants.Contains("platform.write"))),
             Scopes.SqlWrite => data || (platform && service.Grants.Contains("platform.write")),
             Scopes.DatabasesRead => service.Grants.Contains("catalog.read") || data,
             _ => false,
         };
-        return allowed ? new Done() : UnknownProject;
     }
+
+    private static Unauthorized? Foreign(Caller caller, Ulid projectId) => caller switch
+    {
+        EndUserCaller endUser when endUser.ProjectId != projectId =>
+            new Unauthorized("a project tenant token only reaches its own project's routes", "invalid_token"),
+        AnonymousCaller or PeerCaller or ServiceCaller or ApiKeyCaller or UserCaller or ProjectCaller or EndUserCaller => null,
+    };
 
     private static Forbidden MissingScope(string scope) =>
         new(string.Concat("the credential lacks the ", scope, " scope"), "forbidden_scope", new Dictionary<string, string> { ["scope"] = scope });

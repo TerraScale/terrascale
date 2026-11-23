@@ -30,8 +30,8 @@ namespace TerraScale.Dashboard.Features.Logs
             timeout.CancelAfter(TimeSpan.FromSeconds(30));
             var result = TerraBaseResults.Require(await terraBase.ReadLogsAsync(ServiceCaller.User(access), scope.ProjectId, database.Name, null, timeout.Token));
             var batch = Batch(result);
-            Validate(batch, databaseId, status);
-            return batch;
+            Validate(batch, databaseId);
+            return status.Length == 0 ? batch : batch with { Items = [.. batch.Items.Where(item => item.Status / 100 == status[0] - '0')] };
         }
 
         internal static DatabaseLogBatch Batch(TerraBaseRequestLogPage result)
@@ -41,14 +41,13 @@ namespace TerraScale.Dashboard.Features.Logs
                 result.Truncated, result.RecordingLimited, result.NextCursor, result.Gap);
         }
 
-        internal static void Validate(DatabaseLogBatch batch, string databaseId, string status, bool cursor = false)
+        internal static void Validate(DatabaseLogBatch batch, string databaseId, bool cursor = false)
         {
-            if (batch.DatabaseId != databaseId || batch.Items is null || batch.Items.Count > 100 ||
+            if (batch.Items.Count > 0 && batch.DatabaseId != databaseId || batch.Items.Count > 100 ||
                 batch.Items.Any(item => item is null || !TerraScaleIds.IsValid(item.Id) || item.RequestId is not null && !TerraScaleIds.IsValid(item.RequestId) || item.Time == default ||
                     DatabaseRegion.FromId(item.Region) is null || item.Method is not ("GET" or "POST" or "PUT" or "PATCH" or "DELETE" or "HEAD" or "OPTIONS" or "OTHER") ||
                     item.Route is not { Length: > 0 and <= 512 } || !item.Route.StartsWith('/') || item.Route.Contains('?') || item.Route.Any(char.IsControl) ||
-                    item.Status is < 100 or > 599 || !double.IsFinite(item.LatencyMs) || item.LatencyMs < 0 || item.Operations < 0 ||
-                    status.Length > 0 && item.Status / 100 != status[0] - '0') ||
+                    item.Status is < 100 or > 599 || !double.IsFinite(item.LatencyMs) || item.LatencyMs < 0 || item.Operations < 0) ||
                 batch.Items.Select(item => item.Id).Distinct(StringComparer.Ordinal).Count() != batch.Items.Count)
             {
                 throw new JsonException("Request logs returned invalid measurements or a different database.");

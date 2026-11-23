@@ -19,8 +19,16 @@ internal static class PostgresLimits
     public const int MaxChannelLength = 63;
 
     public static readonly TimeSpan HandshakeTimeout = TimeSpan.FromSeconds(10);
-    public static readonly TimeSpan SessionIdleTimeout = TimeSpan.FromHours(1);
+    public static readonly TimeSpan SessionIdleTimeout = TimeSpan.FromMinutes(30);
     public static readonly TimeSpan IdleInTransactionTimeout = TimeSpan.FromMinutes(5);
     public static readonly TimeSpan StatementTimeout = TimeSpan.FromMinutes(5);
     public static readonly TimeSpan WriteTimeout = TimeSpan.FromSeconds(30);
+
+    public static readonly TimeSpan MessageTimeout = TimeSpan.FromSeconds(30);
+
+    public static readonly TimeSpan MaxTransaction = TimeSpan.FromSeconds(5);
+
+    public const int MinimumMessageBytesPerSecond = 16 * 1024;
+
+    public static TimeSpan MessageBudget(long bytes) => MessageTimeout + TimeSpan.FromSeconds((double)bytes / MinimumMessageBytesPerSecond);
 }

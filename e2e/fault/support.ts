@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { expect, test, request as apiRequest, type APIRequestContext } from '@playwright/test';
 import { database, json, sql, type Cells } from '../placement/support';
 import { keyId } from '../support/api-key';
-import { auth, r2StandIn, stateDir } from '../support/stack';
+import { auth, localPort, r2StandIn, stateDir } from '../support/stack';
 import { journey, ownerSession, saveSecret } from '../support/state';
 import { signInToken } from '../support/auth-management';
 import { request as addressedRequest } from '../support/client-address';
@@ -19,89 +19,31 @@ export const nodes = [
   { name: 'journey-3', region: 'gru', address: '127.0.0.3', port: 8280, postgres: 6632, metrics: 9291, service: 'terrabase-gru-2' },
   { name: 'journey-4', region: 'fra', address: '127.0.0.4', port: 8380, postgres: 6732, metrics: 9391, service: 'terrabase-fra-2' },
 ] as const;
-export type KeptCopy = { id: string; organizationId: string; projectId: string; databaseId: string; files: string[]; bytes: number };
-export type FencedDatabase = { databaseId: string; reason: string; epoch: number; detail: string };
-export type Unserved = { databaseId: string; region: string; node: string; epoch: number; cause: string };
-export const node = (name: string) => nodes.find(candidate => candidate.name === name)!;
-
 export type Node = typeof nodes[number];
-type NodeStatus = { node: string; owner: string; epoch: number; writer: boolean; ready: boolean; session: string; unserved?: Unserved[] | null; kept?: KeptCopy[] | null;
-  fenced?: FencedDatabase[] | null; unready?: string | null; primedWithout?: string[] | null };
 export type Row = [number, string];
 export const regions = ['gru', 'fra'] as const;
 export const endpoint = (region: string) => `https://${region}.api.terrascale.tech`;
+export const peersIn = (region: string) => nodes.filter(member => member.region === region);
+export const node = (name: string) => nodes.find(candidate => candidate.name === name)!;
 
-export type BackupHole = { incarnation: string; from: number; to: number; fromAt: string | null; toAt: string | null; open: boolean };
-export type BackupContinuity = {
-  incarnation: string; historyStart: number | null; oldestRetained: number | null; storedPosition: number | null; storedIncarnation: string | null;
-  replacing: boolean; holes: BackupHole[];
+export type SystemBackup = {
+  status: string; region: string; code?: string; message?: string; archivedThrough?: string;
+  earliestRestorePoint?: string; latestRestorePoint?: string; lastSnapshotAt?: string; archivedBytes?: number; pendingSegments?: number;
 };
+export type NodeIdentity = { region: string; machine: string; regions: string[] };
+export type Clock = { region: string; machine: string; wallMs: number; hlcWallMs: number; hlcLogical: number; hlcNode: number };
 
-async function backupFiles(node: Node): Promise<{ file: string; continuity: BackupContinuity | null }[]> {
-  const response = await nodeRequest(node, '/v1/backup');
-  expect(response.status, response.body).toBe(200);
-  return (JSON.parse(response.body) as { files: { file: string; continuity: BackupContinuity | null }[] }).files;
-}
-
-export async function continuity(node: Node, id: string): Promise<BackupContinuity & { file: string }> {
-  const all = await backupFiles(node);
-  const files = all.filter(file => file.file.includes(`/${id}/nodes/`));
-  expect(files, JSON.stringify(all.map(file => file.file))).toHaveLength(1);
-  expect(files[0]!.continuity).not.toBeNull();
-  return { ...files[0]!.continuity!, file: files[0]!.file };
-}
-
-export async function systemContinuity(node: Node): Promise<BackupContinuity & { file: string }> {
-  const all = await backupFiles(node);
-  const system = all.find(file => file.file.endsWith(`/_system/nodes/${node.name}`));
-  expect(system?.continuity, JSON.stringify(all.map(file => file.file))).toBeTruthy();
-  return { ...system!.continuity!, file: system!.file };
-}
-
-export async function nodeHoles(node: Node): Promise<string[]> {
-  return (await backupFiles(node)).flatMap(file => (file.continuity?.holes ?? []).map(hole => `${file.file} ${hole.incarnation} ${hole.from}`));
-}
-
-export type HoleRecord = { incarnation: string; from: number; to: number; fromAt: number | null; toAt: number | null; open: boolean };
-
-const time = (at: number | null) => at === null ? 'unknown' : String(at).padStart(13, '0');
-
-export const holeKey = (file: string, hole: HoleRecord) =>
-  `${file}/holes/${hole.incarnation}-${String(hole.from).padStart(16, '0')}-${String(hole.to).padStart(16, '0')}-${time(hole.fromAt)}-${time(hole.toAt)}-${hole.open ? 'open' : 'closed'}`;
-
-export async function plantHole(file: string, hole: HoleRecord): Promise<void> {
-  const response = await fetch(`${r2StandIn}/fault/plant?key=${encodeURIComponent(holeKey(file, hole))}`, { method: 'POST' });
-  expect(response.status).toBe(204);
-}
-
-export async function holeRecords(state: 'unlisted' | 'listed'): Promise<void> {
-  const response = await fetch(`${r2StandIn}/fault/holes?state=${state}`, { method: 'POST' });
-  expect(response.status).toBe(204);
-  console.log(`backup hole records ${state}`);
-}
-
-export async function backupPuts(file: string): Promise<string[]> {
-  const response = await fetch(`${r2StandIn}/fault/puts`);
-  expect(response.status).toBe(200);
-  return (await response.json() as string[]).filter(key => key.startsWith(`${file}/`));
-}
-
-const drainBudget = 30_000;
 const nodeRequestTimeout = 15_000;
 
-function nodeRequestTimeoutFor(path: string): number {
-  return /^\/v1\/rollout\/(drain|prime)\b/.test(path) ? drainBudget + nodeRequestTimeout : nodeRequestTimeout;
-}
-
-export async function nodeRequest(node: { name: string; address: string }, path: string, method = 'GET', payload?: unknown, user?: string): Promise<{ status: number; body: string; headers: Record<string, string | string[] | undefined> }> {
+export async function nodeRequest(peer: { name: string; address: string }, path: string, method = 'GET', payload?: unknown, user?: string): Promise<{ status: number; body: string; headers: Record<string, string | string[] | undefined> }> {
   const credential = readFileSync(join(stateDir, 'secrets'), 'utf8').split('\n')[0];
-  const session = connect(`http://${node.address}:8081`);
+  const session = connect(`http://${peer.address}:${localPort('internal', 8081)}`);
   const stream = session.request({
     ':method': method, ':path': path, 'x-terrabase-peer-credential': credential,
     ...(payload === undefined ? {} : { 'content-type': 'application/json' }),
     ...(user ? { 'x-terrabase-user-id': user } : {}),
   });
-  stream.setTimeout(nodeRequestTimeoutFor(path), () => stream.destroy(new Error(`node request timed out for ${node.name}: ${method} ${path.split('?')[0]}`)));
+  stream.setTimeout(nodeRequestTimeout, () => stream.destroy(new Error(`node request timed out for ${peer.name}: ${method} ${path.split('?')[0]}`)));
   session.on('error', error => stream.destroy(error));
   try {
     const response = once(stream, 'response');
@@ -115,24 +57,39 @@ export async function nodeRequest(node: { name: string; address: string }, path:
   }
 }
 
-export async function nodeStatus(node: Node, region?: string): Promise<NodeStatus> {
-  const response = await nodeRequest(node, `/v1/rollout/status${region ? `?region=${region}` : ''}`);
-  expect(response.status).toBe(200);
-  return JSON.parse(response.body) as NodeStatus;
+export async function identity(peer: { port: number }): Promise<NodeIdentity | undefined> {
+  const response = await fetch(`http://127.0.0.1:${peer.port}/v1/regions`);
+  if (response.status !== 200) return undefined;
+  return response.json() as Promise<NodeIdentity>;
 }
 
-export async function writerIs(region: string, name: string): Promise<void> {
-  await expect.poll(async () => {
-    const statuses = await Promise.all(nodes.filter(member => member.region === region).map(member => nodeStatus(member)));
-    return statuses.filter(status => status.writer).map(status => status.node);
-  }, { message: `${name} is the only ${region} writer`, timeout: 60_000 }).toEqual([name]);
+export async function clock(peer: Node): Promise<Clock> {
+  const response = await nodeRequest(peer, '/v1/sync/clock');
+  expect(response.status, response.body).toBe(200);
+  return JSON.parse(response.body) as Clock;
 }
 
-export function logged(node: Node, ...fragments: string[]): number {
-  return readFileSync(join(stateDir, 'logs', `${node.service}.log`), 'utf8').split('\n').filter(line => fragments.every(fragment => line.includes(fragment))).length;
+export async function systemBackup(peer: Node): Promise<{ status: number; body: SystemBackup }> {
+  const response = await nodeRequest(peer, '/v1/backup');
+  return { status: response.status, body: response.body ? JSON.parse(response.body) as SystemBackup : { status: '', region: '' } };
 }
 
-export async function writerToken(request: APIRequestContext): Promise<string> {
+export async function peersReady(): Promise<void> {
+  for (const member of nodes) {
+    await expect.poll(async () => {
+      const ready = await fetch(`http://127.0.0.1:${member.port}/readyz`);
+      if (ready.status !== 200) return { status: ready.status };
+      const body = await ready.json() as { status: string; region: string };
+      const listed = await identity(member);
+      if (!listed) return { status: ready.status };
+      return { status: body.status, region: body.region, machine: listed.machine, gru: listed.regions.includes('gru'), fra: listed.regions.includes('fra') };
+    }, { message: `${member.name} is a ready active-active peer` }).toEqual({ status: 'ok', region: member.region, machine: member.name, gru: true, fra: true });
+    const observed = await clock(member);
+    expect(observed).toMatchObject({ region: member.region, machine: member.name });
+  }
+}
+
+export async function projectToken(request: APIRequestContext): Promise<string> {
   const current = journey();
   const grant = await (await request.post(`${auth}/terrascale/oauth/token`, {
     form: { grant_type: 'client_credentials', client_id: keyId(current.apiKey), client_secret: current.apiKey, project: current.projectId, scope: 'sql:read sql:write databases:read databases:write' },
@@ -156,18 +113,6 @@ export async function signIn(): Promise<string> {
   }
 }
 
-export async function exchangedToken(request: APIRequestContext, signedIn: string): Promise<string> {
-  await expect.poll(async () => (await request.get(`${auth}/readyz`)).status(), { message: 'ts-auth reaches its TerraBase writer before a token exchange' }).toBe(200);
-  const current = journey();
-  const grant = await json<{ access_token: string }>(await request.post(`${auth}/terrascale/oauth/token`, {
-    form: { grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange', client_id: '00000000000000000000000007', subject_token: signedIn,
-      subject_token_type: 'urn:ietf:params:oauth:token-type:access_token', organization: current.organizationId, project: current.projectId,
-      scope: 'sql:read sql:write databases:read databases:write' },
-  }));
-  saveSecret('fault-exchanged-token', grant.access_token);
-  return grant.access_token;
-}
-
 export async function cleanUp(failure: unknown, cleanup: () => Promise<void>): Promise<void> {
   try {
     await cleanup();
@@ -178,22 +123,6 @@ export async function cleanUp(failure: unknown, cleanup: () => Promise<void>): P
       contentType: 'text/plain',
     });
   }
-}
-
-export async function topology(): Promise<Node[]> {
-  const writers: Node[] = [];
-  for (const node of nodes) {
-    let status = await nodeStatus(node);
-    await expect.poll(async () => (status = await nodeStatus(node)), { message: `${node.name} is ready before the case starts` })
-      .toMatchObject({ node: node.name, ready: true });
-    expect(nodes.filter(peer => peer.region === node.region).map(peer => peer.name)).toContain(status.owner);
-    if (status.writer) {
-      expect(status.owner).toBe(node.name);
-      writers.push(node);
-    }
-  }
-  for (const region of regions) expect(writers.filter(node => node.region === region)).toHaveLength(1);
-  return writers;
 }
 
 export class Ledger {
@@ -215,75 +144,55 @@ export class Ledger {
     if (event === 'refused') this.refused.push(...rows);
   }
 
-  async direct(node: Node, token: string, rows: Row[]): Promise<boolean> {
-    this.record('submitted', rows, node.region);
+  async direct(peer: Node, token: string, rows: Row[]): Promise<boolean> {
+    this.record('submitted', rows, peer.region);
     try {
-      const response = await fetch(`http://127.0.0.1:${node.port}${database(this.id)}/sql/execute`, {
+      const response = await fetch(`http://127.0.0.1:${peer.port}${database(this.id)}/sql/execute`, {
         method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
         body: JSON.stringify({ statements: [{ sql: this.statement(rows) }] }), signal: AbortSignal.timeout(15_000),
       });
-      const result = await response.json() as { results?: { error?: unknown }[] };
-      if (response.status === 200 && response.headers.get('x-terrabase-region') === node.region && result.results?.length === 1 && !result.results[0].error) {
-        this.record('acknowledged', rows, node.region);
+      const result = await response.json() as { results?: unknown[]; error?: { code: string } };
+      if (response.status === 200 && response.headers.get('x-terrabase-region') === peer.region && response.headers.get('x-terrabase-machine') === peer.name && result.results?.length === 1) {
+        this.record('acknowledged', rows, peer.region);
         return true;
       }
-      this.record(response.status === 200 ? 'failed' : 'refused', rows, node.region);
+      this.record(response.status === 200 ? 'failed' : 'refused', rows, peer.region);
       return false;
     } catch {
-      this.record('failed', rows, node.region);
+      this.record('failed', rows, peer.region);
       return false;
     }
   }
 
-  async refusal(node: Node, token: string, rows: Row[]): Promise<{ status: number; code?: string }> {
-    this.record('submitted', rows, node.region);
-    const response = await fetch(`http://127.0.0.1:${node.port}${database(this.id)}/sql/execute`, {
-      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ statements: [{ sql: this.statement(rows) }] }), signal: AbortSignal.timeout(15_000),
-    });
-    const body = await response.json() as { error?: { code: string }; results?: { error?: { code: string } }[] };
-    const answer = { status: response.status, code: body.error?.code ?? body.results?.[0]?.error?.code };
-    this.record(response.status === 200 && !answer.code ? 'acknowledged' : 'refused', rows, node.region);
-    return answer;
-  }
-
-  async readRefusal(node: Node, token: string): Promise<{ status: number; code?: string }> {
-    const response = await fetch(`http://127.0.0.1:${node.port}${database(this.id)}/sql/execute`, {
+  async readNode(peer: Node, token: string): Promise<Row[]> {
+    const response = await fetch(`http://127.0.0.1:${peer.port}${database(this.id)}/sql/execute`, {
       method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify({ statements: [{ sql: 'SELECT id, value FROM fault_rows ORDER BY id' }] }), signal: AbortSignal.timeout(15_000),
     });
-    const body = await response.json() as { error?: { code: string }; results?: { error?: { code: string } }[] };
-    return { status: response.status, code: body.error?.code ?? body.results?.[0]?.error?.code };
-  }
-
-  async readNode(node: Node, token: string): Promise<Row[]> {
-    const response = await fetch(`http://127.0.0.1:${node.port}${database(this.id)}/sql/execute`, {
-      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ statements: [{ sql: 'SELECT id, value FROM fault_rows ORDER BY id' }] }), signal: AbortSignal.timeout(15_000),
-    });
-    if (response.status === 404 || response.status === 421) return [];
     const body = await response.json() as { results?: { rows: Row[] }[]; error?: { code: string } };
+    if (response.status === 404) return [];
     if (response.status === 400 && body.error?.code === 'undefined_table') return [];
-    expect(response.status, `${node.name} answers the read: ${JSON.stringify(body)}`).toBe(200);
-    if (response.headers.get('x-terrabase-region') !== node.region) return [];
+    expect(response.status, `${peer.name} answers the read: ${JSON.stringify(body)}`).toBe(200);
+    expect(response.headers.get('x-terrabase-region')).toBe(peer.region);
+    expect(response.headers.get('x-terrabase-machine')).toBe(peer.name);
     return body.results![0].rows;
   }
 
-  async converge(token: string, writers: Node[], retained: Row[] = []): Promise<void> {
+  async converge(token: string, peers: readonly Node[], retained: Row[] = []): Promise<void> {
     await expect.poll(async () => {
-      const seen = await Promise.all(writers.map(writer => this.readNode(writer, token)));
+      const seen = await Promise.all(peers.map(peer => this.readNode(peer, token)));
       for (const rows of seen) {
         for (const row of retained) expect(rows, 'a previously observed acknowledged write is never lost').toContainEqual(row);
         for (const row of rows) expect(this.submitted, 'no invented or changed write').toContainEqual(row);
       }
       return seen.every(rows => this.acknowledged.every(row => rows.some(actual => JSON.stringify(actual) === JSON.stringify(row))))
         && seen.every(rows => JSON.stringify(rows) === JSON.stringify(seen[0]));
-    }, { message: 'every region writer serves the client write ledger', timeout: 60_000, intervals: [250, 500, 1000] }).toBe(true);
-    console.log(`ledger ${this.id}: ${this.acknowledged.length} acknowledged rows retained on ${writers.map(writer => writer.name).join(' and ')}`);
+    }, { message: 'every peer serves the client write ledger', timeout: 60_000, intervals: [250, 500, 1000] }).toBe(true);
+    console.log(`ledger ${this.id}: ${this.acknowledged.length} acknowledged rows retained on ${peers.map(peer => peer.name).join(', ')}`);
   }
 
-  async drop(token: string, writer: Node): Promise<void> {
-    await expect.poll(async () => (await fetch(`http://127.0.0.1:${writer.port}${database(this.id)}`, {
+  async drop(token: string, peer: Node): Promise<void> {
+    await expect.poll(async () => (await fetch(`http://127.0.0.1:${peer.port}${database(this.id)}`, {
       method: 'DELETE', headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15_000),
     })).status, { message: `database ${this.id} is deleted`, timeout: 60_000 }).toBe(204);
   }
@@ -306,7 +215,6 @@ export class Ledger {
     if (response.status() === 400) {
       const error = await response.json();
       expect(error.error.code).toBe('undefined_table');
-      expect(error.error.message).toContain('no such table: fault_rows');
       return [];
     }
     if (response.status() === 200 && response.headers()['x-terrabase-region'] !== region) return undefined;
@@ -329,17 +237,17 @@ export class Ledger {
   }
 }
 
-export function crashWrite(node: Node, ledger: Ledger, token: string) {
+export function crashWrite(peer: Node, ledger: Ledger, token: string) {
   const rows: Row[] = Array.from({ length: 256 }, (_, index) => [index + 100, `inflight-${index}`]);
-  ledger.record('submitted', rows, node.region);
+  ledger.record('submitted', rows, peer.region);
   let sent!: Promise<unknown>;
   const outcome = new Promise<void>((resolve, reject) => {
     const interrupted = (error: NodeJS.ErrnoException) => {
       if (error.code !== 'ECONNRESET' && error.code !== 'EPIPE') return reject(error);
-      ledger.record(`unacknowledged-${error.code}`, rows, node.region);
+      ledger.record(`unacknowledged-${error.code}`, rows, peer.region);
       resolve();
     };
-    const call = request(`http://127.0.0.1:${node.port}${database(ledger.id)}/sql/execute`, {
+    const call = request(`http://127.0.0.1:${peer.port}${database(ledger.id)}/sql/execute`, {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       signal: AbortSignal.timeout(15_000),
@@ -351,11 +259,11 @@ export function crashWrite(node: Node, ledger: Ledger, token: string) {
       response.on('end', () => {
         if (response.statusCode !== 200) return reject(new Error(`in-flight write: ${response.statusCode} ${body}`));
         try {
-          const result = JSON.parse(body) as { results: { error?: unknown }[] };
-          expect(response.headers['x-terrabase-region']).toBe(node.region);
+          const result = JSON.parse(body) as { results: unknown[] };
+          expect(response.headers['x-terrabase-region']).toBe(peer.region);
+          expect(response.headers['x-terrabase-machine']).toBe(peer.name);
           expect(result.results).toHaveLength(1);
-          expect(result.results[0].error).toBeUndefined();
-          ledger.record('acknowledged', rows, node.region);
+          ledger.record('acknowledged', rows, peer.region);
           resolve();
         } catch (error) {
           reject(error);
@@ -369,18 +277,18 @@ export function crashWrite(node: Node, ledger: Ledger, token: string) {
   return { sent, outcome: outcome.then(() => ({ error: undefined }), (error: Error) => ({ error })) };
 }
 
-export function restartAfterKill(node: Node, writer = true, access?: { token: string; path: string }, observe?: () => Promise<void>, build?: string, overrides?: NodeJS.ProcessEnv): () => Promise<void> {
-  const pidFile = join(stateDir, 'pids', `${node.service}.pid`);
+export function restartAfterKill(peer: Node, access?: { token: string; path: string }, observe?: () => Promise<void>, build?: string, overrides?: NodeJS.ProcessEnv): () => Promise<void> {
+  const pidFile = join(stateDir, 'pids', `${peer.service}.pid`);
   const pid = Number(readFileSync(pidFile, 'utf8').trim());
   const environment = Object.fromEntries(readFileSync(`/proc/${pid}/environ`, 'utf8').split('\0').filter(Boolean).map(value => {
     const at = value.indexOf('=');
     return [value.slice(0, at), value.slice(at + 1)];
   }));
-  expect(environment.TS_NODE).toBe(node.name);
+  expect(environment.TS_NODE).toBe(peer.name);
   Object.assign(environment, overrides);
   const command = readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean);
   process.kill(pid, 'SIGKILL');
-  console.log(`SIGKILL ${node.name}: client write flushed, response outstanding`);
+  console.log(`SIGKILL ${peer.name}`);
   return async () => {
     await expect.poll(() => {
       try {
@@ -390,12 +298,12 @@ export function restartAfterKill(node: Node, writer = true, access?: { token: st
         return true;
       }
     }, { message: 'the killed process releases its data directory before restart' }).toBe(true);
-    const log = join(stateDir, 'logs', `${node.service}.log`);
+    const log = join(stateDir, 'logs', `${peer.service}.log`);
     const offset = readFileSync(log).length;
     const output = openSync(log, 'a', 0o600);
     let exited = (_code: number | null, _signal: NodeJS.Signals | null) => {};
     const died = new Promise<never>((_, reject) => {
-      exited = (code, signal) => reject(new Error(`the restarted ${node.name} exited (${code ?? signal}) before it opened its listeners`));
+      exited = (code, signal) => reject(new Error(`the restarted ${peer.name} exited (${code ?? signal}) before it opened its listeners`));
     });
     const started = build === undefined ? command : [command[0], build];
     const child = spawn(started[0], started.slice(1), { env: environment, stdio: ['ignore', output, output] });
@@ -409,19 +317,24 @@ export function restartAfterKill(node: Node, writer = true, access?: { token: st
     }
     try {
       await Promise.race([died, expect.poll(() => readFileSync(log).subarray(offset).toString().includes('Application started.'), {
-        message: 'the restarted writer opens its listeners',
+        message: 'the restarted peer opens its listeners',
       }).toBe(true)]);
     } finally {
       child.off('exit', exited);
     }
     await observe?.();
-    await expect.poll(() => nodeStatus(node), {
-      message: 'the restarted node restores its ready regional role',
-    }).toMatchObject({ writer, ready: true });
+    await expect.poll(async () => {
+      const response = await fetch(`http://127.0.0.1:${peer.port}/readyz`);
+      if (response.status !== 200) return { status: response.status };
+      const body = await response.json() as { status: string; region: string };
+      const listed = await identity(peer);
+      if (!listed) return { status: response.status };
+      return { status: body.status, region: body.region, machine: listed.machine };
+    }, { message: 'the restarted peer is ready in its region' }).toEqual({ status: 'ok', region: peer.region, machine: peer.name });
     if (access) {
       const context = await apiRequest.newContext({ extraHTTPHeaders: { authorization: `Bearer ${access.token}` } });
       try {
-        await tokenReady(node, context, access.path);
+        await tokenReady(peer, context, access.path);
       } finally {
         await context.dispose();
       }
@@ -429,8 +342,8 @@ export function restartAfterKill(node: Node, writer = true, access?: { token: st
   };
 }
 
-export async function scrape(node: { address: string; port: number; metricsPort?: number }): Promise<(metricName: string, label?: string) => number> {
-  const response = await fetch(`http://${node.address}:${node.metricsPort ?? node.port + 1011}/metrics`);
+export async function scrape(peer: { address: string; port: number; metrics?: number; metricsPort?: number }): Promise<(metricName: string, label?: string) => number> {
+  const response = await fetch(`http://${peer.address}:${peer.metricsPort ?? peer.metrics ?? peer.port + 1011}/metrics`);
   expect(response.status).toBe(200);
   const lines = (await response.text()).split('\n');
   return (metricName, label = '') => {
@@ -439,12 +352,12 @@ export async function scrape(node: { address: string; port: number; metricsPort?
   };
 }
 
-export async function metric(node: { address: string; port: number; metricsPort?: number }, metricName: string, label = ''): Promise<number> {
-  return (await scrape(node))(metricName, label);
+export async function metric(peer: { address: string; port: number; metrics?: number; metricsPort?: number }, metricName: string, label = ''): Promise<number> {
+  return (await scrape(peer))(metricName, label);
 }
 
-export async function probe(node: Node, path: '/readyz' | '/backupz'): Promise<number> {
-  return (await fetch(`http://127.0.0.1:${node.port}${path}`)).status;
+export async function probe(peer: { port: number }, path: '/readyz' | '/backupz' | '/healthz'): Promise<number> {
+  return (await fetch(`http://127.0.0.1:${peer.port}${path}`)).status;
 }
 
 export async function backupStore(state: 'down' | 'up'): Promise<void> {
@@ -453,13 +366,20 @@ export async function backupStore(state: 'down' | 'up'): Promise<void> {
   console.log(`backup object store ${state}`);
 }
 
-export async function tokenReady(node: Node, cells: Pick<Cells, 'get'>, path: string): Promise<void> {
+export async function backupPuts(prefix = ''): Promise<string[]> {
+  const response = await fetch(`${r2StandIn}/fault/puts`);
+  expect(response.status).toBe(200);
+  const keys = await response.json() as string[];
+  return prefix ? keys.filter(key => key.startsWith(prefix)) : keys;
+}
+
+export async function tokenReady(peer: Node, cells: Pick<Cells, 'get'>, path: string): Promise<void> {
   await expect.poll(async () => {
-    const response = await cells.get(`http://127.0.0.1:${node.port}${path}`);
+    const response = await cells.get(`http://127.0.0.1:${peer.port}${path}`);
     const status = response.status();
     await response.dispose();
     return status;
-  }, { message: `${node.name} must verify the existing token before authenticated recovery checks` }).toBe(200);
+  }, { message: `${peer.name} must verify the existing token before authenticated recovery checks` }).toBe(200);
 }
 
 export function faultId(): string {

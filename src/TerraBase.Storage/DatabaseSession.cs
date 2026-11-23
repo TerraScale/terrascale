@@ -80,7 +80,10 @@ internal sealed partial class DatabaseSession : ISqlDatabaseSession
 
     public static SessionOpenResult Open(SessionContext context, bool create, bool strict, Func<DatabaseSession, Task> release)
     {
-        var options = new SqliteOpenOptions(context.DatabasePath, false, context.RawKey, context.Options.CacheSizeKib, context.DatabaseId, context.Options.DeltaColumns);
+        var options = new SqliteOpenOptions(context.DatabasePath, false, context.RawKey, context.Options.CacheSizeKib, context.DatabaseId, context.Options.DeltaColumns)
+        {
+            StatementTimeout = context.Options.StatementTimeout,
+        };
         var opened = SqliteConnection.Open(options);
         SessionOpenResult? failed = opened switch
         {

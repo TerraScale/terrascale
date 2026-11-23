@@ -46,71 +46,43 @@ const tokenOutcomes = ['issued', 'invalid_request', 'invalid_client', 'invalid_g
 const mailPurposes = ['Authentication', 'Invitation', 'Alert', 'Allowance', 'Support', 'Test', 'Notification'] as const;
 
 test('sign up, verify the email, onboard on Free, create a database and an API key', async ({ page, context, audit, browser }, info) => {
-  await onLocalStack(async () => {
-    const terrabase = await (await fetch('http://127.0.0.1:9091/metrics')).text();
-    const authMetrics = await (await fetch('http://127.0.0.1:9092/metrics')).text();
-    for (const name of [
-      'terrabase_backup_holes', 'terrabase_backup_failures_total', 'terrabase_backup_holes_recorded_total', 'terrabase_backup_generations_total',
-      'terrabase_cdc_unshipped_discarded_total', 'terrabase_storage_writers_evicted_total', 'terrabase_storage_migration_failures_total',
-      'terrabase_storage_fault_publication_late_total', 'terrabase_disk_refused_total', 'terrabase_storage_rejected_total',
-      'terrabase_qos_session_admissions_total', 'terrabase_qos_preauthentication_admissions_total', 'terrabase_qos_relay_output_timeouts_total',
-      'terrabase_request_logs_dropped_total', 'terrabase_usage_observations_dropped_total', 'terrabase_catalog_name_kept_total',
-      'terrabase_clock_observe_capped_total', 'terrabase_clock_steps_total', 'terrabase_clock_failed_rounds_total',
-      'terrabase_localack_finished_total', 'terrabase_localack_unplaced_total', 'terrabase_shape_reads_total', 'terrabase_shape_flights_started_total',
-      'terrabase_shape_seals_total', 'terrabase_shape_sealed_bytes_total', 'terrabase_shape_redirects_total', 'terrabase_shape_sweep_deleted_total',
-    ]) reading(terrabase, name);
-    each(terrabase, 'terrabase_backup_uploaded_bytes_total', 'kind', ['snapshot', 'segment', 'lineage', 'hole']);
-    each(terrabase, 'terrabase_backup_generation_restarts_total', 'reason', ['lineage', 'key_lost', 'log_unplaceable']);
-    each(terrabase, 'terrabase_backup_snapshots_deferred_total', 'reason', ['backlog', 'busy']);
-    each(terrabase, 'terrabase_backup_drills_total', 'result', ['passed', 'failed']);
-    each(terrabase, 'terrabase_backup_bucket_snapshots_total', 'result', ['taken', 'deleted', 'failed']);
-    each(terrabase, 'terrabase_storage_reads_total', 'path', ['point', 'query', 'shape', 'shape_body', 'shape_sweep']);
-    each(terrabase, 'terrabase_storage_rewrite_refused_total', 'reason', ['Safety', 'Budget', 'Deadline', 'Pressure']);
-    each(terrabase, 'terrabase_qos_session_refusals_total', 'kind', ['organization_cap', 'process_ceiling', 'relay_ceiling', 'preauthentication_allowance']);
-    for (const credential of ['caller_rejected', 'unmatched', 'legacy', 'peer']) {
-      reading(terrabase, 'terrabase_internal_authentication_requests_total', `credential="${credential}"`, 'caller="peer"');
-    }
-    each(terrabase, 'terrabase_operator_legacy_grants_total', 'kind', ['act_as', 'data']);
-    reading(terrabase, 'terrabase_sql_connections_total', 'region=');
-    for (const route of ['local', 'home']) {
-      for (const reason of ['client_key', 'update_by_key', 'delete_by_key', 'read', 'ddl', 'autoincrement', 'rowid_key', 'unique', 'unique_change', 'fk_change', 'fk_parent_delete', 'relative_update', 'not_by_key', 'complex', 'trigger', 'read_then_write', 'remembered', 'override', 'unknown']) {
-        for (const commit of ['local', 'home']) {
-          reading(terrabase, 'terrabase_sql_write_routes_total', `route="${route}"`, `reason="${reason}"`, `commit="${commit}"`, 'region=');
-        }
+  if (info.project.name !== 'desktop-setup') {
+    await onLocalStack(async () => {
+      const terrabase = await (await fetch('http://127.0.0.1:9091/metrics')).text();
+      const authMetrics = await (await fetch('http://127.0.0.1:9092/metrics')).text();
+      const platformMetrics = await (await fetch('http://127.0.0.1:9093/metrics')).text();
+      for (const name of [
+        'terrabase_backup_disabled',
+        'terrabase_caller_keys_expired',
+        'terrabase_caller_keys_soonest_expiry_seconds',
+        'terrabase_changefeed_subscribers',
+        'terrabase_pressure_connections',
+        'terrabase_pressure_in_flight',
+        'terrabase_pressure_memory_budget_bytes',
+        'terrabase_pressure_memory_used_bytes',
+        'terrabase_pressure_requests_total',
+      ]) reading(terrabase, name);
+      reading(terrabase, 'terrabase_internal_authentication_requests_total', 'credential="peer"', 'caller="peer"');
+      expect(platformMetrics.length, 'ts-platform metrics').toBeGreaterThan(0);
+      each(authMetrics, 'ts_auth_emails_total', 'outcome', emailOutcomes);
+      for (const [method, outcome] of signIns) reading(authMetrics, 'ts_auth_sign_ins_total', `method="${method}"`, `outcome="${outcome}"`);
+      for (const grant of tokenGrants) {
+        for (const outcome of tokenOutcomes) reading(authMetrics, 'ts_auth_tokens_total', `grant_type="${grant}"`, `outcome="${outcome}"`);
       }
-    }
-    reading(terrabase, 'terrabase_stats_dropped_total', 'kind="database"');
-    reading(terrabase, 'terrabase_project_closure_forward_errors_total', 'error="failed"');
-    each(terrabase, 'terrabase_clock_stamps_total', 'outcome', ['issued', 'refused']);
-    each(terrabase, 'terrabase_localack_unreadable_total', 'reason', ['decrypt', 'decode']);
-    each(terrabase, 'terrabase_auth_stored_keys_rejected_total', 'reason', ['invalid', 'clock_backwards', 'expired']);
-    each(terrabase, 'terrabase_auth_key_fetches_total', 'outcome', ['success', 'failure']);
-    for (const cache of ['tenants', 'records', 'plans', 'placements', 'registrations']) {
-      for (const result of ['hit', 'miss']) reading(terrabase, 'terrabase_catalog_cache_lookups_total', `cache="${cache}"`, `result="${result}"`);
-    }
-    each(terrabase, 'terrabase_purge_errors_total', 'reason', ['active_cleanup', 'record', 'file_cleanup']);
-    each(terrabase, 'terrabase_shape_sweep_handles_total', 'result', ['failed', 'refused', 'current', 'retired', 'unclassified', 'malformed', 'unknown']);
-    each(terrabase, 'terrabase_shape_cdn_purge_attempts_total', 'outcome', ['accepted', 'failed']);
-    each(terrabase, 'terrabase_shape_cdn_purges_total', 'outcome', ['dropped', 'unavailable', 'verification_failed', 'purged', 'failed']);
-    each(terrabase, 'terrabase_shape_cdn_requests_total', 'cache_status', ['hit', 'miss', 'other']);
-    each(authMetrics, 'ts_auth_emails_total', 'outcome', emailOutcomes);
-    for (const [method, outcome] of signIns) reading(authMetrics, 'ts_auth_sign_ins_total', `method="${method}"`, `outcome="${outcome}"`);
-    for (const grant of tokenGrants) {
-      for (const outcome of tokenOutcomes) reading(authMetrics, 'ts_auth_tokens_total', `grant_type="${grant}"`, `outcome="${outcome}"`);
-    }
-    for (const purpose of mailPurposes) {
-      for (const outcome of ['admitted', 'refused']) reading(authMetrics, 'ts_auth_email_admission_total', `purpose="${purpose}"`, `outcome="${outcome}"`);
-    }
-    each(authMetrics, 'ts_auth_deletion_cleanup_total', 'outcome', ['invalid', 'verified', 'storage_unavailable', 'cleanup_failed', 'batch_remaining', 'records_remaining', 'scope_not_deleted', 'project_handoff_required', 'organization_handoff_required']);
-    const refusedBefore = reading(authMetrics, 'ts_auth_sign_ins_total', 'method="hosted_password"', 'outcome="refused"');
-    const refused = await page.request.post(`${auth}/ui/terrascale/sign-in/password`, {
-      headers: { origin: auth },
-      form: { email: 'metric-zero@example.com', password: 'not-a-real-password' },
+      for (const purpose of mailPurposes) {
+        for (const outcome of ['admitted', 'refused']) reading(authMetrics, 'ts_auth_email_admission_total', `purpose="${purpose}"`, `outcome="${outcome}"`);
+      }
+      each(authMetrics, 'ts_auth_deletion_cleanup_total', 'outcome', ['invalid', 'verified', 'storage_unavailable', 'cleanup_failed', 'batch_remaining', 'records_remaining', 'scope_not_deleted', 'project_handoff_required', 'organization_handoff_required']);
+      const refusedBefore = reading(authMetrics, 'ts_auth_sign_ins_total', 'method="hosted_password"', 'outcome="refused"');
+      const refused = await page.request.post(`${auth}/ui/terrascale/sign-in/password`, {
+        headers: { origin: auth },
+        form: { email: 'metric-zero@example.com', password: 'not-a-real-password' },
+      });
+      expect(refused.status()).toBe(401);
+      const after = await (await fetch('http://127.0.0.1:9092/metrics')).text();
+      expect(reading(after, 'ts_auth_sign_ins_total', 'method="hosted_password"', 'outcome="refused"')).toBe(refusedBefore + 1);
     });
-    expect(refused.status()).toBe(401);
-    const after = await (await fetch('http://127.0.0.1:9092/metrics')).text();
-    expect(reading(after, 'ts_auth_sign_ins_total', 'method="hosted_password"', 'outcome="refused"')).toBe(refusedBefore + 1);
-  });
+  }
   const runId = randomBytes(4).toString('hex');
   const email = await newAddress(`journey-${runId}`);
   const password = randomBytes(24).toString('base64url');

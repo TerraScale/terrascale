@@ -39,10 +39,10 @@ internal static class SqlMetering
         using var over = await UsageJourney.PostAsync(http, $"/v1/projects/{tenant.Project}/databases", "{\"name\":\"usage-allowance-over\"}", cancellationToken);
         using var refusal = JsonDocument.Parse(await over.Content.ReadAsStringAsync(cancellationToken));
         var code = refusal.RootElement.GetProperty("error").GetProperty("code").GetString();
-        UsageJourney.Require(over.StatusCode == HttpStatusCode.TooManyRequests && code == "database_limit",
+        UsageJourney.Require(over.StatusCode == HttpStatusCode.Conflict && code == "database_limit",
             $"a hobby organization at its database allowance is refused: {over.StatusCode} {code}");
 
-        return $"before={before} after={after} refused=400 allowance hobby={hobby} refusal=429 {code}";
+        return $"before={before} after={after} refused=400 allowance hobby={hobby} refusal=409 {code}";
     }
 
     private static async Task AcceptedAsync(HttpClient http, UsageTenant tenant, string sql, bool strong, CancellationToken cancellationToken)

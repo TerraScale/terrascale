@@ -9,18 +9,24 @@ using System.Text.Json;
 
 namespace TerraScale.Dashboard.Features.Notifications
 {
-    public sealed class AllowanceNotificationBackend(IHttpClientFactory http, IDashboardIdentity identity, TerraBaseHttpClient terraBase) : IAllowanceNotificationBackend
+    public sealed class AllowanceNotificationBackend(IHttpClientFactory http, IDashboardIdentity identity, TerraBaseHttpClient terraBase, TimeProvider clock) : IAllowanceNotificationBackend
     {
-        public async Task<AllowanceUsagePage> ReadAsync(string? after, DateTimeOffset? month, CancellationToken cancellationToken)
+        public async Task<AllowanceUsagePage?> ReadAsync(string? after, DateTimeOffset? month, CancellationToken cancellationToken)
         {
             return await terraBase.ListAllowancesAsync(cancellationToken) switch
             {
                 JsonElement answer when answer.ValueKind == JsonValueKind.Object && answer.TryGetProperty("items", out _) =>
                     answer.Deserialize(AllowanceBackendJson.Default.AllowanceUsagePage) ?? throw new IOException("Allowance producer response is empty."),
-                JsonElement => throw new IOException("TerraBase publishes no per-organization allowance usage pages."),
+                JsonElement answer when answer.ValueKind == JsonValueKind.Object && answer.TryGetProperty("plans", out var plans) && plans.ValueKind == JsonValueKind.Array =>
+                    EmptyPage(clock.GetUtcNow(), month),
+                JsonElement => throw new IOException("Allowance producer response is invalid."),
                 TerraBaseRefusal => throw new IOException("Allowance producer is unavailable."),
             };
         }
+
+        private static AllowanceUsagePage EmptyPage(DateTimeOffset now, DateTimeOffset? month) =>
+            new(month ?? new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero), now, [], null,
+                AllowanceNotifications.OperationsContract, AllowanceNotifications.StorageContract);
 
         public async Task<string> SendAsync(AllowanceAlert alert, CancellationToken cancellationToken)
         {

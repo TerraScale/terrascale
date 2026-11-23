@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Buffers.Text;
 using TerraBase.Configuration;
 using TerraBase.Features.Callers;
 using TerraBase.Features.Catalog;
@@ -41,23 +43,32 @@ internal sealed class GetDatabaseRegionsEndpoint(DatabaseAccess access, ICluster
 
     private DatabaseReplicationBody Body(DatabaseRecord database, ISqlDatabaseSession session)
     {
-        var applied = coordinator.CurrentBookmark(database.Id).Merge(session.CurrentBookmark);
+        var applied = Encode(coordinator.CurrentBookmark(database.Id).Merge(session.CurrentBookmark));
         var peers = coordinator.Peers;
+        var placed = database.AllRegions ? database.Regions.Append(options.Region) : database.Regions;
+        string[] ordered = [.. placed.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
         List<RegionReplicationBody> regions = [];
-        foreach (var region in database.Regions.Append(options.Region).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
+        foreach (var region in ordered)
         {
             if (region == options.Region)
             {
-                regions.Add(new RegionReplicationBody(region, applied.Encode(), 0, Healthy: true));
+                regions.Add(new RegionReplicationBody(region, applied, 0, Healthy: true));
                 continue;
             }
 
             var health = peers.Where(peer => peer.Peer.Region == region).ToArray();
             var healthy = health.Any(static peer => peer.Status == PeerStatus.Healthy);
             var lag = health.Length == 0 ? -1 : (long)health.Min(static peer => peer.LastRoundTrip).TotalMilliseconds;
-            regions.Add(new RegionReplicationBody(region, applied.Encode(), lag, healthy));
+            regions.Add(new RegionReplicationBody(region, applied, lag, healthy));
         }
 
         return new DatabaseReplicationBody(database.Id.ToString(), time.GetUtcNow(), regions);
+    }
+
+    private static string Encode(CausalBookmark bookmark)
+    {
+        var writer = new ArrayBufferWriter<byte>();
+        bookmark.WriteTo(writer);
+        return Base64Url.EncodeToString(writer.WrittenSpan);
     }
 }

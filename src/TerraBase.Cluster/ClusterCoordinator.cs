@@ -38,14 +38,18 @@ public sealed class ClusterCoordinator(ClusterTopology topology, ClusterDatabase
         databases.Track(session.DatabaseId);
         if (request.Mode == ConsistencyMode.Strong)
         {
-            return await strong.ExecuteAsync(session, request, cancellationToken).ConfigureAwait(false);
+            return IsLocalOnlyStrong(session.DatabaseId)
+                ? await ExecuteLocalStrongAsync(session, request, cancellationToken).ConfigureAwait(false)
+                : await strong.ExecuteAsync(session, request, cancellationToken).ConfigureAwait(false);
         }
 
         var local = await session.ExecuteWriteAsync(request, cancellationToken).ConfigureAwait(false);
         return local switch
         {
             SqlWriteResult written => Durable(written, await finalizer.FinalizeFastAsync(session.DatabaseId, written.Commit, cancellationToken).ConfigureAwait(false)),
-            StrongRequired => await strong.ExecuteAsync(session, request with { Mode = ConsistencyMode.Strong }, cancellationToken).ConfigureAwait(false),
+            StrongRequired => IsLocalOnlyStrong(session.DatabaseId)
+                ? await ExecuteLocalStrongAsync(session, request with { Mode = ConsistencyMode.Strong }, cancellationToken).ConfigureAwait(false)
+                : await strong.ExecuteAsync(session, request with { Mode = ConsistencyMode.Strong }, cancellationToken).ConfigureAwait(false),
             SqlError error => error,
             SchemaMismatch mismatch => mismatch,
             StorageBusy busy => busy,
@@ -63,7 +67,9 @@ public sealed class ClusterCoordinator(ClusterTopology topology, ClusterDatabase
         databases.Track(session.DatabaseId);
         if (transaction.Options.Mode == ConsistencyMode.Strong)
         {
-            return await strong.CommitTransactionAsync(session, transaction, cancellationToken).ConfigureAwait(false);
+            return IsLocalOnlyStrong(session.DatabaseId)
+                ? await CommitLocalStrongAsync(session, transaction, cancellationToken).ConfigureAwait(false)
+                : await strong.CommitTransactionAsync(session, transaction, cancellationToken).ConfigureAwait(false);
         }
 
         var local = await transaction.CommitLocalAsync(cancellationToken).ConfigureAwait(false);
@@ -109,6 +115,54 @@ public sealed class ClusterCoordinator(ClusterTopology topology, ClusterDatabase
                 RequestTimeout expired => expired,
             };
         }
+    }
+
+    private bool IsLocalOnlyStrong(Ulid databaseId) =>
+        topology.StrongParticipants(databaseId) is [{ IsLocal: true }];
+
+    private async ValueTask<Result<SqlWriteResult, SqlError, SerializationConflict, SchemaMismatch, Unavailable, RequestTimeout, StorageBusy>> ExecuteLocalStrongAsync(
+        ISqlDatabaseSession session,
+        SqlStatementRequest request,
+        CancellationToken cancellationToken)
+    {
+        var local = await session.ExecuteWriteAsync(request, cancellationToken).ConfigureAwait(false);
+        return local switch
+        {
+            SqlWriteResult written => await FinalizeLocalStrongAsync(session.DatabaseId, written, cancellationToken).ConfigureAwait(false),
+            StrongRequired => await strong.ExecuteAsync(session, request, cancellationToken).ConfigureAwait(false),
+            SqlError error => error,
+            SchemaMismatch mismatch => mismatch,
+            StorageBusy busy => busy,
+            RequestTimeout timeout => timeout,
+        };
+    }
+
+    private async ValueTask<SqlWriteResult> FinalizeLocalStrongAsync(Ulid databaseId, SqlWriteResult written, CancellationToken cancellationToken)
+    {
+        await finalizer.FinalizeStrongAsync(databaseId, written.Commit, cancellationToken).ConfigureAwait(false);
+        return written;
+    }
+
+    private async ValueTask<Result<CommitMetadata, SerializationConflict, SchemaMismatch, Unavailable, RequestTimeout, StorageBusy>> CommitLocalStrongAsync(
+        ISqlDatabaseSession session,
+        ISqlTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        var local = await transaction.CommitLocalAsync(cancellationToken).ConfigureAwait(false);
+        return local switch
+        {
+            CommitMetadata commit => await FinalizeLocalStrongCommitAsync(session.DatabaseId, commit, cancellationToken).ConfigureAwait(false),
+            StrongRequired required => new SerializationConflict(session.DatabaseId, transaction.TxId, string.Concat(StrongRequiredCode, ":", Reason(required.Reason))),
+            SchemaMismatch mismatch => mismatch,
+            StorageBusy busy => busy,
+            RequestTimeout timeout => timeout,
+        };
+    }
+
+    private async ValueTask<CommitMetadata> FinalizeLocalStrongCommitAsync(Ulid databaseId, CommitMetadata commit, CancellationToken cancellationToken)
+    {
+        await finalizer.FinalizeStrongAsync(databaseId, commit, cancellationToken).ConfigureAwait(false);
+        return commit;
     }
 
     private static Result<SqlWriteResult, SqlError, SerializationConflict, SchemaMismatch, Unavailable, RequestTimeout, StorageBusy> Durable(SqlWriteResult written, Result<Done, Unavailable, RequestTimeout> durable) => durable switch

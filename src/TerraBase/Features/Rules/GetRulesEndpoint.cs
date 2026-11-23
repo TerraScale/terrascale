@@ -29,7 +29,8 @@ internal sealed class GetRulesEndpoint(RulesService rules, RulesStore store, Dat
             {
                 StoredRules current => await access.OpenAsync(resolved.Database, cancellationToken) switch
                 {
-                    ISqlDatabaseSession session => new RulesResponse(current, await RulesService.ProblemsAsync(session, current.Rules, cancellationToken)),
+                    ISqlDatabaseSession session => new RulesResponse(current, await RulesService.ProblemsAsync(session, current.Rules, cancellationToken),
+                        RulesService.Warnings(current.Rules)),
                     Unavailable unavailable => unavailable,
                 },
                 NotFound missing => missing,
@@ -44,15 +45,20 @@ internal sealed class GetRulesEndpoint(RulesService rules, RulesStore store, Dat
     }
 }
 
-public sealed class RulesResponse(StoredRules rules, IReadOnlyList<RulesProblem>? problems) : IResult
+public sealed class RulesResponse(StoredRules rules, IReadOnlyList<RulesProblem> problems, IReadOnlyList<RulesProblem> warnings) : IResult
 {
-    public Task ExecuteAsync(HttpContext httpContext) =>
-        RulesRoute.Body(httpContext, rules, problems is { Count: > 0 } ? problems : null, null).ExecuteAsync(httpContext);
+    public Task ExecuteAsync(HttpContext httpContext) => RulesRoute.Body(httpContext, rules, problems, warnings).ExecuteAsync(httpContext);
 }
 
 public sealed class InvalidRulesResponse(InvalidRules invalid) : IResult
 {
     public Task ExecuteAsync(HttpContext httpContext) => RulesRoute.Invalid(invalid).ExecuteAsync(httpContext);
+}
+
+public sealed class RulesPreconditionRequiredResponse(RulesPreconditionRequired required) : IResult
+{
+    public Task ExecuteAsync(HttpContext httpContext) =>
+        ErrorResults.Json(StatusCodes.Status428PreconditionRequired, "precondition_required", required.Message).ExecuteAsync(httpContext);
 }
 
 public sealed class StaleRulesResponse(StaleRules stale) : IResult

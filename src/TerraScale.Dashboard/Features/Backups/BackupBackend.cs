@@ -51,8 +51,16 @@ namespace TerraScale.Dashboard.Features.Backups
         private async Task<BackupBackendPage> RawPageAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string? after, int limit, CancellationToken cancellationToken)
         {
             var database = await NameAsync(scope, home, databaseId, cancellationToken);
-            var page = await CallAsync(scope, home, ["databases:read"], caller => terraBase.GetBackupStatusAsync(caller, scope.ProjectId, database, cancellationToken), BackupBackendJson.Default.BackupResponse, cancellationToken);
-            return new(page.Items, string.IsNullOrEmpty(page.Next) ? null : page.Next);
+            try
+            {
+                _ = await CallAsync(scope, home, ["databases:read"], caller => terraBase.GetBackupStatusAsync(caller, scope.ProjectId, database, cancellationToken), BackupBackendJson.Default.ContinuousBackupStatus, cancellationToken);
+            }
+            catch (DatabaseProviderException error) when (error.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.ServiceUnavailable)
+            {
+                return new([], null);
+            }
+
+            return new([], null);
         }
 
         public async Task<ProducerBackup> CreateAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
@@ -215,6 +223,7 @@ namespace TerraScale.Dashboard.Features.Backups
     }
 
     internal sealed record BackupResponse(IReadOnlyList<ProducerBackup> Items, string? Next);
+    internal sealed record ContinuousBackupStatus(string DatabaseId, string ArchivedThrough, DateTimeOffset EarliestRestorePointUtc, DateTimeOffset LatestRestorePointUtc, DateTimeOffset LastSnapshotAtUtc, long ArchivedBytes, int PendingSegments);
     internal sealed record BackupPolicyRequest(string? FullBackupCron, int RetentionDays);
     internal sealed record BackupRestoreRequest(string? Name);
     internal sealed record BackupDestinationRequest(string Endpoint, string Region, string Bucket, string AccessKeyId, string SecretKey, string Mode)
@@ -227,6 +236,7 @@ namespace TerraScale.Dashboard.Features.Backups
 
     [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, RespectRequiredConstructorParameters = true, RespectNullableAnnotations = true)]
     [JsonSerializable(typeof(BackupResponse))]
+    [JsonSerializable(typeof(ContinuousBackupStatus))]
     [JsonSerializable(typeof(ProducerBackup))]
     [JsonSerializable(typeof(ProducerBackupPolicy))]
     [JsonSerializable(typeof(BackupDestinationView))]

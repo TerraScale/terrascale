@@ -22,7 +22,8 @@ internal readonly record struct SqliteStatus(int Code, string Message)
 
     private string ErrorCode() => Code switch
     {
-        SqliteNative.ConstraintUnique or SqliteNative.ConstraintPrimaryKey => "unique_violation",
+        SqliteNative.ConstraintPrimaryKey => "primary_key_violation",
+        SqliteNative.ConstraintUnique => "unique_violation",
         SqliteNative.ConstraintForeignKey => "foreign_key_violation",
         SqliteNative.ConstraintNotNull => "not_null_violation",
         SqliteNative.ConstraintCheck => "check_violation",

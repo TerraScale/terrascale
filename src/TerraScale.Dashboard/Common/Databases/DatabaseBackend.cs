@@ -114,7 +114,7 @@ namespace TerraScale.Dashboard.Common.Databases
         private async Task<IReadOnlyList<DatabaseRegion>> ReadCatalogAsync(CancellationToken cancellationToken)
         {
             var catalog = TerraBaseResults.Require(await terraBase.ListRegionsAsync(cancellationToken));
-            var regions = catalog.Regions.Select(region => DatabaseRegion.FromId(region.Id)).ToArray();
+            var regions = catalog.Regions.Select(DatabaseRegion.FromId).ToArray();
             if (regions.Length == 0 || regions.Any(region => region is null) || regions.DistinctBy(region => region!.Id).Count() != regions.Length)
             {
                 throw new HttpRequestException("TerraBase returned an invalid region catalog.");

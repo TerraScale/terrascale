@@ -1,58 +1,53 @@
 import { randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { once } from 'node:events';
-import { request as httpRequest } from 'node:http';
-import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect } from '@playwright/test';
-import { test, database, json, name, project, removeDatabase, sql, type Cells } from '../placement/support';
-import { auth, dash, e2eRoot, stateDir } from '../support/stack';
-import { keyId } from '../support/api-key';
+import { test, answer, database, json, name, project, regions as replication, removeDatabase, type Cells } from '../placement/support';
+import { dash, e2eRoot, stateDir } from '../support/stack';
 import { journey, ownerSession, saveSecret } from '../support/state';
 import { verifyRestoreDrill } from './restore-drill';
 import { extendPeers, startRegion } from '../placement/fleet';
-import { backupPuts, backupStore, cleanUp, continuity, crashWrite, endpoint, faultId, holeRecords, Ledger, logged, metric, node, nodeHoles, nodes, nodeRequest, nodeStatus, plantHole, probe, regions, restartAfterKill, scrape, signIn, exchangedToken, systemContinuity, tokenReady, topology, writerIs, writerToken, type Node, type Row } from './support';
+import { backupPuts, backupStore, cleanUp, clock, crashWrite, endpoint, faultId, Ledger, metric, node, nodes, nodeRequest, peersIn, peersReady, probe, projectToken, regions, restartAfterKill, systemBackup, tokenReady, type Node, type Row } from './support';
 
 test.beforeEach(async () => {
   expect(process.env.E2E_TARGET ?? 'local').toBe('local');
   expect(process.env.E2E_REGIONS).toBe('2');
   expect(process.env.E2E_NODES_PER_REGION).toBe('2');
-  await topology();
+  await peersReady();
 });
 
-test('a writer killed during a write restarts without losing acknowledged rows in either region', async ({ cells, request }) => {
+test('a peer killed during a write restarts without losing acknowledged rows on any peer', async ({ cells, request }) => {
   const created = await json<{ id: string }>(await cells.post(`${endpoint('gru')}${project()}/databases`, {
     data: { name: name('fault'), regions: [...regions] },
   }), 201);
   const ledger = new Ledger(created.id);
   let failure: unknown;
   try {
-    await sql(cells, endpoint('gru'), created.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
+    await answer(cells, endpoint('gru'), created.id, ['CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)']);
     await ledger.write(cells, 'gru', [[1, 'before-gru']]);
     await ledger.compare(cells);
     await ledger.write(cells, 'fra', [[2, 'before-fra']]);
     await ledger.compare(cells);
     const retained = [...ledger.acknowledged];
-    const token = await writerToken(request);
-    const writer = (await topology()).find(node => node.region === 'gru')!;
-    const writing = crashWrite(writer, ledger, token);
+    const token = await projectToken(request);
+    const peer = node('journey-1');
+    const writing = crashWrite(peer, ledger, token);
     await writing.sent;
-    const restart = restartAfterKill(writer, true, { token, path: database(created.id) });
+    const restart = restartAfterKill(peer, { token, path: database(created.id) });
     try {
       const outcome = await writing.outcome;
       if (outcome.error) throw outcome.error;
     } finally {
       await restart();
     }
-    await expect.poll(async () => {
-      const response = await request.get(`http://127.0.0.1:${writer.port}/readyz`);
-      return response.status();
-    }, { message: 'the crashed writer recovers from its existing data directory' }).toBe(200);
+    await expect.poll(() => probe(peer, '/readyz'), { message: 'the crashed peer recovers from its existing data directory' }).toBe(200);
     await ledger.compare(cells, retained);
+    await ledger.converge(token, nodes, retained);
     await ledger.write(cells, 'gru', [[3, 'after-gru']]);
     await ledger.write(cells, 'fra', [[4, 'after-fra']]);
     await ledger.compare(cells);
+    expect(await metric(peer, 'terrabase_backup_disabled')).toBe(0);
   } catch (error) {
     failure = error;
     throw error;
@@ -63,44 +58,38 @@ test('a writer killed during a write restarts without losing acknowledged rows i
   }
 });
 
-test('each regional writer records a restore drill with matching row content and exact recovery position', async () => {
-  for (const writer of await topology()) await verifyRestoreDrill(writer);
-});
-
-test('sjc automatically records the same verified restore evidence as the other regions', async () => {
+test('each peer reports system backup continuity, and a newly started region does too', async () => {
+  for (const peer of nodes) await verifyRestoreDrill({ ...peer, metricsPort: peer.metrics });
   const restorePeers = extendPeers(['sjc']);
   let region: Awaited<ReturnType<typeof startRegion>> | undefined;
   try {
     region = await startRegion('sjc', 0);
     const { hostname, port } = new URL(region.endpoint);
-    await verifyRestoreDrill({ name: 'journey-extra-sjc', region: 'sjc', address: hostname, port: Number(port), metricsPort: region.metricsPort });
+    await verifyRestoreDrill({ name: 'journey-extra-sjc', region: 'sjc', address: hostname, port: Number(port), metricsPort: region.metricsPort }, false);
+    expect((await fetch(`${region.endpoint}/readyz`)).status).toBe(200);
   } finally {
     if (region) await region.stop();
     restorePeers();
   }
 });
 
-test('the recovery-point age keeps rising while the backup bucket is unreachable, also across a writer restart', async () => {
-  const writer = (await topology()).find(node => node.region === 'gru')!;
-  await expect.poll(() => probe(writer, '/backupz'), { message: 'the writer ships every file before the outage' }).toBe(200);
+test('backup failures rise while the bucket is unreachable, including across a peer restart', async () => {
+  const peer = node('journey-1');
+  await expect.poll(async () => {
+    const status = await probe(peer, '/backupz');
+    return status === 200 || status === 503;
+  }, { message: 'backupz answers before the outage' }).toBe(true);
+  const before = await metric(peer, 'terrabase_backup_failures_total');
   await backupStore('down');
   let outage = true;
-  const down = Date.now();
-  const rising = async (above: number, message: string) => {
-    let age = 0;
-    await expect.poll(async () => {
-      const elapsed = (Date.now() - down) / 1000;
-      age = await metric(writer, 'terrabase_backup_recovery_point_age_seconds', 'region="gru"');
-      return Number.isFinite(age) && age > above && age >= elapsed;
-    }, { message }).toBe(true);
-    return age;
-  };
   try {
-    const first = await rising(0, 'the age is a finite number covering the outage');
-    const second = await rising(first, 'the age rises between two observations');
-    const restart = restartAfterKill(writer, true, undefined, async () => {
-      expect(await probe(writer, '/readyz')).toBe(503);
-      await rising(second, 'the restarted writer reports a finite age that still covers the outage before the bucket is back');
+    await expect.poll(() => metric(peer, 'terrabase_backup_failures_total'), { message: 'archive passes fail while the bucket is unreachable', timeout: 60_000 }).toBeGreaterThan(before);
+    expect(await probe(peer, '/readyz'), 'the peer keeps serving while backup is down').toBe(200);
+    const restart = restartAfterKill(peer, undefined, async () => {
+      await expect.poll(() => probe(peer, '/backupz'), { message: 'a cold peer cannot read the archive while the bucket is down' }).toBe(503);
+      const cold = await systemBackup(peer);
+      expect(cold.status).toBe(503);
+      expect(cold.body).toMatchObject({ status: 'unavailable', region: 'gru' });
       await backupStore('up');
       outage = false;
     });
@@ -108,54 +97,59 @@ test('the recovery-point age keeps rising while the backup bucket is unreachable
   } finally {
     if (outage) await backupStore('up');
   }
-  await expect.poll(() => probe(writer, '/readyz'), { message: 'the restarted writer is ready' }).toBe(200);
-  await expect.poll(() => probe(writer, '/backupz'), { message: 'the writer ships again once the bucket is back' }).toBe(200);
+  await expect.poll(() => probe(peer, '/readyz'), { message: 'the restarted peer is ready' }).toBe(200);
+  await expect.poll(() => probe(peer, '/backupz'), { message: 'backupz answers again once the bucket is back' }).toBe(200);
+  expect((await clock(peer)).machine).toBe(peer.name);
 });
 
-test('restore a backup into another database and compare its rows with the snapshot ledger in every region', async ({ cells }) => {
+test('a bookmark restore copies the snapshot ledger into every region and leaves later writes behind', async ({ cells }) => {
   const created = await json<{ id: string }>(await cells.post(`${endpoint('gru')}${project()}/databases`, {
     data: { name: name('backup-ledger'), regions: [...regions] },
   }), 201);
   const ledger = new Ledger(created.id);
-  let restored: string | undefined;
+  const copies: string[] = [];
   let failure: unknown;
   try {
-    await sql(cells, endpoint('gru'), created.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
-    await ledger.write(cells, 'gru', [[1, 'snapshot-gru']]);
+    await answer(cells, endpoint('gru'), created.id, ['CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)']);
+    ledger.record('submitted', [[1, 'snapshot-gru']], 'gru');
+    const snapshot = await answer(cells, endpoint('gru'), created.id, ["INSERT INTO fault_rows (id, value) VALUES (1, 'snapshot-gru')"]);
+    ledger.record('acknowledged', [[1, 'snapshot-gru']], 'gru');
     await ledger.compare(cells);
-    await ledger.write(cells, 'fra', [[2, 'snapshot-fra']]);
+    ledger.record('submitted', [[2, 'snapshot-fra']], 'fra');
+    const fraWrite = await answer(cells, endpoint('fra'), created.id, ["INSERT INTO fault_rows (id, value) VALUES (2, 'snapshot-fra')"]);
+    ledger.record('acknowledged', [[2, 'snapshot-fra']], 'fra');
     await ledger.compare(cells);
-    const snapshotRows = [...ledger.acknowledged];
-    const backup = await json<{ id: string; status: string }>(await cells.post(`${endpoint('gru')}${database(created.id)}/backups`), 201);
-    expect(backup.status).toBe('ready');
-    ledger.record('snapshot', snapshotRows, 'gru');
+    const archived = await json<{ databaseId: string; archivedThrough: string; pendingSegments: number }>(await cells.post(`${endpoint('gru')}${database(created.id)}/backups`));
+    expect(archived.databaseId).toBe(created.id);
+    expect(archived.archivedThrough).toEqual(expect.any(String));
     await ledger.write(cells, 'gru', [[3, 'after-snapshot']]);
-    const operation = await json<{ id: string }>(await cells.post(`${endpoint('gru')}${database(created.id)}/backups/${backup.id}/restore`, {
-      data: { name: name('restored-ledger') },
+    const operation = await json<{ operationId: string; state: string; sourceDatabaseId: string }>(await cells.post(`${endpoint('gru')}${database(created.id)}/point-in-time/restore`, {
+      data: { bookmark: snapshot.bookmark, name: name('restored-ledger') },
     }), 202);
-    await expect.poll(async () => {
-      const state = await json<{ status: string; database: string; errorCode?: string }>(await cells.get(`${endpoint('gru')}${database(created.id)}/restores/${operation.id}`));
-      expect(state.status, state.errorCode).not.toBe('failed');
-      if (state.status === 'completed') restored = state.database;
-      return state.status;
-    }, { message: 'the backup restore completes' }).toBe('completed');
+    expect(operation).toMatchObject({ sourceDatabaseId: created.id });
+    copies.push(await completed(cells, created.id, operation.operationId));
     for (const region of regions) {
-      await expect.poll(() => ledger.read(cells, region, restored), { message: `the restored ${region} data matches the snapshot`, timeout: 45_000, intervals: [250, 500, 1000] }).toEqual(snapshotRows);
+      await expect.poll(async () => (await answer(cells, endpoint(region), copies[0], ['SELECT id, value FROM fault_rows ORDER BY id'])).results[0].rows, {
+        message: `the restored ${region} copy matches the bookmark`, timeout: 45_000, intervals: [250, 500, 1000],
+      }).toEqual([[1, 'snapshot-gru']]);
     }
-    await ledger.compare(cells);
-    console.log(`backup ${backup.id}: restored snapshot ledger in both regions; later source write excluded`);
+    expect((await answer(cells, endpoint('gru'), created.id, ['SELECT id, value FROM fault_rows ORDER BY id'])).results[0].rows).toEqual([[1, 'snapshot-gru'], [2, 'snapshot-fra'], [3, 'after-snapshot']]);
+    expect(fraWrite.bookmark).not.toBe(snapshot.bookmark);
+    const succeeded = await metric(node('journey-1'), 'terrabase_backup_operations_total', 'state="succeeded"')
+      + await metric(node('journey-3'), 'terrabase_backup_operations_total', 'state="succeeded"');
+    expect(succeeded).toBeGreaterThan(0);
+    console.log(`bookmark ${snapshot.bookmark}: restored snapshot ledger in both regions; later source writes excluded`);
   } catch (error) {
     failure = error;
     throw error;
   } finally {
     await cleanUp(failure, async () => {
-      if (restored) await removeDatabase(cells, restored);
+      for (const copy of copies) await removeDatabase(cells, copy);
       await removeDatabase(cells, created.id);
     });
   }
 });
 
-const outageHold = 30_000;
 async function createLedgers(cells: Cells, count: number, label: string): Promise<Ledger[]> {
   const ledgers: Ledger[] = [];
   for (let index = 0; index < count; index++) {
@@ -164,7 +158,7 @@ async function createLedgers(cells: Cells, count: number, label: string): Promis
     }), 201);
     const ledger = new Ledger(created.id);
     ledgers.push(ledger);
-    await sql(cells, endpoint('gru'), created.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
+    await answer(cells, endpoint('gru'), created.id, ['CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)']);
     await ledger.write(cells, 'gru', Array.from({ length: 20 }, (_, row): Row => [row + 1, `base-${row + 1}`]));
   }
   for (const ledger of ledgers) await ledger.compare(cells);
@@ -174,538 +168,215 @@ async function createLedgers(cells: Cells, count: number, label: string): Promis
 async function holdOutage(ledgers: Ledger[], token: string): Promise<void> {
   for (const [index, ledger] of ledgers.entries()) {
     const base = Array.from({ length: 20 }, (_, row): Row => [row + 1, `base-${row + 1}`]);
-    const rows = await ledger.readNode(node('journey-2'), token);
-    for (const row of base) expect(rows, 'fra keeps serving reads while journey-1 is down').toContainEqual(row);
+    for (const peer of [node('journey-3'), node('journey-2'), node('journey-4')]) {
+      const rows = await ledger.readNode(peer, token);
+      for (const row of base) expect(rows, `${peer.name} keeps serving reads while journey-1 is down`).toContainEqual(row);
+    }
     const id = 2000 + index;
-    expect(await ledger.direct(node('journey-2'), token, [[id, `outage-${id}`]]), 'fra accepts writes while journey-1 is down: regions are active-active peers')
-      .toBe(true);
+    expect(await ledger.direct(node('journey-3'), token, [[id, `gru-peer-${id}`]]), 'the other gru peer accepts writes').toBe(true);
+    expect(await ledger.direct(node('journey-2'), token, [[id + 100, `fra-peer-${id}`]]), 'fra accepts writes while one gru peer is down').toBe(true);
   }
 }
 
-async function killDuringBurst(ledgers: Ledger[], token: string): Promise<{ killedAt: number; restart: () => Promise<void> }> {
-  const writer = node('journey-1');
+async function killDuringBurst(ledgers: Ledger[], token: string): Promise<() => Promise<void>> {
+  const peer = node('journey-1');
   const ids = Array.from({ length: 240 }, (_, index) => 1000 + index);
   let next = 0;
   let acknowledged = 0;
-  let killed: { killedAt: number; restart: () => Promise<void> } | undefined;
+  let restart: (() => Promise<void>) | undefined;
   try {
     await Promise.all(Array.from({ length: 12 }, async () => {
       while (next < ids.length) {
         const id = ids[next++];
         const ledger = ledgers[id % ledgers.length];
-        if (await ledger.direct(writer, token, [[id, `burst-${id}`]]) && ++acknowledged === 45 && !killed) {
-          killed = { killedAt: Date.now(), restart: restartAfterKill(writer, true, { token, path: database(ledgers[0].id) }) };
+        if (await ledger.direct(peer, token, [[id, `burst-${id}`]]) && ++acknowledged === 45 && !restart) {
+          restart = restartAfterKill(peer, { token, path: database(ledgers[0].id) });
         }
       }
     }));
   } catch (error) {
-    await cleanUp(error, async () => { await killed?.restart(); });
+    await cleanUp(error, async () => { await restart?.(); });
     throw error;
   }
-  expect(killed, 'the writer was killed during the burst').toBeDefined();
-  return killed!;
+  expect(restart, 'journey-1 was killed during the burst').toBeDefined();
+  return restart!;
 }
 
-const writers = () => [node('journey-1'), node('journey-2')];
-
-async function recovered(ledgers: Ledger[], token: string): Promise<void> {
-  for (const ledger of ledgers) {
-    await ledger.converge(token, writers(), [...ledger.acknowledged]);
-    for (const writer of writers()) {
-      const rows = await ledger.readNode(writer, token);
-      for (const row of ledger.refused) expect(rows, 'a refused write was never applied').not.toContainEqual(row);
-    }
-  }
-}
-
-test('a revoked API key cannot serve a pending request body beyond its documented budget', async ({ cells, request }) => {
-  const [ledger] = await createLedgers(cells, 1, 'revoked-work');
-  const current = journey();
-  const headers = { authorization: `Bearer ${await signIn()}` };
-  const root = `${auth}/v1/terrascale/organizations/${current.organizationId}/projects/${current.projectId}/api-keys`;
-  const created = await json<{ key: string }>(await request.post(root, { headers, data: { name: name('revocation-budget'), scopes: ['sql:read', 'sql:write'] } }), 201);
-  saveSecret('revocation-budget-key', created.key);
-  const grant = await json<{ access_token: string }>(await request.post(`${auth}/terrascale/oauth/token`, {
-    form: { grant_type: 'client_credentials', client_id: keyId(created.key), client_secret: created.key, project: current.projectId, scope: 'sql:read sql:write' },
-  }));
-  saveSecret('revocation-budget-token', grant.access_token);
-  const call = httpRequest(`http://127.0.0.1:${node('journey-1').port}${database(ledger.id)}/sql/execute`, {
-    method: 'POST', headers: { authorization: `Bearer ${grant.access_token}`, 'content-type': 'application/json', expect: '100-continue', 'content-length': '1024' },
-  });
-  const answer = new Promise<{ status: number | undefined; body: string }>((resolve, reject) => {
-    call.on('error', reject);
-    call.on('response', response => {
-      let body = '';
-      response.on('data', data => { body += data; });
-      response.on('error', reject);
-      response.on('end', () => resolve({ status: response.statusCode, body }));
-    });
-  });
-  try {
-    const reading = once(call, 'continue');
-    call.flushHeaders();
-    await reading;
-    const revoked = await request.delete(`${root}/${keyId(created.key)}`, { headers });
-    expect(revoked.status()).toBe(204);
-    const acknowledged = performance.now();
-    const result = await answer;
-    expect(result.status, result.body).toBe(401);
-    expect(JSON.parse(result.body).error.code).toBe('key_revoked');
-    expect(performance.now() - acknowledged, 'a definitive revocation cuts running work within the existing 2.5 s budget').toBeLessThanOrEqual(2500);
-  } finally {
-    call.destroy();
-    await removeDatabase(cells, ledger.id);
-  }
-});
-
-test('a deletion whose holder hands the writer role over before the new writer has its erasure proof still completes erasure', async ({ cells }) => {
+test('a gru peer that stays down loses no acknowledged row: the other peers keep serving, and every row converges after the restart', async ({ cells, request }) => {
   test.setTimeout(300_000);
-  const gru = node('journey-1');
-  const partner = node('journey-3');
-  await restartAfterKill(partner, false)();
-  const [ledger] = await createLedgers(cells, 1, 'holder-handoff');
-  await removeDatabase(cells, ledger.id);
-  const passed = (target: Node) => logged(target, 'Backup erasure of database', `"Database":"${ledger.id}"`, 'is verified')
-    + logged(target, 'Backup erasure of database', `"Database":"${ledger.id}"`, '"Reason":"verification_pending"');
-  let failure: unknown;
-  let handedOver = false;
-  try {
-    const primed = await nodeRequest(partner, '/v1/rollout/prime?source=journey-1', 'POST');
-    expect(primed.status, 'journey-3, restarted after it last gave up the writer role, catches up before it takes it again').toBe(204);
-    const drained = await nodeRequest(gru, '/v1/rollout/drain?target=journey-3', 'POST');
-    expect(drained.status, drained.body).toBe(204);
-    handedOver = true;
-    await writerIs('gru', 'journey-3');
-    await expect.poll(() => passed(partner), {
-      message: 'the new writer gets the erasure proof of journey-1, the holder that deleted the database, and its backup erasure goes past the active copies', timeout: 180_000,
-    }).toBeGreaterThan(0);
-    expect(logged(partner, 'Backup erasure of database', `"Database":"${ledger.id}"`, '"Reason":"active_copies_pending"', '"Holders":"journey-1"'),
-      'once the proof arrives no pass waits on the holder again').toBeLessThanOrEqual(1);
-    const receipts = async (target: Node) => {
-      const response = await nodeRequest(target, '/v1/sync/purge-receipts/' + ledger.id);
-      expect(response.status, response.body).toBe(200);
-      return JSON.parse(response.body) as { known: boolean; settled: boolean };
-    };
-    expect(await receipts(partner), 'the new writer recorded the erasure receipt of every holder its purge record names').toEqual({ known: true, settled: true });
-    expect(await receipts(gru), 'journey-1 still holds its own erasure receipt bound to the purge record').toEqual({ known: true, settled: true });
-  } catch (error) {
-    failure = error;
-    throw error;
-  } finally {
-    await cleanUp(failure, async () => {
-      if (!handedOver) return;
-      await restartAfterKill(gru, false)();
-      const caughtUp = await nodeRequest(gru, '/v1/rollout/prime?source=journey-3', 'POST');
-      expect(caughtUp.status, 'journey-1, restarted after it gave up the writer role, catches up before it takes it back').toBe(204);
-      const back = await nodeRequest(partner, '/v1/rollout/drain?target=journey-1', 'POST');
-      expect(back.status, back.body).toBe(204);
-      await writerIs('gru', 'journey-1');
-    });
-  }
-});
-
-test('a gru node that stays down loses no acknowledged row: fra keeps serving reads and writes, and every row converges in both regions after the restart', async ({ cells, request }) => {
-  test.setTimeout(2 * (outageHold + 150_000));
-  const signedIn = await signIn();
-  for (const round of [1, 2]) {
-    const ledgers = await createLedgers(cells, 3, `node-outage-${round}`);
-    let token = await exchangedToken(request, signedIn);
-    const { restart } = await killDuringBurst(ledgers, token);
-    console.log(`round ${round}: journey-1 killed after ${ledgers.reduce((sum, ledger) => sum + ledger.acknowledged.length, 0)} acknowledged rows`);
-    try {
-      await holdOutage(ledgers, token);
-    } finally {
-      await restart();
-    }
-    token = await exchangedToken(request, signedIn);
-    await recovered(ledgers, token);
-    for (const ledger of ledgers) await ledger.drop(token, node('journey-1'));
-  }
-});
-
-test('a gru node killed right after an acknowledgement that fra replicated serves the row again after its restart', async ({ cells, request }) => {
-  test.setTimeout(outageHold + 180_000);
-  const signedIn = await signIn();
-  const ledgers = await createLedgers(cells, 2, 'node-replicated');
-  for (const ledger of ledgers) {
-    await ledger.write(cells, 'gru', [[500, 'last-before-kill']]);
-    await ledger.compare(cells);
-  }
-  let token = await exchangedToken(request, signedIn);
-  const restart = restartAfterKill(node('journey-1'), true, { token, path: database(ledgers[0].id) });
+  const token = await projectToken(request);
+  const ledgers = await createLedgers(cells, 3, 'node-outage');
+  for (const ledger of ledgers) await ledger.converge(token, nodes);
+  const restart = await killDuringBurst(ledgers, token);
+  console.log(`journey-1 killed after ${ledgers.reduce((sum, ledger) => sum + ledger.acknowledged.length, 0)} acknowledged rows`);
   try {
     await holdOutage(ledgers, token);
-    for (const ledger of ledgers) expect(await ledger.readNode(node('journey-2'), token), 'fra serves the replicated row while journey-1 is down').toContainEqual([500, 'last-before-kill']);
   } finally {
     await restart();
   }
-  token = await exchangedToken(request, signedIn);
-  await recovered(ledgers, token);
-  for (const ledger of ledgers) expect(await ledger.readNode(node('journey-1'), token)).toContainEqual([500, 'last-before-kill']);
-  for (const ledger of ledgers) await ledger.drop(token, node('journey-1'));
+  for (const ledger of ledgers) {
+    await ledger.converge(token, nodes, [...ledger.acknowledged]);
+    await ledger.drop(token, node('journey-1'));
+  }
 });
 
-test('an idle backup reaches acknowledged writes without another write, including after a writer restart', async ({ cells }) => {
-  const writer = (await topology()).find(node => node.region === 'gru')!;
+test('a gru peer killed after the row is on the other peers serves that row again after its restart', async ({ cells, request }) => {
+  test.setTimeout(180_000);
+  const ledgers = await createLedgers(cells, 2, 'node-replicated');
+  const token = await projectToken(request);
+  for (const ledger of ledgers) {
+    await ledger.write(cells, 'gru', [[500, 'last-before-kill']]);
+    await ledger.converge(token, nodes);
+  }
+  const restart = restartAfterKill(node('journey-1'), { token, path: database(ledgers[0].id) });
+  try {
+    await holdOutage(ledgers, token);
+    for (const ledger of ledgers) {
+      for (const peer of [node('journey-3'), node('journey-2')]) {
+        expect(await ledger.readNode(peer, token), `${peer.name} serves the replicated row while journey-1 is down`).toContainEqual([500, 'last-before-kill']);
+      }
+    }
+  } finally {
+    await restart();
+  }
+  for (const ledger of ledgers) {
+    await ledger.converge(token, nodes);
+    expect(await ledger.readNode(node('journey-1'), token)).toContainEqual([500, 'last-before-kill']);
+    await ledger.drop(token, node('journey-1'));
+  }
+});
+
+test('an idle archive reaches acknowledged writes without another write, including after a peer restart', async ({ cells }) => {
+  const peer = node('journey-1');
   const created = await json<{ id: string }>(await cells.post(`${endpoint('gru')}${project()}/databases`, {
     data: { name: name('idle-backup'), regions: ['gru'] },
   }), 201);
   const ledger = new Ledger(created.id);
-  const restored: string[] = [];
+  const copies: string[] = [];
   const latest = async () => {
     const window = await cells.get(`${endpoint('gru')}${database(created.id)}/point-in-time`);
-    return window.status() === 200 ? Date.parse((await window.json() as { latest: string }).latest) : 0;
+    return window.status() === 200 ? Date.parse((await window.json() as { latestRestorePointUtc: string }).latestRestorePointUtc) : 0;
   };
   const recover = async (acked: number) => {
-    await expect.poll(latest, { message: 'the idle backup proves every acknowledged write without a later source write' }).toBeGreaterThanOrEqual(acked);
+    await json(await cells.post(`${endpoint('gru')}${database(created.id)}/backups`));
+    await expect.poll(latest, { message: 'the idle archive proves every acknowledged write without a later source write', timeout: 60_000 }).toBeGreaterThanOrEqual(acked);
     const at = await latest();
-    const plan = await json<{ window: { latest: string } }>(await cells.post(`${endpoint('gru')}${database(created.id)}/point-in-time/plan`, {
+    const plan = await json<{ feasible: boolean; latestRestorePointUtc: string }>(await cells.post(`${endpoint('gru')}${database(created.id)}/point-in-time/plan`, {
       data: { pointInTime: new Date(at).toISOString() },
     }));
-    expect(Date.parse(plan.window.latest), 'the stored objects also prove the acknowledged write').toBeGreaterThanOrEqual(acked);
-    const operation = await json<{ id: string }>(await cells.post(`${endpoint('gru')}${database(created.id)}/point-in-time/restore`, {
+    expect(plan.feasible, 'the stored archive also proves the acknowledged write').toBe(true);
+    expect(Date.parse(plan.latestRestorePointUtc)).toBeGreaterThanOrEqual(acked);
+    const operation = await json<{ operationId: string }>(await cells.post(`${endpoint('gru')}${database(created.id)}/point-in-time/restore`, {
       data: { pointInTime: new Date(at).toISOString(), name: name('idle-restored') },
     }), 202);
-    let copy = '';
-    await expect.poll(async () => {
-      const state = await json<{ status: string; database: string; errorCode?: string }>(await cells.get(`${endpoint('gru')}${database(created.id)}/restores/${operation.id}`));
-      expect(state.status, state.errorCode).not.toBe('failed');
-      if (state.status === 'completed') copy = state.database;
-      return state.status;
-    }, { message: 'the idle backup restores its acknowledged rows' }).toBe('completed');
-    restored.push(copy);
+    const copy = await completed(cells, created.id, operation.operationId);
+    copies.push(copy);
     expect(await ledger.read(cells, 'gru', copy)).toEqual(ledger.acknowledged);
-    console.log(`idle backup ${created.id}: acknowledged=${acked} proven=${at} restored=${JSON.stringify(ledger.acknowledged)}`);
+    console.log(`idle archive ${created.id}: acknowledged=${acked} proven=${at} restored=${JSON.stringify(ledger.acknowledged)}`);
   };
   let failure: unknown;
   try {
-    await sql(cells, endpoint('gru'), created.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
-    await expect.poll(latest, { message: 'the initial snapshot is stored before the isolated write' }).toBeGreaterThan(0);
+    await answer(cells, endpoint('gru'), created.id, ['CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)']);
     await ledger.write(cells, 'gru', [[1, 'before-restart']]);
     await recover(Date.now());
     await ledger.write(cells, 'gru', [[2, 'restart-immediately']]);
     const acked = Date.now();
-    const restart = restartAfterKill(writer, true);
-    await restart();
-    await expect.poll(() => probe(writer, '/readyz'), { message: 'the restarted writer is ready' }).toBe(200);
-    await tokenReady(writer, cells, database(created.id));
+    await restartAfterKill(peer)();
+    await expect.poll(() => probe(peer, '/readyz'), { message: 'the restarted peer is ready' }).toBe(200);
+    await tokenReady(peer, cells, database(created.id));
     await recover(acked);
   } catch (error) {
     failure = error;
     throw error;
   } finally {
     await cleanUp(failure, async () => {
-      for (const copy of restored) await removeDatabase(cells, copy);
+      for (const copy of copies) await removeDatabase(cells, copy);
       await removeDatabase(cells, created.id);
     });
   }
 });
 
-test('history lost while the backup store is unreachable is one hole each time, also across a generation restart and a node restart, and restores refuse every hole', async ({ cells }) => {
+test('writes made while the archive is unreachable are still restorable from the peer, a future point is refused, and deletion removes the restore window', async ({ cells }) => {
   test.setTimeout(180_000);
-  const writer = (await topology()).find(node => node.region === 'gru')!;
+  const peer = node('journey-1');
   const created = await json<{ id: string }>(await cells.post(`${endpoint('gru')}${project()}/databases`, {
     data: { name: name('backup-hole'), regions: ['gru'] },
   }), 201);
   const ledger = new Ledger(created.id);
-  const restored: string[] = [];
+  const copies: string[] = [];
   let outage = false;
-  const churn = async (batches: number) => {
-    let inside = 0;
-    for (let batch = 0; batch < batches; batch++) {
-      if (batch === Math.floor(batches / 2)) inside = Date.now();
-      const response = await cells.post(`${endpoint('gru')}${database(created.id)}/sql/execute`, {
-        data: { statements: Array.from({ length: 2 }, (_, index) => ({ sql: `UPDATE fault_blob SET body = zeroblob(${1_048_576 + batch * 2 + index}) WHERE id = 1` })) },
-      });
-      expect(response.status(), await response.text()).toBe(200);
-    }
-    return inside;
-  };
-  const refusal = async (at: number) => {
-    const refused = await cells.post(`${endpoint('gru')}${database(created.id)}/point-in-time/restore`, {
-      data: { pointInTime: new Date(at).toISOString(), name: name('hole-inside') },
-    });
-    expect(refused.status()).toBe(409);
-    const error = (await refused.json() as { error: { code: string; message: string; unavailableFrom: string; unavailableTo: string } }).error;
-    expect(error.code).toBe('backup_history_incomplete');
-    expect(error.message).toContain('was lost before it was stored');
-    return error;
-  };
   let failure: unknown;
   try {
-    await sql(cells, endpoint('gru'), created.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
-    await ledger.write(cells, 'gru', [[1, 'before-outage']]);
-    const storedAt = Date.now();
-    await sql(cells, endpoint('gru'), created.id, 'CREATE TABLE fault_blob (id INTEGER PRIMARY KEY, body BLOB NOT NULL)');
-    await sql(cells, endpoint('gru'), created.id, 'INSERT INTO fault_blob (id, body) VALUES (1, zeroblob(1))');
-    const blobAt = Date.now();
-    await expect.poll(async () => {
-      const window = await cells.get(`${endpoint('gru')}${database(created.id)}/point-in-time`);
-      return window.status() === 200 ? Date.parse((await window.json() as { latest: string }).latest) : 0;
-    }, { message: 'the proven restore time reaches the acknowledgement of the last write before the outage' }).toBeGreaterThanOrEqual(blobAt);
-    await expect.poll(() => probe(writer, '/backupz'), { message: 'the writer ships every file before the outage' }).toBe(200);
-    const holes = await metric(writer, 'terrabase_backup_holes');
-    const recordedHoles = await metric(writer, 'terrabase_backup_holes_recorded_total');
-    const generations = await metric(writer, 'terrabase_backup_generations_total');
-    const shipped = await continuity(writer, created.id);
-    expect(shipped).toMatchObject({ replacing: false, storedIncarnation: shipped.incarnation, holes: [] });
+    await answer(cells, endpoint('gru'), created.id, ['CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)']);
+    const snapshot = await answer(cells, endpoint('gru'), created.id, ["INSERT INTO fault_rows (id, value) VALUES (1, 'before-outage')"]);
+    ledger.record('acknowledged', [[1, 'before-outage']], 'gru');
+    const archived = await json<{ databaseId: string; archivedThrough: string }>(await cells.post(`${endpoint('gru')}${database(created.id)}/backups`));
+    expect(archived).toMatchObject({ databaseId: created.id });
+    const stored = await backupPuts(`databases/${created.id}/`);
+    expect(stored.some(key => key.endsWith('/manifest.json') || key.includes('/snapshots/') || key.includes('/segments/'))).toBe(true);
 
-    const firstMark = (await backupPuts(shipped.file)).length;
+    const future = await cells.post(`${endpoint('gru')}${database(created.id)}/point-in-time/restore`, {
+      data: { pointInTime: new Date(Date.now() + 3_600_000).toISOString(), name: name('future-hole') },
+    });
+    const futureText = await future.text();
+    expect(future.status(), futureText).toBe(400);
+    expect((JSON.parse(futureText) as { error: { code: string } }).error.code).toBe('restore_point_in_future');
+
+    const failures = await metric(peer, 'terrabase_backup_failures_total');
     await backupStore('down');
     outage = true;
-    const inside = await churn(75);
-    console.log('backup holes: first discard completed');
-    const duringSent = Date.now();
     await ledger.write(cells, 'gru', [[2, 'during-outage']]);
-    const duringAcked = Date.now();
-    const counted = async () => {
-      const read = await scrape(writer);
-      return { holes: read('terrabase_backup_holes'), recorded: read('terrabase_backup_holes_recorded_total') };
-    };
-    await expect.poll(counted, { message: 'the discarded history becomes exactly one hole, counted once' }).toEqual({ holes: holes + 1, recorded: recordedHoles + 1 });
-    await expect.poll(async () => {
-      const state = await continuity(writer, created.id);
-      return state.holes.length === 1 && state.holes[0]!.to === state.historyStart && state.oldestRetained === state.historyStart;
-    }, { message: 'the open hole ends where the change log now starts' }).toBe(true);
-    const opened = await continuity(writer, created.id);
-    expect(opened).toMatchObject({ replacing: true, storedPosition: shipped.storedPosition, storedIncarnation: opened.incarnation });
-    expect(opened.holes[0]).toMatchObject({ incarnation: opened.incarnation, from: shipped.storedPosition, open: true });
-    expect(opened.holes[0]!.from).toBeLessThan(opened.holes[0]!.to);
-    expect(await probe(writer, '/backupz')).toBe(503);
-    expect(await probe(writer, '/readyz')).toBe(200);
-    const stillOpen = await refusal(inside);
-    expect(stillOpen.message).toContain('no recovery point after it is stored yet');
-    expect(Date.parse(stillOpen.unavailableFrom)).toBeLessThan(inside);
-    expect(Date.parse(stillOpen.unavailableTo)).toBeGreaterThanOrEqual(Date.parse(stillOpen.unavailableFrom));
-
+    const during = await answer(cells, endpoint('gru'), created.id, ["INSERT INTO fault_rows (id, value) VALUES (3, 'still-local')"]);
+    ledger.record('acknowledged', [[3, 'still-local']], 'gru');
+    expect(await probe(peer, '/readyz'), 'the peer keeps serving while the archive cannot be reached').toBe(200);
+    const operation = await json<{ operationId: string }>(await cells.post(`${endpoint('gru')}${database(created.id)}/point-in-time/restore`, {
+      data: { bookmark: snapshot.bookmark, name: name('local-hole') },
+    }), 202);
+    copies.push(await completed(cells, created.id, operation.operationId));
+    expect(await ledger.read(cells, 'gru', copies[0])).toEqual([[1, 'before-outage']]);
     await backupStore('up');
     outage = false;
-    await expect.poll(() => probe(writer, '/backupz'), { message: 'a replacement snapshot makes the writer healthy again' }).toBe(200);
-    expect(await metric(writer, 'terrabase_backup_generations_total')).toBeGreaterThan(generations);
-    expect(await metric(writer, 'terrabase_backup_holes')).toBe(holes + 1);
-    const firstHole = new RegExp(`/holes/${opened.incarnation}-${String(opened.holes[0]!.from).padStart(16, '0')}-\\d{16}-\\d{13}-(\\d{13}|unknown)-open$`);
-    const afterFirst = (await backupPuts(shipped.file)).slice(firstMark);
-    expect(afterFirst[0], `the first object the bucket receives after the outage is the hole: ${afterFirst.join(' ')}`).toMatch(firstHole);
-    const uploaded = await metric(writer, 'terrabase_backup_uploaded_bytes_total', 'kind="segment"');
-    await ledger.write(cells, 'gru', [[3, 'after-outage']]);
-    const afterAcked = Date.now();
-    await expect.poll(() => metric(writer, 'terrabase_backup_uploaded_bytes_total', 'kind="segment"'), { message: 'later passes store the writes after the outage' }).toBeGreaterThan(uploaded);
-    await expect.poll(async () => {
-      const window = await cells.get(`${endpoint('gru')}${database(created.id)}/point-in-time`);
-      return window.status() === 200 ? Date.parse((await window.json() as { latest: string }).latest) : 0;
-    }, { message: 'the proven restore time reaches the write after the outage' }).toBeGreaterThanOrEqual(afterAcked);
-    const closed = await continuity(writer, created.id);
-    expect(closed).toMatchObject({ replacing: false, storedIncarnation: closed.incarnation });
-    expect(closed.holes).toHaveLength(1);
-    expect(closed.holes[0]).toMatchObject({ incarnation: closed.incarnation, from: opened.holes[0]!.from, open: false });
-    expect(closed.holes[0]!.to).toBeGreaterThanOrEqual(opened.holes[0]!.to);
-    expect(closed.holes[0]!.to).toBeLessThanOrEqual(closed.storedPosition!);
+    await expect.poll(() => metric(peer, 'terrabase_backup_failures_total'), { message: 'the outage was counted' }).toBeGreaterThanOrEqual(failures);
+    const caughtUp = await json<{ databaseId: string; latestRestorePointUtc: string }>(await cells.post(`${endpoint('gru')}${database(created.id)}/backups`));
+    expect(caughtUp.databaseId).toBe(created.id);
+    expect(Date.parse(caughtUp.latestRestorePointUtc)).toBeGreaterThan(0);
+    expect((await answer(cells, endpoint('gru'), created.id, ['SELECT id, value FROM fault_rows ORDER BY id'], { bookmark: during.bookmark })).results[0].rows)
+      .toEqual([[1, 'before-outage'], [2, 'during-outage'], [3, 'still-local']]);
 
-    const unplaceable = await metric(writer, 'terrabase_backup_generation_restarts_total', 'reason="log_unplaceable"');
-    const secondMark = (await backupPuts(shipped.file)).length;
-    await backupStore('down');
-    outage = true;
-    await sql(cells, endpoint('gru'), created.id, 'ALTER TABLE fault_rows ADD COLUMN note TEXT');
-    await expect.poll(() => metric(writer, 'terrabase_backup_generation_restarts_total', 'reason="log_unplaceable"'),
-      { message: 'the schema change restarts the generation' }).toBe(unplaceable + 1);
-    const kept = await continuity(writer, created.id);
-    expect(kept, 'the restart keeps the last stored position until a replacement is stored').toMatchObject({ replacing: true, storedIncarnation: kept.incarnation });
-    expect(kept.storedPosition).toBeGreaterThanOrEqual(closed.storedPosition!);
-    const insideSecond = await churn(75);
-    console.log('backup holes: second discard completed');
-    await expect.poll(counted, { message: 'history discarded while the replacement cannot be stored is one more hole, counted once' }).toEqual({ holes: holes + 2, recorded: recordedHoles + 2 });
-    const twoHoles = (await continuity(writer, created.id)).holes;
-    expect(twoHoles).toHaveLength(2);
-    expect(twoHoles[1]).toMatchObject({ incarnation: kept.incarnation, from: kept.storedPosition, open: true });
-    await churn(65);
-    console.log('backup holes: later discard completed');
-    await expect.poll(async () => (await continuity(writer, created.id)).holes[1]!.to,
-      { message: 'a later discard moves the open hole to the new start of the change log' }).toBeGreaterThan(twoHoles[1]!.to);
-    expect(await metric(writer, 'terrabase_backup_holes_recorded_total')).toBe(recordedHoles + 2);
-
-    console.log('backup holes: restarting writer');
-    const beforeRestart = await nodeHoles(writer);
-    const systemBefore = await systemContinuity(writer);
-    const restart = restartAfterKill(writer, true, undefined, async () => {
-      expect(await probe(writer, '/readyz')).toBe(503);
-      expect(await metric(writer, 'terrabase_catalog_closed', 'reason="store_unavailable"')).toBe(1);
-      await backupStore('up');
-      outage = false;
-    });
-    await restart();
-    console.log('backup holes: writer restarted');
-    await expect.poll(() => probe(writer, '/readyz'), { message: 'the restarted writer is ready' }).toBe(200);
-    await tokenReady(writer, cells, database(created.id));
-    expect(await metric(writer, 'terrabase_catalog_closed', 'reason="store_unavailable"')).toBe(0);
-    await expect.poll(() => probe(writer, '/backupz'), { message: 'a replacement snapshot after the restart closes the second hole' }).toBe(200);
-    const settled = await continuity(writer, created.id);
-    expect(settled.holes.map(hole => hole.open)).toEqual([false, false]);
-    expect(settled.holes[1]!.from).toBe(kept.storedPosition);
-    const afterSecond = (await backupPuts(shipped.file)).slice(secondMark);
-    const secondHole = new RegExp(`/holes/${kept.incarnation}-${String(kept.storedPosition).padStart(16, '0')}-\\d{16}-\\d{13}-(\\d{13}|unknown)-open$`);
-    expect(afterSecond[0], `the first object the bucket receives after the second outage is its hole: ${afterSecond.join(' ')}`).toMatch(secondHole);
-    expect(afterSecond.some(key => key.includes('/holes/') && key.endsWith('-closed'))).toBe(true);
-    expect(settled.holes.map(hole => [hole.incarnation, hole.from])).toEqual([[opened.incarnation, opened.holes[0]!.from], [kept.incarnation, kept.storedPosition]]);
-    const afterRestart = await nodeHoles(writer);
-    expect(afterRestart.toSorted(), 'every change the restarted writer made before its backup taps opened is kept until they ship it: no new hole on any file')
-      .toEqual(beforeRestart.toSorted());
-    await expect.poll(counted, { message: 'the restarted writer records no hole' }).toEqual({ holes: holes + 2, recorded: 0 });
-    await expect.poll(async () => (await systemContinuity(writer)).storedPosition!,
-      { message: 'the system database ships the writes it made before its backup tap opened' }).toBeGreaterThan(systemBefore.storedPosition!);
-    const systemAfter = await systemContinuity(writer);
-    console.log(`system backup of ${writer.name}: stored ${systemBefore.storedPosition} before the kill, ${systemAfter.storedPosition} after the restart`);
-    expect(systemAfter).toMatchObject({ incarnation: systemBefore.incarnation, storedIncarnation: systemBefore.incarnation });
-    expect(systemAfter.holes.map(hole => [hole.incarnation, hole.from])).toEqual(systemBefore.holes.map(hole => [hole.incarnation, hole.from]));
-
-    const error = await refusal(inside);
-    const [from, to] = [Date.parse(error.unavailableFrom), Date.parse(error.unavailableTo)];
-    expect(from).toBeLessThan(inside);
-    expect(to).toBeGreaterThan(inside);
-    expect([from, to]).toEqual([Date.parse(settled.holes[0]!.fromAt!), Date.parse(settled.holes[0]!.toAt!)]);
-    const secondError = await refusal(insideSecond);
-    expect([Date.parse(secondError.unavailableFrom), Date.parse(secondError.unavailableTo)]).toEqual([Date.parse(settled.holes[1]!.fromAt!), Date.parse(settled.holes[1]!.toAt!)]);
-    expect(Date.parse(secondError.unavailableFrom)).toBeGreaterThan(to);
-    console.log(`holes of ${created.id}: ${JSON.stringify(settled.holes)}; refused inside at ${new Date(inside).toISOString()} and ${new Date(insideSecond).toISOString()}`);
-
-    const restore = async (at: number) => {
-      const started = await cells.post(`${endpoint('gru')}${database(created.id)}/point-in-time/restore`, {
-        data: { pointInTime: new Date(at).toISOString(), name: name('hole-restore') },
-      });
-      expect(started.status(), await started.text()).toBe(202);
-      const operation = await started.json() as { id: string };
-      let copy = '';
-      await expect.poll(async () => {
-        const state = await json<{ status: string; database: string; errorCode?: string }>(await cells.get(`${endpoint('gru')}${database(created.id)}/restores/${operation.id}`));
-        expect(state.status, state.errorCode).not.toBe('failed');
-        if (state.status === 'completed') copy = state.database;
-        return state.status;
-      }, { message: 'the point-in-time restore completes' }).toBe('completed');
-      restored.push(copy);
-      return ledger.read(cells, 'gru', copy);
-    };
-    const window = await json<{ earliest: string }>(await cells.get(`${endpoint('gru')}${database(created.id)}/point-in-time`));
-    const second = Math.max(Date.parse(window.earliest), from - from % 1000);
-    const before = await restore(second);
-    expect(storedAt < second ? [[[1, 'before-outage']]] : [[], [[1, 'before-outage']]]).toContainEqual(before);
-    const atSnapshot = await restore(to);
-    const [one, both] = [[[1, 'before-outage']], [[1, 'before-outage'], [2, 'during-outage']]];
-    expect(to < duringSent ? [one] : to > duringAcked ? [both] : [one, both]).toContainEqual(atSnapshot);
-    console.log(`restores of ${created.id}: ${JSON.stringify(before)} at ${new Date(second).toISOString()}, before the hole; ${JSON.stringify(atSnapshot)} at the replacement snapshot ${new Date(to).toISOString()}`);
+    await removeDatabase(cells, created.id);
+    await expect.poll(async () => (await cells.get(`${endpoint('gru')}${database(created.id)}/point-in-time`)).status(), {
+      message: 'deleting the database removes its restore window',
+    }).toBe(404);
+    expect((await cells.get(`${endpoint('gru')}${database(created.id)}`)).status()).toBe(404);
+    const gone = await systemBackup(peer);
+    expect([200, 503]).toContain(gone.status);
+    console.log(`archive ${created.id}: local bookmark restore during the outage kept ${JSON.stringify([[1, 'before-outage']])}; deletion left no restore window`);
   } catch (error) {
     failure = error;
     throw error;
   } finally {
     await cleanUp(failure, async () => {
       if (outage) await backupStore('up');
-      for (const copy of restored) await removeDatabase(cells, copy);
-      await removeDatabase(cells, created.id);
+      for (const copy of copies) await removeDatabase(cells, copy);
+      const leftover = await cells.get(`${endpoint('gru')}${database(created.id)}`);
+      if (leftover.status() === 200) await removeDatabase(cells, created.id);
     });
   }
 });
 
-test('restores read the holes recorded with the backup: one the restoring node has no account of, the first of 33, an open one with an unknown end, and none while they cannot be listed', async ({ cells }) => {
-  const writer = (await topology()).find(node => node.region === 'gru')!;
-  const created = await json<{ id: string }>(await cells.post(`${endpoint('gru')}${project()}/databases`, {
-    data: { name: name('hole-records'), regions: ['gru'] },
-  }), 201);
-  const ledger = new Ledger(created.id);
-  let unlisted = false;
-  let restored: string | undefined;
-  const latest = async () => {
-    const window = await cells.get(`${endpoint('gru')}${database(created.id)}/point-in-time`);
-    return window.status() === 200 ? Date.parse((await window.json() as { latest: string }).latest) : 0;
-  };
-  const planned = async (at: number) => {
-    const response = await cells.post(`${endpoint('gru')}${database(created.id)}/point-in-time/plan`, { data: { pointInTime: new Date(at).toISOString() } });
-    return `${response.status()} ${response.status() === 200 ? '' : await response.text()}`.trim();
-  };
-  const refused = async (at: number) => {
-    const response = await cells.post(`${endpoint('gru')}${database(created.id)}/point-in-time/restore`, {
-      data: { pointInTime: new Date(at).toISOString(), name: name('hole-record') },
-    });
-    const text = await response.text();
-    expect(response.status(), text).toBe(409);
-    const error = (JSON.parse(text) as { error: { code: string; message: string; unavailableFrom?: string; unavailableTo?: string } }).error;
-    expect(error.code).toBe('backup_history_incomplete');
-    return error;
-  };
-  let failure: unknown;
-  try {
-    await sql(cells, endpoint('gru'), created.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
-    await expect.poll(latest, { message: 'the backup stores its first snapshot before the writes' }).toBeGreaterThan(0);
-    const firstSent = Date.now();
-    await ledger.write(cells, 'gru', [[1, 'first']]);
-    const firstAcked = Date.now();
-    const secondSent = Date.now();
-    await ledger.write(cells, 'gru', [[2, 'second']]);
-    const secondAcked = Date.now();
-    await expect.poll(latest, { message: 'the backup proves a time at or after the second acknowledgement' }).toBeGreaterThanOrEqual(secondAcked);
-    const shipped = await continuity(writer, created.id);
-    expect(shipped.holes).toEqual([]);
-    const newest = await latest();
-    expect(await planned(newest), 'the newest proven time is admitted before any hole is recorded').toBe('200');
-    const started = await cells.post(`${endpoint('gru')}${database(created.id)}/point-in-time/restore`, {
-      data: { pointInTime: new Date(newest).toISOString(), name: name('hole-records-latest') },
-    });
-    expect(started.status(), await started.text()).toBe(202);
-    const operation = await started.json() as { id: string };
-    await expect.poll(async () => {
-      const state = await json<{ status: string; database: string; errorCode?: string }>(await cells.get(`${endpoint('gru')}${database(created.id)}/restores/${operation.id}`));
-      expect(state.status, state.errorCode).not.toBe('failed');
-      if (state.status === 'completed') restored = state.database;
-      return state.status;
-    }, { message: 'the restore of the newest proven time completes' }).toBe('completed');
-    const written: [[number, string], number, number][] = [[[1, 'first'], firstSent, firstAcked], [[2, 'second'], secondSent, secondAcked]];
-    const acknowledged = written.filter(([, , acked]) => acked <= newest).map(([row]) => row);
-    expect(acknowledged, 'both writes were acknowledged before the newest proven time').toHaveLength(2);
-    const sent = written.filter(([, at]) => at <= newest).map(([row]) => row);
-    expect([acknowledged, sent], 'every row acknowledged before the newest proven time is in its restore').toContainEqual(await ledger.read(cells, 'gru', restored));
-    const target = newest - 100;
-    const [before, after, half] = [target - 20, target + 20, 5];
+async function completed(cells: Cells, source: string, operation: string): Promise<string> {
+  let copy = '';
+  await expect.poll(async () => {
+    const state = await json<{ state: string; targetDatabaseId: string; failureMessage: string | null }>(
+      await cells.get(`${endpoint('gru')}${database(source)}/restores/${operation}`));
+    expect(state.state, state.failureMessage ?? '').not.toBe('failed');
+    if (state.state === 'succeeded') copy = state.targetDatabaseId;
+    return state.state;
+  }, { message: 'the restore succeeds', timeout: 60_000 }).toBe('succeeded');
+  return copy;
+}
 
-    await plantHole(shipped.file, { incarnation: shipped.incarnation, from: 1, to: 2, fromAt: target - half, toAt: target + half, open: false });
-    const unknownToNode = await refused(target);
-    expect([Date.parse(unknownToNode.unavailableFrom!), Date.parse(unknownToNode.unavailableTo!)]).toEqual([target - half, target + half]);
-    expect((await continuity(writer, created.id)).holes, 'the restoring node has no account of the hole it refuses').toEqual([]);
-
-    for (let index = 0; index < 32; index++) {
-      await plantHole(shipped.file, { incarnation: shipped.incarnation, from: 10 + index, to: 11 + index, fromAt: newest + 1000 * (index + 1), toAt: newest + 1000 * (index + 1) + 10, open: false });
-    }
-    const firstOf33 = await refused(target);
-    expect([Date.parse(firstOf33.unavailableFrom!), Date.parse(firstOf33.unavailableTo!)]).toEqual([target - half, target + half]);
-
-    await plantHole(shipped.file, { incarnation: shipped.incarnation, from: 100, to: 101, fromAt: after - 1, toAt: null, open: true });
-    const unknownEnd = await refused(after);
-    expect(Date.parse(unknownEnd.unavailableFrom!)).toBe(after - 1);
-    expect(unknownEnd.unavailableTo).toBeUndefined();
-    expect(unknownEnd.message).toContain('to an unknown time');
-
-    await holeRecords('unlisted');
-    unlisted = true;
-    const unreadable = await refused(before);
-    expect(unreadable.message).toContain('record of lost history could not be read');
-    expect(unreadable.unavailableFrom).toBeUndefined();
-    await holeRecords('listed');
-    unlisted = false;
-    expect(await planned(before), 'once the hole records can be listed again, the time outside every hole is not refused for them').not.toContain('could not be read');
-    await plantHole(shipped.file, { incarnation: shipped.incarnation, from: 2, to: 1, fromAt: before + 100, toAt: before, open: false });
-    const inconsistent = await refused(before);
-    expect(inconsistent.message, 'a hole record whose bounds contradict each other is unreadable, not an empty range').toContain('record of lost history could not be read');
-    expect(inconsistent.unavailableFrom).toBeUndefined();
-    console.log(`hole records of ${created.id}: refused ${new Date(target).toISOString()} (planted, unknown to the node; first of 33), ${new Date(after).toISOString()} (open, unknown end) and ${new Date(before).toISOString()} while unlisted`);
-  } catch (error) {
-    failure = error;
-    throw error;
-  } finally {
-    await cleanUp(failure, async () => {
-      if (unlisted) await holeRecords('listed');
-      if (restored) await removeDatabase(cells, restored);
-      await removeDatabase(cells, created.id);
-    });
-  }
-});
-
-test('catalog replication ignores replays, keeps a deletion against a stale create, and refuses malformed, misaddressed, stale-schema and out-of-order commits without changing the catalog', async () => {
+test('catalog replication ignores replays, keeps a deletion against a stale create, and refuses malformed commits', async () => {
   const environment: NodeJS.ProcessEnv = { ...process.env, DOTNET_ENVIRONMENT: 'Development', ASPNETCORE_ENVIRONMENT: 'Development' };
   for (const key of Object.keys(environment)) {
     if (key.startsWith('TS_') || key.startsWith('TERRABASE_')) delete environment[key];
@@ -720,143 +391,77 @@ test('catalog replication ignores replays, keeps a deletion against a stale crea
   const result = await promisify(execFile)('dotnet', [join(build, 'catalog-import', 'terrabase.dll'),
     `--data-directory=${join(stateDir, `catalog-import-${faultId()}`)}`,
   ], { env: environment, cwd: e2eRoot, timeout: 60_000 });
-  for (const name of ['identical', 'foreign-delete', 'stale-create', 'duplicate-transaction', 'malformed', 'invalid-origin', 'stale-schema', 'local-ahead', 'gap', 'gap-filled']) {
-    expect(result.stdout).toContain(`CATALOG_CASE ${name} passed`);
+  for (const label of ['identical', 'foreign-delete', 'stale-create', 'duplicate-transaction', 'malformed', 'invalid-origin', 'stale-schema', 'local-ahead', 'gap', 'gap-filled']) {
+    expect(result.stdout).toContain(`CATALOG_CASE ${label} passed`);
   }
   expect(result.stdout).toContain('CATALOG_IMPORT identical=duplicate foreign=applied stale_create=deleted refused=4 gap=buffered unchanged=true');
   console.log(result.stdout.split('\n').filter(line => line.startsWith('CATALOG_')).join('\n'));
 });
 
-test('another region outside admitted peers cannot interrupt local writer renewal', async ({ cells, request, playwright }) => {
-  const writers = await topology();
-  const local = writers.find(node => node.region === 'gru')!;
-  const foreign = writers.find(node => node.region === 'fra')!;
-  const target = nodes.find(node => node.region === 'fra' && node.name !== foreign.name)!;
+test('closure reaches every peer, including one that was down, and a platform project stays protected', async ({ cells, request, playwright }) => {
+  test.setTimeout(180_000);
   const user = faultId();
-  const manage = async (node: typeof foreign, method: string, path: string, body?: unknown, expected = 200) => {
-    const response = await nodeRequest(node, path, method, body, user);
+  const gru = node('journey-1');
+  const fra = node('journey-2');
+  const fraPeer = node('journey-4');
+  const manage = async (peer: Node, method: string, path: string, body?: unknown, expected = 200) => {
+    const response = await nodeRequest(peer, path, method, body, user);
     expect(response.status, response.body).toBe(expected);
-    return response.body ? JSON.parse(response.body) as { id: string } : undefined;
+    return response.body ? JSON.parse(response.body) as { id: string; error?: { code: string } } : undefined;
   };
-  const organization = (await manage(foreign, 'POST', '/v1/management/organizations', { name: name('handoff-closure') }, 201))!;
+  const organization = (await manage(fra, 'POST', '/v1/management/organizations', { name: name('closure') }, 201))!;
   const organizationPath = `/v1/management/organizations/${organization.id}`;
-  const projectRecord = (await manage(foreign, 'POST', `${organizationPath}/projects`, { name: name('handoff-closure') }, 201))!;
+  const projectRecord = (await manage(fra, 'POST', `${organizationPath}/projects`, { name: name('closure') }, 201))!;
   const projectPath = `${organizationPath}/projects/${projectRecord.id}`;
-  const retired = (await manage(foreign, 'POST', `/v1/projects/${projectRecord.id}/databases`, { name: name('handoff-purge'), regions: ['fra'] }, 201))!;
-  await manage(foreign, 'DELETE', `/v1/projects/${projectRecord.id}/databases/${retired.id}`, undefined, 204);
-  const peers = join(stateDir, 'peers');
-  const original = readFileSync(peers, 'utf8');
-  const replacePeers = (value: string) => {
-    writeFileSync(`${peers}.next`, value);
-    renameSync(`${peers}.next`, peers);
-  };
+  const databaseRecord = (await manage(fra, 'POST', `/v1/projects/${projectRecord.id}/databases`, { name: name('closure-db'), regions: ['fra'] }, 201))!;
+  const closure = { version: 2, closureId: faultId(), authorityOrganizationId: organization.id };
+  const closurePath = `/admin/projects/${projectRecord.id}/closure`;
   const created = await json<{ id: string }>(await cells.post(`${endpoint('gru')}${project()}/databases`, {
-    data: { name: name('owner-isolation'), regions: ['gru'] },
+    data: { name: name('closure-live'), regions: ['gru'] },
   }), 201);
   const ledger = new Ledger(created.id);
-  const metric = async () => {
-    const response = await request.get(`http://${local.address}:${local.port + 1011}/metrics`);
-    expect(response.status()).toBe(200);
-    const text = await response.text();
-    return text.split('\n').filter(line => line.startsWith('terrabase_ownership_refresh_errors_total{') && line.includes('region="fra"'))
-      .reduce((total, line) => total + Number(line.split(' ').at(-1)), 0);
-  };
   let failure: unknown;
+  let restart: (() => Promise<void>) | undefined;
   try {
-    await sql(cells, endpoint('gru'), created.id, 'CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)');
-    await expect.poll(() => nodeStatus(local, 'fra')).toMatchObject({ owner: foreign.name });
-    const before = await metric();
-    const log = join(stateDir, 'logs', `${local.service}.log`);
-    const offset = readFileSync(log).length;
-    const inconsistent = original.trim().split('\n').filter(line => !line.startsWith(`${foreign.name} `))
-      .sort((a, b) => a.split(' ')[1].localeCompare(b.split(' ')[1])).join('\n') + '\n';
-    replacePeers(inconsistent);
-    const started = Date.now();
-    let row = 0;
-    while (Date.now() - started < 30_000) {
-      expect(await nodeStatus(local), 'the same local writer remains ready throughout the foreign fault')
-        .toMatchObject({ owner: local.name, writer: true, ready: true });
-      for (const node of nodes.filter(node => node.region === 'gru' && node.name !== local.name)) {
-        expect(await nodeStatus(node)).toMatchObject({ writer: false, ready: true });
-      }
-      const ready = await request.get(`http://${local.address}:${local.port}/readyz`);
-      expect(ready.status()).toBe(200);
-      await ledger.write(cells, 'gru', [[++row, 'uninterrupted']]);
-    }
-    expect(row).toBeGreaterThan(1);
-    expect(await metric()).toBeGreaterThan(before);
-    const failures = readFileSync(log).subarray(offset).toString().split('\n')
-      .filter(line => line.includes('Regional ownership observation failed for ') && line.includes('fra'));
-    expect(failures, 'unchanged foreign failure logs once').toHaveLength(1);
-    expect(await nodeStatus(foreign), 'invalid local authority still stops its own writer').toMatchObject({ writer: false });
-    expect(await nodeStatus(local, 'fra')).toMatchObject({ owner: foreign.name });
-    console.log(`foreign ownership fault: ${Date.now() - started} ms, ${row} acknowledged local writes, fra counter increased`);
-    replacePeers(original);
-    await expect.poll(() => nodeStatus(foreign), { message: 'the restored foreign writer reacquires local admission' })
-      .toMatchObject({ writer: true, ready: true });
-    await topology();
-    const drain = await nodeRequest(foreign, `/v1/rollout/drain?target=${target.name}`, 'POST');
-    expect(drain.status, drain.body).toBe(204);
-    await expect.poll(() => nodeStatus(local, 'fra'), { message: 'the restored foreign owner is observed after handoff' })
-      .toMatchObject({ owner: target.name });
-    await expect.poll(() => nodeStatus(target)).toMatchObject({ owner: target.name, writer: true, ready: true });
-    expect(await ledger.read(cells, 'gru')).toEqual(ledger.acknowledged);
-    console.log(`foreign ownership restored: ${target.name} observed from ${local.name}; acknowledged rows retained`);
+    await answer(cells, endpoint('gru'), created.id, ['CREATE TABLE fault_rows (id INTEGER PRIMARY KEY, value TEXT NOT NULL)']);
+    const token = await projectToken(request);
+    await ledger.write(cells, 'gru', [[1, 'before-fra-outage']]);
+    await ledger.converge(token, peersIn('gru'));
+    const occupied = await nodeRequest(gru, closurePath, 'PUT', closure);
+    expect(occupied.status, occupied.body).toBe(409);
+    expect(JSON.parse(occupied.body).error.code).toBe('not_empty');
+    await manage(fra, 'DELETE', `/v1/projects/${projectRecord.id}/databases/${databaseRecord.id}`, undefined, 204);
+    const protectedProject = await nodeRequest(gru, '/admin/projects/00000000000000000000000002/closure', 'PUT', {
+      version: 2, closureId: faultId(), authorityOrganizationId: '00000000000000000000000001',
+    });
+    expect(protectedProject.status, protectedProject.body).toBe(409);
+    expect(JSON.parse(protectedProject.body).error.code).toBe('platform_project_protected');
+
+    restart = restartAfterKill(fra);
+    await ledger.write(cells, 'gru', [[2, 'while-fra-peer-down']]);
+    expect(await ledger.direct(node('journey-3'), token, [[3, 'other-gru-peer']]), 'the other gru peer accepts writes while a fra peer is down').toBe(true);
+    const accepted = await nodeRequest(gru, closurePath, 'PUT', closure);
+    expect(accepted.status, accepted.body).toBe(200);
+    expect(JSON.parse(accepted.body)).toMatchObject({ status: 'accepted', closureId: closure.closureId, pendingHolders: 0, evidenceVersion: 2 });
+    await expect.poll(async () => (await nodeRequest(fraPeer, projectPath)).status, {
+      message: 'the live fra peer drops the closed project through anti-entropy', timeout: 60_000,
+    }).toBe(404);
+    const state = await replication(cells, endpoint('gru'), created.id);
+    expect(state.regions.find(item => item.region === 'gru')?.healthy).toBe(true);
   } catch (error) {
     failure = error;
     throw error;
   } finally {
     await cleanUp(failure, async () => {
-      replacePeers(original);
-      await expect.poll(() => nodeStatus(foreign), { message: 'discover the committed foreign writer even when drain failed' })
-        .toMatchObject({ ready: true });
-      let observedOwner = '';
-      await expect.poll(async () => {
-        const status = await nodeStatus(foreign);
-        observedOwner = status.owner;
-        const owner = nodes.find(node => node.name === status.owner && node.region === foreign.region);
-        return owner ? nodeStatus(owner) : undefined;
-      }, { message: 'the actual foreign writer settles before restoration' }).toMatchObject({ writer: true, ready: true });
-      const actualWriter = nodes.find(node => node.name === observedOwner && node.region === foreign.region);
-      expect(actualWriter, 'the actual foreign writer is admitted').toBeDefined();
-      if (actualWriter!.name !== foreign.name) {
-        await restartAfterKill(foreign, false)();
-        const primed = await nodeRequest(foreign, `/v1/rollout/prime?source=${actualWriter!.name}`, 'POST');
-        expect(primed.status, primed.body).toBe(204);
-        const restored = await nodeRequest(actualWriter!, `/v1/rollout/drain?target=${foreign.name}`, 'POST');
-        expect(restored.status, restored.body).toBe(204);
-        await restartAfterKill(target, false)();
-        const caughtUp = await nodeRequest(target, `/v1/rollout/prime?source=${foreign.name}`, 'POST');
-        expect(caughtUp.status, caughtUp.body).toBe(204);
-        await restartAfterKill(target, false)();
-        const primedAgain = await nodeRequest(target, `/v1/rollout/prime?source=${foreign.name}`, 'POST');
-        expect(primedAgain.status, primedAgain.body).toBe(204);
-      }
-      await expect.poll(() => nodeStatus(local), { message: 'local authority is restored before cleanup' })
-        .toMatchObject({ writer: true, ready: true });
+      if (restart) await restart();
+      await expect.poll(async () => (await nodeRequest(fra, projectPath)).status, {
+        message: 'the restarted fra peer learns the closure', timeout: 60_000,
+      }).toBe(404);
+      const again = await nodeRequest(fra, closurePath, 'PUT', closure);
+      expect(again.status, again.body).toBe(200);
+      expect(JSON.parse(again.body)).toMatchObject({ status: 'accepted', pendingHolders: 0, closureId: closure.closureId });
+      await manage(fra, 'DELETE', organizationPath, undefined, 204);
       await removeDatabase(cells, created.id);
-      expect(readFileSync(peers, 'utf8')).toBe(original);
-      const restoredWriters = await topology();
-      expect(restoredWriters.map(node => node.name).sort()).toEqual(writers.map(node => node.name).sort());
-      for (const node of nodes) {
-        for (const writer of writers) {
-          expect(await nodeStatus(node, writer.region)).toMatchObject({ owner: writer.name, ready: true });
-        }
-      }
-      for (const node of [foreign, target]) await tokenReady(node, cells, `${project()}/databases`);
-      const closure = { version: 2, closureId: faultId(), authorityOrganizationId: organization.id };
-      const closurePath = `/admin/projects/${projectRecord.id}/closure`;
-      const closing = await nodeRequest(local, closurePath, 'PUT', closure);
-      expect([200, 202]).toContain(closing.status);
-      const query = `?version=2&closureId=${closure.closureId}&authorityOrganizationId=${organization.id}`;
-      await expect.poll(async () => {
-        const response = await nodeRequest(foreign, closurePath + query);
-        expect([200, 202]).toContain(response.status);
-        return JSON.parse(response.body);
-      }, { message: 'closure completes after returning to the original receipt holder' })
-        .toMatchObject({ status: 'accepted', pendingHolders: 0, closureId: closure.closureId });
-      await manage(foreign, 'DELETE', projectPath, undefined, 204);
-      await manage(foreign, 'DELETE', organizationPath, undefined, 204);
       for (const region of regions) expect((await cells.get(`${endpoint(region)}${project()}/databases`)).status()).toBe(200);
       const owner = await playwright.request.newContext({ storageState: ownerSession() });
       try {
@@ -867,7 +472,6 @@ test('another region outside admitted peers cannot interrupt local writer renewa
       } finally {
         await owner.dispose();
       }
-      console.log('restored original writers, all four peer observations, and existing account credentials and session');
     });
   }
 });

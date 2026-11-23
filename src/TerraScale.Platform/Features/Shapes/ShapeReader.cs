@@ -160,13 +160,14 @@ public sealed class ShapeReader(
         }
 
         var projection = columns is { } names ? string.Join(", ", names.Select(ShapeQuery.Quote)) : "*";
+        var includeRowid = columns?.Any(static name => string.Equals(name, "rowid", StringComparison.OrdinalIgnoreCase)) == true;
         var statement = SqlValues.Statement($"SELECT {projection} FROM {ShapeQuery.Quote(request.Table)} WHERE rowid = ?", SqlValues.Number(key));
         return await access.DatabaseAsync(context, request.Project, request.Database, Scopes.Read, cancellationToken) switch
         {
             DatabaseAccess database => await terraBase.ExecuteAsCallerAsync(
                 request.Project, request.Database, database.Access.Credential, SqlValues.Batch(statement), Bookmark(context), cancellationToken) switch
             {
-                SqlExecuteResponse response => Row(response.Results[0]),
+                CallerSqlResponse sql => Row(sql.Response.Results[0], includeRowid),
                 SqlFailure { Status: StatusCodes.Status400BadRequest } failure => new Validation(failure.Error.Message, failure.Error.Code),
                 SqlFailure failure => new Unavailable(failure.Error.Message, failure.Error.Code),
                 Unauthorized unauthorized => unauthorized,
@@ -235,9 +236,9 @@ public sealed class ShapeReader(
         CancellationToken cancellationToken) =>
         await terraBase.ExecuteAsCallerAsync(route.Project, route.Database, database.Access.Credential, SqlValues.Batch(query.Select()), Bookmark(context), cancellationToken) switch
         {
-            SqlExecuteResponse response => ShapeQuery.Snapshot(response.Results[0]) switch
+            CallerSqlResponse sql => ShapeQuery.Snapshot(sql.Response.Results[0], query.IncludesRowid) switch
             {
-                ShapeSnapshot snapshot => await RegisterAsync(route, query, database, snapshot, cancellationToken),
+                ShapeSnapshot snapshot => await RegisterAsync(route, query, database, snapshot, sql.RulesVersion, cancellationToken),
                 Unavailable unavailable => unavailable,
             },
             SqlFailure { Status: StatusCodes.Status400BadRequest } failure => new Validation(failure.Error.Message, failure.Error.Code),
@@ -253,9 +254,10 @@ public sealed class ShapeReader(
         ShapeQuery query,
         DatabaseAccess database,
         ShapeSnapshot snapshot,
+        string? rulesVersion,
         CancellationToken cancellationToken)
     {
-        var viewer = ShapeViewers.Key(database.Access.Grant);
+        var viewer = ShapeViewers.Key(database.Access.Grant, rulesVersion);
         var (handle, shapeId) = query.Lineage(database.Access.Organization, database.Access.Project, database.Database, viewer, snapshot.Columns);
         var shape = new ShapeRecord(handle, shapeId, database.Access.Organization, database.Access.Project, database.Database, route.Project, route.Database,
             query.Table, query.Where, query.Columns, viewer, 0, "");
@@ -350,14 +352,15 @@ public sealed class ShapeReader(
         return new ShapeMirrorManifest(shape.Handle, objectsList);
     }
 
-    private static Result<RowResponse, Validation, Unauthorized, Forbidden, NotFound, Unavailable> Row(SqlHttpStatementResult result)
+    private static Result<RowResponse, Validation, Unauthorized, Forbidden, NotFound, Unavailable> Row(SqlHttpStatementResult result, bool includeRowid)
     {
         if (result.FirstRow() is not { } row)
         {
             return new NotFound("the row does not exist or is not readable", "row_not_found");
         }
 
-        return new RowResponse(ShapeQuery.RowObject([.. result.Columns.Select(static column => column.Name)], row, 0));
+        var skip = !includeRowid && result.Columns.Count > 1 && string.Equals(result.Columns[0].Name, "rowid", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+        return new RowResponse(ShapeQuery.RowObject([.. result.Columns.Skip(skip).Select(static column => column.Name)], row, skip));
     }
 
     private static string Bookmark(HttpContext context) =>

@@ -1,3 +1,4 @@
+using Dapper;
 
 namespace TerraScale.Dashboard.Features.Notifications;
 
@@ -64,6 +65,7 @@ public sealed record AlertRuleRow
 
     public required string Version { get; set; }
 
+    [DbValue(Ignore = true)]
     public List<AlertEventRow> Events { get; init; } = [];
 }
 

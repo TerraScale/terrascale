@@ -6,7 +6,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Rows;
 
 internal sealed class BatchRowsEndpoint(RowsService rows)
-    : Endpoint<RowsBatchInput, Result<RowsBatchAnswer, SqlRefusal, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
+    : Endpoint<RowsBatchInput, RowsBatchResponse>
 {
     public override void Configure()
     {
@@ -19,7 +19,7 @@ internal sealed class BatchRowsEndpoint(RowsService rows)
         Metadata(ListenerMetadata.Client);
     }
 
-    public override async ValueTask<Result<RowsBatchAnswer, SqlRefusal, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(
+    public override async ValueTask<RowsBatchResponse> HandleAsync(
         RowsBatchInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -57,15 +57,6 @@ internal sealed class BatchRowsEndpoint(RowsService rows)
             commands.Add(new RowCommand(verb, table, key, operation.Row));
         }
 
-        return await rows.RunAsync(HttpContext.Caller, request.Project, request.Database, commands, cancellationToken) switch
-        {
-            IReadOnlyList<RowAnswer> answers => new RowsBatchAnswer(answers),
-            SqlRefusal refusal => refusal,
-            Validation invalid => invalid,
-            Unauthorized unauthorized => unauthorized,
-            Forbidden forbidden => forbidden,
-            NotFound missing => missing,
-            Unavailable unavailable => unavailable,
-        };
+        return RowsResponses.Batch(await rows.RunAsync(HttpContext.Caller, request.Project, request.Database, commands, batch: true, cancellationToken));
     }
 }

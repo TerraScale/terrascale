@@ -120,17 +120,47 @@ public sealed class ShapeSealer(
             }
         }
 
-        var purged = await cdn.PurgeAsync(purge, cancellationToken);
+        await cdn.QueueAsync(purge, cancellationToken);
         notifier.Signal(shape.Database);
         return published switch
         {
-            Done => purged switch
-            {
-                Done => shape,
-                Unavailable unavailable => unavailable,
-            },
+            Done => shape,
             Unavailable unavailable => unavailable,
         };
+    }
+
+    public async ValueTask<int> RetireAsync(ShapeRetirement retirement, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(retirement);
+        foreach (var handle in retirement.Handles)
+        {
+            foreach (var key in _chunks.Keys.Where(key => key.StartsWith(handle + ":", StringComparison.Ordinal)))
+            {
+                _ = _chunks.TryRemove(key, out _);
+            }
+        }
+
+        var purge = new List<string>();
+        var kept = 0;
+        foreach (var chunk in retirement.Chunks.Concat(retirement.Handles.Select(static handle => new ShapeChunkObject(handle, "head.json"))))
+        {
+            var deleted = await objects.DeleteAsync(ShapeObjectStore.Key(chunk.Handle, chunk.Name), cancellationToken) switch
+            {
+                Done => true,
+                Unavailable => false,
+            };
+            if (deleted)
+            {
+                purge.Add(objects.Url(chunk.Handle, chunk.Name));
+            }
+            else
+            {
+                kept++;
+            }
+        }
+
+        await cdn.QueueAsync(purge, cancellationToken);
+        return kept;
     }
 
     private async ValueTask<Result<ShapeRecord, Unavailable>> RereadAsync(ShapeRecord shape, string lostObject, CancellationToken cancellationToken)

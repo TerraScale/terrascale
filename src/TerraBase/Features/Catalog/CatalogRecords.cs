@@ -39,11 +39,11 @@ public static class Plans
 
     public static int DatabaseLimit(string plan) => plan switch
     {
-        "hobby" => 10,
-        "starter" => 50,
-        "pro" => 250,
-        "team" => 1000,
-        _ => 10000,
+        "hobby" => 1,
+        "starter" => 5,
+        "pro" => 25,
+        "team" => 100,
+        _ => 1000,
     };
 }
 

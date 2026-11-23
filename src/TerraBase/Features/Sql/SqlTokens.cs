@@ -127,6 +127,17 @@ internal static class SqlText
 
                     (kind, value) = (SqlTokenKind.Word, sql[start..i]);
                     break;
+                case '-' when next == '>' && i + 2 < sql.Length && sql[i + 2] == '>':
+                    (kind, value, i) = (SqlTokenKind.Symbol, "->>", i + 3);
+                    break;
+                case '<' when next is '>' or '=' or '<':
+                case '>' when next is '=' or '>':
+                case '!' when next == '=':
+                case '=' when next == '=':
+                case '|' when next == '|':
+                case '-' when next == '>':
+                    (kind, value, i) = (SqlTokenKind.Symbol, sql[i..(i + 2)], i + 2);
+                    break;
                 default:
                     kind = c switch
                     {

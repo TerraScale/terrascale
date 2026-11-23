@@ -16,6 +16,7 @@ public sealed record WebhookDeliveryRecord(string Id, string ProjectId, string E
 public sealed record WebhookAttemptRecord(string Id, string DeliveryId, string ProjectId, DateTimeOffset CreatedAt,
     string Status, int LatencyMs, int? ResponseCode, string? ResponseBody)
 {
+    [JsonIgnore]
     public string? Version { get; init; }
 }
 

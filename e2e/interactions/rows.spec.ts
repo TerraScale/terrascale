@@ -115,7 +115,7 @@ test('end users write rows only as the database rules allow, checked in the home
 
     const first = await answered<Answer>('POST', await request.post(rows, { headers: as(alice), data: { row: { title: 'milk' } } }), 201);
     expect(first.row).toEqual({ id: Number(first.key), owner_id: alice.uid, title: 'milk', done: 0 });
-    const stored = await sql(`SELECT owner_id, created_at > 0 FROM ${table} WHERE id = ${Number(first.key)}`);
+    const stored = await sql(`SELECT owner_id, created_at > 0 FROM ${table} WHERE id = ${first.key}`);
     expect(stored).toEqual([[alice.uid, 1]]);
 
     for (const [row, status, code, column] of [

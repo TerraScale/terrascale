@@ -95,9 +95,10 @@ internal sealed class TerraBaseDatabaseExecutor(
             }
         }
 
-        return await rules.ApplyAsync(target.Database.Id, auth, planned, cancellationToken) switch
+        var enforced = await rules.ApplyAsync(target.Database.Id, auth, planned, cancellationToken, session);
+        return enforced switch
         {
-            IReadOnlyList<SqlStatement> statements => request with { Statements = statements },
+            EnforcedSql ready => request with { Statements = ready.Statements },
             SqlRefusal refusal => Error(refusal),
         };
     }
@@ -130,8 +131,8 @@ internal sealed class RulesTransaction(ISqlTransaction inner, Ulid databaseId, R
         {
             PlannedStatement planned => await rules.ApplyAsync(databaseId, auth, [planned], cancellationToken) switch
             {
-                IReadOnlyList<SqlStatement> { Count: 1 } rewritten => await Inner.ExecuteAsync(rewritten[0], cancellationToken),
-                IReadOnlyList<SqlStatement> => TerraBaseDatabaseExecutor.Error(SqlRefusal.RuleDenied("the statement could not be checked against the rules", 0)),
+                EnforcedSql { Statements: [var rewritten] } => await Inner.ExecuteAsync(rewritten, cancellationToken),
+                EnforcedSql => TerraBaseDatabaseExecutor.Error(SqlRefusal.RuleDenied("the statement could not be checked against the rules", 0)),
                 SqlRefusal refusal => TerraBaseDatabaseExecutor.Error(refusal),
             },
             SqlRefusal refusal => TerraBaseDatabaseExecutor.Error(refusal),

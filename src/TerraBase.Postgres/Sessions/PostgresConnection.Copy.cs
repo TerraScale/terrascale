@@ -37,7 +37,7 @@ internal sealed partial class PostgresConnection
         var ownBlock = session.Transaction is null;
         if (ownBlock)
         {
-            session.Transaction = new PostgresTransactionBlock(session.Settings.DefaultMode, SqlAccess.Write, isImplicit: true);
+            session.Transaction = new PostgresTransactionBlock(session.Settings.DefaultMode, SqlAccess.Write, isImplicit: true, session.Time.GetTimestamp());
         }
 
         using var reader = new PgCopyReader(command.Options, [.. columns.Select(static column => column.Oid)]);
@@ -107,6 +107,7 @@ internal sealed partial class PostgresConnection
                 },
                 PgPeerClosed => (null, true, new PgError("08006", "connection lost during COPY", Fatal: true)),
                 PgIdleExpired => (null, true, new PgError("25P03", "terminating connection due to idle COPY", Fatal: true)),
+                PgIncompleteExpired => (null, true, new PgError("57P05", "incomplete message timeout exceeded", Fatal: true)),
                 PgReadInterrupted => (null, false, null),
                 PgError violation => (null, true, violation),
             };

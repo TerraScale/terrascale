@@ -32,7 +32,8 @@ node "$here/callers.mjs" "$state"
 export TERRABASE_CALLERS_FILE="$state/callers.json"
 
 identity=(TERRABASE_INTERNAL_PORT="$(e2e_port internal)" TERRABASE_AUTH_ISSUER=https://auth.terrascale.tech/terrascale TERRABASE_AUTH_AUDIENCE=https://api.terrascale.tech
-  TERRABASE_PEER_SECRET="$peer_secret" TERRABASE_MASTER_KEY="$terrabase_master_key")
+  TERRABASE_PEER_SECRET="$peer_secret" TERRABASE_MASTER_KEY="$terrabase_master_key"
+  TERRABASE_PLATFORM_URL="http://127.0.0.1:$(e2e_port platform)")
 if [ "${E2E_REGIONS:-1}" = 2 ]; then
   {
     printf 'journey-1 gru 127.0.0.1 %s %s\n' "$(e2e_port quic)" "$(e2e_port internal)"

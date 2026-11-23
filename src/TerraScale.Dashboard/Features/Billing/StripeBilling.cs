@@ -398,7 +398,7 @@ namespace TerraScale.Dashboard.Features.Billing
 
         private async Task ApplyPaymentAsync(BillingBinding binding, string invoiceId, string eventType, DateTime created, CancellationToken cancellationToken)
         {
-            if (eventType is not ("invoice.payment_failed" or "invoice.paid" or "invoice.payment_succeeded"))
+            if (eventType is not ("invoice.payment_failed" or "invoice.paid" or "invoice.payment_succeeded") || binding.SubscriptionId.Length == 0)
             {
                 return;
             }

@@ -47,15 +47,19 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
                 return;
             }
 
-            var timeout = session.Transaction is null ? PostgresLimits.SessionIdleTimeout : PostgresLimits.IdleInTransactionTimeout;
+            var open = session.Transaction is { Failed: false } block ? block : null;
+            var timeout = open is null ? PostgresLimits.SessionIdleTimeout : PostgresLimits.MaxTransaction - session.Time.GetElapsedTime(open.Started);
             var read = await Reader.ReadMessageAsync(timeout, closed).ConfigureAwait(false);
             var proceed = read switch
             {
+                PgFrontendMessage when open is not null && session.Time.GetElapsedTime(open.Started, Reader.LastMessageStarted) > PostgresLimits.MaxTransaction =>
+                    await FatalAsync(PgErrors.TransactionExpired).ConfigureAwait(false),
                 PgFrontendMessage message => await HandleAsync(message).ConfigureAwait(false),
                 PgPeerClosed => false,
-                PgIdleExpired => await FatalAsync(session.Transaction is null
+                PgIdleExpired => await FatalAsync(open is null
                     ? new PgError("57P05", "terminating connection due to idle-session timeout", Fatal: true)
-                    : new PgError("25P03", "terminating connection due to idle-in-transaction timeout", Fatal: true)).ConfigureAwait(false),
+                    : PgErrors.TransactionExpired).ConfigureAwait(false),
+                PgIncompleteExpired => await FatalAsync(new PgError("57P05", "incomplete message timeout exceeded", Fatal: true)).ConfigureAwait(false),
                 PgReadInterrupted => true,
                 PgError error => await FatalAsync(error).ConfigureAwait(false),
             };
@@ -107,7 +111,7 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
         if (failure is not null)
         {
             Writer.Error(failure);
-            MarkFailed();
+            await MarkFailedAsync().ConfigureAwait(false);
             if (failure.Fatal)
             {
                 await Writer.FlushAsync(closed).ConfigureAwait(false);
@@ -125,7 +129,7 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
             && !commands.Any(static command => command is PgBeginCommand or PgCommitCommand or PgRollbackCommand);
         if (implicitBlock)
         {
-            session.Transaction = new PostgresTransactionBlock(session.Settings.DefaultMode, SqlAccess.Write, isImplicit: true);
+            session.Transaction = new PostgresTransactionBlock(session.Settings.DefaultMode, SqlAccess.Write, isImplicit: true, session.Time.GetTimestamp());
         }
 
         foreach (var command in commands)
@@ -217,11 +221,21 @@ internal sealed partial class PostgresConnection(PostgresSession session, PgWire
         return false;
     }
 
-    private void MarkFailed()
+    private async ValueTask MarkFailedAsync()
     {
-        if (session.Transaction is { Implicit: false } block)
+        if (session.Transaction is not { Implicit: false } block)
         {
-            block.Failed = true;
+            return;
         }
+
+        block.Failed = true;
+        if (block.Savepoints || block.Active is not { } active)
+        {
+            return;
+        }
+
+        block.Active = null;
+        await active.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+        await active.DisposeAsync().ConfigureAwait(false);
     }
 }

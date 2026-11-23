@@ -32,7 +32,7 @@ public sealed record ApiKeyCaller(ApiKeyRecord Key) : Caller;
 
 public sealed record UserCaller(string UserId, bool ViaOperator) : Caller;
 
-public sealed record ProjectCaller(string UserId, Ulid ProjectId, string? Database, FrozenSet<string> Scopes) : Caller;
+public sealed record ProjectCaller(string UserId, Ulid ProjectId, Ulid? OrganizationId, string? Database, FrozenSet<string> Scopes) : Caller;
 
 public sealed record EndUserCaller(Ulid ProjectId, string? Database, RulesAuth Auth) : Caller;
 

@@ -71,7 +71,8 @@ public sealed class UserProfiles(AuthData data, Users users, PasswordHasher pass
             return current;
         }
 
-        List<Change> changes = [Change.Update(updated), Change.Insert(outbox.NewEvent(current.InstanceId, "user.updated", current.Id, updated.Email))];
+        var update = Change.Update(updated);
+        List<Change> changes = [update, Change.Insert(outbox.NewEvent(current.InstanceId, "user.updated", current.Id, updated.Email))];
         if (authorization is not null)
         {
             changes.Add(authorization);
@@ -82,7 +83,7 @@ public sealed class UserProfiles(AuthData data, Users users, PasswordHasher pass
             throw new ApiException(409, "user_conflict", "User changed concurrently or external_id is already assigned.");
         }
 
-        return updated;
+        return updated with { Version = update.Version };
     }
 
     public async Task<UserRecord?> UpgradePasswordAsync(UserRecord current, string password, CancellationToken cancellationToken)
@@ -90,7 +91,8 @@ public sealed class UserProfiles(AuthData data, Users users, PasswordHasher pass
         ArgumentNullException.ThrowIfNull(current);
         var hash = await passwords.HashAsync(current.InstanceId, password, cancellationToken);
         var updated = current with { PasswordHash = hash };
-        if (!await data.SaveAsync(Change.Update(updated), cancellationToken))
+        var update = Change.Update(updated);
+        if (!await data.SaveAsync(update, cancellationToken))
         {
             var latest = await users.GetAsync(current.InstanceId, current.Id, cancellationToken);
             return latest is { Disabled: false } && latest.AuthStamp == current.AuthStamp && latest.AuthEpoch == current.AuthEpoch
@@ -98,7 +100,7 @@ public sealed class UserProfiles(AuthData data, Users users, PasswordHasher pass
                 ? latest : null;
         }
 
-        return updated;
+        return updated with { Version = update.Version };
     }
 
     private async Task<UserRecord> InsertAsync(string project, string email, string? hash, bool verified, string? first, string? last,
@@ -107,6 +109,7 @@ public sealed class UserProfiles(AuthData data, Users users, PasswordHasher pass
         var user = new UserRecord(AuthIds.New(), project, email, 0, clock.GetUtcNow(), hash)
         {
             AuthStamp = AuthIds.New(),
+            Version = AuthIds.New(),
             EmailVerified = verified,
             FirstName = Text(first, 255),
             LastName = Text(last, 255),

@@ -1,10 +1,11 @@
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Platform;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 
 namespace TerraBase.Features.Callers;
 
-internal sealed class CallerAuthentication(ApiKeyStore keys, TokenVerifier tokens)
+internal sealed class CallerAuthentication(ApiKeyStore keys, TokenVerifier tokens, ApiKeyExchange exchange)
 {
     public const string UserHeader = "X-TerraBase-User-Id";
 
@@ -52,6 +53,22 @@ internal sealed class CallerAuthentication(ApiKeyStore keys, TokenVerifier token
         };
     }
 
+    public async ValueTask<Result<Caller, Unauthorized, Unavailable>> AuthenticatePasswordAsync(string secret, string project, CancellationToken cancellationToken)
+    {
+        if (!ApiKeyExchange.IsKey(secret))
+        {
+            return await AuthenticateBearerAsync(secret, cancellationToken);
+        }
+
+        var exchanged = await exchange.ExchangeAsync(secret, project, cancellationToken);
+        return exchanged switch
+        {
+            string token => await tokens.VerifyAsync(token, cancellationToken),
+            Unauthorized unauthorized => unauthorized,
+            Unavailable unavailable => unavailable,
+        };
+    }
+
     public static string? Bearer(HttpRequest request)
     {
         var header = request.Headers.Authorization.ToString();
@@ -89,10 +106,56 @@ internal static class CallerAuthenticationExtensions
                     return;
                 }
 
+                if (context.Caller is ServiceCaller service && context.Request.Path.Value is { } path && !ServicePathAllowed(service, path))
+                {
+                    await ErrorResults.Json(StatusCodes.Status403Forbidden, "forbidden_caller", "the service caller does not grant access to this route").ExecuteAsync(context);
+                    return;
+                }
+
                 await next(context);
             });
             return app;
         }
+    }
+
+    internal static bool ServicePathAllowed(ServiceCaller service, string path)
+    {
+        if (service.Grants.Contains("admin") || path is "/v1/regions" or "/v1/health" or "/healthz" or "/readyz" or "/backupz")
+        {
+            return true;
+        }
+
+        if (path.StartsWith("/admin/", StringComparison.Ordinal))
+        {
+            return service.Grants.Contains("plans") || service.Grants.Contains("closure") || service.Grants.Contains("platform") || service.Grants.Contains("platform.write");
+        }
+
+        if (path.StartsWith("/v1/sync/", StringComparison.Ordinal))
+        {
+            return service.Grants.Contains("catalog.read") || service.Grants.Contains("platform.read") || service.Grants.Contains("platform.write");
+        }
+
+        if (path.StartsWith("/v1/platform/", StringComparison.Ordinal))
+        {
+            return service.Grants.Contains("platform.read") || service.Grants.Contains("platform.write");
+        }
+
+        const string projectsPrefix = "/v1/projects/";
+        if (path.StartsWith(projectsPrefix, StringComparison.Ordinal))
+        {
+            var rest = path.AsSpan(projectsPrefix.Length);
+            var slash = rest.IndexOf('/');
+            var segment = slash < 0 ? rest : rest[..slash];
+            if (segment.Length == 26 && Ulid.TryParse(segment, out var projectId))
+            {
+                return service.Grants.Contains(string.Concat("data:", projectId.ToString()))
+                    || service.Grants.Contains("catalog.read")
+                    || (PlatformCatalog.IsPlatformProject(projectId)
+                        && (service.Grants.Contains("platform.read") || service.Grants.Contains("platform.write")));
+            }
+        }
+
+        return true;
     }
 
     private static IResult? Accept(HttpContext context, Caller caller)

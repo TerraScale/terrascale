@@ -43,7 +43,15 @@ public sealed record TerraBaseRulesTestValue(string Rule, bool Value);
 
 /// <summary>A simulator decision. Draft compilation problems deny the request.</summary>
 public sealed record TerraBaseRulesTestResult(bool Allowed, string DecidedBy, string? Clause,
-    IReadOnlyList<TerraBaseRulesTestValue> Results, IReadOnlyList<string> Columns, IReadOnlyList<TerraBaseRulesProblem> Problems);
+    IReadOnlyList<TerraBaseRulesTestValue> Results, IReadOnlyList<string> Columns, IReadOnlyList<TerraBaseRulesProblem> Problems)
+{
+    [JsonConstructor]
+    internal TerraBaseRulesTestResult(bool Allowed, string DecidedBy, IReadOnlyList<TerraBaseRulesTestValue> Results,
+        IReadOnlyList<string> Columns, IReadOnlyList<TerraBaseRulesProblem> Problems, string? Clause = null)
+        : this(Allowed, DecidedBy, Clause, Results, Columns, Problems)
+    {
+    }
+}
 
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     RespectRequiredConstructorParameters = true, RespectNullableAnnotations = true)]

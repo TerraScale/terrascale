@@ -98,7 +98,10 @@ public sealed partial record ShapeQuery(string Table, string? Where, string? Col
 
     public static string Quote(string identifier) => "\"" + identifier.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
 
-    public static Result<ShapeSnapshot, Unavailable> Snapshot(SqlHttpStatementResult result)
+    public bool IncludesRowid =>
+        Columns is { } list && ColumnList(list)?.Any(static name => string.Equals(name, "rowid", StringComparison.OrdinalIgnoreCase)) == true;
+
+    public static Result<ShapeSnapshot, Unavailable> Snapshot(SqlHttpStatementResult result, bool includeRowid = false)
     {
         if (result.Rows.Count > MaxRows)
         {
@@ -110,8 +113,9 @@ public sealed partial record ShapeQuery(string Table, string? Where, string? Col
             return new Unavailable("TerraBase answered a shape query without its key column", "terrabase_protocol");
         }
 
-        var columns = result.Columns.Skip(1).Select(static column => column.Name).ToArray();
-        var rows = result.RowsOf().Select(row => new ShapeRowEntry(row.Text(0), RowObject(columns, row, 1))).ToArray();
+        var skip = !includeRowid && result.Columns.Count > 2 && string.Equals(result.Columns[1].Name, "rowid", StringComparison.OrdinalIgnoreCase) ? 2 : 1;
+        var columns = result.Columns.Skip(skip).Select(static column => column.Name).ToArray();
+        var rows = result.RowsOf().Select(row => new ShapeRowEntry(row.Text(0), RowObject(columns, row, skip))).ToArray();
         return new ShapeSnapshot(columns, rows, Digest(columns, rows));
     }
 
@@ -221,11 +225,11 @@ public sealed partial record ShapeQuery(string Table, string? Where, string? Col
 
 public static class ShapeViewers
 {
-    public static string Key(CallerGrant grant)
+    public static string Key(CallerGrant grant, string? rulesVersion = null)
     {
         ArgumentNullException.ThrowIfNull(grant);
         return grant.EndUser
-            ? "user:" + grant.Subject + "|" + string.Join(',', grant.Roles.Order(StringComparer.Ordinal))
+            ? "user:" + grant.Subject + "|" + string.Join(',', grant.Roles.Order(StringComparer.Ordinal)) + "|" + (rulesVersion ?? "")
             : "";
     }
 }

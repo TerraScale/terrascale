@@ -55,7 +55,7 @@ public sealed partial class Users(AuthData data, Credentials credentials, Webhoo
 
     internal (UserRecord User, Change[] Changes) NewAccount(string instanceId, string normalizedEmail, string? passwordHash, string userId, Change? lifecycleEvent = null, string? username = null)
     {
-        var user = new UserRecord(userId, instanceId, normalizedEmail, 0, clock.GetUtcNow(), passwordHash) { AuthStamp = AuthIds.New(), Username = username };
+        var user = new UserRecord(userId, instanceId, normalizedEmail, 0, clock.GetUtcNow(), passwordHash) { AuthStamp = AuthIds.New(), Username = username, Version = AuthIds.New() };
         return (user, lifecycleEvent is null ? [Change.Insert(user)] : [Change.Insert(user), lifecycleEvent]);
     }
 
@@ -67,6 +67,7 @@ public sealed partial class Users(AuthData data, Credentials credentials, Webhoo
             AuthStamp = AuthIds.New(),
             EmailVerified = false,
             IsAnonymous = true,
+            Version = AuthIds.New(),
         };
         return await data.SaveAsync(Change.Insert(guest), cancellationToken) ? BindAuthenticationState(guest) : throw ApiException.Unavailable();
     }
@@ -91,7 +92,7 @@ public sealed partial class Users(AuthData data, Credentials credentials, Webhoo
 
     public async Task<UserRecord?> FindByEmailAsync(string instanceId, string email, CancellationToken cancellationToken = default) =>
         NormalizeEmail(email) is { } normalized
-            ? await this.WithLinksAsync(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
+            ? await this.WithLinksAsync(await data.ReadUserAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
                 "SELECT * FROM users WHERE instance_id = @instanceId AND email = @normalized", new { instanceId, normalized }), cancellationToken), cancellationToken)
             : null;
 
@@ -143,7 +144,7 @@ public sealed partial class Users(AuthData data, Credentials credentials, Webhoo
                 return null;
             }
 
-            var user = new UserRecord(AuthIds.New(), tenant, normalized, 0, clock.GetUtcNow()) { AuthStamp = AuthIds.New(), LinkedProviders = [identity] };
+            var user = new UserRecord(AuthIds.New(), tenant, normalized, 0, clock.GetUtcNow()) { AuthStamp = AuthIds.New(), LinkedProviders = [identity], Version = AuthIds.New() };
             List<Change> changes = [Change.Insert(user), Change.Insert(Link(user, identity)), .. admission];
             if (await outbox.CreateAsync(tenant, "user.signed_up", user.Id, normalized, null, cancellationToken) is { } lifecycleEvent)
             {
@@ -315,7 +316,8 @@ public sealed partial class Users(AuthData data, Credentials credentials, Webhoo
             }
 
             var updated = current with { Disabled = disabled, AuthEpoch = checked(current.AuthEpoch + 1), AuthStamp = AuthIds.New() };
-            List<Change> changes = [Change.Update(updated)];
+            var update = Change.Update(updated);
+            List<Change> changes = [update];
             if (await outbox.CreateAsync(instanceId, disabled ? "user.disabled" : "user.enabled", userId, updated.Email, null, cancellationToken) is { } lifecycleEvent)
             {
                 changes.Add(lifecycleEvent);
@@ -323,7 +325,7 @@ public sealed partial class Users(AuthData data, Credentials credentials, Webhoo
 
             if (await data.SaveAsync(changes, cancellationToken))
             {
-                return BindAuthenticationState(updated);
+                return BindAuthenticationState(updated with { Version = update.Version });
             }
         }
 
@@ -350,7 +352,6 @@ public sealed partial class Users(AuthData data, Credentials credentials, Webhoo
                 cancellationToken));
             List<Change> changes =
             [
-                Change.Delete(current),
                 DeletionJob.Enqueue(instanceId, "account", userId, clock, closureGeneration: closureGeneration),
                 .. passcodes.Select(passcode => Change.Delete(passcode)),
             ];
@@ -372,6 +373,7 @@ public sealed partial class Users(AuthData data, Credentials credentials, Webhoo
                 changes.Add(deleted);
             }
 
+            changes.Add(Change.Delete(current));
             if (await data.SaveAsync(changes, cancellationToken))
             {
                 return;
@@ -407,11 +409,11 @@ public sealed partial class Users(AuthData data, Credentials credentials, Webhoo
     }
 
     private async Task<UserRecord?> ReadIdAsync(string instanceId, string userId, CancellationToken cancellationToken) =>
-        await this.WithLinksAsync(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
+        await this.WithLinksAsync(await data.ReadUserAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
             "SELECT * FROM users WHERE instance_id = @instanceId AND id = @userId", new { instanceId, userId }), cancellationToken), cancellationToken);
 
     private async Task<UserRecord?> ReadUsernameAsync(string instanceId, string username, CancellationToken cancellationToken) =>
-        await this.WithLinksAsync(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
+        await this.WithLinksAsync(await data.ReadUserAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
             "SELECT * FROM users WHERE instance_id = @instanceId AND username = @username", new { instanceId, username }), cancellationToken), cancellationToken);
 
     private async Task<UserRecord?> WithLinksAsync(UserRecord? user, CancellationToken cancellationToken)

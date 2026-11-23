@@ -88,7 +88,42 @@ namespace TerraScale.Dashboard.Common.Usage
 
         public long? FunctionInvocations(IEnumerable<string> projectIds, DateTimeOffset now)
         {
-            return Units(projectIds, now, month => (month.OrganizationInvocations, month.Invocations));
+            var month = now.UtcDateTime.ToString("yyyy-MM", System.Globalization.CultureInfo.InvariantCulture);
+            long? published = null;
+            long projects = 0;
+            var counted = false;
+            foreach (var id in projectIds)
+            {
+                if (Monthly.GetValueOrDefault(id) is not { State: UsageSourceState.Measured, Reading.Month: { } reading }
+                    || reading.Month != month || reading.ReadUnits < 0 || reading.Invocations < 0 || reading.Units < reading.WriteUnits)
+                {
+                    return null;
+                }
+
+                counted = true;
+                try { projects = checked(projects + reading.Invocations); }
+                catch (OverflowException) { return null; }
+                if (reading.OrganizationInvocations is { } organization)
+                {
+                    if (organization < reading.Invocations || published is not null && published != organization)
+                    {
+                        return null;
+                    }
+
+                    published = organization;
+                }
+                else if (published is not null)
+                {
+                    return null;
+                }
+            }
+
+            if (!counted)
+            {
+                return null;
+            }
+
+            return published is { } total ? total >= projects ? total : null : projects;
         }
 
         private long? Units(IEnumerable<string> projectIds, DateTimeOffset now, Func<UsageMonth, (long? Organization, long Project)> counter)

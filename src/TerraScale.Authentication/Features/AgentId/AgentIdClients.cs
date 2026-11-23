@@ -220,7 +220,7 @@ public sealed class AgentIdClients(AuthData data, TimeProvider clock, ILogger<Ag
     }
 
     private async Task<Versioned<UserRecord>?> UserAsync(string instance, string userId, CancellationToken cancellationToken) =>
-        Versioned.Of(await data.ReadAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
+        Versioned.Of(await data.ReadUserAsync(connection => connection.QuerySingleOrDefaultAsync<UserRecord>(
             "SELECT * FROM users WHERE instance_id = @instance AND id = @userId", new { instance, userId }), cancellationToken));
 
     private async Task<StepUpSave> TrySaveAsync(PreparedStepUp proof, IReadOnlyList<Change> changes, CancellationToken cancellationToken)

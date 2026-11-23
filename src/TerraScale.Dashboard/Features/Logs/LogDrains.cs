@@ -178,7 +178,7 @@ namespace TerraScale.Dashboard.Features.Logs
         private async Task ShipAsync(string id, CancellationToken cancellationToken)
         {
             await using var db = await storage.OpenAsync(cancellationToken);
-            if (await DrainWithCursorsAsync(db, DrainById, new { Id = id }) is not { } drain)
+            if (await WithCursorsAsync(db, await db.QuerySingleOrDefaultAsync<LogDrainRow>(DrainById, new { Id = id }), null) is not { } drain)
             {
                 return;
             }
@@ -218,7 +218,8 @@ namespace TerraScale.Dashboard.Features.Logs
                     LogDrainRow? current;
                     await using (var prepared = await connection.BeginTransactionAsync(token))
                     {
-                        current = await DrainWithCursorsAsync(connection, LiveDrain, new { Id = id, drain.Revision, DatabaseId = database.Id }, prepared);
+                        current = await WithCursorsAsync(connection,
+                            await connection.QuerySingleOrDefaultAsync<LogDrainRow>(LiveDrain, new { Id = id, drain.Revision, DatabaseId = database.Id }, prepared), prepared);
                         if (current is null)
                         {
                             await claim.ForgetAsync(prepared, token);
@@ -308,9 +309,9 @@ namespace TerraScale.Dashboard.Features.Logs
             DashboardDb.Expect(await connection.ExecuteAsync(DashboardSql.LogDrains.Update, drain, transaction));
         }
 
-        private static async Task<LogDrainRow?> DrainWithCursorsAsync(TerraBaseDbConnection connection, string sql, object key, DbTransaction? transaction = null)
+        private static async Task<LogDrainRow?> WithCursorsAsync(TerraBaseDbConnection connection, LogDrainRow? drain, DbTransaction? transaction)
         {
-            if (await connection.QuerySingleOrDefaultAsync<LogDrainRow>(sql, key, transaction) is not { } drain)
+            if (drain is null)
             {
                 return null;
             }

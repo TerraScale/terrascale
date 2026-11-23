@@ -20,6 +20,8 @@ internal enum RowAction
 
 internal sealed record RowCommand(RowAction Action, string? Table, long? Key, IReadOnlyDictionary<string, JsonElement>? Values);
 
+internal sealed record PlannedRow(SqlStatement Write, SqlStatement? Check);
+
 internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClusterCoordinator coordinator, SqlRunner runner, TimeProvider time)
 {
     public const string Rows = "/v1/projects/{project}/databases/{database}/tables/{table}/rows";
@@ -30,13 +32,13 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
 
     public const int MaxOperations = 100;
 
-    public async ValueTask<Result<IReadOnlyList<RowAnswer>, SqlRefusal, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> RunAsync(
-        Caller caller, string? project, string? database, IReadOnlyList<RowCommand> commands, CancellationToken cancellationToken) =>
+    public async ValueTask<RowsOutcome> RunAsync(
+        Caller caller, string? project, string? database, IReadOnlyList<RowCommand> commands, bool batch, CancellationToken cancellationToken) =>
         await access.DataAsync(caller, project, database, cancellationToken) switch
         {
             ResolvedDatabase target => await access.OpenAsync(target.Database, cancellationToken) switch
             {
-                ISqlDatabaseSession session => await ExecuteAsync(target, session, commands, cancellationToken),
+                ISqlDatabaseSession session => await ExecuteAsync(target, session, commands, batch, cancellationToken),
                 Unavailable unavailable => unavailable,
             },
             Validation invalid => invalid,
@@ -49,8 +51,8 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
     public static Result<long, Validation> Key(string? raw) =>
         long.TryParse(raw, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var key) ? key : new Validation("key must be the row's integer key", "invalid_key");
 
-    private async ValueTask<Result<IReadOnlyList<RowAnswer>, SqlRefusal, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> ExecuteAsync(
-        ResolvedDatabase target, ISqlDatabaseSession session, IReadOnlyList<RowCommand> commands, CancellationToken cancellationToken)
+    private async ValueTask<RowsOutcome> ExecuteAsync(
+        ResolvedDatabase target, ISqlDatabaseSession session, IReadOnlyList<RowCommand> commands, bool batch, CancellationToken cancellationToken)
     {
         var writes = commands.Any(static command => command.Action != RowAction.Read);
         if (writes && !target.CanWrite)
@@ -63,7 +65,8 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
             StoredRules current => current.Rules,
             NotFound or Unavailable => new RulesSet(new Dictionary<string, RulesTable>()),
         };
-        List<SqlStatement> statements = [];
+        var now = time.GetUtcNow();
+        List<PlannedRow> planned = [];
         for (var index = 0; index < commands.Count; index++)
         {
             if (commands[index].Table is not { Length: > 0 } table)
@@ -71,48 +74,182 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
                 return new Validation("table names the table", "invalid_table");
             }
 
-            var columns = await RulesService.ColumnsAsync(session, table, cancellationToken);
-            if (columns.Count == 0)
+            var tableColumns = await RulesService.TableColumnsAsync(session, table, cancellationToken);
+            if (tableColumns.Count == 0)
             {
                 return new NotFound(string.Concat("the database has no table ", table), "unknown_table");
             }
 
-            var built = Build(commands[index], table, columns, set, target.EndUser, index);
-            if (built switch { SqlStatement statement => Add(statements, statement), SqlRefusal refusal => refusal } is { } failure)
+            var built = Build(commands[index], table, tableColumns, set, target.EndUser, now, new Position(index, batch));
+            var failure = built switch
             {
-                return failure;
+                PlannedRow row => Add(planned, row),
+                RowRefused refused => new RowsOutcome(refused),
+                SqlRefusal refusal => new RowsOutcome(refusal),
+            };
+            if (failure is { } refusedOutcome)
+            {
+                return refusedOutcome;
             }
         }
 
-        var request = new SqlStatementRequest(target.Database.Id, statements, writes ? SqlAccess.Write : SqlAccess.Read, target.Database.DefaultConsistency, CausalBookmark.Empty);
+        if (await ValidateAsync(session, target, commands, planned, batch, cancellationToken) is { } invalid)
+        {
+            return invalid;
+        }
+
+        if (writes && batch)
+        {
+            return await ExecuteBatchWriteAsync(target, session, commands, planned, cancellationToken);
+        }
+
+        var request = new SqlStatementRequest(target.Database.Id, [.. planned.Select(static row => row.Write)], writes ? SqlAccess.Write : SqlAccess.Read,
+            target.Database.DefaultConsistency, CausalBookmark.Empty);
         var outcome = writes
             ? await coordinator.ExecuteWriteAsync(session, request, cancellationToken) switch
             {
-                SqlWriteResult written => Answers(target, written.ResultSets, commands, wrote: true),
-                SqlError error => SqlRefusal.From(error),
-                SerializationConflict conflict => SqlRefusal.From(conflict),
-                SchemaMismatch mismatch => SqlRefusal.From(mismatch),
-                Unavailable unavailable => SqlRefusal.From(unavailable),
-                RequestTimeout timeout => SqlRefusal.From(timeout),
-                StorageBusy busy => SqlRefusal.From(busy),
+                SqlWriteResult written => Answers(target, written.ResultSets, commands, batch, wrote: true),
+                SqlError error => new RowsOutcome(SqlRefusal.From(error)),
+                SerializationConflict conflict => new RowsOutcome(SqlRefusal.From(conflict)),
+                SchemaMismatch mismatch => new RowsOutcome(SqlRefusal.From(mismatch)),
+                Unavailable unavailable => new RowsOutcome(SqlRefusal.From(unavailable)),
+                RequestTimeout timeout => new RowsOutcome(SqlRefusal.From(timeout)),
+                StorageBusy busy => new RowsOutcome(SqlRefusal.From(busy)),
             }
             : await session.ExecuteReadAsync(request, cancellationToken) switch
             {
-                SqlReadResult read => Answers(target, read.ResultSets, commands, wrote: false),
-                SqlError error => SqlRefusal.From(error),
-                StorageBusy busy => SqlRefusal.From(busy),
-                RequestTimeout timeout => SqlRefusal.From(timeout),
+                SqlReadResult read => Answers(target, read.ResultSets, commands, batch, wrote: false),
+                SqlError error => new RowsOutcome(SqlRefusal.From(error)),
+                StorageBusy busy => new RowsOutcome(SqlRefusal.From(busy)),
+                RequestTimeout timeout => new RowsOutcome(SqlRefusal.From(timeout)),
             };
-        return outcome switch
+        return outcome;
+    }
+
+    private async ValueTask<RowsOutcome> ExecuteBatchWriteAsync(
+        ResolvedDatabase target, ISqlDatabaseSession session, IReadOnlyList<RowCommand> commands, List<PlannedRow> planned, CancellationToken cancellationToken)
+    {
+        var begun = await coordinator.BeginTransactionAsync(session, new SqlTransactionOptions(target.Database.DefaultConsistency, SqlAccess.Write, CausalBookmark.Empty), cancellationToken);
+        return begun switch
         {
-            IReadOnlyList<RowAnswer> answers => Result(answers),
-            SqlRefusal refusal => refusal,
+            ISqlTransaction transaction => await RunBatchTransactionAsync(target, session, transaction, commands, planned, cancellationToken),
+            StorageBusy busy => new RowsOutcome(SqlRefusal.From(busy)),
+            RequestTimeout timeout => new RowsOutcome(SqlRefusal.From(timeout)),
         };
     }
 
-    private static Result<IReadOnlyList<RowAnswer>, SqlRefusal, Validation, Unauthorized, Forbidden, NotFound, Unavailable> Result(IReadOnlyList<RowAnswer> answers) => new(answers);
+    private async ValueTask<RowsOutcome> RunBatchTransactionAsync(
+        ResolvedDatabase target, ISqlDatabaseSession session, ISqlTransaction transaction, IReadOnlyList<RowCommand> commands, List<PlannedRow> planned, CancellationToken cancellationToken)
+    {
+        await using (transaction)
+        {
+            List<SqlResultSet> results = new(planned.Count);
+            for (var index = 0; index < planned.Count; index++)
+            {
+                var step = await transaction.ExecuteAsync(planned[index].Write, cancellationToken);
+                var failure = step switch
+                {
+                    SqlResultSet result => CollectOrRefuse(results, result, commands[index], index),
+                    SqlError error => new RowsOutcome(SqlRefusal.From(error)),
+                    StorageBusy busy => new RowsOutcome(SqlRefusal.From(busy)),
+                    RequestTimeout timeout => new RowsOutcome(SqlRefusal.From(timeout)),
+                };
+                if (failure is { } refused)
+                {
+                    _ = await transaction.RollbackAsync(cancellationToken);
+                    return refused;
+                }
+            }
 
-    private Result<IReadOnlyList<RowAnswer>, SqlRefusal> Answers(ResolvedDatabase target, IReadOnlyList<SqlResultSet> results, IReadOnlyList<RowCommand> commands, bool wrote)
+            var committed = await coordinator.CommitTransactionAsync(session, transaction, cancellationToken);
+            return committed switch
+            {
+                CommitMetadata => Answers(target, results, commands, batch: true, wrote: true),
+                SerializationConflict conflict => new RowsOutcome(SqlRefusal.From(conflict)),
+                SchemaMismatch mismatch => new RowsOutcome(SqlRefusal.From(mismatch)),
+                Unavailable unavailable => new RowsOutcome(SqlRefusal.From(unavailable)),
+                RequestTimeout timeout => new RowsOutcome(SqlRefusal.From(timeout)),
+                StorageBusy busy => new RowsOutcome(SqlRefusal.From(busy)),
+            };
+        }
+    }
+
+    private static RowsOutcome? CollectOrRefuse(List<SqlResultSet> results, SqlResultSet result, RowCommand command, int index)
+    {
+        if (result.Rows.Count == 0)
+        {
+            return new RowRefused(
+                command.Action == RowAction.Create ? StatusCodes.Status403Forbidden : StatusCodes.Status404NotFound,
+                command.Action == RowAction.Create ? "rule_denied" : "row_not_found",
+                command.Action == RowAction.Create ? "the rules refused the row" : "the row does not exist or the rules hide it",
+                new RowsErrorDetails(Table: command.Table, Index: index));
+        }
+
+        results.Add(result);
+        return null;
+    }
+
+    private static async ValueTask<RowsOutcome?> ValidateAsync(
+        ISqlDatabaseSession session, ResolvedDatabase target, IReadOnlyList<RowCommand> commands, List<PlannedRow> planned, bool batch,
+        CancellationToken cancellationToken)
+    {
+        List<(int Index, SqlStatement Check)> checks = [];
+        for (var index = 0; index < planned.Count; index++)
+        {
+            if (planned[index].Check is { } check)
+            {
+                checks.Add((index, check));
+            }
+        }
+
+        if (checks.Count == 0)
+        {
+            return null;
+        }
+
+        var request = new SqlStatementRequest(target.Database.Id, [.. checks.Select(static item => item.Check)], SqlAccess.Read, ConsistencyMode.Fast, CausalBookmark.Empty);
+        var read = await session.ExecuteReadAsync(request, cancellationToken);
+        var results = read switch
+        {
+            SqlReadResult answered => answered.ResultSets,
+            SqlError or StorageBusy or RequestTimeout => null,
+        };
+        if (results is null)
+        {
+            return read switch
+            {
+                SqlError error => new RowsOutcome(SqlRefusal.From(error)),
+                StorageBusy busy => new RowsOutcome(SqlRefusal.From(busy)),
+                RequestTimeout timeout => new RowsOutcome(SqlRefusal.From(timeout)),
+                SqlReadResult => throw new UnreachableException(),
+            };
+        }
+
+        for (var at = 0; at < checks.Count && at < results.Count; at++)
+        {
+            if (results[at].Rows is not [var row, ..] || !IsTrue(row[0]))
+            {
+                continue;
+            }
+
+            for (var clause = 1; clause < row.Count; clause++)
+            {
+                if (!IsTrue(row[clause]))
+                {
+                    var index = checks[at].Index;
+                    return new RowsOutcome(new RowRefused(StatusCodes.Status400BadRequest, "validation_failed",
+                        string.Concat("validate[", (clause - 1).ToString(CultureInfo.InvariantCulture), "] is false for the written row"),
+                        new RowsErrorDetails(Table: commands[index].Table, Index: batch ? index : null, Clause: clause - 1)));
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsTrue(SqlValue value) => value.TryGetIntegral(out var integer) && integer != 0;
+
+    private RowsOutcome Answers(ResolvedDatabase target, IReadOnlyList<SqlResultSet> results, IReadOnlyList<RowCommand> commands, bool batch, bool wrote)
     {
         runner.Meter(target, results, wrote, target.Database.DefaultConsistency);
         List<RowAnswer> answers = [];
@@ -121,9 +258,11 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
             var result = results[index];
             if (result.Rows.Count == 0)
             {
-                return new SqlRefusal(commands[index].Action == RowAction.Create ? "rule_denied" : "row_not_found",
-                    commands[index].Action == RowAction.Create ? "the rules refused the row" : "the row does not exist or the rules hide it", "P0002", index,
-                    commands[index].Action == RowAction.Create ? StatusCodes.Status403Forbidden : StatusCodes.Status404NotFound);
+                return new RowRefused(
+                    commands[index].Action == RowAction.Create ? StatusCodes.Status403Forbidden : StatusCodes.Status404NotFound,
+                    commands[index].Action == RowAction.Create ? "rule_denied" : "row_not_found",
+                    commands[index].Action == RowAction.Create ? "the rules refused the row" : "the row does not exist or the rules hide it",
+                    new RowsErrorDetails(Table: commands[index].Table, Index: batch ? index : null));
             }
 
             var row = result.Rows[0];
@@ -134,78 +273,140 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
             answers.Add(new RowAnswer(key, values));
         }
 
-        return answers;
+        return new RowsOutcome(answers);
     }
 
-    private Result<SqlStatement, SqlRefusal> Build(RowCommand command, string tableName, IReadOnlyList<string> columns, RulesSet? set, RulesAuth? auth, int index)
+    private readonly record struct Position(int Index, bool Batch)
     {
+        public RowsErrorDetails Details(string table, string column) => new(Table: table, Column: column, Index: Batch ? Index : null);
+    }
+
+    private static Result<PlannedRow, RowRefused, SqlRefusal> Build(
+        RowCommand command, string tableName, IReadOnlyList<TableColumn> tableColumns, RulesSet? set, RulesAuth? auth, DateTimeOffset now, Position position)
+    {
+        IReadOnlyList<string> columns = [.. tableColumns.Select(static column => column.Name)];
         var rule = set?.Table(tableName);
         var table = RulesCompiler.Quote(tableName);
         var readable = rule?.Columns is { Count: > 0 } chosen ? string.Join(", ", chosen.Select(RulesCompiler.Quote)) : "*";
         if (set is not null && auth is not null && rule is null)
         {
-            return SqlRefusal.RuleDenied(string.Concat("the rules do not cover ", tableName), index);
+            return SqlRefusal.RuleDenied(string.Concat("the rules do not cover ", tableName), position.Index);
         }
 
+        var assigned = command.Action switch
+        {
+            RowAction.Create => rule?.Set?.Create,
+            RowAction.Update => rule?.Set?.Update,
+            RowAction.Read or RowAction.Delete => null,
+            _ => throw new UnreachableException(),
+        };
         var values = new List<(string Column, SqlValue Value)>();
         foreach (var (column, element) in command.Values ?? new Dictionary<string, JsonElement>())
         {
             var known = columns.FirstOrDefault(name => string.Equals(name, column, StringComparison.OrdinalIgnoreCase));
-            if (known is null || SqlWire.Value(element) is not { } value)
+            if (known is null)
             {
-                return SqlRefusal.Invalid(string.Concat(column, " is not a column of ", tableName, " or its value is not a SQL value"), index);
+                return new RowRefused(StatusCodes.Status400BadRequest, "unknown_column", string.Concat("the table ", tableName, " has no column ", column),
+                    position.Details(tableName, column));
             }
 
-            if (auth is not null && rule?.Writable is { } writable && !writable.Contains(known, StringComparer.OrdinalIgnoreCase))
+            if (SqlWire.Value(element) is not { } value)
             {
-                return new SqlRefusal("column_not_writable", string.Concat(known, " is not writable"), "42501", index, StatusCodes.Status403Forbidden);
+                return new RowRefused(StatusCodes.Status400BadRequest, "invalid_request", string.Concat(known, " is not a SQL value"), position.Details(tableName, known));
+            }
+
+            if (auth is not null && (rule?.Writable?.Contains(known, StringComparer.OrdinalIgnoreCase) != true
+                || assigned?.Keys.Contains(known, StringComparer.OrdinalIgnoreCase) == true))
+            {
+                return new RowRefused(StatusCodes.Status403Forbidden, "column_not_writable", string.Concat(known, " is not writable"), position.Details(tableName, known));
             }
 
             values.Add((known, value));
         }
 
+        if (auth is not null && assigned is not null)
+        {
+            var ulid = Ulid.NewUlid(now);
+            foreach (var (column, expression) in assigned)
+            {
+                values.RemoveAll(value => string.Equals(value.Column, column, StringComparison.OrdinalIgnoreCase));
+                values.Add((column, RulesCompiler.SetValue(expression, auth, now.ToUnixTimeMilliseconds(), ulid)));
+            }
+        }
+
+        var renderTime = now.ToUnixTimeMilliseconds();
         return command.Action switch
         {
-            RowAction.Read => Condition(rule?.Read, auth, RulesOperation.Read, columns, index) switch
+            RowAction.Read => Condition(rule?.Read, auth, RulesOperation.Read, columns, position.Index, renderTime) switch
             {
-                string condition => SqlBuild.Statement(string.Concat("SELECT rowid, ", readable, " FROM ", table, " WHERE rowid = ? AND ", condition), SqlBuild.Integer(command.Key ?? 0)),
+                string condition => new PlannedRow(
+                    SqlBuild.Statement(string.Concat("SELECT rowid, ", readable, " FROM ", table, " WHERE rowid = ? AND ", condition), SqlBuild.Integer(command.Key ?? 0)), null),
                 SqlRefusal refusal => refusal,
             },
-            RowAction.Delete => Condition(rule?.Delete, auth, RulesOperation.Delete, columns, index) switch
+            RowAction.Delete => Condition(rule?.Delete, auth, RulesOperation.Delete, columns, position.Index, renderTime) switch
             {
-                string condition => SqlBuild.Statement(string.Concat("DELETE FROM ", table, " WHERE rowid = ? AND ", condition, " RETURNING rowid"), SqlBuild.Integer(command.Key ?? 0)),
+                string condition => new PlannedRow(
+                    SqlBuild.Statement(string.Concat("DELETE FROM ", table, " WHERE rowid = ? AND ", condition, " RETURNING rowid"), SqlBuild.Integer(command.Key ?? 0)), null),
                 SqlRefusal refusal => refusal,
             },
-            RowAction.Create => Create(table, readable, values, rule, auth, columns, index),
-            RowAction.Update => Update(table, readable, command.Key ?? 0, values, rule, auth, columns, index),
+            RowAction.Create => Create(table, readable, values, rule, auth, tableColumns, columns, position.Index, renderTime),
+            RowAction.Update => Update(table, readable, command.Key ?? 0, values, rule, auth, columns, position.Index, renderTime),
             _ => throw new UnreachableException(),
         };
     }
 
-    private Result<SqlStatement, SqlRefusal> Create(
-        string table, string readable, List<(string Column, SqlValue Value)> values, RulesTable? rule, RulesAuth? auth, IReadOnlyList<string> columns, int index)
+    private static Result<PlannedRow, RowRefused, SqlRefusal> Create(
+        string table, string readable, List<(string Column, SqlValue Value)> values, RulesTable? rule, RulesAuth? auth, IReadOnlyList<TableColumn> tableColumns,
+        IReadOnlyList<string> columns, int index, long renderTime)
     {
-        AddSet(values, rule?.Set?.Create, auth);
         if (values.Count == 0)
         {
             return SqlRefusal.Invalid("row names at least one column", index);
         }
 
         var names = string.Join(", ", values.Select(static value => RulesCompiler.Quote(value.Column)));
-        var projected = string.Join(", ", values.Select(static value => string.Concat("? AS ", RulesCompiler.Quote(value.Column))));
-        SqlValue[] args = [.. values.Select(static value => value.Value)];
-        return Condition(rule?.Create, auth, RulesOperation.Create, columns, index, newPrefix: "new.") switch
+        List<string> projection = [];
+        List<SqlValue> args = [];
+        foreach (var column in tableColumns)
         {
-            string condition => SqlBuild.Statement(string.Concat("INSERT INTO ", table, " (", names, ") SELECT ", names, " FROM (SELECT ", projected, ") AS new WHERE ",
-                condition, " RETURNING rowid, ", readable), args),
+            var matched = values.FindIndex(value => string.Equals(value.Column, column.Name, StringComparison.OrdinalIgnoreCase));
+            if (matched >= 0)
+            {
+                projection.Add(string.Concat("? AS ", RulesCompiler.Quote(column.Name)));
+                args.Add(values[matched].Value);
+            }
+            else if (column.DefaultSql is { Length: > 0 } defaultSql)
+            {
+                projection.Add(string.Concat("(", defaultSql, ") AS ", RulesCompiler.Quote(column.Name)));
+            }
+            else
+            {
+                projection.Add(string.Concat("NULL AS ", RulesCompiler.Quote(column.Name)));
+            }
+        }
+
+        var projected = string.Join(", ", projection);
+        SqlValue[] bound = [.. args];
+        var condition = Condition(rule?.Create, auth, RulesOperation.Create, columns, index, renderTime, newPrefix: "new.");
+        var validations = Validations(rule, auth, columns, index, renderTime);
+        return condition switch
+        {
+            string allowed => validations switch
+            {
+                IReadOnlyList<string> clauses => new PlannedRow(
+                    SqlBuild.Statement(string.Concat("INSERT INTO ", table, " (", names, ") SELECT ", names, " FROM (SELECT ", projected, ") AS new WHERE ",
+                        Conjunction(allowed, clauses), " RETURNING rowid, ", readable), bound),
+                    clauses.Count == 0 ? null : SqlBuild.Statement(string.Concat("SELECT ", allowed, ", ", string.Join(", ", clauses), " FROM (SELECT ", projected, ") AS new"), bound)),
+                SqlRefusal refusal => refusal,
+            },
             SqlRefusal refusal => refusal,
         };
     }
 
-    private Result<SqlStatement, SqlRefusal> Update(
-        string table, string readable, long key, List<(string Column, SqlValue Value)> values, RulesTable? rule, RulesAuth? auth, IReadOnlyList<string> columns, int index)
+    private static Result<PlannedRow, RowRefused, SqlRefusal> Update(
+        string table, string readable, long key, List<(string Column, SqlValue Value)> values, RulesTable? rule, RulesAuth? auth, IReadOnlyList<string> columns,
+        int index, long renderTime)
     {
-        AddSet(values, rule?.Set?.Update, auth);
         if (values.Count == 0)
         {
             return SqlRefusal.Invalid("row names at least one column", index);
@@ -215,47 +416,65 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
         var next = string.Join(", ", columns.Select(column => values.Any(value => value.Column == column)
             ? string.Concat("? AS ", RulesCompiler.Quote(column))
             : string.Concat(table, ".", RulesCompiler.Quote(column), " AS ", RulesCompiler.Quote(column))));
-        List<SqlValue> args = [.. values.Select(static value => value.Value), SqlBuild.Integer(key)];
-        args.AddRange(columns.Where(column => values.Any(value => value.Column == column)).Select(column => values.First(value => value.Column == column).Value));
-        return Condition(rule?.Update, auth, RulesOperation.Update, columns, index, newPrefix: "new.") switch
+        List<SqlValue> nextArgs = [.. columns.Where(column => values.Any(value => value.Column == column)).Select(column => values.First(value => value.Column == column).Value)];
+        List<SqlValue> args = [.. values.Select(static value => value.Value), SqlBuild.Integer(key), .. nextArgs];
+        var condition = Condition(rule?.Update, auth, RulesOperation.Update, columns, index, renderTime, newPrefix: "new.", rowPrefix: string.Concat(table, "."));
+        var checkCondition = Condition(rule?.Update, auth, RulesOperation.Update, columns, index, renderTime, newPrefix: "new.", rowPrefix: "row_values.");
+        var validations = Validations(rule, auth, columns, index, renderTime);
+        return condition switch
         {
-            string condition => SqlBuild.Statement(string.Concat("UPDATE ", table, " SET ", assignments, " WHERE rowid = ? AND EXISTS (SELECT 1 FROM (SELECT ", next,
-                ") AS new WHERE ", condition, ") RETURNING rowid, ", readable), [.. args]),
+            string allowed => checkCondition switch
+            {
+                string checkedAllowed => validations switch
+                {
+                    IReadOnlyList<string> clauses => new PlannedRow(
+                        SqlBuild.Statement(string.Concat("UPDATE ", table, " SET ", assignments, " WHERE rowid = ? AND EXISTS (SELECT 1 FROM (SELECT ", next,
+                            ") AS new WHERE ", Conjunction(allowed, clauses), ") RETURNING rowid, ", readable), [.. args]),
+                        clauses.Count == 0 ? null : SqlBuild.Statement(string.Concat("SELECT ", checkedAllowed, ", ", string.Join(", ", clauses), " FROM (SELECT * FROM ",
+                            table, " WHERE rowid = ?) AS row_values, (SELECT ", next, " FROM ", table, " WHERE rowid = ?) AS new"),
+                            [SqlBuild.Integer(key), .. nextArgs, SqlBuild.Integer(key)])),
+                    SqlRefusal refusal => refusal,
+                },
+                SqlRefusal refusal => refusal,
+            },
             SqlRefusal refusal => refusal,
         };
     }
 
-    private void AddSet(List<(string Column, SqlValue Value)> values, IReadOnlyDictionary<string, string>? assignments, RulesAuth? auth)
+    private static string Conjunction(string condition, IReadOnlyList<string> clauses) =>
+        clauses.Count == 0 ? condition : string.Concat(condition, " AND ", string.Join(" AND ", clauses));
+
+    private static Result<IReadOnlyList<string>, SqlRefusal> Validations(RulesTable? rule, RulesAuth? auth, IReadOnlyList<string> columns, int index, long renderTime)
     {
-        if (auth is null || assignments is null)
+        if (auth is null || rule?.Validate is not { Count: > 0 } clauses)
         {
-            return;
+            return Clauses([]);
         }
 
-        foreach (var (column, expression) in assignments)
+        List<string> rendered = [];
+        foreach (var clause in clauses)
         {
-            values.RemoveAll(value => string.Equals(value.Column, column, StringComparison.OrdinalIgnoreCase));
-            values.Add((column, expression switch
+            var compiled = RulesCompiler.Compile(clause, columns, RulesOperation.Validate) switch
             {
-                "auth.uid" => SqlValue.FromText(auth.Uid),
-                "auth.org_id" => auth.OrgId is { } organization ? SqlValue.FromText(organization) : SqlValue.Null,
-                "auth.org_role" => auth.OrgRole is { } role ? SqlValue.FromText(role) : SqlValue.Null,
-                "auth.is_anonymous" => SqlValue.FromIntegral(auth.IsAnonymous ? 1 : 0),
-                "request.time" => SqlValue.FromIntegral(time.GetUtcNow().ToUnixTimeMilliseconds()),
-                "request.ulid" => SqlValue.FromText(Ulid.NewUlid(time.GetUtcNow()).ToString()),
-                _ => Literal(expression),
-            }));
+                CompiledCondition ready => ready,
+                Validation => null,
+            };
+            if (compiled is null)
+            {
+                return new SqlRefusal("rules_invalid", "a validate clause no longer compiles against the table", "42501", index, StatusCodes.Status403Forbidden);
+            }
+
+            rendered.Add(RulesCompiler.Render(compiled, auth, renderTime, "new."));
         }
+
+        return Clauses(rendered);
     }
 
-    private static SqlValue Literal(string expression) =>
-        long.TryParse(expression, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var integer) ? SqlValue.FromIntegral(integer)
-        : expression is ['\'', .., '\''] ? SqlValue.FromText(expression[1..^1].Replace("''", "'", StringComparison.Ordinal))
-        : expression.Equals("TRUE", StringComparison.OrdinalIgnoreCase) ? SqlValue.FromIntegral(1)
-        : expression.Equals("FALSE", StringComparison.OrdinalIgnoreCase) ? SqlValue.FromIntegral(0)
-        : SqlValue.Null;
+    private static Result<IReadOnlyList<string>, SqlRefusal> Clauses(IReadOnlyList<string> clauses) => new(clauses);
 
-    private Result<string, SqlRefusal> Condition(string? condition, RulesAuth? auth, RulesOperation operation, IReadOnlyList<string> columns, int index, string? newPrefix = null)
+    private static Result<string, SqlRefusal> Condition(
+        string? condition, RulesAuth? auth, RulesOperation operation, IReadOnlyList<string> columns, int index, long renderTime, string? newPrefix = null,
+        string? rowPrefix = null)
     {
         if (auth is null)
         {
@@ -269,14 +488,14 @@ internal sealed class RowsService(DatabaseAccess access, RulesStore rules, IClus
 
         return RulesCompiler.Compile(condition, columns, operation) switch
         {
-            CompiledCondition compiled => RulesCompiler.Render(compiled, auth, time.GetUtcNow(), newPrefix),
+            CompiledCondition compiled => RulesCompiler.Render(compiled, auth, renderTime, newPrefix, rowPrefix),
             Validation refused => new SqlRefusal("rules_invalid", refused.Message, "42501", index, StatusCodes.Status403Forbidden),
         };
     }
 
-    private static SqlRefusal? Add(List<SqlStatement> statements, SqlStatement statement)
+    private static RowsOutcome? Add(List<PlannedRow> planned, PlannedRow row)
     {
-        statements.Add(statement);
+        planned.Add(row);
         return null;
     }
 }

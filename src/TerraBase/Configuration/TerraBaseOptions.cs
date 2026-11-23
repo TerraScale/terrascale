@@ -30,7 +30,7 @@ public sealed record TerraBaseOptions
     private static readonly string[] Keys =
     [
         "port", "internal-port", "metrics-port", "postgres-port", "quic-port", "data-directory", "memory-budget", "auth-issuer", "auth-audience",
-        "query-budget-seconds", "storage-threads", "atlas-url", "atlas-publish-key-file", "control-key-file", "master-key", "master-keys",
+        "query-budget-seconds", "storage-threads", "atlas-url", "atlas-publish-key-file", "control-key-file", "master-key", "master-keys", "platform-url",
         .. BackupSettings.Keys,
     ];
 
@@ -69,6 +69,8 @@ public sealed record TerraBaseOptions
     public KeyringSettings? DatabaseKeyring { get; init; }
 
     public Uri? AtlasUrl { get; init; }
+
+    public Uri? PlatformUrl { get; init; }
 
     internal ECDsa? AtlasPublishKey { get; init; }
 
@@ -127,7 +129,8 @@ public sealed record TerraBaseOptions
             StorageThreads = (int)values.Integer("storage-threads", 1, 1024, Math.Clamp(Environment.ProcessorCount, 1, 1024)),
             Backup = BackupSettings.Parse(values),
             DatabaseKeyring = keyring,
-            AtlasUrl = ParseAtlasUrl(values),
+            AtlasUrl = ParseServiceUrl(values, "atlas-url"),
+            PlatformUrl = ParseServiceUrl(values, "platform-url"),
             AtlasPublishKey = values.Get("atlas-publish-key-file") is { } atlasKey ? PrivateKey(values, atlasKey, "TERRABASE_ATLAS_PUBLISH_KEY_FILE") : null,
             ControlSnapshotKey = values.Get("control-key-file") is { } controlKey ? PublicKey(values, controlKey) : null,
         };
@@ -223,9 +226,9 @@ public sealed record TerraBaseOptions
         return (issuer, audiences);
     }
 
-    private static Uri? ParseAtlasUrl(SettingValues values)
+    private static Uri? ParseServiceUrl(SettingValues values, string key)
     {
-        if (values.Get("atlas-url") is not { } url)
+        if (values.Get(key) is not { } url)
         {
             return null;
         }
@@ -234,7 +237,7 @@ public sealed record TerraBaseOptions
             || (address.Scheme != Uri.UriSchemeHttps && (address.Scheme != Uri.UriSchemeHttp || !address.IsLoopback))
             || address.UserInfo.Length > 0 || address.Query.Length > 0 || address.Fragment.Length > 0)
         {
-            values.Fail("atlas-url must be an absolute https URL, or http on loopback, without user information, query or fragment");
+            values.Fail(key + " must be an absolute https URL, or http on loopback, without user information, query or fragment");
             return null;
         }
 

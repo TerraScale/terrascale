@@ -19,7 +19,14 @@ public sealed record TerraBaseBackup(string Id, string DatabaseId, string Status
 /// <param name="FullBackupCron">UTC cron, or null for no schedule.</param>
 /// <param name="RetentionDays">Retention in days, 1–35.</param>
 /// <param name="UpdatedAt">Last save, or null for the default policy.</param>
-public sealed record TerraBaseBackupPolicy(string? FullBackupCron, int RetentionDays, DateTimeOffset? UpdatedAt);
+public sealed record TerraBaseBackupPolicy(string? FullBackupCron, int RetentionDays, DateTimeOffset? UpdatedAt)
+{
+    [JsonConstructor]
+    internal TerraBaseBackupPolicy(int RetentionDays, string? FullBackupCron = null, DateTimeOffset? UpdatedAt = null)
+        : this(FullBackupCron, RetentionDays, UpdatedAt)
+    {
+    }
+}
 
 /// <summary>The inclusive continuous-backup restore window.</summary>
 /// <param name="Earliest">Oldest retained snapshot.</param>
@@ -34,7 +41,15 @@ public sealed record TerraBaseRestoreWindow(DateTimeOffset Earliest, DateTimeOff
 /// <param name="SegmentCount">Applicable segments.</param>
 /// <param name="HistoryCheck">metadata; not proof of object integrity.</param>
 public sealed record TerraBasePointInTimePlan(TerraBaseRestoreWindow Window, DateTimeOffset PointInTime,
-    DateTimeOffset SnapshotAt, DateTimeOffset? LatestSegmentAt, int SegmentCount, string HistoryCheck);
+    DateTimeOffset SnapshotAt, DateTimeOffset? LatestSegmentAt, int SegmentCount, string HistoryCheck)
+{
+    [JsonConstructor]
+    internal TerraBasePointInTimePlan(TerraBaseRestoreWindow Window, DateTimeOffset PointInTime, DateTimeOffset SnapshotAt,
+        int SegmentCount, string HistoryCheck, DateTimeOffset? LatestSegmentAt = null)
+        : this(Window, PointInTime, SnapshotAt, LatestSegmentAt, SegmentCount, HistoryCheck)
+    {
+    }
+}
 
 /// <summary>A restore creates a new database. This response lacks the serving Region field of lifecycle responses.</summary>
 /// <param name="Id">New database ULID.</param>
@@ -44,7 +59,15 @@ public sealed record TerraBasePointInTimePlan(TerraBaseRestoreWindow Window, Dat
 /// <param name="CreatedAt">Creation time.</param>
 /// <param name="HomeRegion">The region holding the new database, or null.</param>
 public sealed record TerraBaseRestoredDatabase(string Id, string ProjectId, string Name, string? BranchedFrom,
-    DateTimeOffset CreatedAt, string? HomeRegion = null);
+    DateTimeOffset CreatedAt, string? HomeRegion = null)
+{
+    [JsonConstructor]
+    internal TerraBaseRestoredDatabase(string Id, string ProjectId, string Name, DateTimeOffset CreatedAt,
+        string? BranchedFrom = null, string? HomeRegion = null)
+        : this(Id, ProjectId, Name, BranchedFrom, CreatedAt, HomeRegion)
+    {
+    }
+}
 
 /// <summary>A background restore started by a restore route; read it with <see cref="TerraBaseDatabase.GetRestoreOperationAsync"/>.</summary>
 /// <param name="Id">Operation ULID.</param>

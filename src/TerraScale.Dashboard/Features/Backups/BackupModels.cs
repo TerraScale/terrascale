@@ -45,7 +45,7 @@ namespace TerraScale.Dashboard.Features.Backups
     }
     public sealed record ProducerBackup(string Id, string DatabaseId, string Status, string Trigger, long SizeBytes, DateTimeOffset CreatedAt);
     public sealed record BackupBackendPage(IReadOnlyList<ProducerBackup> Items, string? NextCursor);
-    public sealed record ProducerBackupPolicy(string? FullBackupCron, int RetentionDays, DateTimeOffset? UpdatedAt,
+    public sealed record ProducerBackupPolicy(int RetentionDays, DateTimeOffset? UpdatedAt, string? FullBackupCron = null,
         DateTimeOffset? LastSucceededAt = null, DateTimeOffset? LastFailedAt = null, BackupPolicyErrorView? LastError = null, DateTimeOffset? NextDueAt = null);
 
     public static class BackupHealth

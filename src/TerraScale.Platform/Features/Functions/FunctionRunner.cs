@@ -153,11 +153,12 @@ public static class FunctionRunner
         }
         catch (ExecutionCanceledException)
         {
-            return new FunctionFailed(cancellationToken.IsCancellationRequested ? "the invocation was cancelled" : "the function exceeded 10 s", lines);
+            cancellationToken.ThrowIfCancellationRequested();
+            return new FunctionFailed("the function exceeded 10 s", lines);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return new FunctionFailed(cancellationToken.IsCancellationRequested ? "the invocation was cancelled" : "the function exceeded 10 s", lines);
+            return new FunctionFailed("the function exceeded 10 s", lines);
         }
         catch (ParseErrorException error)
         {

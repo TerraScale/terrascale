@@ -5,7 +5,7 @@ using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Rows;
 
-internal sealed class UpdateRowEndpoint(RowsService rows) : Endpoint<RowInput, Result<RowAnswer, SqlRefusal, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
+internal sealed class UpdateRowEndpoint(RowsService rows) : Endpoint<RowInput, RowResponse>
 {
     public override void Configure()
     {
@@ -17,13 +17,13 @@ internal sealed class UpdateRowEndpoint(RowsService rows) : Endpoint<RowInput, R
         Metadata(ListenerMetadata.Client);
     }
 
-    public override async ValueTask<Result<RowAnswer, SqlRefusal, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(RowInput request, CancellationToken cancellationToken)
+    public override async ValueTask<RowResponse> HandleAsync(RowInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         return RowsService.Key(request.Key) switch
         {
             long key => RowsResponses.Single(await rows.RunAsync(HttpContext.Caller, request.Project, request.Database,
-                [new RowCommand(RowAction.Update, request.Table, key, request.Row)], cancellationToken)),
+                [new RowCommand(RowAction.Update, request.Table, key, request.Row)], batch: false, cancellationToken)),
             Validation invalid => invalid,
         };
     }

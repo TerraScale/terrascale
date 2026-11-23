@@ -53,7 +53,7 @@ public abstract class Change
             ? version ?? table.VersionOf(entity) ?? throw new ArgumentException("A conditional write needs the version it read.", nameof(version))
             : throw new InvalidOperationException($"{typeof(T).Name} has no version.");
 
-    private sealed class Inserted<T>(T entity) : Change(Table<T>.Of.Versioned ? AuthIds.New() : null)
+    private sealed class Inserted<T>(T entity) : Change(Table<T>.Of.Versioned ? Table<T>.Of.VersionOf(entity) ?? AuthIds.New() : null)
         where T : class
     {
         internal override string Identity => Table<T>.Of.Identity(entity);

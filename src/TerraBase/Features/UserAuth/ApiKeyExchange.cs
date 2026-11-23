@@ -1,0 +1,132 @@
+using System.Buffers;
+using System.Net;
+using System.Net.Http.Headers;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Microsoft.Extensions.Caching.Memory;
+using TerraBase.Configuration;
+
+namespace TerraBase.Features.UserAuth;
+
+internal sealed record ApiKeyTokenResponse(
+    [property: JsonPropertyName("access_token")] string? AccessToken,
+    [property: JsonPropertyName("expires_in")] int? ExpiresIn);
+
+[JsonSerializable(typeof(ApiKeyTokenResponse))]
+internal sealed partial class ApiKeyExchangeJsonContext : JsonSerializerContext;
+
+internal sealed class ApiKeyExchange(TerraBaseOptions options, IHttpClientFactory http, TimeProvider time) : IDisposable
+{
+    private const string KeyPrefix = "sk_";
+
+    private const int SecretLength = 52;
+
+    private const int MaxResponseBytes = 64 * 1024;
+
+    private const int MaxCachedTokens = 4096;
+
+    private static readonly TimeSpan RenewBefore = TimeSpan.FromSeconds(30);
+
+    private static readonly SearchValues<char> SecretCharacters = SearchValues.Create("0123456789abcdefghjkmnpqrstvwxyz");
+
+    private static readonly Unauthorized Refused = new("the API key was refused for this project", "invalid_key");
+
+    private static readonly Unavailable Busy = new("ts-auth could not exchange the API key; retry", "key_exchange_unavailable");
+
+    private readonly MemoryCache _tokens = new(new MemoryCacheOptions { SizeLimit = MaxCachedTokens });
+
+    public static bool IsKey(string secret)
+    {
+        ArgumentNullException.ThrowIfNull(secret);
+        var body = secret.StartsWith(KeyPrefix, StringComparison.Ordinal) ? secret.AsSpan(KeyPrefix.Length) : secret.AsSpan();
+        return body.Length == 27 + SecretLength && body[26] == '_' && Ulid.TryParse(body[..26], out _)
+            && !body[27..].ContainsAnyExcept(SecretCharacters);
+    }
+
+    public async ValueTask<Result<string, Unauthorized, Unavailable>> ExchangeAsync(string secret, string project, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(secret);
+        ArgumentNullException.ThrowIfNull(project);
+        if (options.AuthIssuer is not { } issuer)
+        {
+            return new Unauthorized("API keys need TERRABASE_AUTH_ISSUER", "invalid_key");
+        }
+
+        if (!IsKey(secret) || project.Length != 26 || !Ulid.TryParse(project, out _))
+        {
+            return new Unauthorized("send an API key and connect to <project id>/<database>", "invalid_key");
+        }
+
+        var cacheKey = string.Concat(Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(secret))), "/", project);
+        if (_tokens.TryGetValue(cacheKey, out string? cached) && cached is { } token)
+        {
+            return token;
+        }
+
+        var outcome = await RequestAsync(issuer, secret, project, cancellationToken);
+        return outcome switch
+        {
+            IssuedToken issued => Remember(cacheKey, issued),
+            Unauthorized refused => refused,
+            Unavailable unavailable => unavailable,
+        };
+    }
+
+    public void Dispose() => _tokens.Dispose();
+
+    private string Remember(string cacheKey, IssuedToken issued)
+    {
+        if (issued.Lifetime > RenewBefore)
+        {
+            _tokens.Set(cacheKey, issued.Token, new MemoryCacheEntryOptions { Size = 1, AbsoluteExpiration = time.GetUtcNow() + issued.Lifetime - RenewBefore });
+        }
+
+        return issued.Token;
+    }
+
+    private async ValueTask<Result<IssuedToken, Unauthorized, Unavailable>> RequestAsync(string issuer, string secret, string project, CancellationToken cancellationToken)
+    {
+        var body = secret.StartsWith(KeyPrefix, StringComparison.Ordinal) ? secret[KeyPrefix.Length..] : secret;
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(string.Concat(issuer.TrimEnd('/'), "/oauth/token")))
+        {
+            Content = new FormUrlEncodedContent([new("grant_type", "client_credentials"), new("project", project)]),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(string.Concat(body[..26], ":", secret))));
+        try
+        {
+            using var client = http.CreateClient(TokenVerifier.HttpClientName);
+            client.MaxResponseContentBufferSize = MaxResponseBytes;
+            using var response = await client.SendAsync(request, cancellationToken);
+            if ((int)response.StatusCode >= 500 || response.StatusCode == HttpStatusCode.TooManyRequests)
+            {
+                return Busy;
+            }
+
+            if (response.StatusCode != HttpStatusCode.OK)
+            {
+                return Refused;
+            }
+
+            var answer = await response.Content.ReadFromJsonAsync(ApiKeyExchangeJsonContext.Default.ApiKeyTokenResponse, cancellationToken);
+            return answer is { AccessToken: { Length: > 0 } token, ExpiresIn: var expiresIn }
+                ? new IssuedToken(token, TimeSpan.FromSeconds(expiresIn ?? 0))
+                : Refused;
+        }
+        catch (JsonException)
+        {
+            return Refused;
+        }
+        catch (HttpRequestException)
+        {
+            return Busy;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return Busy;
+        }
+    }
+
+    private sealed record IssuedToken(string Token, TimeSpan Lifetime);
+}

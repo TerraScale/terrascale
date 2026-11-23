@@ -33,7 +33,13 @@ internal sealed partial class DatabaseSession
 
     private StatementOutcome ExecuteStatement(WriteContext context, SqlStatement statement, int index)
     {
-        var bytes = Encoding.UTF8.GetBytes(statement.Sql);
+        var exposure = ConflictsTable.Expose(statement.Sql, out var sql);
+        if (!exposure.IsOk)
+        {
+            return exposure.ToSqlError(index);
+        }
+
+        var bytes = Encoding.UTF8.GetBytes(sql);
         var offset = 0;
         var last = EmptyResult;
         var info = context.Info;
@@ -314,7 +320,13 @@ internal sealed partial class DatabaseSession
 
     internal static Result<SqlResultSet, SqlError> ExecuteOnReader(SqliteConnection reader, SqlStatement statement, int index, StatementInfo info, HashSet<string>? readTables, CancellationToken cancellationToken)
     {
-        var bytes = Encoding.UTF8.GetBytes(statement.Sql);
+        var exposure = ConflictsTable.Expose(statement.Sql, out var sql);
+        if (!exposure.IsOk)
+        {
+            return exposure.ToSqlError(index);
+        }
+
+        var bytes = Encoding.UTF8.GetBytes(sql);
         var offset = 0;
         var last = EmptyResult;
         while (offset < bytes.Length)

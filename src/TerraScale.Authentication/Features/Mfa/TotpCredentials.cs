@@ -183,7 +183,7 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
         }
 
         var pending = new TotpCredentialRecord(caller.InstanceId, caller.Id, boxed, false, caller.AuthEpoch, expires, -1, [], null);
-        if (!await this.CommitAsync(user, pending, current?.Version, null, authorization, cancellationToken))
+        if (!await this.CommitAsync(Change.Assert(user), pending, current?.Version, authorization, cancellationToken))
         {
             return null;
         }
@@ -229,12 +229,13 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
             RecoveryExpiresAt = recoveryExpires,
         };
         var advanced = Users.BindAuthenticationState(user with { AuthEpoch = checked(user.AuthEpoch + 1), AuthStamp = AuthIds.New() });
-        if (!await this.CommitAsync(user, active, current.Version, advanced, authorization, cancellationToken))
+        var update = Change.Update(advanced);
+        if (!await this.CommitAsync(update, active, current.Version, authorization, cancellationToken))
         {
             return null;
         }
 
-        return new IssuedRecoveryCodes(advanced, codes, recoveryExpires);
+        return new IssuedRecoveryCodes(advanced with { Version = update.Version }, codes, recoveryExpires);
     }
 
     public Task<bool> VerifyAsync(UserRecord caller, string code, CancellationToken cancellationToken = default) =>
@@ -251,7 +252,7 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
             return false;
         }
 
-        return await this.CommitAsync(user, proof, current.Version, null, authorization, cancellationToken);
+        return await this.CommitAsync(Change.Assert(user), proof, current.Version, authorization, cancellationToken);
     }
 
     public Task<bool> DisableAsync(UserRecord caller, string code, CancellationToken cancellationToken = default) =>
@@ -273,8 +274,9 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
 
         var disabled = current.Record with { SecretBox = null, Enabled = false, EnrollmentExpiresAt = null, LastAcceptedStep = -1, RecoveryHashes = [], RecoveryExpiresAt = null };
         var advanced = Users.BindAuthenticationState(user with { AuthEpoch = checked(user.AuthEpoch + 1), AuthStamp = AuthIds.New() });
-        return await this.CommitAsync(user, disabled, current.Version, advanced, authorization, cancellationToken)
-            ? advanced
+        var update = Change.Update(advanced);
+        return await this.CommitAsync(update, disabled, current.Version, authorization, cancellationToken)
+            ? advanced with { Version = update.Version }
             : null;
     }
 
@@ -292,7 +294,7 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
         var codes = Enumerable.Range(0, RecoveryCount).Select(_ => Tokens.RandomToken(24)).ToArray();
         var recoveryExpires = clock.GetUtcNow() + RecoveryLifetime;
         var regenerated = proof with { RecoveryHashes = codes.Select(Tokens.Sha256Hex).ToArray(), RecoveryExpiresAt = recoveryExpires };
-        return await this.CommitAsync(user, regenerated, current.Version, null, authorization, cancellationToken)
+        return await this.CommitAsync(Change.Assert(user), regenerated, current.Version, authorization, cancellationToken)
             ? new IssuedRecoveryCodes(user, codes, recoveryExpires)
             : null;
     }
@@ -398,8 +400,7 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
         }
     }
 
-    private async Task<bool> CommitAsync(UserRecord user, TotpCredentialRecord record, string? version,
-        UserRecord? advanced, MfaAuthorization? authorization, CancellationToken cancellationToken)
+    private async Task<bool> CommitAsync(Change user, TotpCredentialRecord record, string? version, MfaAuthorization? authorization, CancellationToken cancellationToken)
     {
         if (authorization is not null && authorization.ExpiresAt <= clock.GetUtcNow())
         {
@@ -408,7 +409,7 @@ public sealed class TotpCredentials(AuthData data, Credentials credentials, User
 
         List<Change> changes =
         [
-            advanced is null ? Change.Assert(user) : Change.Update(advanced),
+            user,
             version is null ? Change.Insert(record) : Change.Update(record, version),
         ];
         if (authorization is not null)

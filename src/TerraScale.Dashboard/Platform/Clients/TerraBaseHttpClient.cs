@@ -146,10 +146,10 @@ public sealed class TerraBaseHttpClient(ServiceTransport transport)
 
     public async Task<Result<TerraBaseRequestLogPage, TerraBaseRefusal>> ReadLogsAsync(ServiceCaller caller, string projectId, string database, string? after,
         CancellationToken cancellationToken) =>
-        await transport.SendAsync(caller, HttpMethod.Get, string.Concat(Database(projectId, database), "/logs", Query(("after", after))), Wire.TerraBaseLogsBody,
+        await transport.SendAsync(caller, HttpMethod.Get, string.Concat(Database(projectId, database), "/logs", Query(("after", after), ("limit", "100"))), Wire.TerraBaseLogsBody,
             cancellationToken) switch
         {
-            TerraBaseLogsBody logs => Page(database, logs),
+            TerraBaseLogsBody logs => Page(logs),
             TerraBaseRefusal refusal => refusal,
         };
 
@@ -158,7 +158,7 @@ public sealed class TerraBaseHttpClient(ServiceTransport transport)
         await transport.SendAsync(caller, HttpMethod.Get, string.Concat("/v1/projects/", Segment(projectId), "/usage",
             Query(("month", until.ToString("yyyy-MM", CultureInfo.InvariantCulture)))), Wire.TerraBaseUsageBody, cancellationToken) switch
         {
-            TerraBaseUsageBody usage => ProjectUsage(projectId, usage, from, until),
+            TerraBaseUsageBody usage => ProjectUsage(usage, from, until),
             TerraBaseRefusal refusal => refusal,
         };
 
@@ -167,7 +167,7 @@ public sealed class TerraBaseHttpClient(ServiceTransport transport)
         await transport.SendAsync(caller, HttpMethod.Get, string.Concat(Database(projectId, database), "/usage",
             Query(("month", until.ToString("yyyy-MM", CultureInfo.InvariantCulture)))), Wire.TerraBaseUsageBody, cancellationToken) switch
         {
-            TerraBaseUsageBody usage => DatabaseUsage(database, usage, from, until),
+            TerraBaseUsageBody usage => DatabaseUsage(usage, from, until),
             TerraBaseRefusal refusal => refusal,
         };
 
@@ -219,21 +219,30 @@ public sealed class TerraBaseHttpClient(ServiceTransport transport)
         TerraBaseRefusal refusal => refusal,
     };
 
-    private static TerraBaseRequestLogPage Page(string database, TerraBaseLogsBody logs) =>
-        new(logs.Items.Count > 0 ? logs.Items[0].DatabaseId : database,
-            [.. logs.Items.Select(static entry => new TerraBaseRequestLog(entry.Id, entry.At, entry.Region, entry.Method, entry.Path, entry.Status, entry.DurationMs, 1,
-                entry.Method == "GET"))],
-            false, false, logs.Next);
+    private static Result<TerraBaseRequestLogPage, TerraBaseRefusal> Page(TerraBaseLogsBody logs) =>
+        logs.Items.Select(static entry => entry.DatabaseId).Distinct(StringComparer.Ordinal).ToArray() switch
+        {
+            [] => new TerraBaseRequestLogPage("", [], false, false, logs.Next, logs.Gap),
+            [var databaseId] => new TerraBaseRequestLogPage(databaseId,
+                [.. logs.Items.Select(static entry => new TerraBaseRequestLog(entry.Id, entry.At, entry.Region, entry.Method, entry.Path, entry.Status, entry.DurationMs, 1,
+                    entry.Method == "GET", entry.Id))],
+                false, false, logs.Next, logs.Gap),
+            _ => TerraBaseRefusal.Invalid("Request logs mixed several databases."),
+        };
 
     private static TerraBaseUsagePeriod Period(TerraBaseUsageBody usage, DateTimeOffset from, DateTimeOffset until) =>
         new(from, until, "month", usage.Metric("reads"), usage.Metric("writes"));
 
-    private static TerraBaseProjectUsage ProjectUsage(string projectId, TerraBaseUsageBody usage, DateTimeOffset from, DateTimeOffset until) =>
-        new(projectId, 0, usage.Metric("file_bytes"), 0, 0, 0, new TerraBaseUsagePeriod(from, until, "month", 0, 0), [], [], usage.Metric("file_bytes"),
+    private static TerraBaseProjectUsage ProjectUsage(TerraBaseUsageBody usage, DateTimeOffset from, DateTimeOffset until) =>
+        new(ScopeId(usage, "project:"), 0, usage.Metric("file_bytes"), 0, usage.Metric("reads"), usage.Metric("writes"), Period(usage, from, until), [], [],
+            usage.Metric("file_bytes"),
             new TerraBaseUsageMonth(usage.Month, usage.Metric("reads"), usage.Metric("writes"), usage.Metric("reads") + usage.Metric("writes"),
                 Invocations: usage.Metric("invocations")));
 
-    private static TerraBaseDatabaseUsage DatabaseUsage(string database, TerraBaseUsageBody usage, DateTimeOffset from, DateTimeOffset until) =>
-        new(database, usage.Metric("storage_bytes"), usage.Metric("logical_bytes"), usage.Metric("reads"), usage.Metric("writes"), Period(usage, from, until),
-            [new TerraBaseUsagePoint(from, usage.Metric("reads"), usage.Metric("writes"))]);
+    private static TerraBaseDatabaseUsage DatabaseUsage(TerraBaseUsageBody usage, DateTimeOffset from, DateTimeOffset until) =>
+        new(ScopeId(usage, "db:"), usage.Metric("storage_bytes"), usage.Metric("logical_bytes"), usage.Metric("reads"), usage.Metric("writes"), Period(usage, from, until),
+            []);
+
+    private static string ScopeId(TerraBaseUsageBody usage, string prefix) =>
+        usage.Scope.StartsWith(prefix, StringComparison.Ordinal) ? usage.Scope[prefix.Length..] : "";
 }

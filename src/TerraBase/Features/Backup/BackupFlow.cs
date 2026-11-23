@@ -128,22 +128,29 @@ internal sealed class BackupFlow(DatabaseAccess access, ManagementService manage
             return new Validation("retentionDays is a whole number from 1 to 3650", "invalid_retention");
         }
 
+        if (write && request.FullBackupCron is { } cron && !IsCron(cron))
+        {
+            return new Validation("fullBackupCron is null or five cron fields of digits, *, /, - and ,", "invalid_schedule");
+        }
+
         return await ResolveAsync(caller, request, write ? Scopes.DatabasesWrite : Scopes.DatabasesRead, cancellationToken) switch
         {
             ResolvedDatabase resolved when write => await system.WriteAsync(SqlBuild.Statement(
-                "INSERT INTO backup_policies (database_id, retention_days, updated_at) VALUES (?, ?, ?) ON CONFLICT (database_id) DO UPDATE SET retention_days = excluded.retention_days, updated_at = excluded.updated_at",
-                SqlBuild.Id(resolved.Database.Id), SqlBuild.Integer(request.RetentionDays ?? 7), SqlBuild.Time(time.GetUtcNow())), ConsistencyMode.Strong, cancellationToken) switch
+                "INSERT INTO backup_policies (database_id, retention_days, full_backup_cron, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (database_id) DO UPDATE SET "
+                + "retention_days = excluded.retention_days, full_backup_cron = excluded.full_backup_cron, updated_at = excluded.updated_at",
+                SqlBuild.Id(resolved.Database.Id), SqlBuild.Integer(request.RetentionDays ?? 7), SqlBuild.OptionalText(request.FullBackupCron), SqlBuild.Time(time.GetUtcNow())),
+                ConsistencyMode.Strong, cancellationToken) switch
             {
-                SqlWriteResult => new BackupPolicyBody(resolved.Database.Id.ToString(), request.RetentionDays ?? 7, time.GetUtcNow()),
+                SqlWriteResult => new BackupPolicyBody(resolved.Database.Id.ToString(), request.RetentionDays ?? 7, request.FullBackupCron, time.GetUtcNow()),
                 Conflict conflict => conflict,
                 Unavailable unavailable => unavailable,
             },
             ResolvedDatabase resolved => await system.QueryAsync(SqlBuild.Statement(
-                "SELECT retention_days, updated_at FROM backup_policies WHERE database_id = ?", SqlBuild.Id(resolved.Database.Id)), cancellationToken) switch
+                "SELECT retention_days, full_backup_cron, updated_at FROM backup_policies WHERE database_id = ?", SqlBuild.Id(resolved.Database.Id)), cancellationToken) switch
             {
                 IReadOnlyList<IReadOnlyList<SqlValue>> { Count: > 0 } rows =>
-                    new BackupPolicyBody(resolved.Database.Id.ToString(), (int)rows[0].IntegerAt(0), rows[0].TimeAt(1)),
-                IReadOnlyList<IReadOnlyList<SqlValue>> => new BackupPolicyBody(resolved.Database.Id.ToString(), 7, resolved.Database.CreatedAt),
+                    new BackupPolicyBody(resolved.Database.Id.ToString(), (int)rows[0].IntegerAt(0), rows[0].OptionalTextAt(1), rows[0].TimeAt(2)),
+                IReadOnlyList<IReadOnlyList<SqlValue>> => new BackupPolicyBody(resolved.Database.Id.ToString(), 7, "0 2 * * *", resolved.Database.CreatedAt),
                 Unavailable unavailable => unavailable,
             },
             Validation invalid => invalid,
@@ -154,6 +161,10 @@ internal sealed class BackupFlow(DatabaseAccess access, ManagementService manage
             Unavailable unavailable => unavailable,
         };
     }
+
+    private static bool IsCron(string cron) =>
+        cron.Length <= 64 && cron.Split(' ', StringSplitOptions.RemoveEmptyEntries) is { Length: 5 } fields
+        && fields.All(static field => field.All(static character => char.IsAsciiDigit(character) || character is '*' or '/' or '-' or ','));
 
     public static TargetChoice Target(BackupInput request) =>
         request.Target is { } target ? RestoreTargets.Parse(target.PointInTime, target.Bookmark) : RestoreTargets.Parse(request.PointInTime, request.Bookmark);
