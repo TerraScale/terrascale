@@ -1,0 +1,15 @@
+[
+  {
+    "repo": "terrascale",
+    "path": "^sdk/skills/",
+    "terms": [
+      "collections",
+      "document-feeds",
+      "documents",
+      "engine-brand",
+      "libsql",
+      "webhooks"
+    ],
+    "reason": "Customer migration skills under sdk/skills/ describe migrating from external products (Firestore documents/collections, Turso/libSQL, Supabase/Firebase webhooks) to TerraScale."
+  }
+]
