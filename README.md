@@ -1,6 +1,6 @@
 # TerraScale
 
-TerraScale is one monorepo for the platform: **TerraBase** (the multi-region SQL database), **ts-auth** (hosted identity provider), **TerraScale.Dashboard** (platform UI/API/MCP), shared .NET libraries (`TerraScale.Analyzers`, `TerraScale.Endpoints*`, `TerraScale.Logging`), the C# Aspire local host (`TerraScale.Aspire`), the five SDKs in `sdk/` (.NET, Go, JS, Python, Rust), the public sites in `sites/` (`docs`, `landing`, `status`, `atlas`), the end-to-end journey (`e2e/`) and E2E benchmarks (`benchmark/`).
+TerraScale is one monorepo for the platform: **TerraBase** (the multi-region SQL database), **ts-auth** (hosted identity provider), **TerraScale.Dashboard** (platform UI/API/MCP), shared .NET libraries (`TerraScale.Contracts`, `TerraScale.Endpoints*`, `TerraScale.Logging`), the C# Aspire local host (`TerraScale.Aspire`), the five SDKs in `sdk/` (.NET, Go, JS, Python, Rust), the public sites in `sites/` (`docs`, `landing`, `status`, `atlas`), the end-to-end journey (`e2e/`) and E2E benchmarks (`benchmark/`).
 
 Contributor and agent rules live in [`AGENTS.md`](AGENTS.md).
 
@@ -8,7 +8,7 @@ Contributor and agent rules live in [`AGENTS.md`](AGENTS.md).
 
 | Path | What |
 |---|---|
-| `src/` | .NET services, shared libraries (`TerraScale.Analyzers`, `TerraScale.Endpoints*`, `TerraScale.Logging`), vendored storage driver (`src/vendor/`) and local Aspire host (`src/TerraScale.Aspire`) |
+| `src/` | .NET services, shared libraries (`TerraScale.Contracts`, `TerraScale.Endpoints*`, `TerraScale.Logging`), vendored storage driver (`src/vendor/`) and local Aspire host (`src/TerraScale.Aspire`) |
 | `sdk/` | Customer SDKs: `dotnet`, `go`, `js`, `python`, `rust` |
 | `sites/` | Public Cloudflare Workers sites: `docs`, `landing`, `status`, `atlas` |
 | `e2e/` | The journey, the only test: Playwright against the real services and all five SDKs ([`e2e/AGENTS.md`](e2e/AGENTS.md)) |

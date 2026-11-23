@@ -44,24 +44,18 @@
     <Error Condition="'@(_NewtonsoftPackage)' != ''" Text="Newtonsoft packages are banned ('@(_NewtonsoftPackage->Distinct())'). Use System.Text.Json; remove the package or the dependency that brings it in." />
   </Target>
 
-
-  <!-- Project-reference content loses AssetType; .NET's single-file publisher otherwise leaves the storage engine and the SQL parser
-       beside the app. -->
   <Target Name="ClassifyStorageNativeForSingleFile" BeforeTargets="_ComputeFilesToBundle" Condition="'$(PublishSingleFile)' == 'true'">
     <ItemGroup>
-      <ResolvedFileToPublish Update="@(ResolvedFileToPublish)" Condition="'%(Filename)%(Extension)' == 'libturso_sdk_kit.so' Or '%(Filename)%(Extension)' == 'libterrascale_sql_parser.so'" AssetType="native" />
+      <ResolvedFileToPublish Update="@(ResolvedFileToPublish)" Condition="'%(Filename)%(Extension)' == 'libturso_sdk_kit.so' Or '%(Filename)%(Extension)' == 'libterrascale_sql_parser.so' Or '%(Filename)%(Extension)' == 'libsqlite3mc.so' Or '%(Filename)%(Extension)' == 'libmsquic.so.2'" AssetType="native" />
     </ItemGroup>
   </Target>
 
-  <!-- TerraBase area: banned APIs (RS0030) and the BannedSymbols.txt list. Auth and ts-libs throw framework exceptions
-       on purpose (BadHttpRequestException in the endpoint binder), so the rule stays with TerraBase. -->
   <ItemGroup Condition="'$(IsTerraBaseArea)' == 'true'">
     <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" Link="BannedSymbols.txt" />
     <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(IsDashboardArea)' == 'true'">
-    <ProjectReference Include="$(MSBuildThisFileDirectory)src/TerraScale.Analyzers/TerraScale.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
     <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" Link="BannedSymbols.txt" />
     <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" PrivateAssets="all" />
   </ItemGroup>

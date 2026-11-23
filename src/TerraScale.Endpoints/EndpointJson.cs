@@ -8,28 +8,32 @@ using JsonOptions = Microsoft.AspNetCore.Http.Json.JsonOptions;
 
 namespace TerraScale.Endpoints;
 
-/// <summary>
-/// Request binding and response writing through the application's configured JSON contracts.
-/// Type metadata is resolved once at mapping time, so a native AOT app missing a type in its
-/// <c>JsonSerializerContext</c> fails at startup instead of on the first request.
-/// </summary>
 internal static class EndpointJson
 {
     internal static JsonTypeInfo<TRequest> GetRequestTypeInfo<TRequest>(IServiceProvider services) =>
-        GetTypeInfo<TRequest>(GetSerializerOptions(services));
+        GetTypeInfo<TRequest>(services);
 
-    internal static JsonTypeInfo<TResponse>? GetResponseTypeInfo<TResponse>(IServiceProvider services) =>
-        typeof(IResult).IsAssignableFrom(typeof(TResponse)) || typeof(TResponse) == typeof(string)
-            ? null
-            : GetTypeInfo<TResponse>(GetSerializerOptions(services));
+    internal static JsonTypeInfo<T> GetTypeInfo<T>(IServiceProvider services) =>
+        GetSerializerOptions(services).GetTypeInfo<T>();
 
-    // The generic GetTypeInfo<T> only exists in net11.0; net10.0 needs the cast from the Type overload.
-    private static JsonTypeInfo<T> GetTypeInfo<T>(JsonSerializerOptions options) =>
-#if NET11_0_OR_GREATER
-        options.GetTypeInfo<T>();
-#else
-        (JsonTypeInfo<T>)options.GetTypeInfo(typeof(T));
-#endif
+    internal static (JsonTypeInfo<TResponse>? TypeInfo, IUnionResponseWriter<TResponse>? UnionWriter, IReadOnlyList<(Type? Type, int StatusCode, string? ContentType)>? UnionProduces)
+        ResolveResponse<TResponse>(IServiceProvider services)
+    {
+        if (services.GetService<IUnionResponseWriterFactory<TResponse>>() is { } factory)
+        {
+            var registry = services.GetRequiredService<EndpointOptions>().Responses;
+            List<(Type? Type, int StatusCode, string? ContentType)> produces = [];
+            var writer = factory.Create(services, registry, (type, status, contentType) => produces.Add((type, status, contentType)));
+            return (null, writer, produces);
+        }
+
+        if (typeof(IResult).IsAssignableFrom(typeof(TResponse)) || typeof(TResponse) == typeof(string))
+        {
+            return (null, null, null);
+        }
+
+        return (GetTypeInfo<TResponse>(services), null, null);
+    }
 
     internal static async ValueTask<Bound<TRequest>> ReadBodyAsync<TRequest>(
         HttpContext context,
@@ -44,7 +48,6 @@ internal static class EndpointJson
         return await ReadJsonAsync(context, typeInfo, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>Reads the body once the JSON content type is known; parsing it again allocates.</summary>
     internal static async ValueTask<Bound<TRequest>> ReadJsonAsync<TRequest>(
         HttpContext context,
         JsonTypeInfo<TRequest> typeInfo,
@@ -65,21 +68,14 @@ internal static class EndpointJson
         }
         catch (InvalidOperationException) when (GetEncoding(context.Request) is null)
         {
-            // ReadFromJsonAsync throws InvalidOperationException for an unknown charset; the filter
-            // only runs on that failure, so valid requests do not parse the content type again.
             return UnsupportedCharset();
         }
 
         return request is null ? new Validation("A JSON request body is required.") : request;
     }
 
-    /// <summary>
-    /// Parsing failures that application converters commonly let escape instead of throwing
-    /// JsonException (decimal.Parse, int.Parse, checked conversions). They come from client input.
-    /// </summary>
     internal static bool IsConverterFailure(Exception exception) => exception is FormatException or OverflowException;
 
-    /// <summary>The body encoding, UTF-8 when no charset is given, or null for an unknown charset.</summary>
     internal static Encoding? GetEncoding(HttpRequest request) =>
         !MediaTypeHeaderValue.TryParse(request.ContentType, out var mediaType) || !mediaType.Charset.HasValue
             ? Encoding.UTF8
@@ -87,25 +83,45 @@ internal static class EndpointJson
 
     internal static UnsupportedMediaType UnsupportedCharset() => new("The request charset is not supported.");
 
-    // Completed handlers write without an async state machine, like generated minimal API code.
-    internal static Task RespondAsync<TResponse>(HttpContext context, ValueTask<TResponse> handled, JsonTypeInfo<TResponse>? typeInfo) =>
-        handled.IsCompletedSuccessfully ? WriteResponseAsync(context, handled.Result, typeInfo) : AwaitAsync(context, handled, typeInfo);
+    internal static Task RespondAsync<TResponse>(
+        HttpContext context,
+        ValueTask<TResponse> handled,
+        JsonTypeInfo<TResponse>? typeInfo,
+        IUnionResponseWriter<TResponse>? unionWriter) =>
+        handled.IsCompletedSuccessfully
+            ? WriteResponseAsync(context, handled.Result, typeInfo, unionWriter)
+            : AwaitAsync(context, handled, typeInfo, unionWriter);
 
-    private static async Task AwaitAsync<TResponse>(HttpContext context, ValueTask<TResponse> handled, JsonTypeInfo<TResponse>? typeInfo) =>
-        await WriteResponseAsync(context, await handled.ConfigureAwait(false), typeInfo).ConfigureAwait(false);
+    private static async Task AwaitAsync<TResponse>(
+        HttpContext context,
+        ValueTask<TResponse> handled,
+        JsonTypeInfo<TResponse>? typeInfo,
+        IUnionResponseWriter<TResponse>? unionWriter) =>
+        await WriteResponseAsync(context, await handled.ConfigureAwait(false), typeInfo, unionWriter).ConfigureAwait(false);
 
-    // No cancellation token on writes: a cancellable token sends WriteAsJsonAsync down its slower
-    // linked-token path, and writes to an aborted connection fail regardless.
-    private static Task WriteResponseAsync<TResponse>(HttpContext context, TResponse response, JsonTypeInfo<TResponse>? typeInfo) =>
-        response switch
+    private static Task WriteResponseAsync<TResponse>(
+        HttpContext context,
+        TResponse response,
+        JsonTypeInfo<TResponse>? typeInfo,
+        IUnionResponseWriter<TResponse>? unionWriter)
+    {
+        if (unionWriter is not null)
+        {
+            return unionWriter.WriteAsync(context, response);
+        }
+
+        return response switch
         {
             IResult result => result.ExecuteAsync(context),
             string text => WriteTextAsync(context, text),
             null when typeInfo is null => throw new InvalidOperationException("An endpoint returning IResult or string must not return null."),
-            _ => context.Response.WriteAsJsonAsync(response, typeInfo!, contentType: null),
+            _ => typeInfo is not null
+                ? context.Response.WriteAsJsonAsync(response, typeInfo, contentType: null)
+                : throw new InvalidOperationException("No response serializer is available for this endpoint."),
         };
+    }
 
-    private static Task WriteTextAsync(HttpContext context, string text)
+    internal static Task WriteTextAsync(HttpContext context, string text)
     {
         context.Response.ContentType ??= "text/plain; charset=utf-8";
         return context.Response.WriteAsync(text);
@@ -115,10 +131,6 @@ internal static class EndpointJson
         services.GetRequiredService<IOptions<JsonOptions>>().Value.SerializerOptions;
 }
 
-/// <summary>
-/// Problem responses (binding errors, validation, <c>Send.ProblemAsync</c>) serialize through the
-/// app's JSON options. This context is appended to the resolver chain so they work in native AOT.
-/// </summary>
 [JsonSerializable(typeof(Microsoft.AspNetCore.Mvc.ProblemDetails))]
 [JsonSerializable(typeof(HttpValidationProblemDetails))]
 internal sealed partial class ProblemJsonContext : JsonSerializerContext;

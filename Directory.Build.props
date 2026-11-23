@@ -16,14 +16,13 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
-    <!-- ts-libs keeps style out of the build: its public signatures carry unused parameters that are API. -->
-    <EnforceCodeStyleInBuild Condition="'$(IsLibsArea)' != 'true'">true</EnforceCodeStyleInBuild>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <!-- Required for IDE0005 (unused usings) in the build; TerraBase's public APIs carry XML docs. -->
     <GenerateDocumentationFile Condition="'$(IsTerraBaseArea)' == 'true'">true</GenerateDocumentationFile>
     <!-- CS1591: TerraBase is a server, not a library, and its code carries no comments (user rule 2026-10-29: "do not
          comment the code"). The documentation file stays generated because IDE0005 needs it in the build. -->
     <NoWarn Condition="'$(IsTerraBaseArea)' == 'true'">$(NoWarn);CS1591</NoWarn>
-    <InvariantGlobalization Condition="'$(IsLibsArea)' != 'true'">true</InvariantGlobalization>
+    <InvariantGlobalization>true</InvariantGlobalization>
     <Deterministic>true</Deterministic>
     <!-- The pinned compiler retains invalid Razor generator state across shared compilations. -->
     <UseSharedCompilation>false</UseSharedCompilation>

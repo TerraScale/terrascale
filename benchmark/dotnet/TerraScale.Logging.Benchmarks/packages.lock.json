@@ -165,11 +165,6 @@
           "System.Memory.Data": "10.0.3"
         }
       },
-      "System.IO.Hashing": {
-        "type": "Transitive",
-        "resolved": "8.0.0",
-        "contentHash": "ne1843evDugl0md7Fjzy6QjJrzsjh46ZKbhf8GwBXb5f/gw97J4bxMs0NQKifDuThh/f0bZ0e62NPl1jzTuRqA=="
-      },
       "System.Memory.Data": {
         "type": "Transitive",
         "resolved": "10.0.3",
@@ -206,6 +201,12 @@
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection": "11.0.0"
         }
+      },
+      "System.IO.Hashing": {
+        "type": "CentralTransitive",
+        "requested": "[11.0.0, )",
+        "resolved": "11.0.0",
+        "contentHash": "U+Bv2qCYt6eONi+arSP0QIp4uTO6os6uceBsqiAwruZ+Wo2HrRhO/0tj38M9URJtS+4DhAtT3ka2TGNFYsnhyQ=="
       },
       "ZLogger": {
         "type": "CentralTransitive",

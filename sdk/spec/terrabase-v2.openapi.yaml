@@ -1,0 +1,1133 @@
+openapi: 3.1.0
+info:
+  title: TerraScale v2 Public API
+  version: 2.0.0
+  description: >-
+    Canonical wire contract for TerraBase v2 and the TerraScale platform. Every SDK (dotnet, go, js, python, rust)
+    is generated or hand-aligned from this document. Every write response returns a TerraScale-Bookmark header;
+    clients send the newest bookmark they hold on every later request to get read-your-writes in any region.
+    TerraScale-Consistency selects fast (local commit, asynchronous peer replication) or strong
+    (2-of-3 quorum optimistic concurrency) execution. Schema changes and writes to tables with secondary UNIQUE
+    indexes always run strong.
+servers:
+  - url: https://api.terrascale.tech
+security:
+  - bearerAuth: []
+  - apiKey: []
+tags:
+  - name: sql
+  - name: databases
+  - name: backups
+  - name: rules
+  - name: functions
+  - name: files
+  - name: shapes
+paths:
+  /v1/projects/{project}/databases/{database}/sql/execute:
+    post:
+      tags: [sql]
+      operationId: executeSql
+      summary: Run 1 to 256 statements as one atomic transaction.
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
+        - $ref: '#/components/parameters/Bookmark'
+        - $ref: '#/components/parameters/Consistency'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SqlExecuteRequest'
+      responses:
+        '200':
+          description: Every statement ran and the transaction committed.
+          headers:
+            TerraScale-Bookmark:
+              $ref: '#/components/headers/Bookmark'
+            TerraScale-Consistency:
+              $ref: '#/components/headers/Consistency'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SqlExecuteResponse'
+        '400':
+          $ref: '#/components/responses/SqlError'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/SqlError'
+        '413':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RetryableError'
+        '503':
+          $ref: '#/components/responses/RetryableError'
+        '504':
+          $ref: '#/components/responses/Error'
+  /v1/projects/{project}/databases/{database}/sql/ws:
+    get:
+      tags: [sql]
+      operationId: openSqlSession
+      summary: Upgrade to an interactive SQL session (WebSocket, subprotocol terrascale.sql.v2).
+      description: >-
+        Client frames are SqlWsClientFrame JSON text messages; server frames are SqlWsServerFrame. A begin frame
+        carries consistency (fast or strong) and an optional bookmark; commit answers with the new bookmark. Frames
+        carry a client id and answers are matched by id. A transaction lasts at most 5 seconds.
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
+        - $ref: '#/components/parameters/Bookmark'
+        - $ref: '#/components/parameters/Consistency'
+        - name: Sec-WebSocket-Protocol
+          in: header
+          required: true
+          schema:
+            type: string
+            const: terrascale.sql.v2
+      responses:
+        '101':
+          description: Switching protocols.
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RetryableError'
+        '503':
+          $ref: '#/components/responses/RetryableError'
+  /v1/projects/{project}/databases:
+    get:
+      tags: [databases]
+      operationId: listDatabases
+      parameters:
+        - $ref: '#/components/parameters/Project'
+      responses:
+        '200':
+          description: Databases of the project.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [databases]
+                properties:
+                  databases:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Database'
+        '401':
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [databases]
+      operationId: createDatabase
+      parameters:
+        - $ref: '#/components/parameters/Project'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDatabaseRequest'
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Database'
+        '400':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '402':
+          $ref: '#/components/responses/Error'
+  /v1/projects/{project}/databases/{database}:
+    get:
+      tags: [databases]
+      operationId: getDatabase
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
+      responses:
+        '200':
+          description: The database.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Database'
+        '404':
+          $ref: '#/components/responses/Error'
+    patch:
+      tags: [databases]
+      operationId: updateDatabase
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateDatabaseRequest'
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Database'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+    delete:
+      tags: [databases]
+      operationId: deleteDatabase
+      description: Deletes the database and crypto-shreds its data key; archived segments become unreadable.
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
+      responses:
+        '204':
+          description: Deleted.
+        '404':
+          $ref: '#/components/responses/Error'
+  /v1/projects/{project}/databases/{database}/regions:
+    get:
+      tags: [databases]
+      operationId: getDatabaseReplication
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
+      responses:
+        '200':
+          description: Per-region replication state; every region accepts writes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatabaseReplication'
+        '404':
+          $ref: '#/components/responses/Error'
+  /v1/projects/{project}/databases/{database}/backups:
+    get:
+      tags: [backups]
+      operationId: getBackupStatus
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
+      responses:
+        '200':
+          description: Continuous backup state and the restorable window.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupStatus'
+        '404':
+          $ref: '#/components/responses/Error'
+  /v1/projects/{project}/databases/{database}/point-in-time/restore:
+    post:
+      tags: [backups]
+      operationId: restoreDatabase
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RestoreRequest'
+      responses:
+        '202':
+          description: Restore into a new database started.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestoreOperation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+  /v1/projects/{project}/databases/{database}/rewind:
+    post:
+      tags: [backups]
+      operationId: rewindDatabase
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RestoreTarget'
+      responses:
+        '202':
+          description: In-place rewind started.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestoreOperation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+  /v1/projects/{project}/databases/{database}/branches:
+    post:
+      tags: [backups]
+      operationId: branchDatabase
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BranchRequest'
+      responses:
+        '202':
+          description: Branch creation started.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestoreOperation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+  /v1/projects/{project}/databases/{database}/restores/{operation}:
+    get:
+      tags: [backups]
+      operationId: getRestoreOperation
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
+        - name: operation
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Ulid'
+      responses:
+        '200':
+          description: Operation state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestoreOperation'
+        '404':
+          $ref: '#/components/responses/Error'
+  /v1/projects/{project}/databases/{database}/rules:
+    get:
+      tags: [rules]
+      operationId: getRules
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
+      responses:
+        '200':
+          description: Table access rules.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuleSet'
+        '404':
+          $ref: '#/components/responses/Error'
+    put:
+      tags: [rules]
+      operationId: putRules
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuleSet'
+      responses:
+        '200':
+          description: Rules replaced and compiled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuleSet'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+  /v1/projects/{project}/functions:
+    get:
+      tags: [functions]
+      operationId: listFunctions
+      parameters:
+        - $ref: '#/components/parameters/Project'
+      responses:
+        '200':
+          description: Functions of the project.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [functions]
+                properties:
+                  functions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Function'
+  /v1/projects/{project}/functions/{function}:
+    get:
+      tags: [functions]
+      operationId: getFunction
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Function'
+      responses:
+        '200':
+          description: The function.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Function'
+        '404':
+          $ref: '#/components/responses/Error'
+    put:
+      tags: [functions]
+      operationId: putFunction
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Function'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PutFunctionRequest'
+      responses:
+        '200':
+          description: Deployed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Function'
+        '400':
+          $ref: '#/components/responses/Error'
+    delete:
+      tags: [functions]
+      operationId: deleteFunction
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Function'
+      responses:
+        '204':
+          description: Deleted.
+        '404':
+          $ref: '#/components/responses/Error'
+  /v1/projects/{project}/functions/{function}/invoke:
+    post:
+      tags: [functions]
+      operationId: invokeFunction
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Function'
+        - $ref: '#/components/parameters/Bookmark'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {}
+      responses:
+        '200':
+          description: The function's JSON result.
+          headers:
+            TerraScale-Bookmark:
+              $ref: '#/components/headers/Bookmark'
+          content:
+            application/json:
+              schema: {}
+        '404':
+          $ref: '#/components/responses/Error'
+        '422':
+          $ref: '#/components/responses/Error'
+        '504':
+          $ref: '#/components/responses/Error'
+  /v1/projects/{project}/buckets/{bucket}/uploads:
+    post:
+      tags: [files]
+      operationId: createUpload
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Bucket'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUploadRequest'
+      responses:
+        '201':
+          description: Presigned upload.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PresignedTransfer'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '413':
+          $ref: '#/components/responses/Error'
+  /v1/projects/{project}/buckets/{bucket}/objects/{key}:
+    get:
+      tags: [files]
+      operationId: getObject
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Bucket'
+        - $ref: '#/components/parameters/ObjectKey'
+      responses:
+        '200':
+          description: Presigned download.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PresignedTransfer'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+    delete:
+      tags: [files]
+      operationId: deleteObject
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Bucket'
+        - $ref: '#/components/parameters/ObjectKey'
+      responses:
+        '204':
+          description: Deleted.
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+  /v1/projects/{project}/databases/{database}/shapes:
+    get:
+      tags: [shapes]
+      operationId: listShapes
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
+      responses:
+        '200':
+          description: Shapes of the database.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [shapes]
+                properties:
+                  shapes:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Shape'
+    post:
+      tags: [shapes]
+      operationId: createShape
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateShapeRequest'
+      responses:
+        '201':
+          description: Created; chunks are served from the CDN at the returned location.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Shape'
+        '400':
+          $ref: '#/components/responses/Error'
+  /v1/projects/{project}/databases/{database}/shapes/{shape}:
+    get:
+      tags: [shapes]
+      operationId: getShape
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
+        - $ref: '#/components/parameters/Shape'
+      responses:
+        '200':
+          description: The shape and its newest chunk.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Shape'
+        '404':
+          $ref: '#/components/responses/Error'
+    delete:
+      tags: [shapes]
+      operationId: deleteShape
+      parameters:
+        - $ref: '#/components/parameters/Project'
+        - $ref: '#/components/parameters/Database'
+        - $ref: '#/components/parameters/Shape'
+      responses:
+        '204':
+          description: Deleted.
+        '404':
+          $ref: '#/components/responses/Error'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+    apiKey:
+      type: http
+      scheme: basic
+  parameters:
+    Project:
+      name: project
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Ulid'
+    Database:
+      name: database
+      in: path
+      required: true
+      schema:
+        type: string
+    Function:
+      name: function
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[a-z][a-z0-9-]{0,62}$'
+    Bucket:
+      name: bucket
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[a-z][a-z0-9-]{0,62}$'
+    ObjectKey:
+      name: key
+      in: path
+      required: true
+      schema:
+        type: string
+    Shape:
+      name: shape
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Ulid'
+    Bookmark:
+      name: TerraScale-Bookmark
+      in: header
+      required: false
+      description: Newest bookmark the client holds; the server waits until its region has applied it before running.
+      schema:
+        $ref: '#/components/schemas/Bookmark'
+    Consistency:
+      name: TerraScale-Consistency
+      in: header
+      required: false
+      schema:
+        $ref: '#/components/schemas/Consistency'
+  headers:
+    Bookmark:
+      description: Causal bookmark covering this response; send it on later requests.
+      schema:
+        $ref: '#/components/schemas/Bookmark'
+    Consistency:
+      description: Mode the request actually ran in (DDL and secondary UNIQUE writes upgrade to strong).
+      schema:
+        $ref: '#/components/schemas/Consistency'
+  responses:
+    Error:
+      description: Refused.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorEnvelope'
+    SqlError:
+      description: A statement was refused; nothing committed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorEnvelope'
+    RetryableError:
+      description: Refused before execution; safe to retry after Retry-After.
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+            minimum: 0
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorEnvelope'
+  schemas:
+    Ulid:
+      type: string
+      pattern: '^[0-7][0-9A-HJKMNP-TV-Z]{25}$'
+    Bookmark:
+      type: string
+      description: >-
+        URL-safe base64 (no padding) of [u8 version=1][varuint count] then per region, ordered by ordinal region id,
+        [varuint byteLength][UTF-8 region][varuint sequence]. Empty string means no causal requirement.
+      pattern: '^[A-Za-z0-9_-]{0,1024}$'
+    Consistency:
+      type: string
+      enum: [fast, strong]
+      default: fast
+    SqlValue:
+      description: null, 64-bit integer (exact JSON number), finite double, string, boolean (stored as 1/0) or blob object.
+      oneOf:
+        - type: 'null'
+        - type: integer
+          format: int64
+        - type: number
+          format: double
+        - type: string
+        - type: boolean
+        - $ref: '#/components/schemas/Blob'
+    Blob:
+      type: object
+      required: [base64]
+      additionalProperties: false
+      properties:
+        base64:
+          type: string
+          contentEncoding: base64
+    SqlStatement:
+      type: object
+      required: [sql]
+      properties:
+        sql:
+          type: string
+          minLength: 1
+        args:
+          type: array
+          items:
+            $ref: '#/components/schemas/SqlValue'
+        named:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/SqlValue'
+    SqlExecuteRequest:
+      type: object
+      required: [statements]
+      properties:
+        statements:
+          type: array
+          minItems: 1
+          maxItems: 256
+          items:
+            $ref: '#/components/schemas/SqlStatement'
+    SqlColumn:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+    SqlStatementResult:
+      type: object
+      required: [columns, rows, rowsAffected, lastInsertRowId]
+      properties:
+        columns:
+          type: array
+          items:
+            $ref: '#/components/schemas/SqlColumn'
+        rows:
+          type: array
+          items:
+            type: array
+            items:
+              $ref: '#/components/schemas/SqlValue'
+        rowsAffected:
+          type: integer
+          format: int64
+        lastInsertRowId:
+          type: integer
+          format: int64
+    SqlExecuteResponse:
+      type: object
+      required: [results, bookmark, consistency]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/SqlStatementResult'
+        bookmark:
+          $ref: '#/components/schemas/Bookmark'
+        consistency:
+          $ref: '#/components/schemas/Consistency'
+    SqlWsClientFrame:
+      type: object
+      required: [type, id]
+      properties:
+        type:
+          type: string
+          enum: [execute, batch, begin, commit, rollback]
+        id:
+          type: integer
+          format: int64
+        statements:
+          type: array
+          items:
+            $ref: '#/components/schemas/SqlStatement'
+        consistency:
+          $ref: '#/components/schemas/Consistency'
+        bookmark:
+          $ref: '#/components/schemas/Bookmark'
+    SqlWsServerFrame:
+      type: object
+      required: [type, id, transaction]
+      properties:
+        type:
+          type: string
+          enum: [result, error]
+        id:
+          type: integer
+          format: int64
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/SqlStatementResult'
+        bookmark:
+          $ref: '#/components/schemas/Bookmark'
+        transaction:
+          type: boolean
+        error:
+          $ref: '#/components/schemas/ApiError'
+    ApiError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: >-
+            Stable error code, for example serialization_conflict (409, SQLSTATE 40001, retry the whole transaction),
+            write_outcome_unknown (503, SQLSTATE 08007, reconcile before repeating), syntax_error, unique_violation,
+            not_found, unauthorized, forbidden, quota_exceeded, storage_busy, request_timeout.
+        message:
+          type: string
+        sqlState:
+          type: string
+        statement:
+          type: integer
+          description: Zero-based index of the refused statement.
+        details:
+          type: object
+          additionalProperties:
+            type: string
+    ApiErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/ApiError'
+    Database:
+      type: object
+      required: [id, projectId, name, regions, defaultConsistency, strict, state, createdAtUtc]
+      properties:
+        id:
+          $ref: '#/components/schemas/Ulid'
+        projectId:
+          $ref: '#/components/schemas/Ulid'
+        name:
+          type: string
+        regions:
+          type: array
+          items:
+            type: string
+        defaultConsistency:
+          $ref: '#/components/schemas/Consistency'
+        strict:
+          type: boolean
+        state:
+          type: string
+          enum: [active, suspended, deleted]
+        createdAtUtc:
+          type: string
+          format: date-time
+        ttlSeconds:
+          type: integer
+          minimum: 60
+    CreateDatabaseRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+        regions:
+          type: array
+          items:
+            type: string
+        allRegions:
+          type: boolean
+        defaultConsistency:
+          $ref: '#/components/schemas/Consistency'
+        strict:
+          type: boolean
+        ttlSeconds:
+          type: integer
+          minimum: 60
+    UpdateDatabaseRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+        regions:
+          type: array
+          items:
+            type: string
+        allRegions:
+          type: boolean
+        defaultConsistency:
+          $ref: '#/components/schemas/Consistency'
+        ttlSeconds:
+          type: ['integer', 'null']
+          minimum: 60
+    DatabaseReplication:
+      type: object
+      required: [databaseId, observedAtUtc, regions]
+      properties:
+        databaseId:
+          $ref: '#/components/schemas/Ulid'
+        observedAtUtc:
+          type: string
+          format: date-time
+        regions:
+          type: array
+          items:
+            type: object
+            required: [region, appliedBookmark, lagMs, healthy]
+            properties:
+              region:
+                type: string
+              appliedBookmark:
+                $ref: '#/components/schemas/Bookmark'
+              lagMs:
+                type: integer
+              healthy:
+                type: boolean
+    RestoreTarget:
+      type: object
+      description: Exactly one of pointInTime or bookmark.
+      properties:
+        pointInTime:
+          type: string
+          format: date-time
+        bookmark:
+          $ref: '#/components/schemas/Bookmark'
+      oneOf:
+        - required: [pointInTime]
+        - required: [bookmark]
+    RestoreRequest:
+      type: object
+      required: [name, target]
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+        target:
+          $ref: '#/components/schemas/RestoreTarget'
+        ttlSeconds:
+          type: integer
+          minimum: 60
+    BranchRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,62}$'
+        target:
+          $ref: '#/components/schemas/RestoreTarget'
+        ttlSeconds:
+          type: integer
+          minimum: 60
+    RestoreOperation:
+      type: object
+      required: [operationId, sourceDatabaseId, targetDatabaseId, state, startedAtUtc, updatedAtUtc]
+      properties:
+        operationId:
+          $ref: '#/components/schemas/Ulid'
+        sourceDatabaseId:
+          $ref: '#/components/schemas/Ulid'
+        targetDatabaseId:
+          $ref: '#/components/schemas/Ulid'
+        state:
+          type: string
+          enum: [pending, running, succeeded, failed]
+        startedAtUtc:
+          type: string
+          format: date-time
+        updatedAtUtc:
+          type: string
+          format: date-time
+        failureMessage:
+          type: string
+    BackupStatus:
+      type: object
+      required: [databaseId, archivedThrough, earliestRestorePointUtc, latestRestorePointUtc, lastSnapshotAtUtc, archivedBytes]
+      properties:
+        databaseId:
+          $ref: '#/components/schemas/Ulid'
+        archivedThrough:
+          $ref: '#/components/schemas/Bookmark'
+        earliestRestorePointUtc:
+          type: string
+          format: date-time
+        latestRestorePointUtc:
+          type: string
+          format: date-time
+        lastSnapshotAtUtc:
+          type: string
+          format: date-time
+        archivedBytes:
+          type: integer
+          format: int64
+    Rule:
+      type: object
+      required: [table, operations, predicate]
+      properties:
+        table:
+          type: string
+        operations:
+          type: array
+          items:
+            type: string
+            enum: [select, insert, update, delete]
+        predicate:
+          type: string
+          description: SQL boolean expression; auth.uid() and auth.claim(name) refer to the caller.
+    RuleSet:
+      type: object
+      required: [rules]
+      properties:
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/Rule'
+    Function:
+      type: object
+      required: [name, runtime, updatedAtUtc]
+      properties:
+        name:
+          type: string
+        runtime:
+          type: string
+          const: javascript
+        schedule:
+          type: string
+          description: Cron expression; absent for HTTP-only functions.
+        timeoutMs:
+          type: integer
+          minimum: 1
+          maximum: 30000
+        updatedAtUtc:
+          type: string
+          format: date-time
+    PutFunctionRequest:
+      type: object
+      required: [source]
+      properties:
+        source:
+          type: string
+        schedule:
+          type: string
+        timeoutMs:
+          type: integer
+          minimum: 1
+          maximum: 30000
+        secrets:
+          type: object
+          additionalProperties:
+            type: string
+    CreateUploadRequest:
+      type: object
+      required: [key, contentType, sizeBytes]
+      properties:
+        key:
+          type: string
+        contentType:
+          type: string
+        sizeBytes:
+          type: integer
+          format: int64
+          minimum: 0
+    PresignedTransfer:
+      type: object
+      required: [method, location, expiresAtUtc]
+      properties:
+        method:
+          type: string
+          enum: [GET, PUT]
+        location:
+          type: string
+          format: uri
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        expiresAtUtc:
+          type: string
+          format: date-time
+    Shape:
+      type: object
+      required: [id, databaseId, table, location, bookmark]
+      properties:
+        id:
+          $ref: '#/components/schemas/Ulid'
+        databaseId:
+          $ref: '#/components/schemas/Ulid'
+        table:
+          type: string
+        where:
+          type: string
+        columns:
+          type: array
+          items:
+            type: string
+        location:
+          type: string
+          format: uri
+        bookmark:
+          $ref: '#/components/schemas/Bookmark'
+    CreateShapeRequest:
+      type: object
+      required: [table]
+      properties:
+        table:
+          type: string
+        where:
+          type: string
+        columns:
+          type: array
+          items:
+            type: string

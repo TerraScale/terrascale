@@ -1,6 +1,5 @@
 <Solution>
   <Folder Name="/libs/">
-    <Project Path="src/TerraScale.Analyzers/TerraScale.Analyzers.csproj" />
     <Project Path="src/TerraScale.Endpoints/TerraScale.Endpoints.csproj" />
     <Project Path="src/TerraScale.Endpoints.Generators/TerraScale.Endpoints.Generators.csproj" />
     <Project Path="src/TerraScale.Endpoints.Example/TerraScale.Endpoints.Example.csproj" />
@@ -15,6 +14,7 @@
   <Folder Name="/terrabase/">
     <Project Path="src/TerraBase/TerraBase.csproj" />
     <Project Path="src/TerraScale.TerraBase.Contracts/TerraScale.TerraBase.Contracts.csproj" />
+    <Project Path="src/TerraScale.Contracts/TerraScale.Contracts.csproj" />
     <Project Path="src/TerraScale.TerraBase.Rpc/TerraScale.TerraBase.Rpc.csproj" />
   </Folder>
   <Folder Name="/vendor/">

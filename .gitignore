@@ -1,6 +1,8 @@
 artifacts/
 src/vendor/Turso.Data.Sqlite/native/runtimes/
 src/vendor/Turso.Data.Sqlite/native/SHA256SUMS-*
+/native/.cache/
+/native/runtimes/
 .env
 .claude/worktrees/
 bin/

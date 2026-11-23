@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -5,10 +6,6 @@ using Microsoft.CodeAnalysis.Text;
 
 namespace TerraScale.Endpoints.Generators;
 
-/// <summary>
-/// Finds every concrete <c>TerraScale.Endpoints.IEndpoint</c> class in the compilation and emits
-/// <c>GeneratedEndpoints.All</c> plus a reflection-free <c>AddTerraScaleEndpoints()</c> overload.
-/// </summary>
 [Generator(LanguageNames.CSharp)]
 public sealed class EndpointRegistrationGenerator : IIncrementalGenerator
 {
@@ -31,7 +28,6 @@ public sealed class EndpointRegistrationGenerator : IIncrementalGenerator
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true);
 
-    /// <inheritdoc />
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
         var referencesLibrary = context.CompilationProvider
@@ -54,6 +50,7 @@ public sealed class EndpointRegistrationGenerator : IIncrementalGenerator
             }
 
             var endpoints = new SortedSet<string>(StringComparer.Ordinal);
+            var unions = new SortedDictionary<string, ImmutableArray<string>>(StringComparer.Ordinal);
             foreach (var candidate in found)
             {
                 if (candidate.Problem is { } problem)
@@ -63,10 +60,14 @@ public sealed class EndpointRegistrationGenerator : IIncrementalGenerator
                 else
                 {
                     endpoints.Add(candidate.FullyQualifiedName);
+                    if (candidate.UnionResponse is { } union)
+                    {
+                        unions[union.FullyQualifiedName] = union.CaseTypes;
+                    }
                 }
             }
 
-            output.AddSource("TerraScale.Endpoints.g.cs", SourceText.From(Emit(endpoints), Encoding.UTF8));
+            output.AddSource("TerraScale.Endpoints.g.cs", SourceText.From(Emit(endpoints, unions), Encoding.UTF8));
         });
     }
 
@@ -80,7 +81,6 @@ public sealed class EndpointRegistrationGenerator : IIncrementalGenerator
             return null;
         }
 
-        // Partial classes surface once per declaration; only the first declaration reports.
         if (type.DeclaringSyntaxReferences.Length > 1 && type.DeclaringSyntaxReferences[0].GetSyntax(cancellationToken) != syntax.Node)
         {
             return null;
@@ -96,12 +96,75 @@ public sealed class EndpointRegistrationGenerator : IIncrementalGenerator
             problem = InaccessibleEndpoint;
         }
 
+        var unionResponse = problem is null ? FindUnionResponse(type) : null;
         return new Candidate(
             type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
             type.ToDisplayString(),
             problem,
-            problem is null ? null : LocationInfo.From(syntax.Node.GetLocation()));
+            problem is null ? null : LocationInfo.From(syntax.Node.GetLocation()),
+            unionResponse);
     }
+
+    private static UnionResponseInfo? FindUnionResponse(INamedTypeSymbol endpointType)
+    {
+        for (var current = endpointType.BaseType; current is not null; current = current.BaseType)
+        {
+            if (current.ContainingNamespace?.ToDisplayString() != "TerraScale.Endpoints")
+            {
+                continue;
+            }
+
+            ITypeSymbol? responseType = current.MetadataName switch
+            {
+                "Endpoint`2" when current.TypeArguments.Length == 2 => current.TypeArguments[1],
+                "EndpointWithoutRequest`1" when current.TypeArguments.Length == 1 => current.TypeArguments[0],
+                _ => null,
+            };
+
+            if (responseType is not INamedTypeSymbol named || !IsUnion(named))
+            {
+                return null;
+            }
+
+            var cases = ImmutableArray.CreateBuilder<string>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var ctor in named.InstanceConstructors)
+            {
+                if (ctor.DeclaredAccessibility != Accessibility.Public || ctor.Parameters.Length != 1)
+                {
+                    continue;
+                }
+
+                var paramType = ctor.Parameters[0].Type;
+                if (SymbolEqualityComparer.Default.Equals(paramType, named))
+                {
+                    continue;
+                }
+
+                var formatted = paramType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                if (seen.Add(formatted))
+                {
+                    cases.Add(formatted);
+                }
+            }
+
+            if (cases.Count == 0)
+            {
+                return null;
+            }
+
+            return new UnionResponseInfo(named.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), cases.ToImmutable());
+        }
+
+        return null;
+    }
+
+    private static bool IsUnion(INamedTypeSymbol type) =>
+        type.AllInterfaces.Any(static iface =>
+            iface.Name == "IUnion" && iface.ContainingNamespace?.ToDisplayString() == "System.Runtime.CompilerServices")
+        || type.GetAttributes().Any(static attr =>
+            attr.AttributeClass is { Name: "UnionAttribute" } cls
+            && cls.ContainingNamespace?.ToDisplayString() == "System.Runtime.CompilerServices");
 
     private static bool IsGeneric(INamedTypeSymbol type)
     {
@@ -129,7 +192,7 @@ public sealed class EndpointRegistrationGenerator : IIncrementalGenerator
         return true;
     }
 
-    private static string Emit(IEnumerable<string> endpoints)
+    private static string Emit(IEnumerable<string> endpoints, SortedDictionary<string, ImmutableArray<string>> unions)
     {
         var source = new StringBuilder();
         source.Append("""
@@ -138,11 +201,9 @@ public sealed class EndpointRegistrationGenerator : IIncrementalGenerator
 
             namespace TerraScale.Endpoints
             {
-                /// <summary>Endpoints discovered at compile time in this project.</summary>
                 [global::System.CodeDom.Compiler.GeneratedCode("TerraScale.Endpoints.Generators", "3.0.0")]
                 internal static class GeneratedEndpoints
                 {
-                    /// <summary>Every concrete endpoint in this project, in deterministic order.</summary>
                     public static global::System.Collections.Generic.IReadOnlyList<global::TerraScale.Endpoints.EndpointRegistration> All { get; } =
                         new global::TerraScale.Endpoints.EndpointRegistration[]
                         {
@@ -155,11 +216,81 @@ public sealed class EndpointRegistrationGenerator : IIncrementalGenerator
         source.Append("""
                         };
 
-                    /// <summary>Registers this project's endpoints and OpenAPI services without reflection scanning.</summary>
                     public static global::Microsoft.Extensions.DependencyInjection.IServiceCollection AddTerraScaleEndpoints(
                         this global::Microsoft.Extensions.DependencyInjection.IServiceCollection services,
-                        global::System.Action<global::TerraScale.Endpoints.EndpointOptions>? configure = null) =>
-                        global::TerraScale.Endpoints.EndpointServiceCollectionExtensions.AddTerraScaleEndpoints(services, All, configure);
+                        global::System.Action<global::TerraScale.Endpoints.EndpointOptions>? configure = null)
+                    {
+            """);
+
+        var index = 0;
+        foreach (var entry in unions)
+        {
+            source.Append("            global::Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton<global::TerraScale.Endpoints.IUnionResponseWriterFactory<")
+                .Append(entry.Key)
+                .Append(">, UnionWriterFactory_")
+                .Append(index)
+                .Append(">(services);\n");
+            index++;
+        }
+
+        source.Append("""
+                        return global::TerraScale.Endpoints.EndpointServiceCollectionExtensions.AddTerraScaleEndpoints(services, All, configure);
+                    }
+            """);
+
+        index = 0;
+        foreach (var entry in unions)
+        {
+            var unionName = entry.Key;
+            var cases = entry.Value;
+            source.Append("\n        private sealed class UnionWriterFactory_")
+                .Append(index)
+                .Append(" : global::TerraScale.Endpoints.IUnionResponseWriterFactory<")
+                .Append(unionName)
+                .Append(">\n        {\n")
+                .Append("            public global::TerraScale.Endpoints.IUnionResponseWriter<")
+                .Append(unionName)
+                .Append("> Create(\n")
+                .Append("                global::System.IServiceProvider services,\n")
+                .Append("                global::TerraScale.Endpoints.EndpointResponseRegistry registry,\n")
+                .Append("                global::System.Action<global::System.Type?, int, string?> addProduces) =>\n")
+                .Append("                new Writer(\n");
+            for (var c = 0; c < cases.Length; c++)
+            {
+                source.Append("                    registry.Resolve<").Append(cases[c]).Append(">(services, addProduces)");
+                source.Append(c + 1 < cases.Length ? ",\n" : ");\n\n");
+            }
+
+            source.Append("            private sealed class Writer(\n");
+            for (var c = 0; c < cases.Length; c++)
+            {
+                source.Append("                global::System.Func<global::Microsoft.AspNetCore.Http.HttpContext, ")
+                    .Append(cases[c])
+                    .Append(", global::System.Threading.Tasks.Task> w")
+                    .Append(c);
+                source.Append(c + 1 < cases.Length ? ",\n" : ") : global::TerraScale.Endpoints.IUnionResponseWriter<");
+            }
+
+            source.Append(unionName).Append(">\n            {\n")
+                .Append("                public global::System.Threading.Tasks.Task WriteAsync(global::Microsoft.AspNetCore.Http.HttpContext context, ")
+                .Append(unionName)
+                .Append(" response) =>\n")
+                .Append("                    response switch\n")
+                .Append("                    {\n");
+            for (var c = 0; c < cases.Length; c++)
+            {
+                source.Append("                        ")
+                    .Append(cases[c])
+                    .Append(" value => w")
+                    .Append(c)
+                    .Append("(context, value),\n");
+            }
+
+            source.Append("                    };\n            }\n        }\n");
+            index++;
+        }
+
+        source.Append("""
                 }
             }
 
@@ -167,13 +298,31 @@ public sealed class EndpointRegistrationGenerator : IIncrementalGenerator
         return source.ToString();
     }
 
-    private sealed record Candidate(string FullyQualifiedName, string DisplayName, DiagnosticDescriptor? Problem, LocationInfo? Location);
+    private sealed record UnionResponseInfo(string FullyQualifiedName, ImmutableArray<string> CaseTypes)
+    {
+        public bool Equals(UnionResponseInfo? other) =>
+            other is not null
+            && string.Equals(FullyQualifiedName, other.FullyQualifiedName, StringComparison.Ordinal)
+            && CaseTypes.SequenceEqual(other.CaseTypes, StringComparer.Ordinal);
+
+        public override int GetHashCode() => StringComparer.Ordinal.GetHashCode(FullyQualifiedName);
+    }
+
+    private sealed record Candidate(
+        string FullyQualifiedName,
+        string DisplayName,
+        DiagnosticDescriptor? Problem,
+        LocationInfo? Location,
+        UnionResponseInfo? UnionResponse);
 
     private sealed record LocationInfo(string FilePath, TextSpan Span, LinePositionSpan LineSpan)
     {
-        public static LocationInfo From(Location location) =>
-            new(location.SourceTree?.FilePath ?? string.Empty, location.SourceSpan, location.GetLineSpan().Span);
+        public static LocationInfo From(Location location)
+        {
+            var lineSpan = location.GetLineSpan();
+            return new(lineSpan.Path, location.SourceSpan, lineSpan.Span);
+        }
 
-        public Location ToLocation() => Location.Create(this.FilePath, this.Span, this.LineSpan);
+        public Location ToLocation() => Location.Create(FilePath, Span, LineSpan);
     }
 }

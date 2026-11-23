@@ -394,11 +394,6 @@
           "Microsoft.Win32.SystemEvents": "6.0.0"
         }
       },
-      "System.IO.Hashing": {
-        "type": "Transitive",
-        "resolved": "11.0.0",
-        "contentHash": "U+Bv2qCYt6eONi+arSP0QIp4uTO6os6uceBsqiAwruZ+Wo2HrRhO/0tj38M9URJtS+4DhAtT3ka2TGNFYsnhyQ=="
-      },
       "YamlDotNet": {
         "type": "Transitive",
         "resolved": "18.1.0",
@@ -599,6 +594,12 @@
         "dependencies": {
           "System.Drawing.Common": "6.0.0"
         }
+      },
+      "System.IO.Hashing": {
+        "type": "CentralTransitive",
+        "requested": "[11.0.0, )",
+        "resolved": "11.0.0",
+        "contentHash": "U+Bv2qCYt6eONi+arSP0QIp4uTO6os6uceBsqiAwruZ+Wo2HrRhO/0tj38M9URJtS+4DhAtT3ka2TGNFYsnhyQ=="
       }
     },
     "net11.0/linux-arm64": {

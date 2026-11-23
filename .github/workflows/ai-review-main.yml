@@ -22,7 +22,7 @@ jobs:
         .github/**
         e2e/**
         src/TerraScale.Aspire/**
-        src/TerraScale.Analyzers/**
+        src/TerraScale.Contracts/**
         src/TerraBase/**
         src/TerraScale.Authentication*/**
         src/TerraScale.Dashboard/Features/Billing/**

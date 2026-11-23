@@ -4,11 +4,6 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace TerraScale.Endpoints.Benchmarks;
 
-/// <summary>
-/// One app that maps every scenario three ways: minimal API with the Request Delegate Generator
-/// (/rdg), minimal API through the reflection-based RequestDelegateFactory (/rdf), and
-/// TerraScale endpoints (/ts). Handlers do the same work so only the plumbing differs.
-/// </summary>
 public static class BenchmarkApp
 {
     public static readonly string[] Scenarios = ["health", "echo", "send", "scoped", "text"];
@@ -29,14 +24,12 @@ public static class BenchmarkApp
 
         var app = builder.Build();
 
-        // RDG intercepts these call sites at compile time because the handlers are lambdas.
         app.MapGet("/rdg/health", () => new HealthResponse("ok"));
         app.MapPost("/rdg/echo", (EchoRequest request) => new EchoResponse(request.Name));
         app.MapPost("/rdg/send", (EchoRequest request) => TypedResults.Ok(new EchoResponse(request.Name)));
         app.MapGet("/rdg/scoped", ([FromServices] ScopedDependency dependency) => dependency.Value);
         app.MapGet("/rdg/text", () => "ok");
 
-        // Handlers typed as Delegate cannot be analyzed by RDG, so they fall back to RequestDelegateFactory.
         MapRdf(app, "GET", "/rdf/health", () => new HealthResponse("ok"));
         MapRdf(app, "POST", "/rdf/echo", (EchoRequest request) => new EchoResponse(request.Name));
         MapRdf(app, "POST", "/rdf/send", (EchoRequest request) => TypedResults.Ok(new EchoResponse(request.Name)));
@@ -88,12 +81,12 @@ public sealed class EchoEndpoint : Endpoint<EchoRequest, EchoResponse>
         ValueTask.FromResult(new EchoResponse(request.Name));
 }
 
-public sealed class SendEndpoint : Endpoint<EchoRequest>
+public sealed class SendEndpoint : Endpoint<EchoRequest, IResult>
 {
     public override void Configure() => Post("/ts/send");
 
-    public override ValueTask HandleAsync(EchoRequest request, CancellationToken cancellationToken) =>
-        Send.OkAsync(new EchoResponse(request.Name), cancellationToken);
+    public override ValueTask<IResult> HandleAsync(EchoRequest request, CancellationToken cancellationToken) =>
+        ValueTask.FromResult<IResult>(TypedResults.Ok(new EchoResponse(request.Name)));
 }
 
 public sealed class ScopedEndpoint(ScopedDependency dependency) : EndpointWithoutRequest<string>

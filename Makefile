@@ -30,12 +30,12 @@ DASHBOARD_WEB := src/TerraScale.Dashboard/web
 
 ASPIRE_PROJECT := src/TerraScale.Aspire/TerraScale.Aspire.csproj
 
-LIBS_STYLE_PROJECTS := src/TerraScale.Analyzers/TerraScale.Analyzers.csproj \
+LIBS_STYLE_PROJECTS := src/TerraScale.Contracts/TerraScale.Contracts.csproj \
 	src/TerraScale.Endpoints/TerraScale.Endpoints.csproj \
 	src/TerraScale.Endpoints.Generators/TerraScale.Endpoints.Generators.csproj \
 	src/TerraScale.Endpoints.Example/TerraScale.Endpoints.Example.csproj \
 	src/TerraScale.Logging/TerraScale.Logging.csproj
-LIBS_BUILD_PROJECTS := src/TerraScale.Analyzers/TerraScale.Analyzers.csproj \
+LIBS_BUILD_PROJECTS := src/TerraScale.Contracts/TerraScale.Contracts.csproj \
 	src/TerraScale.Endpoints.Example/TerraScale.Endpoints.Example.csproj \
 	src/TerraScale.Logging/TerraScale.Logging.csproj \
 	benchmark/dotnet/TerraScale.Endpoints.Benchmarks/TerraScale.Endpoints.Benchmarks.csproj \

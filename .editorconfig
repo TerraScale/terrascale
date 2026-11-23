@@ -20,6 +20,9 @@ indent_size = 2
 [Makefile]
 indent_style = tab
 
+[**/GeneratedRouteBuilderExtensions.g.cs]
+dotnet_diagnostic.RS0030.severity = none
+
 [src/TerraBase*/**.cs]
 csharp_style_namespace_declarations = file_scoped:error
 csharp_style_var_for_built_in_types = true:error
@@ -31,6 +34,12 @@ csharp_using_directive_placement = outside_namespace:error
 dotnet_sort_system_directives_first = true
 dotnet_style_qualification_for_field = false:suggestion
 dotnet_style_prefer_conditional_expression_over_return = true:suggestion
+csharp_prefer_braces = true:error
+
+[src/TerraScale.Contracts/**.cs]
+csharp_style_namespace_declarations = file_scoped:error
+csharp_using_directive_placement = outside_namespace:error
+dotnet_sort_system_directives_first = true
 csharp_prefer_braces = true:error
 
 [{src,benchmark/dotnet}/TerraScale.{Endpoints,Logging}*/**.cs]

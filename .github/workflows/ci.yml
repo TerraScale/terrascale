@@ -95,7 +95,7 @@ jobs:
               - TerraScale.slnx
               - src/TerraScale.Endpoints*/**/!(AGENTS.md)
               - src/TerraScale.Logging/**/!(AGENTS.md)
-              - src/TerraScale.Analyzers/**/!(AGENTS.md)
+              - src/TerraScale.Contracts/**/!(AGENTS.md)
             dotnet-sdk: &dotnet-sdk
               - sdk/dotnet/Directory.*
               - sdk/dotnet/NuGet.config
@@ -156,7 +156,7 @@ jobs:
               - src/vendor/Turso.Native/turso-pin.env
               - src/TerraScale.Endpoints*/**/!(AGENTS.md)
               - src/TerraScale.Logging/**/!(AGENTS.md)
-              - src/TerraScale.Analyzers/**/!(AGENTS.md)
+              - src/TerraScale.Contracts/**/!(AGENTS.md)
             journey-server: &journey-server
               - *journey-shared
               - src/TerraBase/**/!(AGENTS.md)
@@ -302,7 +302,7 @@ jobs:
             dashboard:
               - src/TerraScale.Dashboard*/**/!(AGENTS.md)
               - .github/docker/dashboard.Dockerfile
-              - src/TerraScale.Analyzers/**/!(AGENTS.md)
+              - src/TerraScale.Contracts/**/!(AGENTS.md)
               - src/TerraScale.TerraBase.Contracts/**/!(AGENTS.md)
               - src/TerraScale.Endpoints/**/!(AGENTS.md)
               - src/TerraScale.Endpoints.Generators/**/!(AGENTS.md)

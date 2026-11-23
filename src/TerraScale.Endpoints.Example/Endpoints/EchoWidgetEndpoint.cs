@@ -1,6 +1,5 @@
 namespace TerraScale.Endpoints.Example.Endpoints;
 
-/// <summary>FastEndpoints-style request/response endpoint.</summary>
 public sealed class EchoWidgetEndpoint : Endpoint<EchoWidgetRequest, EchoWidgetResponse>
 {
     public override void Configure()

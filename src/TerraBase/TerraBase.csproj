@@ -40,7 +40,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../TerraScale.Analyzers/TerraScale.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
+    <ProjectReference Include="../../sdk/dotnet/src/TerraScale.DotNet/TerraScale.DotNet.csproj" />
     <ProjectReference Include="../TerraScale.Logging/TerraScale.Logging.csproj" />
     <ProjectReference Include="../TerraScale.TerraBase.Rpc/TerraScale.TerraBase.Rpc.csproj" />
   </ItemGroup>

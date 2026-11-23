@@ -1,39 +1,46 @@
 namespace TerraScale.Endpoints.Example;
 
+public sealed record WidgetNotFound;
+
+public sealed record WidgetConflict;
+
+public readonly union CreateWidgetResult(Widget, WidgetConflict);
+
+public readonly union GetWidgetResult(Widget, WidgetNotFound);
+
 public sealed class WidgetStore
 {
+    private readonly Lock gate = new();
     private readonly Dictionary<Guid, Widget> widgets = [];
 
-    /// <summary>Creates a widget unless the name is taken; the check and insert happen under one lock.</summary>
-    public bool TryCreate(string name, out Widget widget)
+    public CreateWidgetResult Create(string name)
     {
-        lock (widgets)
+        lock (gate)
         {
             if (widgets.Values.Any(existing => existing.Name == name))
             {
-                widget = null!;
-                return false;
+                return new WidgetConflict();
             }
 
-            widget = new Widget(Guid.NewGuid(), name);
+            var widget = new Widget(Guid.NewGuid(), name);
             widgets[widget.Id] = widget;
-            return true;
+            return widget;
         }
     }
 
     public bool NameExists(string name)
     {
-        lock (widgets)
+        lock (gate)
         {
             return widgets.Values.Any(widget => widget.Name == name);
         }
     }
 
-    public Widget? Find(Guid id)
+    public GetWidgetResult Find(Guid id)
     {
-        lock (widgets)
+        lock (gate)
         {
-            return widgets.GetValueOrDefault(id);
+            return widgets.TryGetValue(id, out var widget) ? widget : new WidgetNotFound();
         }
     }
 }

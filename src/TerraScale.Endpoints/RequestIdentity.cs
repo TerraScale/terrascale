@@ -2,24 +2,18 @@ using System.Security.Cryptography;
 
 namespace TerraScale.Endpoints;
 
-/// <summary>Customer correlation labels authenticated between first-party services, never authorization.</summary>
 public static class RequestIdentity
 {
-    /// <summary>The public response header.</summary>
     public const string Header = "X-Request-ID";
-    /// <summary>Internal proof; never return it to clients.</summary>
     public const string ProofHeader = "X-TerraScale-Request-Proof";
     private static readonly AsyncLocal<string?> Current = new();
 
-    /// <summary>Accepts only canonical ULIDs.</summary>
     public static bool IsValid(string? value) => value is { Length: 26 } && value[0] is >= '0' and <= '7'
         && value.All(character => "0123456789ABCDEFGHJKMNPQRSTVWXYZ".Contains(character, StringComparison.Ordinal));
 
-    /// <summary>Signs using the literal Vault credential, with a purpose distinct from authentication.</summary>
     public static string Sign(string id, string secret) => Convert.ToHexString(HMACSHA256.HashData(
         Encoding.UTF8.GetBytes(secret), Encoding.UTF8.GetBytes("terrascale.request-id.v1\n" + id)));
 
-    /// <summary>Assigns identity before errors, routing and authentication; binds structured logging scopes.</summary>
     public static WebApplication UseTerraScaleRequestIdentity(this WebApplication app, Func<string> newId, string? secret)
     {
         ArgumentNullException.ThrowIfNull(app);
@@ -29,11 +23,12 @@ public static class RequestIdentity
         {
             var ids = context.Request.Headers[Header];
             var proofs = context.Request.Headers[ProofHeader];
-            var id = ids.Count == 1 ? ids[0] : null;
+            var candidate = ids.Count == 1 ? ids[0] : null;
             var proof = proofs.Count == 1 ? proofs[0] : null;
-            var trusted = IsValid(id) && secret is { Length: > 0 } && proof is { Length: 64 }
-                && CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(Sign(id!, secret)), Encoding.ASCII.GetBytes(proof));
-            id = trusted ? id! : newId();
+            var id = candidate is not null && IsValid(candidate) && secret is { Length: > 0 } && proof is { Length: 64 }
+                && CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(Sign(candidate, secret)), Encoding.ASCII.GetBytes(proof))
+                ? candidate
+                : newId();
             context.Request.Headers.Remove(ProofHeader);
             context.Request.Headers[Header] = id;
             context.TraceIdentifier = id;
@@ -47,16 +42,19 @@ public static class RequestIdentity
             Current.Value = id;
             using var scope = app.Logger.BeginScope(new Dictionary<string, object> { ["request_id"] = id });
             try
-            { await next(context).ConfigureAwait(false); }
-            finally { Current.Value = previous; }
+            {
+                await next(context).ConfigureAwait(false);
+            }
+            finally
+            {
+                Current.Value = previous;
+            }
         });
         return app;
     }
 
-    /// <summary>Install only on first-party transports; never on outbound callbacks or third-party HTTP clients.</summary>
     public static HttpMessageHandler Wrap(HttpMessageHandler inner, string? secret) => new Propagation(ProofKey(secret)) { InnerHandler = inner };
 
-    /// <summary>Creates a factory-managed handler restricted to one configured service origin.</summary>
     public static DelegatingHandler CreatePropagationHandler(string? secret, Uri origin) => new Propagation(ProofKey(secret), origin);
 
     private static string? ProofKey(string? previous) =>
@@ -77,6 +75,7 @@ public static class RequestIdentity
                 request.Headers.Add(Header, id);
                 request.Headers.Add(ProofHeader, Sign(id, secret));
             }
+
             return base.SendAsync(request, cancellationToken);
         }
     }

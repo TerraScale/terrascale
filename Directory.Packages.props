@@ -120,6 +120,14 @@
     <PackageVersion Include="Ulid" Version="1.4.1" />
     <PackageVersion Include="NUlid" Version="1.7.3" />
   </ItemGroup>
+  <ItemGroup Label="TerraBase v2">
+    <PackageVersion Include="Dapper" Version="2.1.100" />
+    <PackageVersion Include="Dapper.AOT" Version="1.1.0" />
+    <PackageVersion Include="dbup-core" Version="6.1.1" />
+    <PackageVersion Include="DotNext.Net.Cluster" Version="6.13.0" />
+    <PackageVersion Include="System.IO.Hashing" Version="11.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Resilience" Version="11.0.1" />
+  </ItemGroup>
   <ItemGroup Label="Local development">
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="17.0.0" />
     <PackageVersion Include="Aspire.Hosting.Dotnet" Version="17.0.0" />
