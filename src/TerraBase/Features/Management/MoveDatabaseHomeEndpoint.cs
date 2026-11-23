@@ -1,77 +1,30 @@
-using System.Diagnostics;
 using TerraBase.Configuration;
-using TerraBase.Errors;
-using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Callers;
 using TerraBase.Features.Catalog;
-using TerraBase.Features.Regions;
-using TerraBase.Features.Replicas;
 using TerraBase.Hosting;
-using TerraBase.Tenancy;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-public sealed record MoveHomeRequest(string? HomeRegion);
-
-internal sealed class MoveDatabaseHomeEndpoint(IManagementService management, HomeMoves moves, TerraBaseOptions options, IRegionCatalog regions)
-    : Endpoint<MoveHomeRequest, IResult>
+internal sealed class MoveDatabaseHomeEndpoint(DatabaseAccess access, ManagementService management, TerraBaseOptions options, TimeProvider time)
+    : Endpoint<DatabaseInput, UpdateDatabaseResponse>
 {
     public override void Configure()
     {
-        Post(ProjectApiRoute.Database + "/move-home");
-        Metadata(AnchoredRevocation.Instance);
+        Post(ManagementRoute.Database + "/move-home");
         Name("moveDatabaseHome");
-        Summary("Moves a database's home to one of its replica regions");
-        Description("Transitional: this endpoint and the old placement fields are removed by category C23 of batch db4a5ba7 once every consumer sends regions. "
-            + "The replica in homeRegion catches up, writes pause briefly, the home switches and the old home becomes a replica region. "
-            + "No acknowledged write is lost. Answers when the move is done. " + ProjectApiRoute.IdentityDescription);
-        Tags("Databases");
-        Produces<ManagedDatabaseBody>();
-        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
-        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
-        Produces<ErrorBody>(StatusCodes.Status404NotFound);
-        Produces<ErrorBody>(StatusCodes.Status409Conflict);
-        Produces<ErrorBody>(StatusCodes.Status421MisdirectedRequest);
-        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
-        RequireAuthorization(ApiKeyScopes.DatabasesWrite);
-        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware());
+        Summary("Places the database in a region");
+        Description("Regions are equal active-active peers in v2, so there is no home to move; {\"region\"} adds that region to the database's placement.");
+        Tags(ManagementRoute.Tag);
+        AllowAnonymous();
+        Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<IResult> HandleAsync(MoveHomeRequest request, CancellationToken cancellationToken)
+    public override async ValueTask<UpdateDatabaseResponse> HandleAsync(DatabaseInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var (user, organization, project) = (ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), HttpContext.RouteValue("project"));
-        if (!TerraBaseOptions.IsRegion(request.HomeRegion))
-        {
-            return ErrorResponse.From(new Validation("homeRegion must name a region"));
-        }
-
-        if (DatabaseRegions.Unserved("homeRegion", [request.HomeRegion], await regions.ServingAsync(cancellationToken).ConfigureAwait(false)) is { } unserved)
-        {
-            return ErrorResponse.From(unserved);
-        }
-
-        switch (await management.GetDatabaseAsync(user, organization, project, HttpContext.RouteValue("database"), cancellationToken).ConfigureAwait(false))
-        {
-            case NotFound error:
-                return ManagementRoute.DatabaseNotFound(error);
-            case Unavailable error:
-                return ErrorResponse.From(error);
-            case ManagedDatabase database when database.Home(options.Region) != options.Region:
-                return DatabaseRegions.HomeRegion(database.Home(options.Region), database.Regions(options.Region));
-            case ManagedDatabase database:
-                return await moves.MoveAsync(new TenantContext(organization, PlanTier.Hobby, database.ProjectId, database.Id), request.HomeRegion, null, cancellationToken)
-                    .ConfigureAwait(false) switch
-                {
-                    ManagedDatabase moved => TypedResults.Ok(ManagedDatabaseBody.From(moved, options.Region)),
-                    NotFound error => ManagementRoute.DatabaseNotFound(error),
-                    Validation error => ErrorResponse.From(error),
-                    Conflict error when error == ManagementErrors.WrongRegion => DatabaseRegions.HomeRegion(database.Home(options.Region), database.Regions(options.Region)),
-                    Conflict error => ErrorResponse.From(error),
-                    Unavailable error => ErrorResponse.From(error),
-                };
-            default:
-                throw new UnreachableException();
-        }
+        return request.Region is null
+            ? new Validation("region is required", "invalid_region")
+            : await DatabaseUpdates.UpdateAsync(HttpContext.Caller, access, management, options, time, request with { Regions = null, ReplicaRegions = null }, cancellationToken);
     }
 }

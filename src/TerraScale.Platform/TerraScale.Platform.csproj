@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <RootNamespace>TerraScale.Platform</RootNamespace>
+    <AssemblyName>ts-platform</AssemblyName>
+    <Version>2.0.0</Version>
+    <UseTerraScaleEndpoints>true</UseTerraScaleEndpoints>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <TieredPGO>true</TieredPGO>
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <UserSecretsId />
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AWSSDK.S3" />
+    <PackageReference Include="Cronos" />
+    <PackageReference Include="Jint" />
+    <PackageReference Include="JsonSchema.Net" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" />
+    <PackageReference Include="Ulid" />
+    <PackageReference Include="ZLogger" />
+    <PackageReference Include="ZString" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../TerraScale.Contracts/TerraScale.Contracts.csproj" />
+    <ProjectReference Include="../TerraScale.QuicRpc/TerraScale.QuicRpc.csproj" />
+    <ProjectReference Include="../TerraScale.Logging/TerraScale.Logging.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="System.Text.Json" />
+    <Using Include="TerraScale.Results" />
+    <Using Include="TerraScale.Contracts.Consistency" />
+    <Using Include="TerraScale.Contracts.Http" />
+    <Using Include="TerraScale.QuicRpc.Messages" />
+    <Using Include="TerraScale.Endpoints" />
+    <Using Include="TerraScale.Platform.Hosting" />
+    <Using Include="TerraScale.Platform.TerraBase" />
+  </ItemGroup>
+</Project>

@@ -1,14 +1,8 @@
-using System.Collections.Frozen;
-using System.Globalization;
-using TerraBase.Tenancy;
-
 namespace TerraBase.Configuration;
 
 public sealed class BackupSettings
 {
-    internal static string[] Keys => [.. Required, "master-key", "master-keys", "backup-key-rotation-days", "cloudflare-api-token"];
-
-    private static readonly string[] Required =
+    internal static readonly string[] Required =
     [
         "backup-endpoint", "backup-region", "backup-bucket", "backup-access-key-id", "backup-secret-key",
     ];
@@ -18,6 +12,8 @@ public sealed class BackupSettings
         ("AWS_ENDPOINT_URL_S3", "backup-endpoint"), ("AWS_REGION", "backup-region"), ("BUCKET_NAME", "backup-bucket"),
         ("AWS_ACCESS_KEY_ID", "backup-access-key-id"), ("AWS_SECRET_ACCESS_KEY", "backup-secret-key"),
     ];
+
+    internal static IEnumerable<string> Keys => [.. Required, "cloudflare-api-token"];
 
     public required Uri Endpoint { get; init; }
 
@@ -31,83 +27,49 @@ public sealed class BackupSettings
 
     public string? CloudflareApiToken { get; init; }
 
-    public required KeyringSettings Keyring { get; init; }
+    public override string ToString() => string.Concat("backup to ", Bucket);
 
-    public int KeyRotationDays { get; init; } = 90;
-
-    public IReadOnlyDictionary<PlanTier, int> RetentionDays { get; internal set; } = new Dictionary<PlanTier, int>
+    internal static BackupSettings? Parse(SettingValues values)
     {
-        [PlanTier.Hobby] = 1,
-        [PlanTier.Starter] = 3,
-        [PlanTier.Pro] = 7,
-        [PlanTier.Team] = 14,
-        [PlanTier.Enterprise] = 30,
-    }.ToFrozenDictionary();
-
-    public override string ToString() => $"backup to {Bucket}";
-
-    internal static BackupSettings? Parse(IReadOnlyDictionary<string, string> values)
-    {
-        if (!Keys.Any(key => key is not ("master-key" or "master-keys") && values.ContainsKey(key)))
+        if (!Keys.Any(values.Has))
         {
             return null;
         }
 
-        if (!Required.All(values.ContainsKey) || KeyringSettings.Parse(values) is null)
+        if (!Required.All(values.Has))
         {
-            throw new TerraBaseConfigurationException($"{string.Join(", ", Required)} and master-key or master-keys must be set together");
+            values.Fail(string.Join(", ", Required) + " must be set together");
+            return null;
         }
 
-        var endpoint = Https(values, "backup-endpoint");
-        var r2 = endpoint.Host.EndsWith(".r2.cloudflarestorage.com", StringComparison.OrdinalIgnoreCase);
-        if (r2 != values.ContainsKey("cloudflare-api-token"))
+        if (!Uri.TryCreate(values.Get("backup-endpoint"), UriKind.Absolute, out var endpoint) || endpoint.Scheme != Uri.UriSchemeHttps
+            || endpoint.UserInfo.Length > 0 || endpoint.PathAndQuery != "/" || endpoint.Fragment.Length > 0)
         {
-            throw new TerraBaseConfigurationException(r2
-                ? "cloudflare-api-token must be set with an R2 backup-endpoint"
-                : "cloudflare-api-token is used only with an R2 backup-endpoint");
+            values.Fail("backup-endpoint must be an https://host[:port] URL");
+            return null;
+        }
+
+        if (values.Get("backup-bucket") is not { Length: >= 3 and <= 63 } bucket || !bucket.All(static character => character is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '.' or '-'))
+        {
+            values.Fail("backup-bucket must be 3 to 63 lowercase letters, digits, dots or hyphens");
+            return null;
+        }
+
+        var r2 = endpoint.Host.EndsWith(".r2.cloudflarestorage.com", StringComparison.OrdinalIgnoreCase);
+        if (r2 != values.Has("cloudflare-api-token"))
+        {
+            values.Fail(r2 ? "cloudflare-api-token must be set with an R2 backup-endpoint" : "cloudflare-api-token is used only with an R2 backup-endpoint");
+            return null;
         }
 
         return new BackupSettings
         {
             Endpoint = endpoint,
-            Region = Token(values, "backup-region"),
-            Bucket = IsBucket(values["backup-bucket"])
-                ? values["backup-bucket"]
-                : throw new TerraBaseConfigurationException("backup-bucket must be 3 to 63 lowercase letters, digits, dots or hyphens"),
-            AccessKeyId = Token(values, "backup-access-key-id"),
-            SecretKey = Token(values, "backup-secret-key"),
-            Keyring = KeyringSettings.Parse(values) ?? throw new TerraBaseConfigurationException("master-key or master-keys is required"),
-            CloudflareApiToken = r2 ? Token(values, "cloudflare-api-token") : null,
-            KeyRotationDays = values.TryGetValue("backup-key-rotation-days", out var rotation) ? ParseKeyRotation(rotation) : 90,
+            Region = values.Token("backup-region"),
+            Bucket = bucket,
+            AccessKeyId = values.Token("backup-access-key-id"),
+            SecretKey = values.Token("backup-secret-key"),
+            CloudflareApiToken = r2 ? values.Token("cloudflare-api-token") : null,
         };
-    }
-
-    private static int ParseKeyRotation(string value) =>
-        int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var days) && days is >= 1 and <= 3650
-            ? days
-            : throw new TerraBaseConfigurationException("backup-key-rotation-days must be an integer from 1 to 3650");
-
-    private static Uri Https(IReadOnlyDictionary<string, string> values, string key) =>
-        Uri.TryCreate(values[key], UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps && uri.UserInfo.Length == 0
-            && uri.PathAndQuery == "/" && uri.Fragment.Length == 0
-            ? uri
-            : throw new TerraBaseConfigurationException($"{key} must be an https://host[:port] URL");
-
-    private static string Token(IReadOnlyDictionary<string, string> values, string key) =>
-        values[key] is { Length: > 0 and <= 512 } value && !value.Any(character => char.IsWhiteSpace(character) || char.IsControl(character))
-            ? value
-            : throw new TerraBaseConfigurationException($"{key} must be 1 to 512 characters without whitespace");
-
-    private static bool IsBucket(string bucket) =>
-        bucket.Length is >= 3 and <= 63 && bucket.All(character => character is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '.' or '-');
-
-    internal static byte[] ParseMasterKey(string value)
-    {
-        var key = new byte[33];
-        if (!Convert.TryFromBase64String(value, key, out var written) || written != 32)
-        {
-            throw new TerraBaseConfigurationException("master-key must be exactly 32 bytes, base64");
-        }
-        return key[..32];
     }
 }

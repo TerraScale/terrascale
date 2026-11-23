@@ -1,0 +1,180 @@
+using System.Net;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
+using System.Text;
+using TerraScale.QuicRpc;
+
+namespace TerraBase.Cluster;
+
+public sealed record ClusterSettings(string NodeId, string Region, string DataDirectory, int QuicPort, int InternalPort, string? PeersFile, string? PeerSecret);
+
+public sealed record ClusterOptions
+{
+    public const string PeerSecretVariable = "TERRABASE_PEER_SECRET";
+    public const string MeshCertificateVariable = "TERRABASE_MESH_CERT_FILE";
+    public const string MeshKeyVariable = "TERRABASE_MESH_KEY_FILE";
+    public const string MeshAuthorityVariable = "TERRABASE_MESH_CA_FILE";
+
+    public required string NodeId { get; init; }
+
+    public required string Region { get; init; }
+
+    public required string DataDirectory { get; init; }
+
+    public required IPEndPoint ListenEndPoint { get; init; }
+
+    public required IReadOnlyList<PeerNodeInfo> Peers { get; init; }
+
+    public required QuicMeshCertificates Certificates { get; init; }
+
+    public int RaftShardCount { get; init; } = 16;
+
+    public TimeSpan RaftElectionTimeoutLower { get; init; } = TimeSpan.FromMilliseconds(300);
+
+    public TimeSpan RaftElectionTimeoutUpper { get; init; } = TimeSpan.FromMilliseconds(600);
+
+    public TimeSpan RaftRequestTimeout { get; init; } = TimeSpan.FromSeconds(2);
+
+    public TimeSpan RaftCommitTimeout { get; init; } = TimeSpan.FromSeconds(5);
+
+    public TimeSpan StrongPrepareTimeout { get; init; } = TimeSpan.FromSeconds(3);
+
+    public TimeSpan StrongLockLease { get; init; } = TimeSpan.FromSeconds(10);
+
+    public TimeSpan WoundTimeout { get; init; } = TimeSpan.FromSeconds(1);
+
+    public TimeSpan PingInterval { get; init; } = TimeSpan.FromSeconds(1);
+
+    public TimeSpan PingTimeout { get; init; } = TimeSpan.FromSeconds(1);
+
+    public int UnreachableAfterFailures { get; init; } = 3;
+
+    public TimeSpan AntiEntropyInterval { get; init; } = TimeSpan.FromSeconds(2);
+
+    public TimeSpan CatchUpTimeout { get; init; } = TimeSpan.FromSeconds(10);
+
+    public int CatchUpPageSize { get; init; } = 512;
+
+    public int MaxReplicationParallelism { get; init; } = 8;
+
+    public IReadOnlyList<string> Regions =>
+        [.. Peers.Select(static peer => peer.Region).Append(Region).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
+
+    public IReadOnlyList<PeerNodeInfo> RegionPeers => [.. Peers.Where(peer => string.Equals(peer.Region, Region, StringComparison.Ordinal))];
+
+    public IReadOnlyList<PeerNodeInfo> RemotePeers => [.. Peers.Where(peer => !string.Equals(peer.Region, Region, StringComparison.Ordinal))];
+
+    public string StorageOrigin => RegionPeers.Count == 0 ? Region : OriginFor(NodeId);
+
+    public bool IsBootstrapNode => !Peers.Any(peer => string.CompareOrdinal(peer.Region, Region) switch
+    {
+        < 0 => true,
+        0 => string.CompareOrdinal(peer.NodeId, NodeId) < 0,
+        > 0 => false,
+    });
+
+    public QuicMeshOptions ToMeshOptions() => new()
+    {
+        NodeId = NodeId,
+        Region = Region,
+        ListenEndPoint = ListenEndPoint,
+        Certificate = Certificates.Certificate,
+        TrustedAuthorities = Certificates.TrustedAuthorities,
+        IntermediateCertificates = Certificates.Intermediates,
+    };
+
+    public ClusterOptions Validate()
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(NodeId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(Region);
+        ArgumentException.ThrowIfNullOrWhiteSpace(DataDirectory);
+        ArgumentNullException.ThrowIfNull(ListenEndPoint);
+        ArgumentNullException.ThrowIfNull(Peers);
+        ArgumentNullException.ThrowIfNull(Certificates);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(RaftShardCount);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(RaftShardCount, ushort.MaxValue);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(CatchUpPageSize);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxReplicationParallelism);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(UnreachableAfterFailures);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(StrongLockLease, StrongPrepareTimeout);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(RaftElectionTimeoutUpper, RaftElectionTimeoutLower);
+        if (Peers.Any(peer => string.Equals(peer.NodeId, NodeId, StringComparison.Ordinal)))
+        {
+            throw new ArgumentException("Peers must not contain the local node.", nameof(Peers));
+        }
+
+        if (Peers.Select(static peer => peer.NodeId).Distinct(StringComparer.Ordinal).Count() != Peers.Count)
+        {
+            throw new ArgumentException("Peer node ids must be unique.", nameof(Peers));
+        }
+
+        return this;
+    }
+
+    public static string OriginFor(string nodeId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(nodeId);
+        var builder = new StringBuilder(nodeId.Length);
+        foreach (var character in nodeId)
+        {
+            builder.Append(char.IsAsciiLetterOrDigit(character) || character is '-' or '_' ? char.ToLowerInvariant(character) : '-');
+        }
+
+        return builder.ToString();
+    }
+
+    public static Result<ClusterOptions, Validation> Create(ClusterSettings settings, TimeProvider timeProvider)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        ArgumentNullException.ThrowIfNull(timeProvider);
+        return PeerMeshDiscovery.Discover(settings.PeersFile, settings.QuicPort, settings.InternalPort) switch
+        {
+            IReadOnlyList<PeerNodeInfo> all => MeshCertificates(settings, all.Count == 0, timeProvider) switch
+            {
+                QuicMeshCertificates certificates => new ClusterOptions
+                {
+                    NodeId = settings.NodeId,
+                    Region = settings.Region,
+                    DataDirectory = Path.Combine(settings.DataDirectory, "cluster"),
+                    ListenEndPoint = ListenFor(all.FirstOrDefault(peer => string.Equals(peer.NodeId, settings.NodeId, StringComparison.Ordinal)), all.Count == 0, settings.QuicPort),
+                    Peers = [.. all.Where(peer => !string.Equals(peer.NodeId, settings.NodeId, StringComparison.Ordinal))],
+                    Certificates = certificates,
+                },
+                Validation invalid => invalid,
+            },
+            Validation invalid => invalid,
+        };
+    }
+
+    private static IPEndPoint ListenFor(PeerNodeInfo? self, bool standalone, int quicPort)
+    {
+        if (self is not null && IPAddress.TryParse(self.Host, out var address))
+        {
+            return new IPEndPoint(address, self.QuicPort);
+        }
+
+        return new IPEndPoint(standalone ? IPAddress.Loopback : IPAddress.Any, self?.QuicPort ?? quicPort);
+    }
+
+    private static Result<QuicMeshCertificates, Validation> MeshCertificates(ClusterSettings settings, bool standalone, TimeProvider timeProvider)
+    {
+        var certificate = Environment.GetEnvironmentVariable(MeshCertificateVariable);
+        var key = Environment.GetEnvironmentVariable(MeshKeyVariable);
+        var authority = Environment.GetEnvironmentVariable(MeshAuthorityVariable);
+        if (!string.IsNullOrWhiteSpace(certificate) || !string.IsNullOrWhiteSpace(key) || !string.IsNullOrWhiteSpace(authority))
+        {
+            return string.IsNullOrWhiteSpace(certificate) || string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(authority)
+                ? new Validation(string.Concat(MeshCertificateVariable, ", ", MeshKeyVariable, " and ", MeshAuthorityVariable, " must be set together."), "cluster_mesh_pem")
+                : QuicMeshPki.LoadPem(certificate, key, authority, settings.NodeId, settings.Region, timeProvider);
+        }
+
+        if (settings.PeerSecret is { } secret)
+        {
+            return QuicMeshPki.DeriveNode(QuicMeshPki.DecodeSecret(secret), settings.NodeId, settings.Region, timeProvider);
+        }
+
+        return standalone
+            ? QuicMeshPki.DeriveNode(RandomNumberGenerator.GetBytes(32), settings.NodeId, settings.Region, timeProvider)
+            : new Validation(string.Concat(PeerSecretVariable, " (or ", MeshCertificateVariable, ") is required for the QUIC mesh."), "cluster_peer_secret");
+    }
+}

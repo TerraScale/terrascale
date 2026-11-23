@@ -1,122 +1,115 @@
-using System.Security.Cryptography;
-using System.Text.Json;
+using System.Globalization;
 using TerraBase.Engine;
-using TerraBase.Errors;
-using TerraBase.Features.Qos;
-using TerraBase.Features.Shapes;
-using TerraBase.Primitives;
-using TerraBase.Tenancy;
+using TerraBase.Features.Callers;
+using TerraBase.Features.Catalog;
 
 namespace TerraBase.Features.Rules;
 
-internal sealed class RulesService(IStorageEngine engine, IShapeStorage storage, ReplicaShapeTails replicas, TimeProvider time) : IRules
+public sealed record DeployedRules(StoredRules Rules);
+
+public readonly union RulesDeployResponse(DeployedRules, InvalidRules, StaleRules, PreconditionFailed, Validation, Unauthorized, Forbidden, NotFound, Unavailable);
+
+internal sealed class RulesService(DatabaseAccess access, RulesStore store)
 {
-    private static readonly NotFound UnknownDatabase = new("the database does not exist", "unknown_database");
-    private static readonly NotFound NoRules = new("the database has no rules", "no_rules");
-    private static readonly NotFound UnknownVersion = new("the database has no such rules version", "unknown_version");
-    private static readonly Unavailable StorageBusy = new("rules storage changed or is busy; retry later");
-    private static readonly Unavailable CatchingUp = new("the region replica is catching up; retry later");
+    public const int MaxTables = 256;
 
-    public ValueTask<RulesTestResult> TestAsync(TenantContext database, RulesTestRequest request, CancellationToken cancellationToken) =>
-        ReadAsync<RulesTestResult>(database, async rules => await rules.TestRulesAsync(request,
-            request.Rules ?? (await rules.ReadRulesAsync(null, cancellationToken).ConfigureAwait(false))?.Rules ?? new RulesSet(new Dictionary<string, RulesTable>()),
-            cancellationToken).ConfigureAwait(false), error => error, error => error, cancellationToken);
+    public async ValueTask<Result<ResolvedDatabase, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> ResolveAsync(
+        Caller caller, string? project, string? database, string scope, CancellationToken cancellationToken) =>
+        await access.ManagedAsync(caller, project, database, scope, cancellationToken);
 
-    public ValueTask<RulesCurrentResult> GetAsync(TenantContext database, CancellationToken cancellationToken) =>
-        ReadAsync<RulesCurrentResult>(database, async rules => await rules.ReadRulesAsync(null, cancellationToken).ConfigureAwait(false) is { } current
-            ? new CurrentRules(current, await rules.CheckRulesAsync(current.Rules, cancellationToken).ConfigureAwait(false))
-            : NoRules, error => error, error => error, cancellationToken);
-
-    public ValueTask<RulesVersionsResult> VersionsAsync(TenantContext database, string? after, int limit, CancellationToken cancellationToken) =>
-        ReadAsync<RulesVersionsResult>(database, async rules => await rules.ListRulesVersionsAsync(after, limit, cancellationToken).ConfigureAwait(false) is { } page
-            ? page
-            : UnknownVersion, error => error, error => error, cancellationToken);
-
-    public ValueTask<RulesVersionResult> VersionAsync(TenantContext database, string version, CancellationToken cancellationToken) =>
-        ReadAsync<RulesVersionResult>(database, async rules => await rules.ReadRulesAsync(version, cancellationToken).ConfigureAwait(false) is { } stored
-            ? stored
-            : UnknownVersion, error => error, error => error, cancellationToken);
-
-    public async ValueTask<RulesDeployResult> DeployAsync(TenantContext database, RulesChange change, RulesPrecondition precondition, string actor,
-        CancellationToken cancellationToken)
+    public async ValueTask<RulesDeployResponse> DeployAsync(
+        Caller caller, string? project, string? database, RulesSet rules, string? ifMatch, bool ifNoneMatch, CancellationToken cancellationToken)
     {
-        try
+        if (ifMatch is null && !ifNoneMatch)
         {
-            if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
-            {
-                return UnknownDatabase;
-            }
-
-            await using var writer = await storage.BeginTransactionAsync(store, write: true, cancellationToken).ConfigureAwait(false);
-            var rules = Rules(writer);
-            var current = await rules.ReadRulesAsync(null, cancellationToken).ConfigureAwait(false);
-            if (precondition switch
-            {
-                RulesIfMatch match => current?.Version != match.Version,
-                RulesIfNone => current is not null,
-                _ => true,
-            })
-            {
-                return new StaleRules(current?.Version);
-            }
-
-            RulesSet set;
-            switch (change)
-            {
-                case RulesDeploy deploy:
-                    set = deploy.Rules;
-                    break;
-                case RulesRestore restore when await rules.ReadRulesAsync(restore.Version, cancellationToken).ConfigureAwait(false) is { } stored:
-                    set = stored.Rules;
-                    break;
-                default:
-                    return UnknownVersion;
-            }
-
-            set = new RulesSet(new SortedDictionary<string, RulesTable>(set.Tables.ToDictionary(StringComparer.Ordinal), StringComparer.Ordinal));
-            var problems = await rules.CheckRulesAsync(set, cancellationToken).ConfigureAwait(false);
-            if (problems.Count > 0)
-            {
-                return new InvalidRules(problems);
-            }
-
-            var digest = Convert.ToHexStringLower(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(set, RulesJsonContext.Default.RulesSet)));
-            var saved = new StoredRules(EntityIds.New().ToString(), set, time.GetUtcNow(), actor, digest);
-            await rules.WriteRulesAsync(saved, cancellationToken).ConfigureAwait(false);
-            _ = await writer.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return new DeployedRules(saved, RulesChecks.Warnings(set));
+            return new PreconditionFailed("send If-Match: \"<current version>\", or If-None-Match: * when the database has no rules", "precondition_required");
         }
-        catch (Exception error) when (error is ObjectDisposedException or StorageBusyException or QosMemoryException)
+
+        return await ResolveAsync(caller, project, database, Scopes.DatabasesWrite, cancellationToken) switch
         {
-            return StorageBusy;
-        }
+            ResolvedDatabase resolved => await access.OpenAsync(resolved.Database, cancellationToken) switch
+            {
+                ISqlDatabaseSession session => await ProblemsAsync(session, rules, cancellationToken) switch
+                {
+                    { Count: > 0 } problems => new InvalidRules(problems),
+                    _ => await store.DeployAsync(resolved.Database.Id, rules, ifMatch, CallerContext.Actor(caller), cancellationToken) switch
+                    {
+                        StoredRules stored => new DeployedRules(stored),
+                        StaleRules stale => stale,
+                        Unavailable unavailable => unavailable,
+                    },
+                },
+                Unavailable unavailable => unavailable,
+            },
+            Validation invalid => invalid,
+            Unauthorized unauthorized => unauthorized,
+            Forbidden forbidden => forbidden,
+            NotFound missing => missing,
+            Unavailable unavailable => unavailable,
+        };
     }
 
-    private async ValueTask<T> ReadAsync<T>(TenantContext database, Func<IRulesStorage, ValueTask<T>> read, Func<NotFound, T> missing,
-        Func<Unavailable, T> unavailable, CancellationToken cancellationToken)
+    public static async ValueTask<IReadOnlyList<RulesProblem>> ProblemsAsync(ISqlDatabaseSession session, RulesSet rules, CancellationToken cancellationToken)
     {
-        try
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentNullException.ThrowIfNull(rules);
+        List<RulesProblem> problems = [];
+        if (rules.Tables.Count > MaxTables)
         {
-            if (replicas.Holds(database))
+            problems.Add(new RulesProblem("", "tables", "invalid_value", "a rules set holds at most 256 tables"));
+            return problems;
+        }
+
+        foreach (var (table, rule) in rules.Tables)
+        {
+            var columns = await ColumnsAsync(session, table, cancellationToken);
+            if (columns.Count == 0)
             {
-                await using var replica = await replicas.BeginReadAsync(database, cancellationToken).ConfigureAwait(false);
-                return replica is null ? unavailable(CatchingUp) : await read(replica).ConfigureAwait(false);
+                problems.Add(new RulesProblem(table, "", "unknown_table", string.Concat("the database has no table ", table)));
+                continue;
             }
 
-            if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
+            Check(problems, table, "read", rule.Read, columns, RulesOperation.Read);
+            Check(problems, table, "create", rule.Create, columns, RulesOperation.Create);
+            Check(problems, table, "update", rule.Update, columns, RulesOperation.Update);
+            Check(problems, table, "delete", rule.Delete, columns, RulesOperation.Delete);
+            for (var index = 0; index < (rule.Validate?.Count ?? 0); index++)
             {
-                return missing(UnknownDatabase);
+                Check(problems, table, string.Concat("validate[", index.ToString(CultureInfo.InvariantCulture), "]"), rule.Validate?[index], columns,
+                    RulesOperation.Validate);
             }
 
-            await using var reader = await storage.BeginTransactionAsync(store, write: false, cancellationToken).ConfigureAwait(false);
-            return await read(Rules(reader)).ConfigureAwait(false);
+            foreach (var column in (rule.Columns ?? []).Concat(rule.Writable ?? []).Where(column => !columns.Contains(column, StringComparer.OrdinalIgnoreCase)))
+            {
+                problems.Add(new RulesProblem(table, "columns", "unknown_column", string.Concat("the table has no column ", column)));
+            }
         }
-        catch (Exception error) when (error is ObjectDisposedException or StorageBusyException or QosMemoryException)
-        {
-            return unavailable(StorageBusy);
-        }
+
+        return problems;
     }
 
-    private static IRulesWriter Rules(IStorageTransaction transaction) =>
-        transaction as IRulesWriter ?? throw new NotSupportedException("the storage transaction does not support rules");
+    public static async ValueTask<IReadOnlyList<string>> ColumnsAsync(ISqlDatabaseSession session, string table, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        var request = new SqlStatementRequest(session.DatabaseId, [new SqlStatement(string.Concat("PRAGMA table_info(", RulesCompiler.Quote(table), ")"), [], SqlBuild.NoNamed)],
+            SqlAccess.Read, ConsistencyMode.Fast, CausalBookmark.Empty);
+        return await session.ExecuteReadAsync(request, cancellationToken) switch
+        {
+            SqlReadResult { ResultSets: [.., var last] } => [.. last.Rows.Select(static row => SqlBuild.Format(row[1]))],
+            SqlReadResult or SqlError or StorageBusy or RequestTimeout => [],
+        };
+    }
+
+    private static void Check(List<RulesProblem> problems, string table, string field, string? condition, IReadOnlyList<string> columns, RulesOperation operation)
+    {
+        if (condition is null)
+        {
+            return;
+        }
+
+        if (RulesCompiler.Compile(condition, columns, operation) switch { CompiledCondition => null, Validation refused => refused } is { } failure)
+        {
+            problems.Add(new RulesProblem(table, field, failure.Code, failure.Message));
+        }
+    }
 }

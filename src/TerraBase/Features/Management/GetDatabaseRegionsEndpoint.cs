@@ -1,71 +1,63 @@
-using System.Diagnostics;
 using TerraBase.Configuration;
-using TerraBase.Engine;
-using TerraBase.Errors;
-using TerraBase.Features.ApiKeys;
-using TerraBase.Features.Regions;
-using TerraBase.Features.Replicas;
+using TerraBase.Features.Callers;
+using TerraBase.Features.Catalog;
 using TerraBase.Hosting;
-using TerraBase.Tenancy;
+using TerraScale.Contracts.Cluster;
 using TerraScale.Endpoints;
-using TerraScale.TerraBase.Contracts.Management;
 
 namespace TerraBase.Features.Management;
 
-internal sealed class GetDatabaseRegionsEndpoint(IManagementService management, IDatabaseRevisions revisions, IRegionCatalog regions, IReplicaStatus status,
-    TerraBaseOptions options, TimeProvider time) : EndpointWithoutRequest<IResult>
+internal sealed class GetDatabaseRegionsEndpoint(DatabaseAccess access, IClusterCoordinator coordinator, TerraBaseOptions options, TimeProvider time)
+    : Endpoint<DatabaseInput, Result<DatabaseReplicationBody, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
 {
     public override void Configure()
     {
-        Get(ProjectApiRoute.Database + "/regions");
-        Name("getDatabaseRegions");
-        Summary("Reads a database's regions and sync progress");
-        Description("regions lists every selected region in region-id order, with role writer on the current writer entry. Its order carries no meaning. "
-            + "Writer-observed successful page pulls, not application or checksum acknowledgements. lagMs is the age of the oldest known commit "
-            + "missing from the last served revision, zero when caught up, and null without sufficient observations. lastPulledAt is when a complete "
-            + "pull was served. lastVerified is null until checksum verification reports a result. Observations reset when the database reopens. "
-            + ProjectApiRoute.IdentityDescription);
-        Tags("Databases");
-        Produces<TerraBaseDatabaseRegions>();
-        Produces<ErrorBody>(StatusCodes.Status404NotFound);
-        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
-        RequireAuthorization(ApiKeyScopes.DatabasesRead);
-        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware(), new DatabaseRegions.WriterReads());
+        Get(ManagementRoute.Database + "/regions");
+        Name("getDatabaseReplication");
+        Summary("Per-region replication state; every region accepts writes");
+        Tags(ManagementRoute.Tag);
+        AllowAnonymous();
+        Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override async ValueTask<Result<DatabaseReplicationBody, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(
+        DatabaseInput request, CancellationToken cancellationToken)
     {
-        HttpContext.Response.Headers.CacheControl = "no-store";
-        var found = await management.GetDatabaseAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext),
-            HttpContext.RouteValue("project"), HttpContext.RouteValue("database"), cancellationToken).ConfigureAwait(false);
-        if (found is not ManagedDatabase record)
+        ArgumentNullException.ThrowIfNull(request);
+        return await access.ManagedAsync(HttpContext.Caller, request.Project, request.Database, Scopes.DatabasesRead, cancellationToken) switch
         {
-            return found switch
+            ResolvedDatabase resolved => await access.OpenAsync(resolved.Database, cancellationToken) switch
             {
-                NotFound error => ManagementRoute.DatabaseNotFound(error),
-                Unavailable error => ErrorResponse.From(error),
-                ManagedDatabase => throw new UnreachableException(),
-            };
-        }
+                ISqlDatabaseSession session => Body(resolved.Database, session),
+                Unavailable unavailable => unavailable,
+            },
+            Validation invalid => invalid,
+            Unauthorized unauthorized => unauthorized,
+            Forbidden forbidden => forbidden,
+            NotFound missing => missing,
+            Unavailable unavailable => unavailable,
+        };
+    }
 
-        var home = record.Home(options.Region);
-        IReadOnlyList<string> replicas = record.AllRegions
-            ? [.. (await regions.ServingAsync(cancellationToken).ConfigureAwait(false)).Where(region => region != home)]
-            : record.Replicas;
-        if (home != options.Region)
+    private DatabaseReplicationBody Body(DatabaseRecord database, ISqlDatabaseSession session)
+    {
+        var applied = coordinator.CurrentBookmark(database.Id).Merge(session.CurrentBookmark);
+        var peers = coordinator.Peers;
+        List<RegionReplicationBody> regions = [];
+        foreach (var region in database.Regions.Append(options.Region).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
         {
-            await DatabaseRegions.ProxyAsync(HttpContext, home).ConfigureAwait(false);
-            return TypedResults.Empty;
+            if (region == options.Region)
+            {
+                regions.Add(new RegionReplicationBody(region, applied.Encode(), 0, Healthy: true));
+                continue;
+            }
+
+            var health = peers.Where(peer => peer.Peer.Region == region).ToArray();
+            var healthy = health.Any(static peer => peer.Status == PeerStatus.Healthy);
+            var lag = health.Length == 0 ? -1 : (long)health.Min(static peer => peer.LastRoundTrip).TotalMilliseconds;
+            regions.Add(new RegionReplicationBody(region, applied.Encode(), lag, healthy));
         }
 
-        var tenant = new TenantContext(ManagementRoute.OrganizationId(HttpContext), PlanTier.Hobby, record.ProjectId, record.Id);
-        var observations = await revisions.ReplicaStatusAsync(tenant, replicas, cancellationToken).ConfigureAwait(false);
-        var verification = status.Local(tenant, replicas).ToDictionary(row => row.Region, row => row.VerifiedAt, StringComparer.Ordinal);
-        IReadOnlyList<TerraBaseReplicaStatus> observed = [.. observations.Select(row => new TerraBaseReplicaStatus(row.Region, row.LagMs, row.LastPulledAt,
-            verification.GetValueOrDefault(row.Region), row.Revision))];
-        IReadOnlyList<TerraBaseReplicaStatus> placed = [.. observed.Append(new TerraBaseReplicaStatus(home, Role: "writer")).OrderBy(row => row.Region, StringComparer.Ordinal)];
-        return TypedResults.Json(new TerraBaseDatabaseRegions(record.Id, home, time.GetUtcNow(),
-            observed, placed),
-            ManagementJson.Default.TerraBaseDatabaseRegions);
+        return new DatabaseReplicationBody(database.Id.ToString(), time.GetUtcNow(), regions);
     }
 }

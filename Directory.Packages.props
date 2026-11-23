@@ -28,7 +28,6 @@
   <ItemGroup Label="MagicOnion">
     <PackageVersion Include="MagicOnion.Abstractions" Version="7.11.0" />
     <PackageVersion Include="MagicOnion.Client" Version="7.11.0" />
-    <PackageVersion Include="MagicOnion.Server" Version="7.11.0" />
     <PackageVersion Include="MessagePack" Version="3.1.12" />
     <!-- MagicOnion's gRPC dependencies, pinned to the Grpc.Tools release train above. -->
     <PackageVersion Include="Grpc.AspNetCore.Server" Version="2.84.0" />

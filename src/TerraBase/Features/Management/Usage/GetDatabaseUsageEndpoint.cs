@@ -1,53 +1,38 @@
-using TerraBase.Errors;
-using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Callers;
+using TerraBase.Features.Catalog;
 using TerraBase.Hosting;
-using TerraBase.Tenancy;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Usage;
 
-internal sealed class GetDatabaseUsageEndpoint(IManagementService management, IUsageService usage, TimeProvider time) : EndpointWithoutRequest<IResult>
+internal sealed class GetDatabaseUsageEndpoint(DatabaseAccess access, UsageReports reports) : Endpoint<UsageInput, Result<UsageBody, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
 {
-    internal const string CountsDescription =
-        "Each SQL read statement is one read, however many rows it returns; each committed write statement is one write. "
-        + "period sums the series; reads and writes are totals since each database was created. "
-        + "Reads and writes are best-effort dashboard usage, not billing data: they are saved every 10 seconds and at a clean shutdown "
-        + "(a catalog follower sends its counts to its primary as often), a failed save is retried, and a crash loses the operations "
-        + "counted since the last successful save. " + UsageWindow.Description;
-
     public override void Configure()
     {
-        Get(ProjectApiRoute.Database + "/usage");
+        Get(ManagementRoute.Database + "/usage");
         Name("getDatabaseUsage");
-        Summary("Reads the usage of a database");
-        Description("Bytes on disk, and reads and writes, with one point per hour or day of the period. " + CountsDescription + " " + ProjectApiRoute.IdentityDescription);
+        Summary("A database's usage in a month (default: this month)");
         Tags("Usage");
-        Produces<DatabaseUsage>();
-        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
-        Produces<ErrorBody>(StatusCodes.Status404NotFound);
-        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
-        RequireAuthorization(ApiKeyScopes.DatabasesRead);
-        Metadata(new ProjectManagementRoute(), new ManagementUserRoute(), ListenerMetadata.Management);
+        AllowAnonymous();
+        Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        UsageWindow.Parse(HttpContext.Request.Query, time.GetUtcNow()) switch
+    public override async ValueTask<Result<UsageBody, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(UsageInput request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return await access.ManagedAsync(HttpContext.Caller, request.Project, request.Database, Scopes.DatabasesRead, cancellationToken) switch
         {
-            Validation error => ErrorResponse.From(error),
-            UsageWindow window => await ReadAsync(window, cancellationToken),
-        };
-
-    private async ValueTask<IResult> ReadAsync(UsageWindow window, CancellationToken cancellationToken) =>
-        await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) switch
-        {
-            TenantContext database => await usage.GetDatabaseUsageAsync(database, window, cancellationToken) switch
+            ResolvedDatabase resolved => await reports.UsageAsync(UsageMeter.DatabaseScope(resolved.Database.Id), request.Month, cancellationToken) switch
             {
-                DatabaseUsage result => TypedResults.Ok(result),
-                NotFound error => ErrorResponse.From(error),
-                Validation error => ErrorResponse.From(error),
-                Unavailable error => ErrorResponse.From(error),
+                UsageBody usage => usage,
+                Validation invalid => invalid,
+                Unavailable unavailable => unavailable,
             },
-            NotFound error => ErrorResponse.From(error),
-            Unavailable error => ErrorResponse.From(error),
+            Validation invalid => invalid,
+            Unauthorized unauthorized => unauthorized,
+            Forbidden forbidden => forbidden,
+            NotFound missing => missing,
+            Unavailable unavailable => unavailable,
         };
+    }
 }

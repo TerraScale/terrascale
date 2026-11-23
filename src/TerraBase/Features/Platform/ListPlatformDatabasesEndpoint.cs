@@ -1,48 +1,46 @@
 using TerraBase.Configuration;
-using TerraBase.Errors;
+using TerraBase.Features.Callers;
+using TerraBase.Features.Catalog;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraBase.Features.Callers;
 
 namespace TerraBase.Features.Platform;
 
-internal sealed class ListPlatformDatabasesEndpoint(IManagementService management, TerraBaseOptions options, ILogger<ListPlatformDatabasesEndpoint> logger)
-    : EndpointWithoutRequest<IResult>
+internal sealed class ListPlatformDatabasesEndpoint(CatalogStore catalog, TerraBaseOptions options, TimeProvider time)
+    : EndpointWithoutRequest<Result<DatabasesBody, Forbidden, Unavailable>>
 {
     public override void Configure()
     {
-        Metadata(new Requires("catalog.read"));
-        Get(PlatformExplore.Databases);
+        Get("/v1/platform/databases");
         Name("listPlatformDatabases");
-        Summary("Lists the platform databases");
-        Description("Platform admins only: a ts-auth user access token with platform_role admin (403 otherwise). Read-only.");
-        Tags("Platform");
-        Produces<PlatformDatabaseListBody>();
-        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
-        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
-        RequireAuthorization(PlatformExplore.PolicyName);
-        Metadata(ListenerMetadata.Client);
+        Summary("Lists the platform's own databases (ts-auth, ts-dashboard)");
+        Tags("Administration");
+        AllowAnonymous();
+        Metadata(ListenerMetadata.Internal);
     }
 
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override async ValueTask<Result<DatabasesBody, Forbidden, Unavailable>> HandleAsync(CancellationToken cancellationToken)
     {
-        var items = new List<PlatformDatabaseBody>();
-        foreach (var (name, database) in PlatformDatabases.Databases)
+        if (!PlanFlow.IsOperator(HttpContext.Caller, "platform.read"))
         {
-            switch (await management.FindDatabaseRecordAsync(PlatformDatabases.OrganizationId, database.ProjectId, name, cancellationToken))
+            return new Forbidden("listing platform databases needs the platform.read grant", "forbidden_caller");
+        }
+
+        List<DatabaseBody> items = [];
+        foreach (var platform in PlatformCatalog.Databases)
+        {
+            var found = await catalog.GetDatabaseAsync(platform.Id, cancellationToken) switch
             {
-                case ManagedDatabase record:
-                    items.Add(new PlatformDatabaseBody(record.Name, record.Id, record.Home(options.Region), record.Replicas, record.AllRegions));
-                    break;
-                case Unavailable error:
-                    return ErrorResponse.From(error);
-                case NotFound:
-                    break;
+                DatabaseRecord record => DatabaseBody.From(record, options.Region, time.GetUtcNow()),
+                NotFound or Unavailable => null,
+            };
+            if (found is not null)
+            {
+                items.Add(found);
             }
         }
 
-        PlatformExplore.Audit(logger, HttpContext);
-        return TypedResults.Ok(new PlatformDatabaseListBody(items));
+        return new DatabasesBody(items, items, null);
     }
 }

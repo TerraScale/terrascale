@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>TerraBase.Continuity</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../TerraScale.Contracts/TerraScale.Contracts.csproj" />
+    <ProjectReference Include="../TerraScale.QuicRpc/TerraScale.QuicRpc.csproj" />
+    <ProjectReference Include="../TerraBase.Storage/TerraBase.Storage.csproj" />
+    <PackageReference Include="AWSSDK.S3" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="Microsoft.Extensions.Logging" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="TerraScale.Results" />
+    <Using Include="TerraScale.Contracts.Consistency" />
+    <Using Include="TerraScale.Contracts.Continuity" />
+    <Using Include="TerraScale.Contracts.Storage" />
+  </ItemGroup>
+</Project>

@@ -1,68 +1,46 @@
-using TerraBase.Engine;
-using TerraBase.Errors;
-using TerraBase.Features.ApiKeys;
+using TerraBase.Configuration;
+using TerraBase.Features.Callers;
+using TerraBase.Features.Catalog;
 using TerraBase.Hosting;
-using TerraBase.Tenancy;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-public sealed record DatabaseBody(string Id, string ProjectId, string Name);
-
-internal sealed class CreateDatabaseEndpoint(ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
+internal sealed class CreateDatabaseEndpoint(DatabaseAccess access, ManagementService management, TerraBaseOptions options, TimeProvider time)
+    : Endpoint<DatabaseInput, CreateDatabaseResponse>
 {
     public override void Configure()
     {
-        Put(DatabaseRoute.Template);
-        Name("legacyCreateDatabase");
+        Post(ManagementRoute.Databases);
+        Name("createDatabase");
         Summary("Creates a database");
-        Description("{project} is a project of the API key's organization. A key narrowed to one database cannot create others. A project the key does not reach answers 404. 409 database_limit when the organization's live databases reach its plan's allowance, counted at each database's home region, so a delete its home acknowledged with 204 has released its slot.");
-        Tags("Databases");
-        Produces<DatabaseBody>(StatusCodes.Status201Created);
-        Produces<DatabaseBody>();
-        Produces<ErrorBody>(StatusCodes.Status404NotFound);
-        Produces<ErrorBody>(StatusCodes.Status409Conflict);
-        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
-        RequireAuthorization(ApiKeyScopes.SqlWrite);
-        Metadata(ListenerMetadata.Client);
+        Description("Needs databases:write. regions (default: the answering region) are equal active-active peers; every region accepts writes. "
+            + "defaultConsistency is fast (default) or strong; strict makes every write strong; ttlSeconds (at least 60) deletes it when it expires.");
+        Tags(ManagementRoute.Tag);
+        AllowAnonymous();
+        Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        DatabaseRoute.CheckDatabase(HttpContext) switch
-        {
-            Validation error => ErrorResponse.From(error),
-            DatabaseName name => await CreateAsync(name, cancellationToken),
-        };
-
-    private async ValueTask<IResult> CreateAsync(DatabaseName name, CancellationToken cancellationToken)
+    public override async ValueTask<CreateDatabaseResponse> HandleAsync(DatabaseInput request, CancellationToken cancellationToken)
     {
-        if (HttpContext.Features.Get<UserAuth.ProjectAccess>() is not null)
+        ArgumentNullException.ThrowIfNull(request);
+        return await access.ProjectAsync(HttpContext.Caller, request.Project, Scopes.DatabasesWrite, cancellationToken) switch
         {
-            return ErrorResponse.From(DatabaseRoute.UnknownDatabase);
-        }
-
-        var key = ApiKey.Of(HttpContext);
-        var project = DatabaseRoute.Project(HttpContext);
-        if (key.DatabaseId is not null)
-        {
-            return await DatabaseRoute.TenantAsync(HttpContext, tenants,
-                (own, _) => ValueTask.FromResult<IResult>(TypedResults.Ok(Body(own, name.Value))), cancellationToken);
-        }
-
-        if (key.ProjectId is not null && !string.Equals(key.ProjectId, project, StringComparison.Ordinal))
-        {
-            return ErrorResponse.From(DatabaseRoute.UnknownDatabase);
-        }
-
-        return await tenants.CreateDatabaseAsync(key.OrganizationId, project, name.Value, cancellationToken) switch
-        {
-            ProvisionedDatabase { Created: true } created => TypedResults.Created($"/v1/projects/{project}/databases/{name}", Body(created.Database, name.Value)),
-            ProvisionedDatabase existing => TypedResults.Ok(Body(existing.Database, name.Value)),
-            NotFound => ErrorResponse.From(DatabaseRoute.UnknownDatabase),
-            Conflict error => ErrorResponse.From(error),
-            Unavailable error => ErrorResponse.From(error),
+            ResolvedProject project => await management.CreateDatabaseAsync(project.Project, request, cancellationToken) switch
+            {
+                DatabaseRecord created => new Created<DatabaseBody>(
+                    string.Concat("/v1/projects/", created.ProjectId.ToString(), "/databases/", created.Name), DatabaseBody.From(created, options.Region, time.GetUtcNow())),
+                Validation invalid => invalid,
+                Forbidden forbidden => forbidden,
+                Conflict conflict => conflict,
+                QuotaExceeded quota => quota,
+                Unavailable unavailable => unavailable,
+            },
+            Validation invalid => invalid,
+            Unauthorized unauthorized => unauthorized,
+            Forbidden forbidden => forbidden,
+            NotFound missing => missing,
+            Unavailable unavailable => unavailable,
         };
     }
-
-    private static DatabaseBody Body(TenantContext database, string name) => new(database.DatabaseId!, database.ProjectId!, name);
 }

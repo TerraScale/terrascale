@@ -4,8 +4,10 @@ namespace TerraBase.Storage;
 
 internal readonly union StatementOutcome(SqlResultSet, SqlError, StrongRequired);
 
-internal sealed class WriteContext(ConsistencyMode mode, bool analyzeReads)
+internal sealed class WriteContext(ConsistencyMode mode, bool analyzeReads, CancellationToken cancellationToken)
 {
+    public CancellationToken CancellationToken { get; set; } = cancellationToken;
+
     public ConsistencyMode Mode { get; } = mode;
 
     public bool AnalyzeReads { get; } = analyzeReads;
@@ -85,7 +87,7 @@ internal sealed partial class DatabaseSession
             }
 
             _capture.Annotation = SqlAnalyzer.Annotate(tokens, _writer.Schema);
-            status = _writer.StepUser(handle, out var result);
+            status = _writer.StepUser(handle, out var result, context.CancellationToken);
             _capture.Annotation = null;
             SqliteConnection.FinalizeStatement(handle);
             if (!status.IsOk)
@@ -310,7 +312,7 @@ internal sealed partial class DatabaseSession
         }
     }
 
-    internal static Result<SqlResultSet, SqlError> ExecuteOnReader(SqliteConnection reader, SqlStatement statement, int index, StatementInfo info, HashSet<string>? readTables = null)
+    internal static Result<SqlResultSet, SqlError> ExecuteOnReader(SqliteConnection reader, SqlStatement statement, int index, StatementInfo info, HashSet<string>? readTables, CancellationToken cancellationToken)
     {
         var bytes = Encoding.UTF8.GetBytes(statement.Sql);
         var offset = 0;
@@ -334,7 +336,7 @@ internal sealed partial class DatabaseSession
             status = reader.BindUser(handle, statement);
             if (status.IsOk)
             {
-                status = reader.StepUser(handle, out last);
+                status = reader.StepUser(handle, out last, cancellationToken);
             }
 
             SqliteConnection.FinalizeStatement(handle);

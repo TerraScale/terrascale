@@ -11,42 +11,6 @@
           "AWSSDK.Core": "[4.0.102.8, 5.0.0)"
         }
       },
-      "Cronos": {
-        "type": "Direct",
-        "requested": "[0.13.0, )",
-        "resolved": "0.13.0",
-        "contentHash": "Nkve+Yi0+ol3ntSBRHeW0ka9cJQ8vndSUvvkXqF9LVqwpoqWueyxu/HS275r98RDOmF7/mzRnZW5XXUBXob+TA=="
-      },
-      "Google.Protobuf": {
-        "type": "Direct",
-        "requested": "[3.36.2, )",
-        "resolved": "3.36.2",
-        "contentHash": "Ci1q1iJg74qAE5riTA2FbMS0wPbpruPQI/JQ9DrAsRo2VsSxgt1e/pmxGxgrci+pXJEgrSYg2vPl8rrStZkclQ=="
-      },
-      "Grpc.Net.Client": {
-        "type": "Direct",
-        "requested": "[2.84.0, )",
-        "resolved": "2.84.0",
-        "contentHash": "My6Fms2YCyAbihTBZZ3kLS39iTY2pkMAzGDBTC6XhPOujg70eB07AEJ7tPiW3tZ70bhFzHcc3+d4j3DaIPF3aA==",
-        "dependencies": {
-          "Grpc.Net.Common": "2.84.0"
-        }
-      },
-      "Grpc.Tools": {
-        "type": "Direct",
-        "requested": "[2.84.0, )",
-        "resolved": "2.84.0",
-        "contentHash": "SarjdfpQYU/mmdu/fWgSW8kEHQ54jiyG2+I4THu9eubtAud+QJf+1iJdGtoKTJ/ZRaI0qAG+7ttsK2WUTao2OQ=="
-      },
-      "Jint": {
-        "type": "Direct",
-        "requested": "[4.17.0, )",
-        "resolved": "4.17.0",
-        "contentHash": "9jdpLQQYsWTjOn2THpiR8zRJ34ksV6ofW0gJvZxJW/fIGK+A+TkpWonhuuLDRwqLDjP+9WsxYt2MEge6lWjk2A==",
-        "dependencies": {
-          "Acornima": "1.7.0"
-        }
-      },
       "JsonSchema.Net": {
         "type": "Direct",
         "requested": "[8.0.5, )",
@@ -54,16 +18,6 @@
         "contentHash": "QoEqdoAUgAkbzuFAiHySjGuh8lJs8L8DxkEDGJLEebtlZ6+EbEr0wmYlidErSS2ASNFOModueb83DLNIRLqshg==",
         "dependencies": {
           "JsonPointer.Net": "6.0.1"
-        }
-      },
-      "K4os.Compression.LZ4.Streams": {
-        "type": "Direct",
-        "requested": "[1.3.8, )",
-        "resolved": "1.3.8",
-        "contentHash": "P15qr8dZAeo9GvYbUIPEYFQ0MEJ0i5iqr37wsYeRC3la2uCldOoeCa6to0CZ1taiwxIV+Mk8NGuZi+4iWivK9w==",
-        "dependencies": {
-          "K4os.Compression.LZ4": "1.3.8",
-          "K4os.Hash.xxHash": "1.0.8"
         }
       },
       "Microsoft.AspNetCore.OpenApi": {
@@ -96,50 +50,6 @@
         "requested": "[11.0.0, )",
         "resolved": "11.0.0",
         "contentHash": "gK2aq4XvChj5kvozpPHrkfKkr7zc5Z4xoTrJb4GPZzDEPMlCk0TX632bwY3LsWcX2UVcVRQBBGzsBGC2lq6YhA=="
-      },
-      "NativeCompressions": {
-        "type": "Direct",
-        "requested": "[0.6.1, )",
-        "resolved": "0.6.1",
-        "contentHash": "yESAPDsL6q0QbUVqeoT4j4EfNYfpvWoRmAhp1IjgNsS7eAEPlAA7258RfiLWaIb2zF1ci/KJwJDxU9rTt5dFWw==",
-        "dependencies": {
-          "NativeCompressions.LZ4": "0.6.1",
-          "NativeCompressions.Zstandard": "0.6.1"
-        }
-      },
-      "NATS.Client.Core": {
-        "type": "Direct",
-        "requested": "[3.3.2, )",
-        "resolved": "3.3.2",
-        "contentHash": "qs79vr6A2Le6sQxY5FFpQayRVSLOXJZkSvSx1lb8A8FK9bmvNcJRW1FE5pdoEEW+WV92TDFoc38MRqe4w0Lnjg==",
-        "dependencies": {
-          "NATS.Client.Abstractions": "3.3.2",
-          "NATS.NKeys": "1.0.1"
-        }
-      },
-      "NATS.Client.JetStream": {
-        "type": "Direct",
-        "requested": "[3.3.2, )",
-        "resolved": "3.3.2",
-        "contentHash": "JF2xH52Fjj/KTpiCqLgOvFGoJl92eKlgT62X02oEkff/TphWjoXG1s26I7ySIwiScHgToW/fAuM0HW/76k7J4Q==",
-        "dependencies": {
-          "NATS.Client.Core": "3.3.2"
-        }
-      },
-      "NATS.Client.KeyValueStore": {
-        "type": "Direct",
-        "requested": "[3.3.2, )",
-        "resolved": "3.3.2",
-        "contentHash": "qnh6AxEJmwl1GZuCMHoxnt1dwCHHSUda+kuOQrWYrP+PliZNWxcn1AIdhEXFqFfqaPgLj0S+/t5fWnRA4rjHPA==",
-        "dependencies": {
-          "NATS.Client.JetStream": "3.3.2"
-        }
-      },
-      "NUlid": {
-        "type": "Direct",
-        "requested": "[1.7.3, )",
-        "resolved": "1.7.3",
-        "contentHash": "AXxv7eF+3REXlGLojlN4zXzvesgxiC0/Jq66Qn5L+hhw+NBCK60douGZBI+6ZTAZHRE2xg7AyCEj8cqCKp/U5w=="
       },
       "OpenTelemetry.Exporter.Prometheus.AspNetCore": {
         "type": "Direct",
@@ -190,15 +100,42 @@
         "resolved": "2.6.0",
         "contentHash": "XE8a+11nZg0LRaf+RGABEWaHIf8yGd5w8v/Ra1iWxMBmAVzwuKbW7G21mS0U7w7sh1lYcgckInWGgnz4qyET8A=="
       },
-      "Acornima": {
-        "type": "Transitive",
-        "resolved": "1.7.0",
-        "contentHash": "a2I4O4qkuAdB0oSaGz6/k0n/bXxMbGcLBra5dNTTVSLmTwM7uORA8ebpOrNMmDfFWOMwvuaRL6gPprRV4HTV0w=="
-      },
       "AWSSDK.Core": {
         "type": "Transitive",
         "resolved": "4.0.102.8",
         "contentHash": "90B9Skhl+ORbtWNXrrmGdGhGvAfZiPmZafRYrB/xHelZjePIwPvXioqz9UiiF1vo21eDLzTnXh5EC4RjbNWsFQ=="
+      },
+      "DotNext": {
+        "type": "Transitive",
+        "resolved": "6.13.0",
+        "contentHash": "x7UgW5MEbkXpYe3mOyhbr6q0xnUNuN3afjmVyQ4Wjtc3Xy6qsfowRJ7gyi/WERjkfZ236/N98C2m+SKNrqykiA==",
+        "dependencies": {
+          "System.IO.Hashing": "10.0.14"
+        }
+      },
+      "DotNext.IO": {
+        "type": "Transitive",
+        "resolved": "6.13.0",
+        "contentHash": "/xzRz0Pv1zreLoLUkVY4gTmzPK6Am+vPad263ZOq0EoqseWxgL3AR5ciWhTUNH2xZu57CGPnWTwj7NcyQS4pQw==",
+        "dependencies": {
+          "DotNext": "6.13.0"
+        }
+      },
+      "DotNext.Threading": {
+        "type": "Transitive",
+        "resolved": "6.13.0",
+        "contentHash": "UjvcGy8Eg+nhuBuhJfMd6xVWExrGBTNcQQq+ZypYLNMaOF0XzuqpohmjbJMcoW0EYNLkIDzcIrS+CXKRkCOv4A==",
+        "dependencies": {
+          "DotNext": "6.13.0"
+        }
+      },
+      "DotNext.Unsafe": {
+        "type": "Transitive",
+        "resolved": "6.13.0",
+        "contentHash": "S+lMrG5RcuiAL/uQGwpqOTBlv6VflDuQLpQ/U72+1ZCpWK6NFv3Zdd1+gwpRcYvhebWuoDl+LQLGY4KeUIDgAg==",
+        "dependencies": {
+          "DotNext": "6.13.0"
+        }
       },
       "Humanizer.Core": {
         "type": "Transitive",
@@ -218,47 +155,6 @@
           "Humanizer.Core": "3.0.1",
           "Json.More.Net": "2.2.0"
         }
-      },
-      "K4os.Compression.LZ4": {
-        "type": "Transitive",
-        "resolved": "1.3.8",
-        "contentHash": "LhwlPa7c1zs1OV2XadMtAWdImjLIsqFJPoRcIWAadSRn0Ri1DepK65UbWLPmt4riLqx2d40xjXRk0ogpqNtK7g=="
-      },
-      "K4os.Hash.xxHash": {
-        "type": "Transitive",
-        "resolved": "1.0.8",
-        "contentHash": "Wp2F7BamQ2Q/7Hk834nV9vRQapgcr8kgv9Jvfm8J3D0IhDqZMMl+a2yxUq5ltJitvXvQfB8W6K4F4fCbw/P6YQ=="
-      },
-      "MagicOnion.Serialization.MessagePack": {
-        "type": "Transitive",
-        "resolved": "7.11.0",
-        "contentHash": "fdkSv0lHMvo5sSneMGVf2gexgZEkgzkVeuDWmVAJbIydknJN2uu4+EQJa+EpPBzaHkX7lqdyHDPKjTyPMvCQhg==",
-        "dependencies": {
-          "Grpc.Core.Api": "2.57.0",
-          "MagicOnion.Abstractions": "7.11.0",
-          "MessagePack": "3.1.7"
-        }
-      },
-      "MagicOnion.Shared": {
-        "type": "Transitive",
-        "resolved": "7.11.0",
-        "contentHash": "IttsfeydrAWXUT3eoK6KKwo1J89o5Vp+3uMjosTfkfuaR7DN7pPqhzqKMw3GE1L/awDKgYe1rwJc0Vx6Ebc/rg==",
-        "dependencies": {
-          "Grpc.Core.Api": "2.57.0",
-          "MagicOnion.Abstractions": "7.11.0",
-          "MagicOnion.Serialization.MessagePack": "7.11.0",
-          "MessagePack": "3.1.7"
-        }
-      },
-      "MessagePack.Annotations": {
-        "type": "Transitive",
-        "resolved": "3.1.12",
-        "contentHash": "LdI67sY7F3KK+JsrG02+DP1XFkowaZSoyfL2M88hjm1MOOsjf8amBLAJolV+zxoPUZf3uGbKzq1cMQD8PlpSpA=="
-      },
-      "MessagePackAnalyzer": {
-        "type": "Transitive",
-        "resolved": "3.1.12",
-        "contentHash": "iNSNatPh6bafRUbkQKlClExjpPpd8hiZgfZsodGf7bheIlkizGbMzsJ2mPui8jOHRe4Ky9eg5ou/fFzI7CT3fg=="
       },
       "Microsoft.Bcl.Cryptography": {
         "type": "Transitive",
@@ -295,204 +191,10 @@
           "Microsoft.IdentityModel.Logging": "8.23.0"
         }
       },
-      "Microsoft.NET.StringTools": {
-        "type": "Transitive",
-        "resolved": "17.11.4",
-        "contentHash": "mudqUHhNpeqIdJoUx2YDWZO/I9uEDYVowan89R6wsomfnUJQk6HteoQTlNjZDixhT2B4IXMkMtgZtoceIjLRmA=="
-      },
       "Microsoft.OpenApi": {
         "type": "Transitive",
         "resolved": "3.11.0",
         "contentHash": "kvQz+mL/fnDw2VaE8zMyQhbMv7FmOYUydIhCVNKxQdrLu9XiMT/07DHwJ5YkRO2uzcxTFvMAKFKKywxoyLKHcA=="
-      },
-      "Multicaster": {
-        "type": "Transitive",
-        "resolved": "2.1.1",
-        "contentHash": "KhcxjWkOG7jwUQwqf6sV8lDMPfj6pn2mhz14q4a4Tkt9ZpH5J4QPZgFw0gyt+Isr4nwPGt8E/FeiRy0aQKBGJg=="
-      },
-      "NativeCompressions.LZ4": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "uN7a//cyj8IqwNOy28TsmIYicmZOeoxJAaRmqxeg8EXdjiG09wUHO3tFxs4KoDEp5F/43A0pYbpvk1pMbnNw8g==",
-        "dependencies": {
-          "NativeCompressions.LZ4.Core": "0.6.1",
-          "NativeCompressions.LZ4.Runtime": "0.6.1"
-        }
-      },
-      "NativeCompressions.LZ4.Core": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "qFPrvB2EdV8Pj0VAUhZsfR2jsOoNgyZubZi4udVa0w5f7VJdRug37Xi+b4At2TPd10Kg+AizkWae/BRHib5p2w=="
-      },
-      "NativeCompressions.LZ4.Runtime": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "9b15NrhFzjuNNXbme1v3jYg+4fEeI+iBnqKh8d7Ydv5TxlEjEUPY/l0FgiabG+JouXpdK5PW2+kJFQTuJ8Lu3Q==",
-        "dependencies": {
-          "NativeCompressions.LZ4.Runtime.android-arm": "0.6.1",
-          "NativeCompressions.LZ4.Runtime.android-arm64": "0.6.1",
-          "NativeCompressions.LZ4.Runtime.android-x64": "0.6.1",
-          "NativeCompressions.LZ4.Runtime.ios-arm64": "0.6.1",
-          "NativeCompressions.LZ4.Runtime.ios-x64": "0.6.1",
-          "NativeCompressions.LZ4.Runtime.linux-arm64": "0.6.1",
-          "NativeCompressions.LZ4.Runtime.linux-x64": "0.6.1",
-          "NativeCompressions.LZ4.Runtime.osx-arm64": "0.6.1",
-          "NativeCompressions.LZ4.Runtime.osx-x64": "0.6.1",
-          "NativeCompressions.LZ4.Runtime.win-arm64": "0.6.1",
-          "NativeCompressions.LZ4.Runtime.win-x64": "0.6.1"
-        }
-      },
-      "NativeCompressions.LZ4.Runtime.android-arm": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "9BkccLPcx7jQuRRZuuXx9gFtce/sXIYZNu2O8gW+02VpocV/SEQvxRPI/fWUByLLIkQX6RW5ezu3UY0VBAq/IQ=="
-      },
-      "NativeCompressions.LZ4.Runtime.android-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "cc/myufYAx6rvN2jV/mw74Qti+EDtcA5NMOH0RGtjcGm2J1/aeNgYtbLrmrzUIXv4trqjEx60NUei7v4QhH/ew=="
-      },
-      "NativeCompressions.LZ4.Runtime.android-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "dNPvH7YxpD+1HF+Aiz8sqfAS5g6rOhpa0MqBx1rWy0QupjQ7ehxIBeGviB8CjCcbv1d55RVNNNQf7ydAEHhytg=="
-      },
-      "NativeCompressions.LZ4.Runtime.ios-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "SaFq10ORu+x7BqCHaWYzuWqx/m1Rt5hwwGGu4o8v5kSrszwYMWiemQIT52KjXLNjjWc/LH5ooDPRzUQ+7KLXOw=="
-      },
-      "NativeCompressions.LZ4.Runtime.ios-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "1GHfyvJUBwFPcsG0fOdMeXVzf5zvNPxScWde8Ili3K+h1v0VwkLt2RvkiqWSKUnE6frsizu0o8EjPxcnXwewgQ=="
-      },
-      "NativeCompressions.LZ4.Runtime.linux-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "ki8Ez9+qNnzovbDUaqHyJ4kUyM14wzYDM3DuLboqdNwgjAoJom/Ye/LRVVQYVMW5h9cVY7eeSRyeq0aKS1H7zQ=="
-      },
-      "NativeCompressions.LZ4.Runtime.linux-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "gmBy/UOC8OAMOXNObF6Hl8jUBwaWJqLCe9OzzVidiNu0HTXeKgO5GSe5BMLInrJxi7qGzUwecQAvamxJ0guKqg=="
-      },
-      "NativeCompressions.LZ4.Runtime.osx-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "Un5za5THkynojuoajJiJEodXmZWtXbnIcUgO+7XJ55Mx43TSNkOXGNDwypRgVHQgWe7uhJl5jTS5GnheQzhbcw=="
-      },
-      "NativeCompressions.LZ4.Runtime.osx-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "Q9GI7BDjPlrUPiW4muB9vuWKnoHJZxFrEwDdg3eaOeWpRFDUP+xIQ6h3iHjaBey1KGi4aJWvN+Oo7knk9m+Pig=="
-      },
-      "NativeCompressions.LZ4.Runtime.win-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "kxUV0RJIp33FjaMwkdXwb8Y/slUkwdFGYP8d3nEO0f1W9x8dOxAyh+Gk7GetPw4eNHBNBf9RIOozxo5AOogD2g=="
-      },
-      "NativeCompressions.LZ4.Runtime.win-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "hhHnpVkAI4evIweNq5+dzIk4RVwc/1wbPllXgvIdHCFfTzlELFoS2NoY3XHGNonnWZKB7PReiY44Y+CqV7j6QQ=="
-      },
-      "NativeCompressions.Zstandard": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "O6ZnSaLoWaZuAiBYXYJfVsARgT3oWHYzo5vnnR0sP3tLCeReoBETeLKVNle8SuWVXGHdfTdAjbif39gd9FVdmw==",
-        "dependencies": {
-          "NativeCompressions.Zstandard.Core": "0.6.1",
-          "NativeCompressions.Zstandard.Runtime": "0.6.1"
-        }
-      },
-      "NativeCompressions.Zstandard.Core": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "QYMmJdjmg5tEDLfBj4WYylNpsOvn0pE8woyqhu6HK/j5iOgaR9l69MvdQ+OzBhfuZtWkVcHoTbp3HtDuqb6ZsA=="
-      },
-      "NativeCompressions.Zstandard.Runtime": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "ptMtHMAmYbZEM4SdRn1ZTBXFqpsocLJdlgngRg/FBBpG0gyuB/UkidYchvzOxZf6Wf5p/mgnyZG4IAZVNOO2kw==",
-        "dependencies": {
-          "NativeCompressions.Zstandard.Runtime.android-arm": "0.6.1",
-          "NativeCompressions.Zstandard.Runtime.android-arm64": "0.6.1",
-          "NativeCompressions.Zstandard.Runtime.android-x64": "0.6.1",
-          "NativeCompressions.Zstandard.Runtime.ios-arm64": "0.6.1",
-          "NativeCompressions.Zstandard.Runtime.ios-x64": "0.6.1",
-          "NativeCompressions.Zstandard.Runtime.linux-arm64": "0.6.1",
-          "NativeCompressions.Zstandard.Runtime.linux-x64": "0.6.1",
-          "NativeCompressions.Zstandard.Runtime.osx-arm64": "0.6.1",
-          "NativeCompressions.Zstandard.Runtime.osx-x64": "0.6.1",
-          "NativeCompressions.Zstandard.Runtime.win-arm64": "0.6.1",
-          "NativeCompressions.Zstandard.Runtime.win-x64": "0.6.1"
-        }
-      },
-      "NativeCompressions.Zstandard.Runtime.android-arm": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "/49JsrRQFeYKPuKKYFV3gXUsGtsTP5VWOMu2dIdru7WIUSzINHiAlZcuvtZdcQDINbK0KVKPBfqEaI1GNgeKrw=="
-      },
-      "NativeCompressions.Zstandard.Runtime.android-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "U7+tATEmZoqEUlBCtYoMvNR/vDLHVr7uEERa7MKU1bb0efoWRd7nV2C7ULum+8tTyoromIwuphRdA6nKzQOGyA=="
-      },
-      "NativeCompressions.Zstandard.Runtime.android-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "oOQhjetjEcW31u9V6zfvr1cSAv4GaqNXGt3A/YK8IpKt9QueRNoKDiIKP8DPG0gaEDOB/V2G1Kt7r5wQ62UqTg=="
-      },
-      "NativeCompressions.Zstandard.Runtime.ios-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "Mpd7LIocbMmMU71mE1fJtApDmE2qEsthuredxrkVNdXuom1pGRY+WknpEMuSxQa5NK+YA8QyRhhZm61dPD1AMw=="
-      },
-      "NativeCompressions.Zstandard.Runtime.ios-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "8ein5TCBKWKX+VLh1Og2aeclI3Q/PYuysDYev1sbyJkzFybchaAo4sDgFjUvFIPaMwSH7Atk/yQ1RUazFH90VQ=="
-      },
-      "NativeCompressions.Zstandard.Runtime.linux-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "NfFMpJ3ikFE7EM3Kp0uR+qaQR1kGUV3jW4nJ1qXrLlOTx1ZEGaXveEQFX6HW2sj0edTxdNk7noPq0SnJez3Aqg=="
-      },
-      "NativeCompressions.Zstandard.Runtime.linux-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "1LjlTiZ9AKR45CXtiw6WVsfdtaJ+TgHj8nK85QQlO3PNkmC0VtInQ/CmQRpYBPfJ4gQ7ZLP+8feM45BfzOkYDQ=="
-      },
-      "NativeCompressions.Zstandard.Runtime.osx-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "A58ChYf6Wdzfv+oDWIowMR87SwghlriwoU22gq1s85OZNSwGX0nqBFYS0eDYF6gdtcCght4AL6lEmFl+b8Jpkw=="
-      },
-      "NativeCompressions.Zstandard.Runtime.osx-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "+7p93a7kgh2Hn8CCy77onaXp6b0hjs+WjTVC2SvTFtXDD8Mfk5SThAvGafk+WuqKNU2udZzvpRn7IA9qVbuwNw=="
-      },
-      "NativeCompressions.Zstandard.Runtime.win-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "v3pxIzWDR3fG9gkwCJuwc5a/KzFSjJm3cDZl5qQ8PDekV6anm992J7cnVukvEy5MvnRRkaaePRnSbqZzxijilw=="
-      },
-      "NativeCompressions.Zstandard.Runtime.win-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "sIkjjYJ+z277MvyHTJCFI2dmoifWnQ+EsuULz1ewM15lpARdIpFPmdUhSukBov7HCFdczTIhkQyRmXulU7rang=="
-      },
-      "NATS.Client.Abstractions": {
-        "type": "Transitive",
-        "resolved": "3.3.2",
-        "contentHash": "6VAmrvgN9116SAfRXK/gfR7Fxu02lOUtN2ZejwI/C2iMw9dsofLRZBSrutWH+iH+06FjAidKtpGiLt5ui6/xlQ=="
-      },
-      "NATS.NKeys": {
-        "type": "Transitive",
-        "resolved": "1.0.1",
-        "contentHash": "xtURX0fexmMd10noG3Uc8gFgwaH7QLQxxgdaVoQKFo0+8a4blwe8vPGgY2S5pzeVYcRXyjlIoA4AR4JgtThyjQ=="
       },
       "OpenTelemetry": {
         "type": "Transitive",
@@ -529,8 +231,44 @@
         "resolved": "1.3.1",
         "contentHash": "VIo1LtpoFvp5LlCDkTiQsKrjX+GMA7N37OEJoqHMhCOdIeNoi8uFocnwi8h3TklSySB3U4Y1+gThB00fJTnfGA=="
       },
-      "SqlParser": {
-        "type": "Project"
+      "terrabase.cluster": {
+        "type": "Project",
+        "dependencies": {
+          "DotNext.Net.Cluster": "[6.13.0, )",
+          "TerraBase.Storage": "[1.0.0, )",
+          "TerraScale.Contracts": "[1.0.0, )",
+          "TerraScale.QuicRpc": "[1.0.0, )"
+        }
+      },
+      "terrabase.continuity": {
+        "type": "Project",
+        "dependencies": {
+          "AWSSDK.S3": "[4.0.104.1, )",
+          "TerraBase.Storage": "[1.0.0, )",
+          "TerraScale.Contracts": "[1.0.0, )",
+          "TerraScale.QuicRpc": "[1.0.0, )"
+        }
+      },
+      "terrabase.postgres": {
+        "type": "Project",
+        "dependencies": {
+          "TerraScale.Contracts": "[1.0.0, )"
+        }
+      },
+      "terrabase.storage": {
+        "type": "Project",
+        "dependencies": {
+          "System.IO.Hashing": "[11.0.0, )",
+          "TerraScale.Contracts": "[1.0.0, )",
+          "Ulid": "[1.4.1, )"
+        }
+      },
+      "terrascale.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "TerraScale.DotNet": "[0.0.21, )",
+          "Ulid": "[1.4.1, )"
+        }
       },
       "terrascale.dotnet": {
         "type": "Project",
@@ -553,93 +291,21 @@
           "ZString": "[2.6.0, )"
         }
       },
-      "terrascale.terrabase.contracts": {
+      "terrascale.quicrpc": {
         "type": "Project",
         "dependencies": {
-          "MagicOnion.Abstractions": "[7.11.0, )",
-          "MessagePack": "[3.1.12, )"
+          "TerraScale.Contracts": "[1.0.0, )"
         }
       },
-      "terrascale.terrabase.rpc": {
-        "type": "Project",
-        "dependencies": {
-          "MagicOnion.Server": "[7.11.0, )",
-          "TerraScale.TerraBase.Contracts": "[1.0.0, )"
-        }
-      },
-      "turso.data": {
-        "type": "Project",
-        "dependencies": {
-          "Turso.Raw": "[0.8.2, )"
-        }
-      },
-      "turso.data.sqlite": {
-        "type": "Project",
-        "dependencies": {
-          "Turso.Data": "[0.8.2, )"
-        }
-      },
-      "turso.raw": {
-        "type": "Project"
-      },
-      "Grpc.AspNetCore.Server": {
+      "DotNext.Net.Cluster": {
         "type": "CentralTransitive",
-        "requested": "[2.84.0, )",
-        "resolved": "2.84.0",
-        "contentHash": "RXUkMjU+Hu5tvf5EXNoJlKX+ADvR2HERkNRznMFpsQQiHFsaQ+OYyhgomuLxAaiNuPUmCUGPxyiCdqq//lrQdg==",
+        "requested": "[6.13.0, )",
+        "resolved": "6.13.0",
+        "contentHash": "PFeSUkdsZOCBwtxrWrwdr3TfxnMSbYnbpBirVAsj5r8QSTvKUwg/48Xt3uyIHMux6kb14dfkccfii+Xn6kF+ow==",
         "dependencies": {
-          "Grpc.Net.Common": "2.84.0"
-        }
-      },
-      "Grpc.Core.Api": {
-        "type": "CentralTransitive",
-        "requested": "[2.84.0, )",
-        "resolved": "2.84.0",
-        "contentHash": "p2SOMl6q/GZ4/5MLkgboC/z55g4zKUEruRn/g46QgppjQBVnsLZVBU/9VO7n60ll38G3Eo8Zu9b7x+W01GKFVg=="
-      },
-      "Grpc.Net.Common": {
-        "type": "CentralTransitive",
-        "requested": "[2.84.0, )",
-        "resolved": "2.84.0",
-        "contentHash": "DPxm/H8G/lDRrz997wM0M2zN/PGqVeZKDakhBbtABEbv6WIW4HI9g3BvntBQT6ZUROuGacMzfyyF9e5kiTVFfQ==",
-        "dependencies": {
-          "Grpc.Core.Api": "2.84.0"
-        }
-      },
-      "MagicOnion.Abstractions": {
-        "type": "CentralTransitive",
-        "requested": "[7.11.0, )",
-        "resolved": "7.11.0",
-        "contentHash": "Q8eflOkdZIWfxPLHZsVcUmvYWeMBXnV2FE6AUW5iBCZXokEMhiZyvjOTREqD1DT9xt5GMmr75vJpSEN6bFIRWw==",
-        "dependencies": {
-          "Grpc.Core.Api": "2.57.0",
-          "MessagePack": "3.1.7"
-        }
-      },
-      "MagicOnion.Server": {
-        "type": "CentralTransitive",
-        "requested": "[7.11.0, )",
-        "resolved": "7.11.0",
-        "contentHash": "HiaxMFYMJM28NjBU4iVR842Axe6Z2QWWXbAp9pbjq4nVKvcz6Fe9/JsOAo6OJ+LbFZxrQRejGcOl4F4g1glcaw==",
-        "dependencies": {
-          "Grpc.AspNetCore.Server": "2.57.0",
-          "Grpc.Core.Api": "2.57.0",
-          "MagicOnion.Abstractions": "7.11.0",
-          "MagicOnion.Serialization.MessagePack": "7.11.0",
-          "MagicOnion.Shared": "7.11.0",
-          "MessagePack": "3.1.7",
-          "Multicaster": "2.1.1"
-        }
-      },
-      "MessagePack": {
-        "type": "CentralTransitive",
-        "requested": "[3.1.12, )",
-        "resolved": "3.1.12",
-        "contentHash": "m1QEsd59gUj82ji5tEQbZiyjV6y0F7cYfGVhil6pAlNZpyzR7ze9TucMu4lPpi8cZAV8aNl3D9/T9J1HbFz15Q==",
-        "dependencies": {
-          "MessagePack.Annotations": "3.1.12",
-          "MessagePackAnalyzer": "3.1.12",
-          "Microsoft.NET.StringTools": "17.11.4"
+          "DotNext.IO": "6.13.0",
+          "DotNext.Threading": "6.13.0",
+          "DotNext.Unsafe": "6.13.0"
         }
       },
       "Microsoft.IdentityModel.JsonWebTokens": {
@@ -650,6 +316,12 @@
         "dependencies": {
           "Microsoft.IdentityModel.Tokens": "8.23.0"
         }
+      },
+      "NUlid": {
+        "type": "CentralTransitive",
+        "requested": "[1.7.3, )",
+        "resolved": "1.7.3",
+        "contentHash": "AXxv7eF+3REXlGLojlN4zXzvesgxiC0/Jq66Qn5L+hhw+NBCK60douGZBI+6ZTAZHRE2xg7AyCEj8cqCKp/U5w=="
       },
       "Scalar.AspNetCore": {
         "type": "CentralTransitive",
@@ -664,229 +336,7 @@
         "contentHash": "U+Bv2qCYt6eONi+arSP0QIp4uTO6os6uceBsqiAwruZ+Wo2HrRhO/0tj38M9URJtS+4DhAtT3ka2TGNFYsnhyQ=="
       }
     },
-    "net11.0/linux-arm64": {
-      "NativeCompressions.LZ4.Runtime.android-arm": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "9BkccLPcx7jQuRRZuuXx9gFtce/sXIYZNu2O8gW+02VpocV/SEQvxRPI/fWUByLLIkQX6RW5ezu3UY0VBAq/IQ=="
-      },
-      "NativeCompressions.LZ4.Runtime.android-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "cc/myufYAx6rvN2jV/mw74Qti+EDtcA5NMOH0RGtjcGm2J1/aeNgYtbLrmrzUIXv4trqjEx60NUei7v4QhH/ew=="
-      },
-      "NativeCompressions.LZ4.Runtime.android-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "dNPvH7YxpD+1HF+Aiz8sqfAS5g6rOhpa0MqBx1rWy0QupjQ7ehxIBeGviB8CjCcbv1d55RVNNNQf7ydAEHhytg=="
-      },
-      "NativeCompressions.LZ4.Runtime.ios-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "SaFq10ORu+x7BqCHaWYzuWqx/m1Rt5hwwGGu4o8v5kSrszwYMWiemQIT52KjXLNjjWc/LH5ooDPRzUQ+7KLXOw=="
-      },
-      "NativeCompressions.LZ4.Runtime.ios-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "1GHfyvJUBwFPcsG0fOdMeXVzf5zvNPxScWde8Ili3K+h1v0VwkLt2RvkiqWSKUnE6frsizu0o8EjPxcnXwewgQ=="
-      },
-      "NativeCompressions.LZ4.Runtime.linux-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "ki8Ez9+qNnzovbDUaqHyJ4kUyM14wzYDM3DuLboqdNwgjAoJom/Ye/LRVVQYVMW5h9cVY7eeSRyeq0aKS1H7zQ=="
-      },
-      "NativeCompressions.LZ4.Runtime.linux-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "gmBy/UOC8OAMOXNObF6Hl8jUBwaWJqLCe9OzzVidiNu0HTXeKgO5GSe5BMLInrJxi7qGzUwecQAvamxJ0guKqg=="
-      },
-      "NativeCompressions.LZ4.Runtime.osx-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "Un5za5THkynojuoajJiJEodXmZWtXbnIcUgO+7XJ55Mx43TSNkOXGNDwypRgVHQgWe7uhJl5jTS5GnheQzhbcw=="
-      },
-      "NativeCompressions.LZ4.Runtime.osx-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "Q9GI7BDjPlrUPiW4muB9vuWKnoHJZxFrEwDdg3eaOeWpRFDUP+xIQ6h3iHjaBey1KGi4aJWvN+Oo7knk9m+Pig=="
-      },
-      "NativeCompressions.LZ4.Runtime.win-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "kxUV0RJIp33FjaMwkdXwb8Y/slUkwdFGYP8d3nEO0f1W9x8dOxAyh+Gk7GetPw4eNHBNBf9RIOozxo5AOogD2g=="
-      },
-      "NativeCompressions.LZ4.Runtime.win-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "hhHnpVkAI4evIweNq5+dzIk4RVwc/1wbPllXgvIdHCFfTzlELFoS2NoY3XHGNonnWZKB7PReiY44Y+CqV7j6QQ=="
-      },
-      "NativeCompressions.Zstandard.Runtime.android-arm": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "/49JsrRQFeYKPuKKYFV3gXUsGtsTP5VWOMu2dIdru7WIUSzINHiAlZcuvtZdcQDINbK0KVKPBfqEaI1GNgeKrw=="
-      },
-      "NativeCompressions.Zstandard.Runtime.android-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "U7+tATEmZoqEUlBCtYoMvNR/vDLHVr7uEERa7MKU1bb0efoWRd7nV2C7ULum+8tTyoromIwuphRdA6nKzQOGyA=="
-      },
-      "NativeCompressions.Zstandard.Runtime.android-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "oOQhjetjEcW31u9V6zfvr1cSAv4GaqNXGt3A/YK8IpKt9QueRNoKDiIKP8DPG0gaEDOB/V2G1Kt7r5wQ62UqTg=="
-      },
-      "NativeCompressions.Zstandard.Runtime.ios-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "Mpd7LIocbMmMU71mE1fJtApDmE2qEsthuredxrkVNdXuom1pGRY+WknpEMuSxQa5NK+YA8QyRhhZm61dPD1AMw=="
-      },
-      "NativeCompressions.Zstandard.Runtime.ios-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "8ein5TCBKWKX+VLh1Og2aeclI3Q/PYuysDYev1sbyJkzFybchaAo4sDgFjUvFIPaMwSH7Atk/yQ1RUazFH90VQ=="
-      },
-      "NativeCompressions.Zstandard.Runtime.linux-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "NfFMpJ3ikFE7EM3Kp0uR+qaQR1kGUV3jW4nJ1qXrLlOTx1ZEGaXveEQFX6HW2sj0edTxdNk7noPq0SnJez3Aqg=="
-      },
-      "NativeCompressions.Zstandard.Runtime.linux-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "1LjlTiZ9AKR45CXtiw6WVsfdtaJ+TgHj8nK85QQlO3PNkmC0VtInQ/CmQRpYBPfJ4gQ7ZLP+8feM45BfzOkYDQ=="
-      },
-      "NativeCompressions.Zstandard.Runtime.osx-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "A58ChYf6Wdzfv+oDWIowMR87SwghlriwoU22gq1s85OZNSwGX0nqBFYS0eDYF6gdtcCght4AL6lEmFl+b8Jpkw=="
-      },
-      "NativeCompressions.Zstandard.Runtime.osx-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "+7p93a7kgh2Hn8CCy77onaXp6b0hjs+WjTVC2SvTFtXDD8Mfk5SThAvGafk+WuqKNU2udZzvpRn7IA9qVbuwNw=="
-      },
-      "NativeCompressions.Zstandard.Runtime.win-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "v3pxIzWDR3fG9gkwCJuwc5a/KzFSjJm3cDZl5qQ8PDekV6anm992J7cnVukvEy5MvnRRkaaePRnSbqZzxijilw=="
-      },
-      "NativeCompressions.Zstandard.Runtime.win-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "sIkjjYJ+z277MvyHTJCFI2dmoifWnQ+EsuULz1ewM15lpARdIpFPmdUhSukBov7HCFdczTIhkQyRmXulU7rang=="
-      }
-    },
-    "net11.0/linux-x64": {
-      "NativeCompressions.LZ4.Runtime.android-arm": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "9BkccLPcx7jQuRRZuuXx9gFtce/sXIYZNu2O8gW+02VpocV/SEQvxRPI/fWUByLLIkQX6RW5ezu3UY0VBAq/IQ=="
-      },
-      "NativeCompressions.LZ4.Runtime.android-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "cc/myufYAx6rvN2jV/mw74Qti+EDtcA5NMOH0RGtjcGm2J1/aeNgYtbLrmrzUIXv4trqjEx60NUei7v4QhH/ew=="
-      },
-      "NativeCompressions.LZ4.Runtime.android-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "dNPvH7YxpD+1HF+Aiz8sqfAS5g6rOhpa0MqBx1rWy0QupjQ7ehxIBeGviB8CjCcbv1d55RVNNNQf7ydAEHhytg=="
-      },
-      "NativeCompressions.LZ4.Runtime.ios-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "SaFq10ORu+x7BqCHaWYzuWqx/m1Rt5hwwGGu4o8v5kSrszwYMWiemQIT52KjXLNjjWc/LH5ooDPRzUQ+7KLXOw=="
-      },
-      "NativeCompressions.LZ4.Runtime.ios-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "1GHfyvJUBwFPcsG0fOdMeXVzf5zvNPxScWde8Ili3K+h1v0VwkLt2RvkiqWSKUnE6frsizu0o8EjPxcnXwewgQ=="
-      },
-      "NativeCompressions.LZ4.Runtime.linux-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "ki8Ez9+qNnzovbDUaqHyJ4kUyM14wzYDM3DuLboqdNwgjAoJom/Ye/LRVVQYVMW5h9cVY7eeSRyeq0aKS1H7zQ=="
-      },
-      "NativeCompressions.LZ4.Runtime.linux-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "gmBy/UOC8OAMOXNObF6Hl8jUBwaWJqLCe9OzzVidiNu0HTXeKgO5GSe5BMLInrJxi7qGzUwecQAvamxJ0guKqg=="
-      },
-      "NativeCompressions.LZ4.Runtime.osx-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "Un5za5THkynojuoajJiJEodXmZWtXbnIcUgO+7XJ55Mx43TSNkOXGNDwypRgVHQgWe7uhJl5jTS5GnheQzhbcw=="
-      },
-      "NativeCompressions.LZ4.Runtime.osx-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "Q9GI7BDjPlrUPiW4muB9vuWKnoHJZxFrEwDdg3eaOeWpRFDUP+xIQ6h3iHjaBey1KGi4aJWvN+Oo7knk9m+Pig=="
-      },
-      "NativeCompressions.LZ4.Runtime.win-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "kxUV0RJIp33FjaMwkdXwb8Y/slUkwdFGYP8d3nEO0f1W9x8dOxAyh+Gk7GetPw4eNHBNBf9RIOozxo5AOogD2g=="
-      },
-      "NativeCompressions.LZ4.Runtime.win-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "hhHnpVkAI4evIweNq5+dzIk4RVwc/1wbPllXgvIdHCFfTzlELFoS2NoY3XHGNonnWZKB7PReiY44Y+CqV7j6QQ=="
-      },
-      "NativeCompressions.Zstandard.Runtime.android-arm": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "/49JsrRQFeYKPuKKYFV3gXUsGtsTP5VWOMu2dIdru7WIUSzINHiAlZcuvtZdcQDINbK0KVKPBfqEaI1GNgeKrw=="
-      },
-      "NativeCompressions.Zstandard.Runtime.android-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "U7+tATEmZoqEUlBCtYoMvNR/vDLHVr7uEERa7MKU1bb0efoWRd7nV2C7ULum+8tTyoromIwuphRdA6nKzQOGyA=="
-      },
-      "NativeCompressions.Zstandard.Runtime.android-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "oOQhjetjEcW31u9V6zfvr1cSAv4GaqNXGt3A/YK8IpKt9QueRNoKDiIKP8DPG0gaEDOB/V2G1Kt7r5wQ62UqTg=="
-      },
-      "NativeCompressions.Zstandard.Runtime.ios-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "Mpd7LIocbMmMU71mE1fJtApDmE2qEsthuredxrkVNdXuom1pGRY+WknpEMuSxQa5NK+YA8QyRhhZm61dPD1AMw=="
-      },
-      "NativeCompressions.Zstandard.Runtime.ios-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "8ein5TCBKWKX+VLh1Og2aeclI3Q/PYuysDYev1sbyJkzFybchaAo4sDgFjUvFIPaMwSH7Atk/yQ1RUazFH90VQ=="
-      },
-      "NativeCompressions.Zstandard.Runtime.linux-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "NfFMpJ3ikFE7EM3Kp0uR+qaQR1kGUV3jW4nJ1qXrLlOTx1ZEGaXveEQFX6HW2sj0edTxdNk7noPq0SnJez3Aqg=="
-      },
-      "NativeCompressions.Zstandard.Runtime.linux-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "1LjlTiZ9AKR45CXtiw6WVsfdtaJ+TgHj8nK85QQlO3PNkmC0VtInQ/CmQRpYBPfJ4gQ7ZLP+8feM45BfzOkYDQ=="
-      },
-      "NativeCompressions.Zstandard.Runtime.osx-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "A58ChYf6Wdzfv+oDWIowMR87SwghlriwoU22gq1s85OZNSwGX0nqBFYS0eDYF6gdtcCght4AL6lEmFl+b8Jpkw=="
-      },
-      "NativeCompressions.Zstandard.Runtime.osx-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "+7p93a7kgh2Hn8CCy77onaXp6b0hjs+WjTVC2SvTFtXDD8Mfk5SThAvGafk+WuqKNU2udZzvpRn7IA9qVbuwNw=="
-      },
-      "NativeCompressions.Zstandard.Runtime.win-arm64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "v3pxIzWDR3fG9gkwCJuwc5a/KzFSjJm3cDZl5qQ8PDekV6anm992J7cnVukvEy5MvnRRkaaePRnSbqZzxijilw=="
-      },
-      "NativeCompressions.Zstandard.Runtime.win-x64": {
-        "type": "Transitive",
-        "resolved": "0.6.1",
-        "contentHash": "sIkjjYJ+z277MvyHTJCFI2dmoifWnQ+EsuULz1ewM15lpARdIpFPmdUhSukBov7HCFdczTIhkQyRmXulU7rang=="
-      }
-    }
+    "net11.0/linux-arm64": {},
+    "net11.0/linux-x64": {}
   }
 }

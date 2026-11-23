@@ -1,66 +1,66 @@
-using System.Diagnostics;
-using TerraBase.Errors;
+using TerraBase.Features.Callers;
 using TerraBase.Features.Catalog;
-using TerraBase.Features.UserAuth;
-using TerraBase.Tenancy;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-internal sealed class SetOrganizationPlanEndpoint(IManagementService management, PlanFanout fanout) : Endpoint<PlanRequest, IResult>
+internal sealed class SetOrganizationPlanEndpoint(CatalogStore catalog)
+    : Endpoint<PlanInput, Result<OrganizationBody, Validation, Forbidden, NotFound, Unavailable>>
 {
     public override void Configure()
     {
         Put(ManagementRoute.Organization + "/plan");
-        Metadata(AnchoredRevocation.Instance);
         Name("setOrganizationPlan");
         Summary("Sets an organization's plan");
-        Description("Publishes a resource plan authorized by the platform: hobby (the default), starter, pro, team or enterprise. Requires the platform operator (internal listener) acting as an organization owner. The platform organization's plan cannot change (403 platform_plan_locked). " + ManagementRoute.IdentityDescription);
+        Description("Operators only: the internal peer credential or a caller token with the plans or admin grant.");
         Tags(ManagementRoute.Tag);
-        Produces<Organization>();
-        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
-        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
-        Produces<ErrorBody>(StatusCodes.Status404NotFound);
-        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
-        RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management);
+        AllowAnonymous();
+        Metadata(ListenerMetadata.Internal);
     }
 
-    public override async ValueTask<IResult> HandleAsync(PlanRequest request, CancellationToken cancellationToken) =>
-        ManagementRoute.CheckPlan(request) switch
-        {
-            Validation error => ErrorResponse.From(error),
-            PlanTier plan => await SetPlanAsync(plan, cancellationToken),
-        };
+    public override async ValueTask<Result<OrganizationBody, Validation, Forbidden, NotFound, Unavailable>> HandleAsync(PlanInput request, CancellationToken cancellationToken) =>
+        await PlanFlow.SetOrganizationPlanAsync(HttpContext.Caller, catalog, request, cancellationToken);
+}
 
-    private async ValueTask<IResult> SetPlanAsync(PlanTier plan, CancellationToken cancellationToken)
+internal static class PlanFlow
+{
+    public static bool IsOperator(Caller caller, string grant) => caller switch
     {
-        var user = ManagementRoute.UserId(HttpContext);
-        var organization = ManagementRoute.OrganizationId(HttpContext);
-        var found = await management.GetOrganizationAsync(user, organization, cancellationToken).ConfigureAwait(false);
-        if (found is not Organization)
+        PeerCaller => true,
+        ServiceCaller service => service.Grants.Contains(grant) || service.Grants.Contains("admin"),
+        AnonymousCaller or ApiKeyCaller or UserCaller or ProjectCaller or EndUserCaller => false,
+    };
+
+    public static async ValueTask<Result<OrganizationBody, Validation, Forbidden, NotFound, Unavailable>> SetOrganizationPlanAsync(
+        Caller caller, CatalogStore catalog, PlanInput request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (!IsOperator(caller, "plans"))
         {
-            return found switch
+            return new Forbidden("setting a plan needs the plans grant", "forbidden_caller");
+        }
+
+        if (!Plans.IsPlan(request.Plan))
+        {
+            return new Validation("plan must be hobby, starter, pro, team or enterprise", "invalid_plan");
+        }
+
+        if (ManagementService.Id(request.Organization) is not { } id)
+        {
+            return new NotFound("the organization does not exist", "unknown_organization");
+        }
+
+        return await catalog.SetOrganizationPlanAsync(id, request.Plan, cancellationToken) switch
+        {
+            Done => await catalog.GetOrganizationAsync(id, cancellationToken) switch
             {
-                NotFound error => ErrorResponse.From(error),
-                Unavailable error => ErrorResponse.From(error),
-                Organization => throw new UnreachableException(),
-            };
-        }
-
-        if (!HttpContext.User.IsOperator())
-        {
-            return ErrorResponse.From(new Forbidden("plan changes need the platform operator"));
-        }
-
-        return await management.SetPlanAsync(user, organization, plan, cancellationToken).ConfigureAwait(false) switch
-        {
-            Organization value => await fanout.PublishAsync(HttpContext, value.Id, plan, cancellationToken).ConfigureAwait(false) is { } error
-                ? ErrorResponse.From(error) : TypedResults.Ok(value),
-            NotFound error => ErrorResponse.From(error),
-            Forbidden error => ErrorResponse.From(error),
-            Unavailable error => ErrorResponse.From(error),
+                OrganizationRecord organization => OrganizationBody.From(organization),
+                NotFound missing => missing,
+                Unavailable unavailable => unavailable,
+            },
+            NotFound missing => missing,
+            Unavailable unavailable => unavailable,
         };
     }
 }

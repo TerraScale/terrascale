@@ -50,6 +50,8 @@ public interface IClusterCoordinator
 
     IReadOnlyList<PeerHealth> Peers { get; }
 
+    void TrackDatabase(Ulid databaseId);
+
     CausalBookmark CurrentBookmark(Ulid databaseId);
 
     ValueTask<Result<Done, NotFound, RequestTimeout>> WaitForBookmarkAsync(Ulid databaseId, CausalBookmark bookmark, TimeSpan timeout, CancellationToken cancellationToken);
@@ -58,6 +60,8 @@ public interface IClusterCoordinator
         ISqlDatabaseSession session,
         SqlStatementRequest request,
         CancellationToken cancellationToken);
+
+    ValueTask<Result<ISqlTransaction, StorageBusy, RequestTimeout>> BeginTransactionAsync(ISqlDatabaseSession session, SqlTransactionOptions options, CancellationToken cancellationToken);
 
     ValueTask<Result<CommitMetadata, SerializationConflict, SchemaMismatch, Unavailable, RequestTimeout, StorageBusy>> CommitTransactionAsync(
         ISqlDatabaseSession session,

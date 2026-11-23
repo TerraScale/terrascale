@@ -1,82 +1,42 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using TerraBase.Features.Sql;
 
 namespace TerraBase.Features.Rows;
 
-internal closed record class RowOperation(string Table);
+public sealed record RowInput(string? Project, string? Database, string? Table, string? Key, IReadOnlyDictionary<string, JsonElement>? Row);
 
-internal sealed record class CreateRow(string Table, IReadOnlyDictionary<string, object?> Values) : RowOperation(Table);
+public sealed record RowsBatchOperation(string? Op, string? Table, string? Key, IReadOnlyDictionary<string, JsonElement>? Row);
 
-internal sealed record class UpdateRow(string Table, long Key, IReadOnlyDictionary<string, object?> Values) : RowOperation(Table);
+public sealed record RowsBatchInput(string? Project, string? Database, IReadOnlyList<RowsBatchOperation?>? Operations);
 
-internal sealed record class DeleteRow(string Table, long Key) : RowOperation(Table);
+public sealed record RowAnswer(string Key, [property: JsonConverter(typeof(RowValuesConverter))] IReadOnlyList<KeyValuePair<string, SqlValue>>? Row);
 
-internal sealed record RowBody(IReadOnlyDictionary<string, JsonElement>? Row);
+public sealed record RowsBatchAnswer(IReadOnlyList<RowAnswer> Results);
 
-internal sealed record RowsBatchBody(IReadOnlyList<RowsBatchOperation?>? Operations);
-
-internal sealed record RowsBatchOperation(string? Op, string? Table, string? Key, IReadOnlyDictionary<string, JsonElement>? Row);
-
-[JsonConverter(typeof(RowValuesConverter))]
-internal sealed record RowValues(IReadOnlyList<KeyValuePair<string, object?>> Columns);
-
-internal sealed record RowAnswer(string Key, RowValues? Row);
-
-internal sealed record RowsBatchAnswer(IReadOnlyList<RowAnswer> Results);
-
-internal sealed record RowsErrorBody(RowsError Error);
-
-internal sealed record RowsError(string Code, string Message, RowsErrorDetails? Details);
-
-internal sealed record RowsErrorDetails(
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Operation = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Table = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Column = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Clause = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Key = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Index = null);
-
-internal sealed record RowRefused(int Status, string Code, string Message, RowsErrorDetails? Details = null);
-
-internal readonly union RowsOutcome(IReadOnlyList<RowAnswer>, RowRefused);
-
-internal sealed class RowValuesConverter : JsonConverter<RowValues>
+public sealed class RowValuesConverter : JsonConverter<IReadOnlyList<KeyValuePair<string, SqlValue>>>
 {
-    public override RowValues Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+    public override IReadOnlyList<KeyValuePair<string, SqlValue>> Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
         throw new NotSupportedException("rows are response-only");
 
-    public override void Write(Utf8JsonWriter writer, RowValues value, JsonSerializerOptions options)
+    public override void Write(Utf8JsonWriter writer, IReadOnlyList<KeyValuePair<string, SqlValue>> value, JsonSerializerOptions options)
     {
         ArgumentNullException.ThrowIfNull(writer);
         ArgumentNullException.ThrowIfNull(value);
         writer.WriteStartObject();
-        foreach (var (name, cell) in value.Columns)
+        foreach (var (column, cell) in value)
         {
-            writer.WritePropertyName(name);
-            switch (cell)
-            {
-                case null:
-                    writer.WriteNullValue();
-                    break;
-                case long integer:
-                    writer.WriteNumberValue(integer);
-                    break;
-                case double real:
-                    writer.WriteNumberValue(real);
-                    break;
-                case string text:
-                    writer.WriteStringValue(text);
-                    break;
-                case byte[] blob:
-                    writer.WriteStartObject();
-                    writer.WriteBase64String("base64", blob);
-                    writer.WriteEndObject();
-                    break;
-                default:
-                    throw new InvalidOperationException("a stored value is null, an integer, a real, text or a blob");
-            }
+            writer.WritePropertyName(column);
+            SqlRowsConverter.WriteValue(writer, cell);
         }
 
         writer.WriteEndObject();
     }
 }
+
+[JsonSourceGenerationOptions(JsonSerializerDefaults.Web, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
+[JsonSerializable(typeof(RowInput))]
+[JsonSerializable(typeof(RowsBatchInput))]
+[JsonSerializable(typeof(RowAnswer))]
+[JsonSerializable(typeof(RowsBatchAnswer))]
+internal sealed partial class RowsJsonContext : JsonSerializerContext;

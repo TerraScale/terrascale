@@ -35,7 +35,7 @@ internal sealed partial class DatabaseSession
             List<SqlResultSet> results = [];
             for (var index = 0; index < request.Statements.Count; index++)
             {
-                SqlError? failure = ExecuteOnReader(reader, request.Statements[index], index, info) switch
+                SqlError? failure = ExecuteOnReader(reader, request.Statements[index], index, info, null, cancellationToken) switch
                 {
                     SqlResultSet result => Collect(results, result),
                     SqlError error => error,

@@ -1,57 +1,40 @@
-using TerraBase.Configuration;
-using TerraBase.Errors;
-using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Callers;
 using TerraBase.Features.Catalog;
-using TerraBase.Features.Management;
 using TerraBase.Hosting;
-using TerraBase.Primitives;
-using TerraBase.Tenancy;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Rules;
 
-internal sealed class RestoreRulesVersionEndpoint(IManagementService management, IRules rules, TerraBaseOptions options) : EndpointWithoutRequest<IResult>
+internal sealed class RestoreRulesVersionEndpoint(RulesService rules, RulesStore store) : Endpoint<RulesRouteInput, RulesWriteResponse>
 {
     public override void Configure()
     {
         Post(RulesRoute.Restore);
-        Metadata(AnchoredRevocation.Instance);
-        Name("restoreDatabaseRulesVersion");
-        Summary("Restores an earlier rules version");
-        Description("Deploys the body of an earlier version as a new version, checked against today's schema like any deploy. 404 unknown_version when the "
-            + "version is not among the kept ones." + RulesRoute.WriteDescription + RulesRoute.Description);
+        Name("restoreDatabaseRules");
+        Summary("Deploys an earlier rules version again");
+        Description("Same preconditions as PUT rules; the restored rules are compiled against the current schema first.");
         Tags("Rules");
-        Produces<RulesBody>();
-        Produces<RulesErrorBody>(StatusCodes.Status400BadRequest);
-        Produces<ErrorBody>(StatusCodes.Status404NotFound);
-        Produces<ErrorBody>(StatusCodes.Status412PreconditionFailed);
-        Produces<ErrorBody>(StatusCodes.Status421MisdirectedRequest);
-        Produces<ErrorBody>(StatusCodes.Status428PreconditionRequired);
-        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
-        RequireAuthorization(ApiKeyScopes.DatabasesWrite);
-        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware());
+        AllowAnonymous();
+        Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override async ValueTask<RulesWriteResponse> HandleAsync(RulesRouteInput request, CancellationToken cancellationToken)
     {
-        if (HttpContext.Request.RouteValues["version"] is not string version || !EntityIds.IsValid(version))
+        ArgumentNullException.ThrowIfNull(request);
+        return await rules.ResolveAsync(HttpContext.Caller, request.Project, request.Database, Scopes.DatabasesWrite, cancellationToken) switch
         {
-            return ErrorResponse.From(RulesRoute.UnknownVersion);
-        }
-
-        if (RulesRoute.Precondition(HttpContext.Request) is not { } precondition)
-        {
-            return RulesRoute.Required();
-        }
-
-        if (await RulesRoute.ElsewhereAsync(HttpContext, management, options) is { } elsewhere)
-        {
-            return elsewhere;
-        }
-
-        var resolved = await RulesRoute.DatabaseAsync(HttpContext, management, cancellationToken);
-        return resolved is TenantContext database
-            ? RulesRoute.Deployed(HttpContext, await rules.DeployAsync(database, new RulesRestore(version), precondition, ManagementRoute.UserId(HttpContext), cancellationToken))
-            : (IResult)resolved;
+            ResolvedDatabase resolved => await store.VersionAsync(resolved.Database.Id, request.Version, cancellationToken) switch
+            {
+                StoredRules version => RulesWrites.Map(await rules.DeployAsync(HttpContext.Caller, request.Project, request.Database, version.Rules,
+                    RulesRoute.IfMatch(HttpContext.Request), RulesRoute.IfNoneMatchAny(HttpContext.Request), cancellationToken)),
+                NotFound missing => missing,
+                Unavailable unavailable => unavailable,
+            },
+            Validation invalid => invalid,
+            Unauthorized unauthorized => unauthorized,
+            Forbidden forbidden => forbidden,
+            NotFound missing => missing,
+            Unavailable unavailable => unavailable,
+        };
     }
 }

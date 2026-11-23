@@ -1,11 +1,9 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
-using TerraBase.Errors;
-using TerraBase.Features.Shapes;
-using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Rules;
 
-internal sealed record RulesSet(IReadOnlyDictionary<string, RulesTable> Tables)
+public sealed record RulesSet(IReadOnlyDictionary<string, RulesTable> Tables)
 {
     public RulesTable? Table(string name) =>
         Tables.TryGetValue(name, out var exact)
@@ -13,111 +11,103 @@ internal sealed record RulesSet(IReadOnlyDictionary<string, RulesTable> Tables)
             : Tables.FirstOrDefault(pair => string.Equals(pair.Key, name, StringComparison.OrdinalIgnoreCase)).Value;
 }
 
-internal sealed record RulesTable(
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Read = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Create = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Update = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Delete = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Columns = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Writable = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Validate = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] RulesValues? Set = null);
+public sealed record RulesTable(
+    string? Read = null,
+    string? Create = null,
+    string? Update = null,
+    string? Delete = null,
+    IReadOnlyList<string>? Columns = null,
+    IReadOnlyList<string>? Writable = null,
+    IReadOnlyList<string>? Validate = null,
+    RulesValues? Set = null);
 
-internal sealed record RulesValues(
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<string, string>? Create = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<string, string>? Update = null);
+public sealed record RulesValues(IReadOnlyDictionary<string, string>? Create = null, IReadOnlyDictionary<string, string>? Update = null);
 
-internal sealed record RulesProblem(string Table, string Field, string Code, string Message);
+public sealed record RulesProblem(string Table, string Field, string Code, string Message);
 
-internal sealed record StoredRules(string Version, RulesSet Rules, DateTimeOffset UpdatedAt, string UpdatedBy, string Digest);
+public sealed record StoredRules(string Version, RulesSet Rules, DateTimeOffset UpdatedAt, string UpdatedBy, string Digest);
 
-internal sealed record RulesVersionItem(string Version, DateTimeOffset UpdatedAt, string UpdatedBy, string Digest);
+public sealed record RulesVersionItem(string Version, DateTimeOffset UpdatedAt, string UpdatedBy, string Digest);
 
-internal sealed record RulesVersionPage(IReadOnlyList<RulesVersionItem> Items, string? Next);
-
-internal sealed record RulesTableSchema(ShapeTableStatus Status, IReadOnlyList<string> Columns, string? RowId = null);
-
-internal sealed record RulesBody(
+public sealed record RulesBody(
     string Version,
     IReadOnlyDictionary<string, RulesTable> Tables,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<RulesProblem>? Problems,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<RulesProblem>? Warnings,
+    IReadOnlyList<RulesProblem>? Problems,
+    IReadOnlyList<RulesProblem>? Warnings,
     DateTimeOffset UpdatedAt,
     string UpdatedBy);
 
-internal sealed record RulesVersionsBody(IReadOnlyList<RulesVersionItem> Items, string? Next);
+public sealed record RulesVersionsBody(IReadOnlyList<RulesVersionItem> Items, string? Next);
 
-internal sealed record RulesErrorBody(RulesErrorDetail Error);
+public sealed record RulesErrorDetails(IReadOnlyList<RulesProblem> Problems);
 
-internal sealed record RulesErrorDetail(string Code, string Message, RulesErrorDetails Details);
+public sealed record RulesErrorDetail(string Code, string Message, RulesErrorDetails Details);
 
-internal sealed record RulesErrorDetails(IReadOnlyList<RulesProblem> Problems);
+public sealed record RulesErrorBody(RulesErrorDetail Error);
 
-internal sealed record CurrentRules(StoredRules Rules, IReadOnlyList<RulesProblem> Problems);
+public sealed record RulesInput(string? Project, string? Database, IReadOnlyDictionary<string, RulesTable>? Tables);
 
-internal sealed record DeployedRules(StoredRules Rules, IReadOnlyList<RulesProblem> Warnings);
+public sealed record RulesTestAuth(string? Uid, JsonElement? Claims, string? OrgId, string? OrgRole, bool IsAnonymous = false);
 
-internal sealed record InvalidRules(IReadOnlyList<RulesProblem> Problems);
+public sealed record RulesTestInput(
+    string? Project,
+    string? Database,
+    IReadOnlyDictionary<string, RulesTable>? Tables,
+    RulesTestAuth? Auth,
+    string? Table,
+    string? Operation,
+    IReadOnlyDictionary<string, JsonElement>? Row,
+    IReadOnlyDictionary<string, JsonElement>? New);
 
-internal sealed record StaleRules(string? Current);
+public sealed record RulesTestBody(bool Allowed, string? Condition, IReadOnlyList<RulesProblem> Problems);
 
-internal abstract record RulesPrecondition;
+public sealed record InvalidRules(IReadOnlyList<RulesProblem> Problems);
 
-internal sealed record RulesIfMatch(string Version) : RulesPrecondition;
+public sealed record StaleRules(string? Current);
 
-internal sealed record RulesIfNone : RulesPrecondition;
-
-internal abstract record RulesChange;
-
-internal sealed record RulesDeploy(RulesSet Rules) : RulesChange;
-
-internal sealed record RulesRestore(string Version) : RulesChange;
-
-internal readonly union RulesCurrentResult(CurrentRules, NotFound, Unavailable);
-
-internal readonly union RulesVersionResult(StoredRules, NotFound, Unavailable);
-
-internal readonly union RulesVersionsResult(RulesVersionPage, NotFound, Unavailable);
-
-internal readonly union RulesDeployResult(DeployedRules, InvalidRules, StaleRules, NotFound, Unavailable);
-
-internal interface IRulesStorage
+public enum RulesOperation
 {
-    ValueTask<StoredRules?> ReadRulesAsync(string? version, CancellationToken cancellationToken);
-
-    ValueTask<RulesVersionPage?> ListRulesVersionsAsync(string? after, int limit, CancellationToken cancellationToken);
-
-    ValueTask<RulesTestBody> TestRulesAsync(RulesTestRequest request, RulesSet rules, CancellationToken cancellationToken);
-
-    ValueTask<IReadOnlyList<RulesProblem>> CheckRulesAsync(RulesSet rules, CancellationToken cancellationToken);
+    Read,
+    Create,
+    Update,
+    Delete,
+    Validate,
 }
 
-internal interface IRulesWriter : IRulesStorage
+[JsonSourceGenerationOptions(JsonSerializerDefaults.Web, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
+[JsonSerializable(typeof(RulesSet))]
+[JsonSerializable(typeof(RulesBody))]
+[JsonSerializable(typeof(RulesVersionsBody))]
+[JsonSerializable(typeof(RulesErrorBody))]
+[JsonSerializable(typeof(RulesInput))]
+[JsonSerializable(typeof(RulesTestInput))]
+[JsonSerializable(typeof(RulesTestBody))]
+[JsonSerializable(typeof(RulesRouteInput))]
+internal sealed partial class RulesJsonContext : JsonSerializerContext;
+
+internal static class RulesRoute
 {
-    ValueTask<RulesTableSchema> ReadRulesTableAsync(string table, CancellationToken cancellationToken);
+    public const string Rules = "/v1/projects/{project}/databases/{database}/rules";
 
-    ValueTask WriteRulesAsync(StoredRules rules, CancellationToken cancellationToken);
-}
+    public const string Versions = Rules + "/versions";
 
-internal interface IRulesSchema
-{
-    RulesTableSchema RulesTable(string table);
+    public const string Version = Versions + "/{version}";
 
-    bool Runs(RulesTableSchema table, CompiledCondition condition);
-}
+    public const string Restore = Version + "/restore";
 
-internal readonly union RulesTestResult(RulesTestBody, NotFound, Unavailable);
+    public static IResult Body(HttpContext context, StoredRules rules, IReadOnlyList<RulesProblem>? problems, IReadOnlyList<RulesProblem>? warnings)
+    {
+        context.Response.Headers.ETag = string.Concat("\"", rules.Version, "\"");
+        context.Response.Headers.CacheControl = "no-store";
+        return TypedResults.Json(new RulesBody(rules.Version, rules.Rules.Tables, problems, warnings, rules.UpdatedAt, rules.UpdatedBy), RulesJsonContext.Default.RulesBody);
+    }
 
-internal interface IRules
-{
-    ValueTask<RulesTestResult> TestAsync(TenantContext database, RulesTestRequest request, CancellationToken cancellationToken);
+    public static IResult Invalid(InvalidRules invalid) =>
+        TypedResults.Json(new RulesErrorBody(new RulesErrorDetail("invalid_rules", "the rules do not fit the database; see details.problems",
+            new RulesErrorDetails(invalid.Problems))), RulesJsonContext.Default.RulesErrorBody, statusCode: StatusCodes.Status400BadRequest);
 
-    ValueTask<RulesCurrentResult> GetAsync(TenantContext database, CancellationToken cancellationToken);
+    public static string? IfMatch(HttpRequest request) =>
+        request.Headers.IfMatch is [{ Length: > 2 } tag] && tag[0] == '"' && tag[^1] == '"' ? tag[1..^1] : request.Headers.IfMatch.Count > 0 ? request.Headers.IfMatch.ToString() : null;
 
-    ValueTask<RulesVersionsResult> VersionsAsync(TenantContext database, string? after, int limit, CancellationToken cancellationToken);
-
-    ValueTask<RulesVersionResult> VersionAsync(TenantContext database, string version, CancellationToken cancellationToken);
-
-    ValueTask<RulesDeployResult> DeployAsync(TenantContext database, RulesChange change, RulesPrecondition precondition, string actor,
-        CancellationToken cancellationToken);
+    public static bool IfNoneMatchAny(HttpRequest request) => request.Headers.IfNoneMatch is ["*"];
 }

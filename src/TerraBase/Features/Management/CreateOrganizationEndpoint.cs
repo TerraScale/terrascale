@@ -1,36 +1,34 @@
-using TerraBase.Errors;
-using TerraBase.Features.UserAuth;
+using TerraBase.Features.Callers;
+using TerraBase.Features.Catalog;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-internal sealed class CreateOrganizationEndpoint(IManagementService management) : Endpoint<NameRequest, IResult>
+internal sealed class CreateOrganizationEndpoint(ManagementService management)
+    : Endpoint<NameInput, Result<Created<OrganizationBody>, Validation, Unauthorized, Conflict, Unavailable>>
 {
     public override void Configure()
     {
         Post(ManagementRoute.Organizations);
         Name("createOrganization");
-        Summary("Creates an organization");
-        Description("name: 1 to 128 characters with a letter or digit, unique among the organizations the acting user created, ignoring case." + " " + ManagementRoute.IdentityDescription);
+        Summary("Creates an organization owned by the calling user");
         Tags(ManagementRoute.Tag);
-        Produces<Organization>(StatusCodes.Status201Created);
-        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
-        Produces<ErrorBody>(StatusCodes.Status409Conflict);
-        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
-        RequireAuthorization(UserAuthExtensions.PolicyName);
+        AllowAnonymous();
         Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<IResult> HandleAsync(NameRequest request, CancellationToken cancellationToken) =>
-        ManagementRoute.CheckDisplayName(request) switch
+    public override async ValueTask<Result<Created<OrganizationBody>, Validation, Unauthorized, Conflict, Unavailable>> HandleAsync(
+        NameInput request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return await management.CreateOrganizationAsync(HttpContext.Caller, request.Name, cancellationToken) switch
         {
-            Validation error => ErrorResponse.From(error),
-            string name => await management.CreateOrganizationAsync(ManagementRoute.UserId(HttpContext), name, cancellationToken) switch
-            {
-                Organization value => TypedResults.Created($"{ManagementRoute.Organizations}/{value.Id}", value),
-                Conflict error => ErrorResponse.From(error),
-                Unavailable error => ErrorResponse.From(error),
-            },
+            OrganizationRecord created => new Created<OrganizationBody>(string.Concat(ManagementRoute.Organizations, "/", created.Id.ToString()), OrganizationBody.From(created)),
+            Validation invalid => invalid,
+            Unauthorized unauthorized => unauthorized,
+            Conflict conflict => conflict,
+            Unavailable unavailable => unavailable,
         };
+    }
 }

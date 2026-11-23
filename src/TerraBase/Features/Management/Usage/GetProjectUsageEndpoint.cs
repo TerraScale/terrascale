@@ -1,65 +1,38 @@
-using System.Diagnostics;
-using TerraBase.Errors;
-using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Callers;
+using TerraBase.Features.Catalog;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management.Usage;
 
-internal sealed class GetProjectUsageEndpoint(IUsageService usage, PeerUsage peers, TimeProvider time) : EndpointWithoutRequest<IResult>
+internal sealed class GetProjectUsageEndpoint(DatabaseAccess access, UsageReports reports) : Endpoint<UsageInput, Result<UsageBody, Validation, Unauthorized, Forbidden, NotFound, Unavailable>>
 {
-    internal const string LimitsDescription =
-        "Every database is listed before any is counted: more than 100 answer 400 \"query too expensive\" without a count. A request still running after 5 seconds starts no further catalog read or count and answers 503 capacity with Retry-After; retry it unchanged.";
-
     public override void Configure()
     {
-        Get(ProjectApiRoute.Project + "/usage");
+        Get(ManagementRoute.ProjectApi + "/usage");
         Name("getProjectUsage");
-        Summary("Reads the usage of a project");
-        Description("Sums the usage of every database of the project and lists each one, in creation order, with its period but no series. " + LimitsDescription + " " + GetDatabaseUsageEndpoint.CountsDescription + " " + ProjectApiRoute.IdentityDescription);
+        Summary("A project's usage in a month (default: this month)");
         Tags("Usage");
-        Produces<ProjectUsage>();
-        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
-        Produces<ErrorBody>(StatusCodes.Status404NotFound);
-        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
-        RequireAuthorization(ApiKeyScopes.DatabasesRead);
-        Metadata(new ProjectManagementRoute(), new ManagementUserRoute(), ListenerMetadata.Management);
+        AllowAnonymous();
+        Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        UsageWindow.Parse(HttpContext.Request.Query, time.GetUtcNow()) switch
-        {
-            Validation error => ErrorResponse.From(error),
-            UsageWindow window => await ReadAsync(window, cancellationToken),
-        };
-
-    private async ValueTask<IResult> ReadAsync(UsageWindow window, CancellationToken cancellationToken)
+    public override async ValueTask<Result<UsageBody, Validation, Unauthorized, Forbidden, NotFound, Unavailable>> HandleAsync(UsageInput request, CancellationToken cancellationToken)
     {
-        var organization = ManagementRoute.OrganizationId(HttpContext);
-        var nodeOnly = PeerUsage.NodeOnly(HttpContext);
-        var others = nodeOnly ? Task.FromResult<IReadOnlyList<ProjectUsage>?>([]) : peers.ProjectAsync(HttpContext, cancellationToken);
-        var month = PeerUsage.MonthOf(time.GetUtcNow());
-        var units = nodeOnly
-            ? Task.FromResult<IReadOnlyDictionary<string, UsageTotals>?>(new Dictionary<string, UsageTotals>(StringComparer.Ordinal) { [organization] = new UsageTotals(0, 0) })
-            : peers.MonthsAsync([organization], month, cancellationToken);
-        var local = await usage.GetProjectUsageAsync(
-            ManagementRoute.UserId(HttpContext), organization, HttpContext.RouteValue("project"), window, cancellationToken);
-        if (local is not ProjectUsage project)
+        ArgumentNullException.ThrowIfNull(request);
+        return await access.ProjectAsync(HttpContext.Caller, request.Project, Scopes.DatabasesRead, cancellationToken) switch
         {
-            return local switch
+            ResolvedProject resolved => await reports.UsageAsync(UsageMeter.ProjectScope(resolved.Project.Id), request.Month, cancellationToken) switch
             {
-                NotFound error => ErrorResponse.From(error),
-                Validation error => ErrorResponse.From(error),
-                Unavailable error => ErrorResponse.From(error),
-                ProjectUsage => throw new UnreachableException(),
-            };
-        }
-
-        if (await others is not { } remote || await units is not { } remoteUnits || project.Month.Month != month)
-        {
-            return ErrorResponse.From(new Unavailable("usage of another region is unavailable; retry"));
-        }
-
-        return TypedResults.Ok(PeerUsage.MergeProject(project, remote, remoteUnits[organization]));
+                UsageBody usage => usage,
+                Validation invalid => invalid,
+                Unavailable unavailable => unavailable,
+            },
+            Validation invalid => invalid,
+            Unauthorized unauthorized => unauthorized,
+            Forbidden forbidden => forbidden,
+            NotFound missing => missing,
+            Unavailable unavailable => unavailable,
+        };
     }
 }

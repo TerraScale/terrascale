@@ -1,7 +1,5 @@
-using System.Diagnostics.Metrics;
-using System.Runtime.CompilerServices;
+using System.Reflection;
 using Microsoft.Extensions.Diagnostics.Metrics;
-using OpenTelemetry;
 using OpenTelemetry.Metrics;
 
 namespace TerraBase.Hosting;
@@ -9,116 +7,44 @@ namespace TerraBase.Hosting;
 public static class Telemetry
 {
     public const string MeterName = "TerraScale.TerraBase";
+
     public const string MetricsPath = "/metrics";
-    private static readonly string[] AspNetCoreMeters =
+
+    private static readonly string[] Meters =
     [
-        "Microsoft.AspNetCore.Hosting", "Microsoft.AspNetCore.Server.Kestrel", "Microsoft.AspNetCore.Http.Connections",
-        "Microsoft.AspNetCore.Routing", "Microsoft.AspNetCore.Diagnostics", "Microsoft.AspNetCore.RateLimiting",
-        "Microsoft.AspNetCore.Components", "Microsoft.AspNetCore.Components.Server.Circuits", "Microsoft.AspNetCore.Components.Lifecycle",
-        "Microsoft.AspNetCore.Authorization", "Microsoft.AspNetCore.Authentication", "Microsoft.AspNetCore.Identity",
-        "Microsoft.AspNetCore.MemoryPool",
+        MeterName, "TerraScale.QuicRpc", "Microsoft.AspNetCore.Hosting", "Microsoft.AspNetCore.Server.Kestrel", "Microsoft.AspNetCore.Routing",
+        "Microsoft.AspNetCore.Diagnostics", "Microsoft.AspNetCore.Authentication",
     ];
+
     public static IServiceCollection AddTerraBaseTelemetry(this IServiceCollection services)
     {
-        using (ExecutionContext.SuppressFlow())
-        {
-            RuntimeHelpers.RunClassConstructor(typeof(Sdk).TypeHandle);
-        }
-
         services.AddOpenTelemetry().WithMetrics(metrics => metrics
             .AddRuntimeInstrumentation()
             .AddPrometheusExporter(options => options.ScrapeResponseCacheDurationMilliseconds = 0));
         services.AddMetrics(metrics =>
         {
-            metrics.EnableMetrics(MeterName, listenerName: "OpenTelemetry");
-            foreach (var name in AspNetCoreMeters)
+            foreach (var name in Meters)
             {
                 metrics.EnableMetrics(name, listenerName: "OpenTelemetry");
             }
         });
-        services.ConfigureOpenTelemetryMeterProvider((provider, metrics) =>
-        {
-            var meters = provider.GetRequiredService<IMeterFactory>();
-            metrics.AddView(instrument =>
-            {
-                if (instrument.Meter.Scope is not null && !ReferenceEquals(instrument.Meter.Scope, meters))
-                {
-                    return MetricStreamConfiguration.Drop;
-                }
-                if (instrument.Meter.Name == "System.Runtime")
-                {
-                    return instrument.Name switch
-                    {
-                        "dotnet.process.memory.working_set" or "dotnet.gc.heap.total_allocated"
-                            or "dotnet.gc.last_collection.memory.committed_size" or "dotnet.gc.pause.time"
-                            or "dotnet.jit.compiled_il.size" or "dotnet.jit.compiled_methods" or "dotnet.jit.compilation.time"
-                            or "dotnet.monitor.lock_contentions" or "dotnet.thread_pool.thread.count"
-                            or "dotnet.thread_pool.work_item.count" or "dotnet.thread_pool.queue.length"
-                            or "dotnet.timer.count" or "dotnet.assembly.count" or "dotnet.process.cpu.count"
-                            => new MetricStreamConfiguration { CardinalityLimit = 1 },
-                        "dotnet.process.cpu.time" => new MetricStreamConfiguration { CardinalityLimit = 2 },
-                        "dotnet.gc.collections" or "dotnet.gc.last_collection.heap.size"
-                            or "dotnet.gc.last_collection.heap.fragmentation.size"
-                            => new MetricStreamConfiguration { CardinalityLimit = 5 },
-                        _ => null,
-                    };
-                }
-
-                if (instrument.Meter.Name != MeterName)
-                {
-                    return string.Equals(instrument.Meter.Name, MeterName, StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(instrument.Meter.Name, "System.Runtime", StringComparison.OrdinalIgnoreCase)
-                        || AspNetCoreMeters.Contains(instrument.Meter.Name, StringComparer.OrdinalIgnoreCase)
-                        ? null : MetricStreamConfiguration.Drop;
-                }
-                return instrument.Name switch
-                {
-                    "terrabase.clock.skew" or "terrabase.clock.hlc_ahead" or "terrabase.clock.observe_capped" or "terrabase.clock.local_writes_allowed" or "terrabase.clock.reported" or "terrabase.clock.steps" or "terrabase.clock.failed_rounds" or "terrabase.clock.agreeing_rounds" or "terrabase.clock.peers_answering" or "terrabase.clock.peers_agreeing" or "terrabase_pressure_cpu_util" or "terrabase_pressure_mem_util"
-                        or "terrabase_pressure_memory_used_bytes" or "terrabase_pressure_memory_budget_bytes"
-                        or "terrabase_pressure_disk_used_bytes" or "terrabase_pressure_disk_free_bytes"
-                        or "terrabase_pressure_disk_total_bytes" or "terrabase_pressure_request_rate"
-                        or "terrabase_pressure_p95_latency_ms" or "terrabase_pressure_data_bytes"
-                        or "terrabase_pressure_write_qps" or "terrabase_pressure_connections"
-                        or "terrabase_pressure_io_admitted_count"
-                        or "terrabase_pressure_local_ready"
-                        or "terrabase_pressure_sampled_at_seconds" or "terrabase_pressure_storage_sampled_at_seconds"
-                        or "terrabase_pressure_sample_window_seconds" or "terrabase_pressure_untracked_tenant_requests"
-                        or "terrabase_pressure_info"
-                        or "terrabase.memory.reserved" or "terrabase.stats.databases"
-                        or "terrabase.catalog.verified" or "terrabase.catalog.bucket_missing"
-                        or "terrabase.object_store.bucket_missing"
-                        or "terrabase.storage.admitted" or "terrabase.storage.running"
-                        or "terrabase.storage.rejected" or "terrabase.storage.unknown_files"
-                        or "terrabase.backup.failures" or "terrabase.backup.holes" or "terrabase.backup.holes_recorded" or "terrabase.backup.generations"
-                        or "terrabase.backup.stored" or "terrabase.backup.files" or "terrabase.backup.lag"
-                        or "terrabase.backup.last_success" or "terrabase.backup.bucket_snapshot"
-                        or "terrabase.backup.recovery_point_age" or "terrabase.backup.drill_last_success" or "terrabase.backup.drill_failed_files"
-                        or "terrabase.shape.reads" or "terrabase.shape.requests.waiting" or "terrabase.shape.flights.active"
-                        or "terrabase.shape.flights.started" or "terrabase.shape.seals" or "terrabase.shape.seals.duration" or "terrabase.shape.sealed_bytes"
-                        or "terrabase.shape.mirror.lag" or "terrabase.shape.redirects" or "terrabase.cdc.retained.rows"
-                        => new MetricStreamConfiguration { CardinalityLimit = 1 },
-                    "terrabase.auth.key_fetches" or "terrabase.stats.operations" or "terrabase.clock.stamps" => new MetricStreamConfiguration { CardinalityLimit = 2 },
-                    "terrabase_pressure_listener_request_rate" or "terrabase_pressure_listener_p95_latency_ms"
-                        or "terrabase_pressure_listener_requests" or "terrabase.stats.dropped"
-                        or "terrabase.stats.rollups" or "terrabase.backup.generation_restarts"
-                        => new MetricStreamConfiguration { CardinalityLimit = 3 },
-                    "terrabase.storage.reads" => new MetricStreamConfiguration { CardinalityLimit = 6 },
-                    "terrabase.query_shapes.dropped" or "terrabase.catalog.closed" => new MetricStreamConfiguration { CardinalityLimit = 7 },
-                    "terrabase_pressure_top_tenant_request_rate" or "terrabase_pressure_top_tenant_storage_bytes"
-                        or "terrabase.stats.top.operations"
-                        => new MetricStreamConfiguration { CardinalityLimit = 10 },
-                    "terrabase.regional_catalog.receipt_conflicts" => new MetricStreamConfiguration { CardinalityLimit = 2, TagKeys = ["kind"] },
-                    "terrabase.ownership.refresh_errors" => new MetricStreamConfiguration { CardinalityLimit = 2000, TagKeys = ["region"] },
-                    "terrabase_pressure_available" => new MetricStreamConfiguration { CardinalityLimit = 11 },
-                    _ => null,
-                };
-            });
-        });
         return services;
     }
-    public static IEndpointRouteBuilder MapTerraBaseMetrics(this IEndpointRouteBuilder endpoints)
+
+    public static WebApplication MapTerraBaseMetrics(this WebApplication app)
     {
-        endpoints.MapPrometheusScrapingEndpoint(MetricsPath).WithMetadata(ListenerMetadata.Metrics);
-        return endpoints;
+        ArgumentNullException.ThrowIfNull(app);
+        app.MapPrometheusScrapingEndpoint(MetricsPath).WithMetadata(ListenerMetadata.Metrics);
+        return app;
     }
+}
+
+public static class ServiceVersion
+{
+    public static string Value { get; } = Informational.Split('+')[0];
+
+    public static string? Revision { get; } = Informational.Split('+') is [_, var revision, ..] && revision.Length > 0 ? revision : null;
+
+    private static string Informational =>
+        typeof(ServiceVersion).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
 }

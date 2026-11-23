@@ -1,34 +1,38 @@
-using TerraBase.Errors;
-using TerraBase.Features.UserAuth;
+using TerraBase.Features.Callers;
+using TerraBase.Features.Catalog;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-internal sealed class ListOrganizationsEndpoint(IManagementService management) : EndpointWithoutRequest<IResult>
+internal sealed class ListOrganizationsEndpoint(CatalogStore catalog)
+    : Endpoint<PageInput, Result<PageBody<OrganizationBody>, Validation, Unauthorized, Unavailable>>
 {
     public override void Configure()
     {
         Get(ManagementRoute.Organizations);
         Name("listOrganizations");
-        Summary("Lists organizations");
-        Description(ManagementRoute.PageDescription + " " + ManagementRoute.IdentityDescription);
+        Summary("Lists the organizations the calling user created");
+        Description("Query: after (exclusive cursor), limit (1 to 100, default 20).");
         Tags(ManagementRoute.Tag);
-        Produces<ManagementPage<Organization>>();
-        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
-        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
-        RequireAuthorization(UserAuthExtensions.PolicyName);
+        AllowAnonymous();
         Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        ManagementRoute.CheckPage(HttpContext) switch
+    public override async ValueTask<Result<PageBody<OrganizationBody>, Validation, Unauthorized, Unavailable>> HandleAsync(
+        PageInput request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return (HttpContext.Caller, ManagementService.Limit(request.Limit)) switch
         {
-            Validation error => ErrorResponse.From(error),
-            PageQuery page => await management.ListOrganizationsAsync(ManagementRoute.UserId(HttpContext), page.After, page.Limit, cancellationToken) switch
+            (_, Validation invalid) => invalid,
+            (UserCaller user, int limit) => await catalog.ListOrganizationsAsync(user.UserId, request.After, limit, cancellationToken) switch
             {
-                ManagementPage<Organization> value => TypedResults.Ok(value),
-                Unavailable error => ErrorResponse.From(error),
+                CatalogPage<OrganizationRecord> page => new PageBody<OrganizationBody>([.. page.Items.Select(OrganizationBody.From)], page.Next),
+                Unavailable unavailable => unavailable,
             },
+            (AnonymousCaller or PeerCaller or ServiceCaller or ApiKeyCaller or ProjectCaller or EndUserCaller, int) =>
+                new Unauthorized("listing organizations needs a ts-auth access token for a user", "unauthorized"),
         };
+    }
 }

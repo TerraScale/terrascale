@@ -18,4 +18,7 @@ namespace TerraScale.Contracts;
 [JsonSerializable(typeof(SqlWsClientFrame))]
 [JsonSerializable(typeof(SqlWsServerFrame))]
 [JsonSerializable(typeof(ApiErrorEnvelope))]
+[JsonSerializable(typeof(AuthorizeRequest))]
+[JsonSerializable(typeof(CallerGrant))]
+[JsonSerializable(typeof(ChangefeedHttpItem))]
 public sealed partial class TerraScaleContractsJsonContext : JsonSerializerContext;

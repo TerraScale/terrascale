@@ -13,18 +13,14 @@
   </Folder>
   <Folder Name="/terrabase/">
     <Project Path="src/TerraBase/TerraBase.csproj" />
+    <Project Path="src/TerraBase.Cluster/TerraBase.Cluster.csproj" />
+    <Project Path="src/TerraBase.Continuity/TerraBase.Continuity.csproj" />
     <Project Path="src/TerraBase.Postgres/TerraBase.Postgres.csproj" />
     <Project Path="src/TerraBase.Storage/TerraBase.Storage.csproj" />
     <Project Path="src/TerraScale.Contracts/TerraScale.Contracts.csproj" />
     <Project Path="src/TerraScale.QuicRpc/TerraScale.QuicRpc.csproj" />
+    <Project Path="src/TerraScale.Platform/TerraScale.Platform.csproj" />
     <Project Path="src/TerraScale.TerraBase.Contracts/TerraScale.TerraBase.Contracts.csproj" />
-    <Project Path="src/TerraScale.TerraBase.Rpc/TerraScale.TerraBase.Rpc.csproj" />
-  </Folder>
-  <Folder Name="/vendor/">
-    <Project Path="src/vendor/SqlParserCS/SqlParserCS.csproj" />
-    <Project Path="src/vendor/Turso.Data.Sqlite/src/Turso.Raw/Turso.Raw.csproj" />
-    <Project Path="src/vendor/Turso.Data.Sqlite/src/Turso.Data/Turso.Data.csproj" />
-    <Project Path="src/vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/Turso.Data.Sqlite.csproj" />
   </Folder>
   <Folder Name="/benchmark/">
     <Project Path="benchmark/csharp/TerraScale.Benchmark.csproj" />

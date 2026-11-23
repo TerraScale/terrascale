@@ -1,57 +1,50 @@
-using TerraBase.Configuration;
-using TerraBase.Errors;
-using TerraBase.Features.ApiKeys;
-using TerraBase.Features.Catalog;
-using TerraBase.Features.Management;
+using TerraBase.Features.Callers;
 using TerraBase.Hosting;
-using TerraBase.Tenancy;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Rules;
 
-internal sealed class PutRulesEndpoint(IManagementService management, IRules rules, TerraBaseOptions options) : Endpoint<RulesSet, IResult>
+public readonly union RulesWriteResponse(RulesResponse, InvalidRulesResponse, StaleRulesResponse, PreconditionFailed, Validation, Unauthorized, Forbidden, NotFound, Unavailable);
+
+internal sealed class PutRulesEndpoint(RulesService rules) : Endpoint<RulesInput, RulesWriteResponse>
 {
     public override void Configure()
     {
         Put(RulesRoute.Rules);
-        Metadata(AnchoredRevocation.Instance);
         Name("putDatabaseRules");
         Summary("Deploys a database's rules");
-        Description("Replaces the whole rules set and answers the new version with its warnings. To deny every end-user request, deploy {\"tables\":{}}. "
-            + "The last 100 versions are kept." + RulesRoute.WriteDescription + RulesRoute.Description);
+        Description("Send If-Match: \"<current version>\", or If-None-Match: * when the database has no rules; a stale version answers 412 version_mismatch. "
+            + "Every condition is compiled against the current schema; problems answer 400 invalid_rules with details.problems.");
         Tags("Rules");
-        Produces<RulesBody>();
-        Produces<RulesErrorBody>(StatusCodes.Status400BadRequest);
-        Produces<ErrorBody>(StatusCodes.Status404NotFound);
-        Produces<ErrorBody>(StatusCodes.Status412PreconditionFailed);
-        Produces<ErrorBody>(StatusCodes.Status421MisdirectedRequest);
-        Produces<ErrorBody>(StatusCodes.Status428PreconditionRequired);
-        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
-        RequireAuthorization(ApiKeyScopes.DatabasesWrite);
-        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware());
+        AllowAnonymous();
+        Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<IResult> HandleAsync(RulesSet request, CancellationToken cancellationToken)
+    public override async ValueTask<RulesWriteResponse> HandleAsync(RulesInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        if (request.Tables is null || request.Tables.Values.Any(table => table is null))
+        if (request.Tables is null || request.Tables.Values.Any(static table => table is null))
         {
-            return ErrorResponse.From(new Validation("tables must be an object of table rules"));
+            return new Validation("the body is {\"tables\": {\"<table>\": {...}}}", "invalid_rules");
         }
 
-        if (RulesRoute.Precondition(HttpContext.Request) is not { } precondition)
-        {
-            return RulesRoute.Required();
-        }
-
-        if (await RulesRoute.ElsewhereAsync(HttpContext, management, options) is { } elsewhere)
-        {
-            return elsewhere;
-        }
-
-        var resolved = await RulesRoute.DatabaseAsync(HttpContext, management, cancellationToken);
-        return resolved is TenantContext database
-            ? RulesRoute.Deployed(HttpContext, await rules.DeployAsync(database, new RulesDeploy(request), precondition, ManagementRoute.UserId(HttpContext), cancellationToken))
-            : (IResult)resolved;
+        return RulesWrites.Map(await rules.DeployAsync(HttpContext.Caller, request.Project, request.Database, new RulesSet(request.Tables),
+            RulesRoute.IfMatch(HttpContext.Request), RulesRoute.IfNoneMatchAny(HttpContext.Request), cancellationToken));
     }
+}
+
+internal static class RulesWrites
+{
+    public static RulesWriteResponse Map(RulesDeployResponse response) => response switch
+    {
+        DeployedRules deployed => new RulesResponse(deployed.Rules, null),
+        InvalidRules invalid => new InvalidRulesResponse(invalid),
+        StaleRules stale => new StaleRulesResponse(stale),
+        PreconditionFailed failed => failed,
+        Validation invalid => invalid,
+        Unauthorized unauthorized => unauthorized,
+        Forbidden forbidden => forbidden,
+        NotFound missing => missing,
+        Unavailable unavailable => unavailable,
+    };
 }

@@ -1,31 +1,32 @@
-using TerraBase.Errors;
-using TerraBase.Features.UserAuth;
+using TerraBase.Features.Callers;
+using TerraBase.Features.Catalog;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-internal sealed class GetOrganizationEndpoint(IManagementService management) : EndpointWithoutRequest<IResult>
+internal sealed class GetOrganizationEndpoint(ManagementService management)
+    : Endpoint<RouteInput, Result<OrganizationBody, Unauthorized, NotFound, Unavailable>>
 {
     public override void Configure()
     {
         Get(ManagementRoute.Organization);
         Name("getOrganization");
-        Summary("Reads an organization");
-        Description(ManagementRoute.IdentityDescription);
+        Summary("Reads an organization the calling user owns");
         Tags(ManagementRoute.Tag);
-        Produces<Organization>();
-        Produces<ErrorBody>(StatusCodes.Status404NotFound);
-        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
-        RequireAuthorization(UserAuthExtensions.PolicyName);
+        AllowAnonymous();
         Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        await management.GetOrganizationAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), cancellationToken) switch
+    public override async ValueTask<Result<OrganizationBody, Unauthorized, NotFound, Unavailable>> HandleAsync(RouteInput request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return await management.OwnedOrganizationAsync(HttpContext.Caller, request.Organization, cancellationToken) switch
         {
-            Organization value => TypedResults.Ok(value),
-            NotFound error => ErrorResponse.From(error),
-            Unavailable error => ErrorResponse.From(error),
+            OrganizationRecord organization => OrganizationBody.From(organization),
+            Unauthorized unauthorized => unauthorized,
+            NotFound missing => missing,
+            Unavailable unavailable => unavailable,
         };
+    }
 }

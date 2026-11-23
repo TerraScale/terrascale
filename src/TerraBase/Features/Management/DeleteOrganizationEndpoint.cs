@@ -1,36 +1,37 @@
-using TerraBase.Errors;
+using TerraBase.Features.Callers;
 using TerraBase.Features.Catalog;
-using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-internal sealed class DeleteOrganizationEndpoint(IManagementService management) : EndpointWithoutRequest<IResult>
+internal sealed class DeleteOrganizationEndpoint(ManagementService management, CatalogStore catalog)
+    : Endpoint<RouteInput, Result<Done, Unauthorized, NotFound, Conflict, Unavailable>>
 {
     public override void Configure()
     {
         Delete(ManagementRoute.Organization);
-        Metadata(AnchoredRevocation.Instance);
         Name("deleteOrganization");
-        Summary("Deletes an organization");
-        Description("Needs the organization creator. Fails with 409 while the organization still has projects." + " " + ManagementRoute.IdentityDescription);
+        Summary("Deletes an organization without projects");
         Tags(ManagementRoute.Tag);
-        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
-        Produces<ErrorBody>(StatusCodes.Status404NotFound);
-        Produces<ErrorBody>(StatusCodes.Status409Conflict);
-        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
-        RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management, new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
+        AllowAnonymous();
+        Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        await management.DeleteOrganizationAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), cancellationToken) switch
+    public override async ValueTask<Result<Done, Unauthorized, NotFound, Conflict, Unavailable>> HandleAsync(RouteInput request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return await management.OwnedOrganizationAsync(HttpContext.Caller, request.Organization, cancellationToken) switch
         {
-            Done => TypedResults.NoContent(),
-            NotFound error => ErrorResponse.From(error),
-            Forbidden error => ErrorResponse.From(error),
-            Conflict error => ErrorResponse.From(error),
-            Unavailable error => ErrorResponse.From(error),
+            OrganizationRecord organization => await catalog.DeleteOrganizationAsync(organization.Id, cancellationToken) switch
+            {
+                Done done => done,
+                Conflict conflict => conflict,
+                Unavailable unavailable => unavailable,
+            },
+            Unauthorized unauthorized => unauthorized,
+            NotFound missing => missing,
+            Unavailable unavailable => unavailable,
         };
+    }
 }

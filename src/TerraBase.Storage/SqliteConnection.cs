@@ -310,8 +310,9 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         return SqliteStatus.Success;
     }
 
-    public SqliteStatus StepUser(nint statement, out SqlResultSet result)
+    public SqliteStatus StepUser(nint statement, out SqlResultSet result, CancellationToken cancellationToken)
     {
+        using var interrupt = cancellationToken.Register(Interrupt);
         var columnCount = SqliteNative.ColumnCount(statement);
         var columns = new SqlColumn[columnCount];
         for (var index = 0; index < columnCount; index++)
@@ -327,6 +328,12 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         var status = SqliteStatus.Success;
         while (true)
         {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                status = Canceled;
+                break;
+            }
+
             var rc = SqliteNative.Step(statement);
             if (rc == SqliteNative.Done)
             {
@@ -416,6 +423,8 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
             : new SqliteStatus(SqliteNative.ExtendedErrCode(destination.Handle), SqliteNative.ReadUtf8(SqliteNative.ErrMsg(destination.Handle)));
     }
 
+    private void Interrupt() => SqliteNative.InterruptQuery(Handle);
+
     public void Dispose()
     {
         if (_db == 0)
@@ -442,8 +451,15 @@ internal sealed unsafe partial class SqliteConnection : IDisposable
         }
     }
 
+    private static readonly SqliteStatus Canceled = new(SqliteNative.Interrupt, "canceling statement due to user request");
+
     internal SqliteStatus Status(int rc)
     {
+        if ((rc & 0xFF) == SqliteNative.Interrupt)
+        {
+            return Canceled;
+        }
+
         var extended = SqliteNative.ExtendedErrCode(_db);
         var code = (extended & 0xFF) == (rc & 0xFF) ? extended : rc;
         return new SqliteStatus(code, SqliteNative.ReadUtf8(SqliteNative.ErrMsg(_db)));

@@ -288,7 +288,7 @@ internal sealed partial class DatabaseSession
             return false;
         }
 
-        var (failure, context, commit) = RunLocal(local.Request, ref nextSequence, ref epoch);
+        var (failure, context, commit) = RunLocal(local.Request, local.CancellationToken, ref nextSequence, ref epoch);
         if (failure is { } outcome)
         {
             local.Completion.TrySetResult(outcome);
@@ -307,14 +307,14 @@ internal sealed partial class DatabaseSession
             return false;
         }
 
-        var (outcome, schemaTouched) = RunStage(stage.Request);
+        var (outcome, schemaTouched) = RunStage(stage.Request, stage.CancellationToken);
         stage.Completion.TrySetResult(outcome);
         return schemaTouched;
     }
 
-    private (Result<SqlWriteResult, SqlError, StrongRequired, SchemaMismatch, StorageBusy, RequestTimeout>? Failure, WriteContext Context, CommitMetadata? Commit) RunLocal(SqlStatementRequest request, ref long nextSequence, ref ulong epoch)
+    private (Result<SqlWriteResult, SqlError, StrongRequired, SchemaMismatch, StorageBusy, RequestTimeout>? Failure, WriteContext Context, CommitMetadata? Commit) RunLocal(SqlStatementRequest request, CancellationToken cancellationToken, ref long nextSequence, ref ulong epoch)
     {
-        var context = new WriteContext(request.Mode, analyzeReads: false);
+        var context = new WriteContext(request.Mode, analyzeReads: false, cancellationToken);
         var savepoint = _writer.Exec(ItemSavepoint);
         if (!savepoint.IsOk)
         {
@@ -349,9 +349,9 @@ internal sealed partial class DatabaseSession
         return released.IsOk ? (null, context, commit) : (released.ToSqlError(-1), context, null);
     }
 
-    private (Result<StagedWrite, SqlError, SchemaMismatch, StorageBusy, RequestTimeout> Outcome, bool SchemaTouched) RunStage(SqlStatementRequest request)
+    private (Result<StagedWrite, SqlError, SchemaMismatch, StorageBusy, RequestTimeout> Outcome, bool SchemaTouched) RunStage(SqlStatementRequest request, CancellationToken cancellationToken)
     {
-        var context = new WriteContext(ConsistencyMode.Strong, analyzeReads: true);
+        var context = new WriteContext(ConsistencyMode.Strong, analyzeReads: true, cancellationToken);
         var savepoint = _writer.Exec(ItemSavepoint);
         if (!savepoint.IsOk)
         {
@@ -399,7 +399,7 @@ internal sealed partial class DatabaseSession
             return transaction.Started.TrySetResult(begun.ToBusy());
         }
 
-        var context = new WriteContext(transaction.Options.Mode, analyzeReads: transaction.Options.Mode == ConsistencyMode.Strong);
+        var context = new WriteContext(transaction.Options.Mode, analyzeReads: transaction.Options.Mode == ConsistencyMode.Strong, CancellationToken.None);
         _capture.Begin();
         Volatile.Write(ref _activeTransaction, transaction);
         transaction.Started.TrySetResult(new Done());
@@ -423,6 +423,7 @@ internal sealed partial class DatabaseSession
 
     private bool ExecuteInTransaction(WriteContext context, WriteTransaction.ExecuteCommand execute)
     {
+        context.CancellationToken = execute.CancellationToken;
         Result<SqlResultSet, SqlError, StorageBusy, RequestTimeout> outcome = ExecuteStatement(context, execute.Statement, execute.Index) switch
         {
             SqlResultSet result => result,

@@ -1,13 +1,9 @@
-using System.Collections;
-using System.Collections.Frozen;
 using System.Diagnostics.CodeAnalysis;
-using System.Globalization;
-using System.Security;
 using System.Security.Cryptography;
 
 namespace TerraBase.Configuration;
 
-public sealed class TerraBaseConfigurationException(string message) : Exception(message);
+public readonly union OptionsResult(TerraBaseOptions, ConfigurationError);
 
 public sealed record TerraBaseOptions
 {
@@ -19,27 +15,24 @@ public sealed record TerraBaseOptions
 
     public const int DefaultPostgresPort = 5432;
 
-    public const int DefaultShutdownGraceSeconds = 10;
-
-    public const int DefaultReadinessCacheSeconds = 1;
+    public const int DefaultQuicPort = 8443;
 
     public const int DefaultQueryBudgetSeconds = 5;
 
-    private const int MaxQueryBudgetSeconds = 600;
-
     public const string DefaultDataDirectory = "data";
 
-    private const string EnvironmentPrefix = "TERRABASE_";
+    public const string LocalIdentity = "local";
 
-    private const int DefaultStorageQueue = 1024;
     internal const long MinMemoryBudget = 1024 * 1024;
 
-    private static readonly FrozenSet<string> Keys = FrozenSet.Create(
-        StringComparer.Ordinal,
-        ["port", "internal-port", "metrics-port", "postgres-port", "data-directory", "memory-budget", "auth-issuer", "auth-audience", "query-budget-seconds", "storage-threads", "nats-token", "atlas-url", "atlas-publish-key-file", .. BackupSettings.Keys, .. FileStorageSettings.Keys, .. ShapeStorageSettings.Keys]);
+    private const int MaxQueryBudgetSeconds = 600;
 
-    private static readonly FrozenSet<string> HostArguments = FrozenSet.Create(
-        StringComparer.Ordinal, "environment", "applicationName", "contentRoot");
+    private static readonly string[] Keys =
+    [
+        "port", "internal-port", "metrics-port", "postgres-port", "quic-port", "data-directory", "memory-budget", "auth-issuer", "auth-audience",
+        "query-budget-seconds", "storage-threads", "atlas-url", "atlas-publish-key-file", "control-key-file", "master-key", "master-keys",
+        .. BackupSettings.Keys,
+    ];
 
     public int Port { get; init; } = DefaultPort;
 
@@ -49,7 +42,11 @@ public sealed record TerraBaseOptions
 
     public int PostgresPort { get; init; } = DefaultPostgresPort;
 
+    public int QuicPort { get; init; } = DefaultQuicPort;
+
     public required string DataDirectory { get; init; }
+
+    public required string EnvironmentName { get; init; }
 
     public string Region { get; init; } = LocalIdentity;
 
@@ -57,343 +54,117 @@ public sealed record TerraBaseOptions
 
     public string? PeersFile { get; init; }
 
-    private const string LocalIdentity = "local";
-
-    internal static bool IsRegion([NotNullWhen(true)] string? region) => region is { Length: >= 1 and <= 63 } && region[0] is >= 'a' and <= 'z'
-        && region[^1] != '-' && region.All(character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
-
-    internal static bool IsMachineId([NotNullWhen(true)] string? id) => id is { Length: >= 1 and <= 63 } && id[0] != '-' && id[^1] != '-'
-        && id.All(character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
-
     public string? AuthIssuer { get; init; }
 
     public IReadOnlyList<string> AuthAudiences { get; init; } = [];
 
-    public TimeSpan ShutdownGrace { get; } = TimeSpan.FromSeconds(DefaultShutdownGraceSeconds);
+    public TimeSpan QueryBudget { get; init; } = TimeSpan.FromSeconds(DefaultQueryBudgetSeconds);
 
-    public TimeSpan ReadinessCacheTtl { get; } = TimeSpan.FromSeconds(DefaultReadinessCacheSeconds);
+    public required long MemoryBudget { get; init; }
 
-    public TimeSpan QueryBudget
-    {
-        get;
-        init => field = value >= TimeSpan.FromSeconds(1) && value <= TimeSpan.FromSeconds(MaxQueryBudgetSeconds)
-            ? value
-            : throw new TerraBaseConfigurationException($"query-budget-seconds must be between 1 and {MaxQueryBudgetSeconds} seconds");
-    } = TimeSpan.FromSeconds(DefaultQueryBudgetSeconds);
-
-    public required long MemoryBudget
-    {
-        get;
-        init => field = ValidateInteger(value, "memory-budget", MinMemoryBudget, long.MaxValue);
-    }
-
-    public required int StorageThreads
-    {
-        get;
-        init => field = (int)ValidateInteger(value, "storage-threads", 1, 1024);
-    }
-
-    public int StorageQueue { get; init; } = DefaultStorageQueue;
+    public required int StorageThreads { get; init; }
 
     public BackupSettings? Backup { get; init; }
 
-    public FileStorageSettings? FileStorage { get; init; }
-
-    internal ShapeStorageSettings? ShapeStorage { get; init; }
     public KeyringSettings? DatabaseKeyring { get; init; }
-
-    public Uri? NatsUrl { get; init; }
-
-    public string? NatsToken { get; init; }
 
     public Uri? AtlasUrl { get; init; }
 
-    public string? AtlasPublishKeyFile { get; init; }
-
     internal ECDsa? AtlasPublishKey { get; init; }
 
-    public static string EnvironmentName(IReadOnlyList<string> args)
+    internal ECDsa? ControlSnapshotKey { get; init; }
+
+    public bool IsDevelopment => EnvironmentName == Environments.Development;
+
+    public string StorageDirectory => Path.Combine(DataDirectory, "databases");
+
+    public static string ResolveEnvironmentName(IReadOnlyList<string> args)
     {
         ArgumentNullException.ThrowIfNull(args);
-        return args.LastOrDefault(argument => argument.StartsWith("--environment=", StringComparison.Ordinal))?[14..]
+        return args.LastOrDefault(static argument => argument.StartsWith("--environment=", StringComparison.Ordinal))?[14..]
             ?? Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT")
             ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
             ?? Environments.Production;
     }
 
-    public static void ReadSecretFiles()
-    {
-        foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
-        {
-            if (entry.Key is string key && key.EndsWith("_FILE", StringComparison.Ordinal) && entry.Value is string { Length: > 0 } path
-                && key[..^"_FILE".Length] is var name
-                && (name.StartsWith(EnvironmentPrefix, StringComparison.Ordinal) || BackupSettings.TigrisVariables.Any(variable => variable.Variable == name)))
-            {
-                try
-                {
-                    Environment.SetEnvironmentVariable(name, File.ReadAllText(path).TrimEnd('\r', '\n'));
-                }
-                catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
-                {
-                    if (name.StartsWith("TERRABASE_FILES_S3_", StringComparison.Ordinal))
-                    {
-                        Environment.SetEnvironmentVariable(name, null);
-                        continue;
-                    }
-                    throw new TerraBaseConfigurationException($"{key} must name a readable file");
-                }
-            }
-        }
-    }
+    public static bool IsRegion([NotNullWhen(true)] string? region) => region is { Length: >= 1 and <= 63 } && region[0] is >= 'a' and <= 'z'
+        && region[^1] != '-' && region.All(static character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
 
-    public static TerraBaseOptions FromProcess(IReadOnlyList<string> args)
+    public static bool IsMachineId([NotNullWhen(true)] string? id) => id is { Length: >= 1 and <= 63 } && id[0] != '-' && id[^1] != '-'
+        && id.All(static character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
+
+    public static OptionsResult FromProcess(IReadOnlyList<string> args)
     {
         ArgumentNullException.ThrowIfNull(args);
-        var values = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var key in Keys)
+        if (SettingValues.ReadSecretFiles(BackupSettings.TigrisVariables) is { } unreadable)
         {
-            var value = Environment.GetEnvironmentVariable(EnvironmentPrefix + key.Replace('-', '_').ToUpperInvariant());
-            if (!string.IsNullOrEmpty(value))
-            {
-                values[key] = value;
-            }
+            return unreadable;
         }
 
-        if (BackupSettings.TigrisVariables.All(variable => !string.IsNullOrEmpty(Environment.GetEnvironmentVariable(variable.Variable))))
+        var environmentName = ResolveEnvironmentName(args);
+        var values = SettingValues.FromProcess(Keys, BackupSettings.TigrisVariables, args);
+        var development = environmentName == Environments.Development;
+        var (region, machineId, peersFile) = ClusterIdentity(values, development);
+        var dataDirectory = DataDirectoryOf(values);
+        var (issuer, audiences) = Auth(values);
+        var keyring = KeyringSettings.Parse(values);
+        var options = new TerraBaseOptions
         {
-            foreach (var (variable, key) in BackupSettings.TigrisVariables)
-            {
-                values[key] = Environment.GetEnvironmentVariable(variable)!;
-            }
-        }
-
-        foreach (var arg in args)
-        {
-            var separator = arg.IndexOf('=', StringComparison.Ordinal);
-            if (!arg.StartsWith("--", StringComparison.Ordinal) || separator < 3)
-            {
-                throw new TerraBaseConfigurationException($"unrecognized argument '{arg.Split('=')[0]}'; use --name=value");
-            }
-
-            var key = arg[2..separator];
-            var value = arg[(separator + 1)..];
-            if (HostArguments.Contains(key))
-            {
-                continue;
-            }
-
-            if (value.Length == 0)
-            {
-                values.Remove(key);
-            }
-            else
-            {
-                values[key] = value;
-            }
-        }
-
-        var outsideDevelopment = EnvironmentName(args) != Environments.Development;
-        if (!outsideDevelopment && !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("TS_PEERS_FILE")))
-        {
-            throw new TerraBaseConfigurationException("Development refuses TS_PEERS_FILE");
-        }
-
-        var options = FromValues(values, outsideDevelopment);
-        if (options.Backup is null && outsideDevelopment)
-        {
-            throw new TerraBaseConfigurationException($"backup requires {string.Join(", ", BackupSettings.TigrisVariables.Select(variable => variable.Variable))} (attach the Tigris bucket) and TERRABASE_MASTER_KEY or TERRABASE_MASTER_KEYS_FILE outside Development");
-        }
-
-        return options;
-    }
-
-    public static TerraBaseOptions FromValues(IReadOnlyDictionary<string, string> values, bool production = false)
-    {
-        ArgumentNullException.ThrowIfNull(values);
-        foreach (var key in values.Keys)
-        {
-            if (!Keys.Contains(key))
-            {
-                throw new TerraBaseConfigurationException($"unknown setting '{key}'");
-            }
-        }
-
-        var (region, machineId, peersFile) = ClusterIdentity();
-        var dataDirectory = values.GetValueOrDefault("data-directory", DefaultDataDirectory);
-        if (string.IsNullOrWhiteSpace(dataDirectory))
-        {
-            throw new TerraBaseConfigurationException("data-directory must not be empty");
-        }
-
-        try
-        {
-            dataDirectory = Path.GetFullPath(dataDirectory);
-        }
-        catch (Exception error) when (error is ArgumentException or NotSupportedException or PathTooLongException or SecurityException)
-        {
-            throw new TerraBaseConfigurationException("data-directory must be a valid path");
-        }
-
-        var (authIssuer, authAudiences) = ParseAuth(values);
-        if (production && authIssuer is null)
-        {
-            throw new TerraBaseConfigurationException(
-                "outside Development, TERRABASE_AUTH_ISSUER and TERRABASE_AUTH_AUDIENCE must name the ts-auth of this environment");
-        }
-
-        return new TerraBaseOptions
-        {
-            Port = ParsePort(values, "port") ?? DefaultPort,
-            InternalPort = ParsePort(values, "internal-port") ?? DefaultInternalPort,
-            MetricsPort = ParsePort(values, "metrics-port") ?? DefaultMetricsPort,
-            PostgresPort = ParsePort(values, "postgres-port") ?? DefaultPostgresPort,
+            Port = values.Port("port", DefaultPort),
+            InternalPort = values.Port("internal-port", DefaultInternalPort),
+            MetricsPort = values.Port("metrics-port", DefaultMetricsPort),
+            PostgresPort = values.Port("postgres-port", DefaultPostgresPort),
+            QuicPort = values.Port("quic-port", DefaultQuicPort),
             DataDirectory = dataDirectory,
+            EnvironmentName = environmentName,
             Region = region,
             MachineId = machineId,
             PeersFile = peersFile,
-            MemoryBudget = ParseInteger(values, "memory-budget", MinMemoryBudget, long.MaxValue) ?? DefaultMemoryBudget(),
-            StorageThreads = (int)(ParseInteger(values, "storage-threads", 1, 1024) ?? Math.Clamp(Environment.ProcessorCount, 1, 1024)),
-            AuthIssuer = authIssuer,
-            AuthAudiences = authAudiences,
-            QueryBudget = TimeSpan.FromSeconds(ParseInteger(values, "query-budget-seconds", 1, MaxQueryBudgetSeconds) ?? DefaultQueryBudgetSeconds),
+            AuthIssuer = issuer,
+            AuthAudiences = audiences,
+            QueryBudget = TimeSpan.FromSeconds(values.Integer("query-budget-seconds", 1, MaxQueryBudgetSeconds, DefaultQueryBudgetSeconds)),
+            MemoryBudget = values.Integer("memory-budget", MinMemoryBudget, long.MaxValue, DefaultMemoryBudget()),
+            StorageThreads = (int)values.Integer("storage-threads", 1, 1024, Math.Clamp(Environment.ProcessorCount, 1, 1024)),
             Backup = BackupSettings.Parse(values),
-            FileStorage = FileStorageSettings.Parse(values),
-            ShapeStorage = ShapeStorageSettings.Parse(values),
-            DatabaseKeyring = KeyringSettings.Parse(values),
-            NatsUrl = NatsAddress(),
-            NatsToken = values.TryGetValue("nats-token", out var natsToken) ? ParseNatsToken(natsToken) : null,
-            AtlasUrl = ParseAtlasUrl(values, out var atlasKeyFile, out var atlasKey),
-            AtlasPublishKeyFile = atlasKeyFile,
-            AtlasPublishKey = atlasKey,
+            DatabaseKeyring = keyring,
+            AtlasUrl = ParseAtlasUrl(values),
+            AtlasPublishKey = values.Get("atlas-publish-key-file") is { } atlasKey ? PrivateKey(values, atlasKey, "TERRABASE_ATLAS_PUBLISH_KEY_FILE") : null,
+            ControlSnapshotKey = values.Get("control-key-file") is { } controlKey ? PublicKey(values, controlKey) : null,
         };
-    }
 
-    private static Uri? ParseAtlasUrl(IReadOnlyDictionary<string, string> values, out string? keyFile, out ECDsa? key)
-    {
-        var url = values.GetValueOrDefault("atlas-url");
-        keyFile = values.GetValueOrDefault("atlas-publish-key-file");
-        key = null;
-        if (url is null && keyFile is null)
+        if (!development && issuer is null)
         {
-            return null;
+            values.Fail("outside Development, TERRABASE_AUTH_ISSUER and TERRABASE_AUTH_AUDIENCE must name the ts-auth of this environment");
         }
 
-        if (url is null || keyFile is null)
+        if (!development && keyring is null)
         {
-            throw new TerraBaseConfigurationException("TERRABASE_ATLAS_URL and TERRABASE_ATLAS_PUBLISH_KEY_FILE must be set together");
+            values.Fail("outside Development, TERRABASE_MASTER_KEY or TERRABASE_MASTER_KEYS_FILE must hold the database master keys");
         }
 
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var address)
-            || (address.Scheme != Uri.UriSchemeHttps && (address.Scheme != Uri.UriSchemeHttp || !address.IsLoopback))
-            || address.UserInfo.Length > 0 || address.Query.Length > 0 || address.Fragment.Length > 0)
+        if ((options.AtlasUrl is null) != (options.AtlasPublishKey is null))
         {
-            throw new TerraBaseConfigurationException("atlas-url must be an absolute https URL, or http on loopback, without user information, query or fragment");
+            values.Fail("TERRABASE_ATLAS_URL and TERRABASE_ATLAS_PUBLISH_KEY_FILE must be set together");
         }
 
-        key = ECDsa.Create();
-        try
-        {
-            key.ImportFromPem(File.ReadAllText(keyFile));
-            if (key.ExportParameters(includePrivateParameters: true).Curve.Oid.Value != "1.2.840.10045.3.1.7")
-            {
-                throw new CryptographicException("the Atlas signing key must use P-256");
-            }
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or InvalidOperationException or CryptographicException)
-        {
-            key.Dispose();
-            key = null;
-            throw new TerraBaseConfigurationException($"TERRABASE_ATLAS_PUBLISH_KEY_FILE must name a readable PKCS#8 PEM P-256 private key ({error.GetType().Name})");
-        }
-
-        return address;
+        return values.Errors.Count > 0 ? new ConfigurationError(values.Errors[0]) : options;
     }
 
     private static long DefaultMemoryBudget() => Math.Max(MinMemoryBudget, GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / 4);
 
-    private static long? ParseInteger(IReadOnlyDictionary<string, string> values, string key, long min, long max)
+    private static string DataDirectoryOf(SettingValues values)
     {
-        if (!values.TryGetValue(key, out var raw))
+        var configured = values.Get("data-directory") ?? DefaultDataDirectory;
+        if (string.IsNullOrWhiteSpace(configured) || configured.Any(char.IsControl) || configured.Contains('\0', StringComparison.Ordinal))
         {
-            return null;
+            values.Fail("data-directory must be a valid path");
+            return DefaultDataDirectory;
         }
 
-        if (!long.TryParse(raw, NumberStyles.None, CultureInfo.InvariantCulture, out var value))
-        {
-            throw new TerraBaseConfigurationException($"{key} must be an integer between {min} and {max}");
-        }
-
-        return ValidateInteger(value, key, min, max);
+        return Path.GetFullPath(configured);
     }
 
-    private static long ValidateInteger(long value, string key, long min, long max) =>
-        value >= min && value <= max
-            ? value
-            : throw new TerraBaseConfigurationException($"{key} must be an integer between {min} and {max}");
-
-    private static int? ParsePort(IReadOnlyDictionary<string, string> values, string key)
-    {
-        if (!values.TryGetValue(key, out var raw))
-        {
-            return null;
-        }
-
-        if (!int.TryParse(raw, NumberStyles.None, CultureInfo.InvariantCulture, out var port) || port > ushort.MaxValue)
-        {
-            throw new TerraBaseConfigurationException($"{key} must be an integer between 0 and 65535");
-        }
-
-        return port;
-    }
-
-    private static (string? Issuer, string[] Audiences) ParseAuth(IReadOnlyDictionary<string, string> values)
-    {
-        var issuer = values.GetValueOrDefault("auth-issuer");
-        var audience = values.GetValueOrDefault("auth-audience");
-        if (issuer is null && audience is null)
-        {
-            return (null, []);
-        }
-
-        if (issuer is null || audience is null)
-        {
-            throw new TerraBaseConfigurationException("auth-issuer and auth-audience must be set together");
-        }
-
-        if (issuer.Any(character => char.IsWhiteSpace(character) || char.IsControl(character))
-            || !Uri.TryCreate(issuer, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps
-            || uri.UserInfo.Length > 0 || uri.Query.Length > 0 || uri.Fragment.Length > 0)
-        {
-            throw new TerraBaseConfigurationException(
-                "auth-issuer must be an absolute https URL without whitespace, user information, query or fragment");
-        }
-
-        var audiences = audience.Split(',', StringSplitOptions.TrimEntries);
-        return audience.Any(char.IsControl) || audiences.Any(value => value.Length == 0)
-            ? throw new TerraBaseConfigurationException("auth-audience must be a comma-separated list of non-empty audiences without control characters")
-            : (issuer, audiences);
-    }
-
-    private static Uri? NatsAddress()
-    {
-        var value = Environment.GetEnvironmentVariable("TS_NATS_URL");
-        if (string.IsNullOrEmpty(value))
-        {
-            return null;
-        }
-
-        return Uri.TryCreate(value, UriKind.Absolute, out var address) && address.Scheme is "nats" or "tls" && address.Port > 0
-            && address.UserInfo.Length == 0 && address.PathAndQuery == "/" && address.Fragment.Length == 0
-            ? address
-            : throw new TerraBaseConfigurationException("TS_NATS_URL must be a nats:// or tls:// address with a port and no credentials or path");
-    }
-
-    private static string ParseNatsToken(string value) =>
-        value.Length is >= 16 and <= 512 && value.All(character => character is > ' ' and < (char)127)
-            ? value
-            : throw new TerraBaseConfigurationException("nats-token must be 16 to 512 printable ASCII characters");
-
-    private static (string Region, string MachineId, string? PeersFile) ClusterIdentity()
+    private static (string Region, string MachineId, string? PeersFile) ClusterIdentity(SettingValues values, bool development)
     {
         var region = Environment.GetEnvironmentVariable("TS_REGION");
         var node = Environment.GetEnvironmentVariable("TS_NODE");
@@ -403,19 +174,128 @@ public sealed record TerraBaseOptions
             return (LocalIdentity, LocalIdentity, null);
         }
 
-        if (!IsRegion(region) || !IsMachineId(node) || string.IsNullOrEmpty(peersFile) || !Path.IsPathFullyQualified(peersFile))
+        if (development && !string.IsNullOrEmpty(peersFile))
         {
-            throw new TerraBaseConfigurationException("TS_REGION, TS_NODE and TS_PEERS_FILE must name a region, a node and an absolute path together");
+            values.Fail("Development refuses TS_PEERS_FILE");
+            return (LocalIdentity, LocalIdentity, null);
         }
 
-        return (region, node, peersFile);
+        if (!IsRegion(region) || !IsMachineId(node) || (!development && (string.IsNullOrEmpty(peersFile) || !Path.IsPathFullyQualified(peersFile))))
+        {
+            values.Fail("TS_REGION, TS_NODE and TS_PEERS_FILE must name a region, a node and an absolute path together");
+            return (LocalIdentity, LocalIdentity, null);
+        }
+
+        return (region, node, string.IsNullOrEmpty(peersFile) ? null : peersFile);
     }
 
-    internal static bool TryParsePeerAddress(string value, [NotNullWhen(true)] out Uri? address) =>
-        Uri.TryCreate(value, UriKind.Absolute, out address)
-        && address.Scheme == Uri.UriSchemeHttp
-        && address.Port != 0
-        && address.PathAndQuery == "/"
-        && address.Fragment.Length == 0
-        && address.UserInfo.Length == 0;
+    private static (string? Issuer, IReadOnlyList<string> Audiences) Auth(SettingValues values)
+    {
+        var issuer = values.Get("auth-issuer");
+        var audience = values.Get("auth-audience");
+        if (issuer is null && audience is null)
+        {
+            return (null, []);
+        }
+
+        if (issuer is null || audience is null)
+        {
+            values.Fail("auth-issuer and auth-audience must be set together");
+            return (null, []);
+        }
+
+        if (issuer.Any(static character => char.IsWhiteSpace(character) || char.IsControl(character))
+            || !Uri.TryCreate(issuer, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps
+            || uri.UserInfo.Length > 0 || uri.Query.Length > 0 || uri.Fragment.Length > 0)
+        {
+            values.Fail("auth-issuer must be an absolute https URL without whitespace, user information, query or fragment");
+            return (null, []);
+        }
+
+        var audiences = audience.Split(',', StringSplitOptions.TrimEntries);
+        if (audience.Any(char.IsControl) || audiences.Any(static value => value.Length == 0))
+        {
+            values.Fail("auth-audience must be a comma-separated list of non-empty audiences without control characters");
+            return (null, []);
+        }
+
+        return (issuer, audiences);
+    }
+
+    private static Uri? ParseAtlasUrl(SettingValues values)
+    {
+        if (values.Get("atlas-url") is not { } url)
+        {
+            return null;
+        }
+
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var address)
+            || (address.Scheme != Uri.UriSchemeHttps && (address.Scheme != Uri.UriSchemeHttp || !address.IsLoopback))
+            || address.UserInfo.Length > 0 || address.Query.Length > 0 || address.Fragment.Length > 0)
+        {
+            values.Fail("atlas-url must be an absolute https URL, or http on loopback, without user information, query or fragment");
+            return null;
+        }
+
+        return address;
+    }
+
+    private static ECDsa? PrivateKey(SettingValues values, string path, string variable)
+    {
+        if (FileText.Read(path) is not { } pem || Pem.ImportP256(pem, requirePrivate: true) is not { } key)
+        {
+            values.Fail(variable + " must name a readable PKCS#8 PEM P-256 private key");
+            return null;
+        }
+
+        return key;
+    }
+
+    private static ECDsa? PublicKey(SettingValues values, string path)
+    {
+        if (FileText.Read(path) is not { } pem || Pem.ImportP256(pem, requirePrivate: false) is not { } key)
+        {
+            values.Fail("TERRABASE_CONTROL_KEY_FILE must name a readable PEM P-256 public key");
+            return null;
+        }
+
+        return key;
+    }
+}
+
+internal static class Pem
+{
+    private const string P256Oid = "1.2.840.10045.3.1.7";
+
+    public static ECDsa? ImportP256(string pem, bool requirePrivate)
+    {
+        var key = ECDsa.Create();
+        try
+        {
+            key.ImportFromPem(pem);
+            var parameters = key.ExportParameters(includePrivateParameters: false);
+            if (parameters.Curve.Oid.Value == P256Oid && (!requirePrivate || HasPrivate(key)))
+            {
+                return key;
+            }
+        }
+        catch (Exception error) when (error is ArgumentException or CryptographicException)
+        {
+        }
+
+        key.Dispose();
+        return null;
+    }
+
+    private static bool HasPrivate(ECDsa key)
+    {
+        try
+        {
+            return key.ExportParameters(includePrivateParameters: true).D is { Length: > 0 };
+        }
+        catch (CryptographicException)
+        {
+            return false;
+        }
+    }
 }

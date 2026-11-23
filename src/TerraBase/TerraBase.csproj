@@ -1,9 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
     <RootNamespace>TerraBase</RootNamespace>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>terrabase</AssemblyName>
-    <Version>0.1.0</Version>
+    <Version>2.0.0</Version>
     <SourceRevisionId Condition="'$(TERRABASE_REVISION)' != ''">$(TERRABASE_REVISION)</SourceRevisionId>
     <PublishSingleFile>true</PublishSingleFile>
     <PublishDocumentationFile>false</PublishDocumentationFile>
@@ -24,17 +23,9 @@
     <PackageReference Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" />
     <PackageReference Include="AWSSDK.S3" />
-    <PackageReference Include="Cronos" />
-    <PackageReference Include="Jint" />
     <PackageReference Include="JsonSchema.Net" />
     <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" />
-    <PackageReference Include="NATS.Client.Core" />
-    <PackageReference Include="NATS.Client.JetStream" />
-    <PackageReference Include="NATS.Client.KeyValueStore" />
-    <PackageReference Include="K4os.Compression.LZ4.Streams" />
-    <PackageReference Include="NativeCompressions" />
     <PackageReference Include="Ulid" />
-    <PackageReference Include="NUlid" />
     <PackageReference Include="ZLogger" />
     <PackageReference Include="ZString" />
   </ItemGroup>
@@ -42,22 +33,21 @@
   <ItemGroup>
     <ProjectReference Include="../../sdk/dotnet/src/TerraScale.DotNet/TerraScale.DotNet.csproj" />
     <ProjectReference Include="../TerraScale.Logging/TerraScale.Logging.csproj" />
-    <ProjectReference Include="../TerraScale.TerraBase.Rpc/TerraScale.TerraBase.Rpc.csproj" />
+    <ProjectReference Include="../TerraScale.Contracts/TerraScale.Contracts.csproj" />
+    <ProjectReference Include="../TerraScale.QuicRpc/TerraScale.QuicRpc.csproj" />
+    <ProjectReference Include="../TerraBase.Storage/TerraBase.Storage.csproj" />
+    <ProjectReference Include="../TerraBase.Postgres/TerraBase.Postgres.csproj" />
+    <ProjectReference Include="../TerraBase.Cluster/TerraBase.Cluster.csproj" />
+    <ProjectReference Include="../TerraBase.Continuity/TerraBase.Continuity.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="TerraScale.Results" />
+    <Using Include="TerraScale.Contracts.Consistency" />
+    <Using Include="TerraScale.Contracts.Storage" />
   </ItemGroup>
 
   <ItemGroup>
     <None Update="THIRD-PARTY-NOTICES" CopyToPublishDirectory="PreserveNewest" />
-    <EmbeddedResource Include="../../sites/landing/static/pricing.json" LogicalName="TerraBase.pricing.json" />
-  </ItemGroup>
-  <ItemGroup>
-    <PackageReference Include="Google.Protobuf" />
-    <PackageReference Include="Grpc.Net.Client" />
-    <PackageReference Include="Grpc.Tools" PrivateAssets="all" />
-    <Protobuf Include="Features/Backup/Protos/*.proto" GrpcServices="Both" Access="Internal" />
-    <Protobuf Include="Features/Sync/Protos/*.proto" ProtoRoot="Features/Sync/Protos" GrpcServices="None" Access="Internal" />
-  </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="../vendor/SqlParserCS/SqlParserCS.csproj" />
-    <ProjectReference Include="../vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/Turso.Data.Sqlite.csproj" />
   </ItemGroup>
 </Project>

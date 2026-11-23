@@ -14,6 +14,7 @@ internal static unsafe partial class SqliteNative
     public const int Busy = 5;
     public const int Locked = 6;
     public const int ReadOnly = 8;
+    public const int Interrupt = 9;
     public const int IoError = 10;
     public const int Corrupt = 11;
     public const int Full = 13;
@@ -98,6 +99,9 @@ internal static unsafe partial class SqliteNative
 
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_close_v2")]
     public static partial int CloseV2(nint db);
+
+    [LibraryImport(LibraryName, EntryPoint = "sqlite3_interrupt")]
+    public static partial void InterruptQuery(nint db);
 
     [LibraryImport(LibraryName, EntryPoint = "sqlite3_errmsg")]
     public static partial byte* ErrMsg(nint db);

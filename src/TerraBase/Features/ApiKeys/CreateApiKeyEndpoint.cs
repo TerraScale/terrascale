@@ -1,69 +1,100 @@
-using TerraBase.Errors;
+using TerraBase.Features.Callers;
+using TerraBase.Features.Catalog;
+using TerraBase.Features.Management;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraBase.Features.Callers;
 
 namespace TerraBase.Features.ApiKeys;
 
-public sealed record CreateApiKeyRequest(
-    string Name, IReadOnlyList<string> Scopes, string? OrganizationId = null, string? ProjectId = null, string? DatabaseId = null, DateTimeOffset? ExpiresAt = null);
-
-public sealed record CreatedApiKeyBody(
-    string Id, string Name, IReadOnlyList<string> Scopes, string OrganizationId, string? ProjectId, string? DatabaseId, string Secret, DateTimeOffset? ExpiresAt = null);
-
-public sealed class CreateApiKeyEndpoint(IApiKeyStore keys, TimeProvider time) : Endpoint<CreateApiKeyRequest, IResult>
+internal sealed class CreateApiKeyEndpoint(ApiKeyStore keys, CatalogStore catalog, TimeProvider time)
+    : Endpoint<CreateApiKeyInput, Result<Created<CreatedApiKeyBody>, Validation, Forbidden, Conflict, Unavailable>>
 {
-    private const int MaxNameLength = 100;
-
     private static readonly TimeSpan MaxLifetime = TimeSpan.FromDays(366);
 
     public override void Configure()
     {
-        Metadata(new Requires("admin"));
         Post("/admin/api-keys");
         Name("createApiKey");
         Summary("Issues a scoped client API key");
-        Description("organizationId is required: the key reaches only that organization's databases. projectId narrows it to one of its projects, and databaseId (which requires projectId) to one database of that project. expiresAt (optional, in the future, at most 366 days away) ends it; without it the key lasts until revoked.");
+        Description("organizationId is required; projectId narrows the key to one project and databaseId (with projectId) to one database. expiresAt is at most 366 days away.");
         Tags("Administration");
-        Produces<CreatedApiKeyBody>(StatusCodes.Status201Created);
-        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
-        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         AllowAnonymous();
         Metadata(ListenerMetadata.Internal);
     }
 
-    public override async ValueTask<IResult> HandleAsync(CreateApiKeyRequest request, CancellationToken cancellationToken)
+    public override async ValueTask<Result<Created<CreatedApiKeyBody>, Validation, Forbidden, Conflict, Unavailable>> HandleAsync(
+        CreateApiKeyInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Length > MaxNameLength)
+        if (!PlanFlow.IsOperator(HttpContext.Caller, "admin"))
         {
-            return ErrorResponse.From(new Validation("name must be 1 to 100 characters"));
+            return new Forbidden("issuing API keys needs the admin grant", "forbidden_caller");
         }
 
-        if (request.Scopes is not { Count: > 0 } || request.Scopes.Except(ApiKeyScopes.All).Any())
+        if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Length > 100)
         {
-            return ErrorResponse.From(new Validation($"scopes must be a non-empty subset of: {string.Join(", ", ApiKeyScopes.All)}"));
+            return new Validation("name must be 1 to 100 characters", "invalid_request");
+        }
+
+        if (request.Scopes is not { Count: > 0 } scopes || scopes.Except(Scopes.ApiKey).Any())
+        {
+            return new Validation(string.Concat("scopes must be a non-empty subset of: ", string.Join(", ", Scopes.ApiKey)), "invalid_request");
         }
 
         if (request.ExpiresAt is { } expires && (expires <= time.GetUtcNow() || expires - time.GetUtcNow() > MaxLifetime))
         {
-            return ErrorResponse.From(new Validation("expiresAt must be in the future and at most 366 days away"));
+            return new Validation("expiresAt must be in the future and at most 366 days away", "invalid_request");
         }
 
-        const string UnknownScope =
-            "organizationId must name an organization, projectId one of its projects and databaseId (only with projectId) one of that project's databases";
-        if (string.IsNullOrEmpty(request.OrganizationId) || (request.DatabaseId is not null && request.ProjectId is null))
+        var unknown = new Validation("organizationId must name an organization, projectId one of its projects and databaseId one of that project's databases", "invalid_request");
+        if (ManagementService.Id(request.OrganizationId) is not { } organizationId || (request.DatabaseId is not null && request.ProjectId is null))
         {
-            return ErrorResponse.From(new Validation(UnknownScope));
+            return unknown;
         }
 
-        return await keys.CreateAsync(request.Name, [.. request.Scopes.Distinct()], request.OrganizationId, request.ProjectId, request.DatabaseId, cancellationToken, request.ExpiresAt) switch
+        var projectId = ManagementService.Id(request.ProjectId);
+        var databaseId = ManagementService.Id(request.DatabaseId);
+        if ((request.ProjectId is not null && projectId is null) || (request.DatabaseId is not null && databaseId is null)
+            || !await ReachesAsync(organizationId, projectId, databaseId, cancellationToken))
         {
-            IssuedApiKey issued => TypedResults.Created(
-                $"/admin/api-keys/{issued.Key.Id}",
-                new CreatedApiKeyBody(issued.Key.Id, issued.Key.Name, issued.Key.Scopes, issued.Key.OrganizationId, issued.Key.ProjectId, issued.Key.DatabaseId, issued.Secret, issued.Key.ExpiresAt)),
-            NotFound => ErrorResponse.From(new Validation(UnknownScope)),
-            Unavailable error => ErrorResponse.From(error),
+            return unknown;
+        }
+
+        return await keys.CreateAsync(request.Name, [.. scopes.Distinct(StringComparer.Ordinal)], organizationId, projectId, databaseId, request.ExpiresAt, cancellationToken) switch
+        {
+            IssuedApiKey issued => new Created<CreatedApiKeyBody>(string.Concat("/admin/api-keys/", issued.Key.Id), new CreatedApiKeyBody(issued.Key.Id, issued.Key.Name,
+                issued.Key.Scopes, issued.Key.OrganizationId.ToString(), issued.Key.ProjectId?.ToString(), issued.Key.DatabaseId?.ToString(), issued.Secret, issued.Key.ExpiresAt)),
+            Conflict conflict => conflict,
+            Unavailable unavailable => unavailable,
+        };
+    }
+
+    private async ValueTask<bool> ReachesAsync(Ulid organizationId, Ulid? projectId, Ulid? databaseId, CancellationToken cancellationToken)
+    {
+        var organization = await catalog.GetOrganizationAsync(organizationId, cancellationToken) switch
+        {
+            OrganizationRecord => true,
+            NotFound or Unavailable => false,
+        };
+        if (!organization || projectId is not { } project)
+        {
+            return organization;
+        }
+
+        var inOrganization = await catalog.GetProjectAsync(project, cancellationToken) switch
+        {
+            ProjectRecord record => record.OrganizationId == organizationId,
+            NotFound or Unavailable => false,
+        };
+        if (!inOrganization || databaseId is not { } database)
+        {
+            return inOrganization;
+        }
+
+        return await catalog.GetDatabaseAsync(database, cancellationToken) switch
+        {
+            DatabaseRecord record => record.ProjectId == project,
+            NotFound or Unavailable => false,
         };
     }
 }

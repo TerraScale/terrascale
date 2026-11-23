@@ -1,236 +1,93 @@
-using System.ComponentModel;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using TerraBase.Configuration;
-using TerraBase.Engine;
-using TerraBase.Features.Health;
 using TerraBase.Hosting;
-using TerraBase.Primitives;
-using TerraBase.Tenancy;
-using ZLogger;
 
 namespace TerraBase.Features.Pressure;
 
-internal sealed partial class PressureSignals : BackgroundService, IPressureSignals
-{
-    private const int BucketCount = 256;
-    private const int MaxTrackedTenants = 4096;
-    private static readonly string[] ListenerNames = ["internal", "client", "metrics"];
-    private readonly Lock _gate = new();
-    private readonly long[][] _latencies = [new long[BucketCount], new long[BucketCount], new long[BucketCount]];
-    private readonly long[] _totals = new long[3];
-    private readonly long[] _previousTotals = new long[3];
-    private readonly Dictionary<string, (long Count, PlanTier? Plan)> _tenants = [];
-    private readonly TerraBaseOptions _options;
-    private readonly IStorageEngine _engine;
-    private readonly INodeReadiness _readiness;
-    private readonly TimeProvider _time;
-    private readonly ILogger<PressureSignals> _logger;
-    private readonly string _processId = EntityIds.New().ToString();
-    private readonly string _release = ServiceVersion.Informational;
-    private PressureBody _snapshot;
-    private StorageSample? _storage;
-    private long _untracked;
-    private long _lastTimestamp = Stopwatch.GetTimestamp();
-    private long _lastWrites;
-    private TimeSpan? _lastCpu;
-    private long _clientConnections;
+public sealed record PressureBody(
+    string Region,
+    string Machine,
+    long Connections,
+    long InFlight,
+    long Requests,
+    double CpuUtilization,
+    long MemoryUsedBytes,
+    long MemoryBudgetBytes,
+    long DiskFreeBytes,
+    long DiskTotalBytes,
+    DateTimeOffset SampledAt);
 
-    public PressureSignals(TerraBaseOptions options, IStorageEngine engine, TimeProvider time, IMeterFactory meters, ILogger<PressureSignals> logger, INodeReadiness readiness)
+internal sealed class PressureSignals
+{
+    private readonly TerraBaseOptions _options;
+    private readonly TimeProvider _time;
+    private long _connections;
+    private long _inFlight;
+    private long _requests;
+    private TimeSpan _lastCpu = Process.GetCurrentProcess().TotalProcessorTime;
+    private long _lastSample = Stopwatch.GetTimestamp();
+
+    public PressureSignals(TerraBaseOptions options, TimeProvider time, IMeterFactory meters)
     {
         _options = options;
-        _engine = engine;
-        _readiness = readiness;
         _time = time;
-        _logger = logger;
-        _snapshot = Sample();
-        RegisterMetrics(meters.Create(Telemetry.MeterName));
+        var meter = meters.Create(Telemetry.MeterName);
+        meter.CreateObservableGauge("terrabase_pressure_connections", () => Interlocked.Read(ref _connections));
+        meter.CreateObservableGauge("terrabase_pressure_in_flight", () => Interlocked.Read(ref _inFlight));
+        meter.CreateObservableCounter("terrabase_pressure_requests", () => Interlocked.Read(ref _requests));
+        meter.CreateObservableGauge("terrabase_pressure_memory_used_bytes", static () => GC.GetTotalMemory(forceFullCollection: false));
+        meter.CreateObservableGauge("terrabase_pressure_memory_budget_bytes", () => _options.MemoryBudget);
     }
 
-    public PressureBody Snapshot => Volatile.Read(ref _snapshot);
+    public void ConnectionOpened() => Interlocked.Increment(ref _connections);
 
-    public void ConnectionOpened() => Interlocked.Increment(ref _clientConnections);
+    public void ConnectionClosed() => Interlocked.Decrement(ref _connections);
 
-    public void ConnectionClosed() => Interlocked.Decrement(ref _clientConnections);
-
-    public void Record(TerraBaseListener listener, TimeSpan elapsed, string? organization, PlanTier? plan = null)
+    public IDisposable Request()
     {
-        var index = (int)listener;
-        var bucket = (int)Math.Clamp(Math.Ceiling(Math.Log(Math.Max(0.01, elapsed.TotalMilliseconds) / 0.01, 1.1)), 0, BucketCount - 1);
-        lock (_gate)
-        {
-            _totals[index]++;
-            _latencies[index][bucket]++;
-            if (organization is null || !EntityIds.IsValid(organization))
-            {
-                return;
-            }
-
-            if (_tenants.TryGetValue(organization, out var count))
-            {
-                _tenants[organization] = (count.Count + 1, plan ?? count.Plan);
-            }
-            else if (_tenants.Count < MaxTrackedTenants)
-            {
-                _tenants.Add(organization, (1, plan));
-            }
-            else
-            {
-                _untracked++;
-            }
-        }
+        Interlocked.Increment(ref _requests);
+        Interlocked.Increment(ref _inFlight);
+        return new Lease(this);
     }
 
-    protected override Task ExecuteAsync(CancellationToken stoppingToken) => Task.WhenAll(
-        Task.Run(async () =>
-        {
-            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1), _time);
-            while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
-            {
-                await Task.Yield();
-                Sample(await _readiness.UnreadyAsync(stoppingToken).ConfigureAwait(false) is null);
-            }
-        }, stoppingToken),
-        Task.Run(async () =>
-        {
-            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(10), _time);
-            do
-            {
-                await Task.Yield();
-                StoragePressure stored;
-                try
-                {
-                    await _engine.RefreshStoragePressureAsync(stoppingToken).ConfigureAwait(false);
-                    stored = _engine.StoragePressure;
-                }
-                catch (ObjectDisposedException)
-                {
-                    stored = new StoragePressure(null, []);
-                }
-
-                Volatile.Write(ref _storage, new StorageSample(stored, stored.PhysicalBytes is null ? null : _time.GetUtcNow()));
-            }
-            while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
-        }, stoppingToken));
-
-    private PressureBody Sample(bool? localReady = null)
+    public PressureBody Sample()
     {
-        var timestamp = Stopwatch.GetTimestamp();
-        var seconds = Math.Max(0.000001, Stopwatch.GetElapsedTime(_lastTimestamp, timestamp).TotalSeconds);
-        _lastTimestamp = timestamp;
-        var listeners = new ListenerPressure[3];
-        var combined = new long[BucketCount];
-        TenantPressure[] tenants;
-        long untracked;
-        lock (_gate)
-        {
-            for (var index = 0; index < listeners.Length; index++)
-            {
-                var count = _totals[index] - _previousTotals[index];
-                listeners[index] = new ListenerPressure(ListenerNames[index], count / seconds, Percentile(_latencies[index]), _totals[index]);
-                _previousTotals[index] = _totals[index];
-                for (var bucket = 0; bucket < BucketCount; bucket++)
-                {
-                    combined[bucket] += _latencies[index][bucket];
-                    _latencies[index][bucket] = 0;
-                }
-            }
+        var process = Process.GetCurrentProcess();
+        var cpu = process.TotalProcessorTime;
+        var now = Stopwatch.GetTimestamp();
+        var elapsed = Stopwatch.GetElapsedTime(Interlocked.Exchange(ref _lastSample, now), now);
+        var used = cpu - _lastCpu;
+        _lastCpu = cpu;
+        var utilization = elapsed > TimeSpan.Zero ? Math.Clamp(used / elapsed / Environment.ProcessorCount, 0, 1) : 0;
+        var (free, total) = Disk(_options.DataDirectory);
+        return new PressureBody(_options.Region, _options.MachineId, Interlocked.Read(ref _connections), Interlocked.Read(ref _inFlight), Interlocked.Read(ref _requests),
+            utilization, process.WorkingSet64, _options.MemoryBudget, free, total, _time.GetUtcNow());
+    }
 
-            tenants = [.. _tenants.OrderByDescending(pair => pair.Value.Count).ThenBy(pair => pair.Key, StringComparer.Ordinal)
-                .Take(10).Select(pair => new TenantPressure(pair.Key, pair.Value.Count / seconds, pair.Value.Plan?.JsonName))];
-            _tenants.Clear();
-            untracked = _untracked;
-            _untracked = 0;
-        }
-
-        long? memory = null;
-        double? cpu = null;
+    private static (long Free, long Total) Disk(string path)
+    {
         try
         {
-            var workingSet = Environment.WorkingSet;
-            memory = workingSet > 0 ? workingSet : null;
-            var totalCpu = Environment.CpuUsage.TotalTime;
-            if (_lastCpu is { } previous)
-            {
-                cpu = Math.Clamp((totalCpu - previous).TotalSeconds / seconds / Environment.ProcessorCount, 0, 1);
-            }
-
-            _lastCpu = totalCpu;
-        }
-        catch (Exception error) when (error is Win32Exception or InvalidOperationException or NotSupportedException)
-        {
-            _lastCpu = null;
-            _logger.ZLogWarning(error, $"Pressure measurement {"process":@Signal} is unavailable");
-        }
-
-        long? diskTotal = null;
-        long? diskFree = null;
-        try
-        {
-            var drive = new DriveInfo(_options.DataDirectory);
-            diskTotal = drive.TotalSize;
-            diskFree = drive.TotalFreeSpace;
+            var drive = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(path)) ?? "/");
+            return (drive.AvailableFreeSpace, drive.TotalSize);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
         {
-            _logger.ZLogWarning(error, $"Pressure measurement {"disk":@Signal} is unavailable");
+            return (0, 0);
         }
-
-        var writes = _engine.CommittedWrites;
-        var writeRate = Math.Max(0, writes - _lastWrites) / seconds;
-        _lastWrites = writes;
-        var storage = Volatile.Read(ref _storage);
-        var snapshot = new PressureBody
-        {
-            Node = _options.MachineId,
-            LocalReady = localReady,
-            IoAdmittedCount = _engine.IoAdmittedCount,
-            Region = _options.Region,
-            ProcessId = _processId,
-            Release = _release,
-            SampledAt = _time.GetUtcNow(),
-            SampleWindowSeconds = seconds,
-            CpuUtil = cpu,
-            MemoryUtil = memory is { } used ? Math.Clamp((double)used / _options.MemoryBudget, 0, 1) : null,
-            MemoryUsedBytes = memory,
-            MemoryBudgetBytes = _options.MemoryBudget,
-            DiskTotalBytes = diskTotal,
-            DiskFreeBytes = diskFree,
-            DiskUsedBytes = diskTotal - diskFree,
-            RequestRate = listeners.Sum(listener => listener.RequestRate),
-            P95LatencyMs = Percentile(combined),
-            Load = new PressureLoad(writeRate, Interlocked.Read(ref _clientConnections)),
-            Listeners = Array.AsReadOnly(listeners),
-            TopTenants = Array.AsReadOnly(tenants),
-            UntrackedTenantRequests = untracked,
-            DataBytes = storage?.Pressure.PhysicalBytes,
-            StorageSampledAt = storage?.SampledAt,
-            TopTenantsByStorage = Array.AsReadOnly(storage?.Pressure.TopTenants.Select(tenant => new TenantStoragePressure(tenant.Org, tenant.Bytes)).ToArray() ?? []),
-        };
-        Volatile.Write(ref _snapshot, snapshot);
-        return snapshot;
     }
-    private static double Percentile(long[] buckets)
-    {
-        var count = buckets.Sum();
-        if (count == 0)
-        {
-            return 0;
-        }
 
-        var target = (long)Math.Ceiling(count * 0.95);
-        long accumulated = 0;
-        for (var index = 0; index < buckets.Length; index++)
+    private sealed class Lease(PressureSignals signals) : IDisposable
+    {
+        private int _disposed;
+
+        public void Dispose()
         {
-            accumulated += buckets[index];
-            if (accumulated >= target)
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
             {
-                return Math.Min(1e9, 0.01 * Math.Pow(1.1, index));
+                Interlocked.Decrement(ref signals._inFlight);
             }
         }
-
-        return 0;
     }
-
-    private sealed record StorageSample(StoragePressure Pressure, DateTimeOffset? SampledAt);
 }

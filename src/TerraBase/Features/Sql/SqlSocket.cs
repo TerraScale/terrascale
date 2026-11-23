@@ -1,745 +1,419 @@
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Http.Features;
 using System.Buffers;
 using System.Net.WebSockets;
-using System.Text.Json.Serialization.Metadata;
 using System.Text.Json;
-using TerraBase.Configuration;
-using TerraBase.Errors;
-using TerraBase.Engine;
-using TerraBase.Features.ApiKeys;
-using TerraBase.Features.Management.Logs;
-using TerraBase.Features.Management.Usage;
-using TerraBase.Features.Management;
-using TerraBase.Features.Memory;
-using TerraBase.Features.Qos;
-using TerraBase.Features.Replicas;
-using TerraBase.Features.Regions;
-using TerraBase.Features.Sql.Routing;
-using TerraBase.Features.Sql;
-using TerraBase.Features.UserAuth;
-using TerraBase.Hosting;
-using TerraBase.Primitives;
-using TerraBase.Tenancy;
+using TerraBase.Features.Callers;
+using TerraBase.Features.Catalog;
+using TerraScale.Contracts.Cluster;
 
 namespace TerraBase.Features.Sql;
 
+internal sealed record SocketAnswer(IReadOnlyList<SqlResultSet> Results);
+
 internal sealed class SqlSocket(
-    HttpContext context,
     WebSocket socket,
-    IHostApplicationLifetime lifetime,
-    ISqlService sql,
-    IAuthorizationService authorization,
-    ITenantDirectory tenants,
-    TerraBaseOptions options,
-    IMemoryBudget memory,
-    TimeProvider time,
-    IQosAdmission admission,
-    QosSessions sessions,
-    IUsageMeter usage,
-    IRequestLogs logs,
-    RegionalIngress ingress) : IDisposable
+    bool v2,
+    string? project,
+    string? database,
+    SqlRunner runner,
+    DatabaseAccess access,
+    CallerAuthentication authentication,
+    IClusterCoordinator coordinator,
+    TimeProvider time) : IAsyncDisposable
 {
-    private const int FirstBufferBytes = 16 * 1024;
-    private const int MaxTokenLength = 8 * 1024;
-    private const WebSocketCloseStatus ServiceRestart = (WebSocketCloseStatus)1012;
-    private const string WriterMoving = "the region's writer is moving; reconnect";
+    public const int MaxFrameBytes = 1024 * 1024;
 
-    public static readonly TimeSpan AuthDeadline = TimeSpan.FromSeconds(5);
-    public const string AuthExpired = "authentication did not finish within 5 seconds";
+    private static readonly TimeSpan AuthTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan MaxTransaction = TimeSpan.FromSeconds(5);
 
-    private static readonly SqlError SessionLimit = new(SqlErrors.TenantBusy, "organization session limit exceeded");
-    private static readonly SqlError ConnectionAttempts = new(SqlErrors.TenantBusy, QosSessions.ConnectionAttemptsMessage);
-
-    private static readonly SqlError AuthFirst = new(SqlErrors.Unauthorized, "the first frame is {\"type\":\"auth\",\"token\":\"…\"}");
-    private static readonly SqlError UnknownDatabase = new(SqlErrors.Unauthorized, "the database does not exist or the credential does not reach it");
-
-    private static readonly SqlError CredentialRevoked = new(SqlErrors.Unauthorized, "the credential no longer grants this access to the database");
-    private static readonly SqlError FailedCommit = new(SqlErrors.TransactionRolledBack, "the transaction was rolled back after a failed statement");
-    private static readonly SqlError AlreadyOpen = new(SqlErrors.TransactionState, "there is already a transaction in progress");
-    private static readonly SqlError NoneOpen = new(SqlErrors.TransactionState, "there is no transaction in progress");
-    private static readonly SqlError UnknownType = new(SqlErrors.InvalidRequest, "type is execute, begin, commit or rollback");
-    private static readonly SqlError NodeFull = new(SqlErrors.Unavailable, "the node is at its request limit; retry");
-
-    private readonly SemaphoreSlim _send = new(1, 1);
-    private readonly SemaphoreSlim _frame = new(1, 1);
-    private readonly CancellationTokenSource _revoked = new();
-    private readonly CancellationTokenSource _closed = new();
-    private readonly List<IDisposable> _watches = [];
-    private ISqlSession? _session;
-    private TenantContext? _database;
-    private CancellationToken _fence;
-    private CancellationToken _admitting;
-    private long? _authId;
-    private bool _canWrite;
+    private ResolvedDatabase? _target;
+    private ISqlDatabaseSession? _session;
+    private ISqlTransaction? _transaction;
+    private ConsistencyMode _mode;
     private bool _failed;
-    private bool _closing;
-    private DateTimeOffset? _tokenExpiry;
+    private DateTimeOffset _deadline;
+    private CausalBookmark _bookmark = CausalBookmark.Empty;
 
-    private ISqlSession Session => _session!;
-
-    private TenantContext Database => _database!;
-
-    public async Task RunAsync(TenantContext? database, bool canWrite, CancellationToken fence, CancellationToken cancellationToken)
+    public async Task RunAsync(ResolvedDatabase? target, SqlCausality causality, CancellationToken cancellationToken)
     {
-        var stopping = lifetime.ApplicationStopping;
-        await using var aborting = _closed.Token.Register(socket.Abort).ConfigureAwait(false);
-        await using var leaving = stopping.Register(() => _ = CloseAsync(WebSocketCloseStatus.EndpointUnavailable, "the server is restarting")).ConfigureAwait(false);
-        await using var moving = fence.Register(() => _ = CloseAfterFrameAsync()).ConfigureAwait(false);
-        await using var cutOff = _revoked.Token.Register(() => _ = CloseAsync(WebSocketCloseStatus.PolicyViolation, "the credential was revoked")).ConfigureAwait(false);
-        using var admitting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, fence);
-        (_database, _canWrite, _fence, _admitting) = (database, canWrite, fence, admitting.Token);
-        using var preauthentication = sessions.TryPreauthenticate(IpAllowlists.ClientOf(context), AuthDeadline, cancellationToken, database?.OrganizationId);
-        if (preauthentication is null)
+        ArgumentNullException.ThrowIfNull(causality);
+        _target = target;
+        _bookmark = causality.After;
+        _mode = causality.Mode ?? target?.Database.DefaultConsistency ?? ConsistencyMode.Fast;
+        while (!cancellationToken.IsCancellationRequested)
         {
-            await RefuseAsync(null, ConnectionAttempts, cancellationToken).ConfigureAwait(false);
-            return;
-        }
-
-        var frameAuth = _database is null;
-        if (frameAuth && !await AuthenticateAsync(preauthentication, cancellationToken).ConfigureAwait(false))
-        {
-            return;
-        }
-
-        using var lease = sessions.TryEnter(Database);
-        preauthentication.Dispose();
-        if (lease is null)
-        {
-            await RefuseAsync(_authId, SessionLimit, cancellationToken).ConfigureAwait(false);
-            return;
-        }
-
-        _tokenExpiry = context.Features.Get<ProjectToken>()?.ExpiresAt;
-        using var expiry = _tokenExpiry is { } end
-            ? new CancellationTokenSource(end - time.GetUtcNow() is { Ticks: > 0 } left ? left : TimeSpan.Zero, time)
-            : new CancellationTokenSource();
-        await using var expired = expiry.Token.Register(() => _ = CloseAsync(WebSocketCloseStatus.PolicyViolation, "the token expired")).ConfigureAwait(false);
-        var fences = context.RequestServices.GetRequiredService<DatabaseFences>();
-        var previousHome = fences.MovedTo(Database.DatabaseId!);
-        using var moved = fences.WatchMoved(Database.DatabaseId!, previousHome, () => _ = CloseAfterFrameAsync());
-        _session = sql.Open(Database, _canWrite);
-        await using (_session.ConfigureAwait(false))
-        {
-            _session.Prefer(WritePreference.Parse(context.Request.Headers[WritePreference.Header]) ?? WriteOverride.Auto);
-            if (frameAuth)
-            {
-                await SendAsync(new SqlSocketResult(_authId, "result", [], false), SqlJsonContext.Default.SqlSocketResult, cancellationToken).ConfigureAwait(false);
-            }
-
-            await ServeAsync(cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    private async Task ServeAsync(CancellationToken cancellationToken)
-    {
-        while (socket.State is (WebSocketState.Open or WebSocketState.CloseSent) && !cancellationToken.IsCancellationRequested && !_revoked.IsCancellationRequested)
-        {
-            var frame = await ReceiveAsync(SqlBatch.MaxBytes, cancellationToken).ConfigureAwait(false);
+            using var authDeadline = _target is null ? new CancellationTokenSource(AuthTimeout, time) : null;
+            using var linked = authDeadline is null ? null : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, authDeadline.Token);
+            var frame = await ReceiveAsync(linked?.Token ?? cancellationToken);
             if (frame is null)
             {
                 return;
             }
 
-            try
+            if (!await HandleAsync(frame, causality, cancellationToken))
             {
-                await _frame.WaitAsync(cancellationToken).ConfigureAwait(false);
-                try
-                {
-                    if (_closing)
-                    {
-                        continue;
-                    }
-
-                    if (!await AnswerAsync(frame.Value.Bytes.AsMemory(0, frame.Value.Length), cancellationToken).ConfigureAwait(false))
-                    {
-                        return;
-                    }
-                }
-                finally
-                {
-                    _frame.Release();
-                }
-            }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(frame.Value.Bytes);
-                frame.Value.Reservation.Dispose();
+                return;
             }
         }
     }
 
-    private async ValueTask<bool> AuthenticateAsync(SessionPreauthentication preauthentication, CancellationToken cancellationToken)
+    public async ValueTask DisposeAsync()
     {
-        var aborted = context.RequestAborted;
-        context.RequestAborted = preauthentication.Token;
-        await using var expiry = preauthentication.Token.Register(() => _ = CloseAsync(WebSocketCloseStatus.PolicyViolation, AuthExpired)).ConfigureAwait(false);
-        try
+        if (_transaction is { } transaction)
         {
-            return await ValidateAsync(preauthentication, cancellationToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (preauthentication.Expired)
-        {
-            await CloseAsync(WebSocketCloseStatus.PolicyViolation, AuthExpired).ConfigureAwait(false);
-            return false;
-        }
-        finally
-        {
-            context.RequestAborted = aborted;
+            _transaction = null;
+            await transaction.DisposeAsync();
         }
     }
 
-    private async ValueTask<bool> ValidateAsync(SessionPreauthentication preauthentication, CancellationToken cancellationToken)
+    private async Task<bool> HandleAsync(byte[] payload, SqlCausality causality, CancellationToken cancellationToken)
     {
-        var validating = preauthentication.Token;
-        var frame = await ReceiveAsync(FirstBufferBytes, cancellationToken).ConfigureAwait(false);
-        if (frame is null || _closing)
+        if (Parse(payload) is not { } frame)
         {
-            if (frame is { } late)
+            await ErrorAsync(null, SqlRefusal.Invalid("frames are JSON objects with id and type", 0), cancellationToken);
+            return true;
+        }
+
+        if (_target is null)
+        {
+            return await AuthenticateAsync(frame, causality, cancellationToken);
+        }
+
+        if (frame.Bookmark is { Length: > 0 } encoded)
+        {
+            if (!CausalBookmark.TryDecode(encoded, out var bookmark))
             {
-                ArrayPool<byte>.Shared.Return(late.Bytes);
-                late.Reservation.Dispose();
+                await ErrorAsync(frame.Id, new SqlRefusal("invalid_bookmark", "bookmark must be one bookmark returned by TerraScale", "22023", 0, StatusCodes.Status400BadRequest), cancellationToken);
+                return true;
             }
 
-            return false;
+            _bookmark = _bookmark.Merge(bookmark);
         }
 
-        SqlSocketRequest? request;
-        byte[] authFrame;
-        try
+        if (_transaction is not null && time.GetUtcNow() > _deadline)
         {
-            authFrame = frame.Value.Bytes.AsSpan(0, frame.Value.Length).ToArray();
-            request = RequestJson.Read<SqlSocketRequest>(frame.Value.Bytes.AsSpan(0, frame.Value.Length), SqlErrors.InvalidRequest) is SqlSocketRequest read ? read : null;
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(frame.Value.Bytes);
-            frame.Value.Reservation.Dispose();
+            await EndTransactionAsync(commit: false, cancellationToken);
+            await ErrorAsync(frame.Id, new SqlRefusal("query_canceled", "the transaction expired: it was open for more than 5 seconds and was rolled back", "57014", 0,
+                StatusCodes.Status400BadRequest), cancellationToken);
+            return true;
         }
 
-        if (request is not { Type: "auth", Token: { Length: > 0 and <= MaxTokenLength } token } || token.Any(char.IsControl) || token.Any(char.IsWhiteSpace))
+        var outcome = frame.Type switch
         {
-            return await RefuseAsync(request?.Id, AuthFirst, cancellationToken).ConfigureAwait(false);
-        }
-
-        context.Request.Headers.Authorization = "Bearer " + token;
-        var authenticated = await ApiKeysExtensions.AuthenticateAgainAsync(context).ConfigureAwait(false);
-        if (!authenticated.Succeeded)
+            "execute" or "batch" => await ExecuteAsync(frame, _target, cancellationToken),
+            "begin" => await BeginAsync(Mode(frame.Consistency) ?? _mode, cancellationToken),
+            "commit" => await EndTransactionAsync(commit: true, cancellationToken),
+            "rollback" => await EndTransactionAsync(commit: false, cancellationToken),
+            "auth" => SqlRefusal.Invalid("the socket is already authenticated", 0),
+            _ => SqlRefusal.Invalid("type is execute, batch, begin, commit or rollback", 0),
+        };
+        await (outcome switch
         {
-            return await RefuseAsync(request.Id, TokenKeysPending.On(context)
-                ? new SqlError(SqlErrors.Unavailable, TokenKeysPending.Code + ": " + TokenKeysPending.Message)
-                : CredentialRevoked, cancellationToken).ConfigureAwait(false);
-        }
-
-        context.User = authenticated.Principal;
-        if (await SocketAdmission.AdmitSocketAsync(context, _revoked, _watches.Add).ConfigureAwait(false) is { } refused)
-        {
-            return await RefuseAsync(request.Id, new SqlError(SqlErrors.Unauthorized, refused.Code + ": " + refused.Message), cancellationToken).ConfigureAwait(false);
-        }
-
-        if (!(await authorization.AuthorizeAsync(context.User, context, ApiKeyScopes.SqlRead).ConfigureAwait(false)).Succeeded)
-        {
-            return await RefuseAsync(request.Id, SqlErrors.Auth with { Message = "SQL needs the sql:read scope" }, cancellationToken).ConfigureAwait(false);
-        }
-
-        if (context.Features.Get<ProjectAccess>() is { DatabaseName: not null } restricted
-            && context.Request.RouteValues["database"] as string != restricted.DatabaseId)
-        {
-            var reachable = await context.RequestServices.GetRequiredService<IManagementService>()
-                .FindDatabaseRecordAsync(restricted.OrganizationId, restricted.ProjectId, context.RouteValue("database"), cancellationToken).ConfigureAwait(false);
-            if (reachable is not ManagedDatabase record || restricted.DatabaseId != record.Id)
-            {
-                return await RefuseAsync(request.Id, UnknownDatabase, cancellationToken).ConfigureAwait(false);
-            }
-        }
-
-        if (!Listeners.IsForwarded(context)
-            && await HomeForwarding.ForwardBrowserAsync(context, socket, authFrame, preauthentication.Authenticated, cancellationToken).ConfigureAwait(false))
-        {
-            return false;
-        }
-
-        if (Listeners.IsForwarded(context)
-            && await DatabaseRegions.RecordAsync(context, context.RouteValue("project"), context.RouteValue("database"))
-                .ConfigureAwait(false) is ManagedDatabase placement
-            && !placement.Placement(options.Region).PlacedIn(options.Region))
-        {
-            context.Features.Set(new HomeForwarding.ProxiedRequest());
-            return await RefuseAsync(request.Id, new SqlError(SqlErrors.Unavailable, HomeForwarding.PlacementMissMessage), cancellationToken).ConfigureAwait(false);
-        }
-
-        _canWrite = (await authorization.AuthorizeAsync(context.User, context, ApiKeyScopes.SqlWrite).ConfigureAwait(false)).Succeeded;
-        switch (await CheckTenantAsync(validating).ConfigureAwait(false))
-        {
-            case TenantContext found:
-                _database = found;
-                break;
-            case Unavailable unavailable:
-                return await RefuseAsync(request.Id, new SqlError(unavailable.Code, unavailable.Message), cancellationToken).ConfigureAwait(false);
-            default:
-                return await RefuseAsync(request.Id, UnknownDatabase, cancellationToken).ConfigureAwait(false);
-        }
-
-        var region = options.Region;
-        switch (await DatabaseRegions.RecordAsync(context, context.RouteValue("project"), context.RouteValue("database"))
-            .ConfigureAwait(false))
-        {
-            case ManagedDatabase record when !record.PlacedIn(region) && !record.AllRegions && !record.Replicas.Contains(region):
-                return await RefuseAsync(request.Id, new SqlError(SqlErrors.Unavailable,
-                    $"the database region {record.Home(region)} could not be reached"),
-                    cancellationToken).ConfigureAwait(false);
-            case Unavailable unavailable:
-                return await RefuseAsync(request.Id, new SqlError(unavailable.Code, unavailable.Message), cancellationToken).ConfigureAwait(false);
-        }
-
-        _authId = request.Id;
+            SocketAnswer answer => ResultAsync(frame.Id, answer.Results, cancellationToken),
+            SqlRefusal refusal => ErrorAsync(frame.Id, refusal, cancellationToken),
+        });
         return true;
     }
 
-    private async ValueTask<bool> RefuseAsync(long? id, SqlError error, CancellationToken cancellationToken)
+    private async Task<bool> AuthenticateAsync(SocketFrame frame, SqlCausality causality, CancellationToken cancellationToken)
     {
-        await SendAsync(new SqlSocketError(id, "error", SqlBatch.Body(new SqlBatchFailure(error, 0), context.TraceIdentifier).Error, false), SqlJsonContext.Default.SqlSocketError,
-            cancellationToken).ConfigureAwait(false);
-        await CloseAsync(WebSocketCloseStatus.PolicyViolation, error.Code).ConfigureAwait(false);
-        return false;
-    }
-
-    private async ValueTask<(byte[] Bytes, int Length, IMemoryReservation Reservation)?> ReceiveAsync(int maxBytes, CancellationToken cancellationToken)
-    {
-        var reservation = memory.TryReserve(FirstBufferBytes, _database);
-        if (reservation is null)
+        if (frame is not { Type: "auth", Token: { Length: > 0 and <= 16 * 1024 } token })
         {
-            await CloseAsync(WebSocketCloseStatus.InternalServerError, "organization memory budget exceeded").ConfigureAwait(false);
-            return null;
+            await ErrorAsync(frame.Id, new SqlRefusal("unauthorized", "send {\"type\":\"auth\",\"token\":\"…\"} first", "28000", 0, StatusCodes.Status401Unauthorized), cancellationToken);
+            await CloseAsync(WebSocketCloseStatus.PolicyViolation, "unauthorized");
+            return false;
         }
 
-        var transaction = _session?.TransactionRemaining;
-        using var idle = new SessionMessageDeadline(time, transaction);
-        var closing = Task.CompletedTask;
-        var expiry = idle.Token.Register(() => closing = ExpireAsync());
-        var input = context.Features.GetRequiredFeature<SqlSocketInput>();
-        input.Progress = (bytes, started) => idle.Progress(bytes, started);
-        using var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _closed.Token);
-        var buffer = ArrayPool<byte>.Shared.Rent(FirstBufferBytes);
-        var length = 0;
+        var resolved = await authentication.AuthenticateBearerAsync(token, cancellationToken) switch
+        {
+            Caller caller => await access.DataAsync(caller, project, database, cancellationToken) switch
+            {
+                ResolvedDatabase target => Accept(target, causality),
+                Validation invalid => new SqlRefusal(invalid.Code, invalid.Message, "22023", 0, StatusCodes.Status400BadRequest),
+                Unauthorized unauthorized => new SqlRefusal("unauthorized", unauthorized.Message ?? "unauthorized", "28000", 0, StatusCodes.Status401Unauthorized),
+                Forbidden forbidden => new SqlRefusal("forbidden_scope", forbidden.Message, "42501", 0, StatusCodes.Status403Forbidden),
+                NotFound missing => new SqlRefusal(missing.Code, missing.Message ?? "the database does not exist", "3D000", 0, StatusCodes.Status404NotFound),
+                Unavailable unavailable => SqlRefusal.From(unavailable),
+            },
+            Unauthorized unauthorized => new SqlRefusal("unauthorized", unauthorized.Message ?? "unauthorized", "28000", 0, StatusCodes.Status401Unauthorized),
+            Unavailable unavailable => SqlRefusal.From(unavailable),
+        };
+        if (resolved is { } refusal)
+        {
+            await ErrorAsync(frame.Id, refusal, cancellationToken);
+            await CloseAsync(WebSocketCloseStatus.PolicyViolation, refusal.Code);
+            return false;
+        }
+
+        await ResultAsync(frame.Id, [], cancellationToken);
+        return true;
+    }
+
+    private SqlRefusal? Accept(ResolvedDatabase target, SqlCausality causality)
+    {
+        _target = target;
+        _mode = causality.Mode ?? target.Database.DefaultConsistency;
+        return null;
+    }
+
+    private async ValueTask<Result<SocketAnswer, SqlRefusal>> ExecuteAsync(SocketFrame frame, ResolvedDatabase target, CancellationToken cancellationToken)
+    {
+        var mode = Mode(frame.Consistency);
+        return SqlWire.Statements(frame.Statements) switch
+        {
+            IReadOnlyList<SqlStatement> statements => SqlPlan.Batch(statements, allowTransactionControl: true) switch
+            {
+                SqlBatch { Statements: [{ Kind: StatementKind.Begin } begin] } => await BeginAsync(begin.BeginMode ?? mode ?? _mode, cancellationToken),
+                SqlBatch { Statements: [{ Kind: StatementKind.Commit }] } => await EndTransactionAsync(commit: true, cancellationToken),
+                SqlBatch { Statements: [{ Kind: StatementKind.Rollback }] } => await EndTransactionAsync(commit: false, cancellationToken),
+                SqlBatch batch when _transaction is not null => await InTransactionAsync(target, batch, cancellationToken),
+                SqlBatch batch => await AutocommitAsync(target, batch, mode, cancellationToken),
+                SqlRefusal refusal => refusal,
+            },
+            SqlRefusal refusal => refusal,
+        };
+    }
+
+    private async ValueTask<Result<SocketAnswer, SqlRefusal>> AutocommitAsync(ResolvedDatabase target, SqlBatch batch, ConsistencyMode? mode, CancellationToken cancellationToken)
+    {
+        if (batch.Statements.Any(static statement => statement.Kind is StatementKind.Begin or StatementKind.Commit or StatementKind.Rollback))
+        {
+            return new SqlRefusal("transaction_state", "BEGIN, COMMIT and ROLLBACK go in their own frame", "25000", 0, StatusCodes.Status400BadRequest);
+        }
+
+        return await runner.RunAsync(target, batch.Sql, new SqlCausality(batch.Mode ?? mode ?? _mode, _bookmark), cancellationToken) switch
+        {
+            SqlRun run => Answer(run),
+            SqlRefusal refusal => refusal,
+        };
+    }
+
+    private SocketAnswer Answer(SqlRun run)
+    {
+        _bookmark = _bookmark.Merge(run.Bookmark);
+        return new SocketAnswer(run.Results);
+    }
+
+    private async ValueTask<Result<SocketAnswer, SqlRefusal>> BeginAsync(ConsistencyMode mode, CancellationToken cancellationToken)
+    {
+        if (_transaction is not null || _target is not { } target)
+        {
+            return new SqlRefusal("transaction_state", "a transaction is already open", "25001", 0, StatusCodes.Status400BadRequest);
+        }
+
+        return await runner.WaitAsync(target, _bookmark, cancellationToken) switch
+        {
+            Done => await access.OpenAsync(target.Database, cancellationToken) switch
+            {
+                ISqlDatabaseSession session => await OpenTransactionAsync(session, mode, cancellationToken),
+                Unavailable unavailable => SqlRefusal.From(unavailable),
+            },
+            SqlRefusal refusal => refusal,
+        };
+    }
+
+    private async ValueTask<Result<SocketAnswer, SqlRefusal>> OpenTransactionAsync(ISqlDatabaseSession session, ConsistencyMode mode, CancellationToken cancellationToken) =>
+        await coordinator.BeginTransactionAsync(session, new SqlTransactionOptions(mode, SqlAccess.Write, _bookmark), cancellationToken) switch
+        {
+            ISqlTransaction transaction => Opened(session, transaction, mode),
+            StorageBusy busy => SqlRefusal.From(busy),
+            RequestTimeout timeout => SqlRefusal.From(timeout),
+        };
+
+    private SocketAnswer Opened(ISqlDatabaseSession session, ISqlTransaction transaction, ConsistencyMode mode)
+    {
+        _session = session;
+        _transaction = transaction;
+        _mode = mode;
+        _failed = false;
+        _deadline = time.GetUtcNow() + MaxTransaction;
+        return new SocketAnswer([]);
+    }
+
+    private async ValueTask<Result<SocketAnswer, SqlRefusal>> InTransactionAsync(ResolvedDatabase target, SqlBatch batch, CancellationToken cancellationToken)
+    {
+        if (_failed || _transaction is not { } transaction)
+        {
+            return new SqlRefusal("transaction_aborted", "the transaction failed; only rollback is accepted", "25P02", 0, StatusCodes.Status400BadRequest);
+        }
+
+        return await runner.PrepareAsync(target, batch.Statements, cancellationToken) switch
+        {
+            IReadOnlyList<SqlStatement> statements => await RunInTransactionAsync(target, transaction, statements, batch.Writes, cancellationToken),
+            SqlRefusal denied => Fail(denied),
+        };
+    }
+
+    private async ValueTask<Result<SocketAnswer, SqlRefusal>> RunInTransactionAsync(
+        ResolvedDatabase target, ISqlTransaction transaction, IReadOnlyList<SqlStatement> statements, bool writes, CancellationToken cancellationToken)
+    {
+        List<SqlResultSet> results = [];
+        foreach (var statement in statements)
+        {
+            var failure = await transaction.ExecuteAsync(statement, cancellationToken) switch
+            {
+                SqlResultSet result => Collect(results, result),
+                SqlError error => SqlRefusal.From(error),
+                StorageBusy busy => SqlRefusal.From(busy),
+                RequestTimeout timeout => SqlRefusal.From(timeout),
+            };
+            if (failure is not null)
+            {
+                return Fail(failure);
+            }
+        }
+
+        runner.Meter(target, results, writes, _mode);
+        return new SocketAnswer(results);
+    }
+
+    private SqlRefusal Fail(SqlRefusal refusal)
+    {
+        _failed = true;
+        return refusal;
+    }
+
+    private async ValueTask<Result<SocketAnswer, SqlRefusal>> EndTransactionAsync(bool commit, CancellationToken cancellationToken)
+    {
+        if (_transaction is not { } transaction || _session is not { } session)
+        {
+            return new SqlRefusal("transaction_state", "no transaction is open", "25P01", 0, StatusCodes.Status400BadRequest);
+        }
+
+        _transaction = null;
+        await using (transaction)
+        {
+            if (!commit || _failed)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return _failed && commit
+                    ? new SqlRefusal("transaction_rolled_back", "the transaction failed earlier and was rolled back", "40000", 0, StatusCodes.Status400BadRequest)
+                    : new SocketAnswer([]);
+            }
+
+            return await coordinator.CommitTransactionAsync(session, transaction, cancellationToken) switch
+            {
+                CommitMetadata committed => Committed(committed),
+                SerializationConflict conflict => SqlRefusal.From(conflict),
+                SchemaMismatch mismatch => SqlRefusal.From(mismatch),
+                Unavailable unavailable => SqlRefusal.From(unavailable),
+                RequestTimeout timeout => SqlRefusal.From(timeout),
+                StorageBusy busy => SqlRefusal.From(busy),
+            };
+        }
+    }
+
+    private SocketAnswer Committed(CommitMetadata commit)
+    {
+        _bookmark = _bookmark.Merge(commit.Bookmark);
+        return new SocketAnswer([]);
+    }
+
+    private static SqlRefusal? Collect(List<SqlResultSet> results, SqlResultSet result)
+    {
+        results.Add(result);
+        return null;
+    }
+
+    private static ConsistencyMode? Mode(string? value) => value is not null && ConsistencyHeaders.TryParse(value, out var mode) ? mode : null;
+
+    private static SocketFrame? Parse(byte[] payload)
+    {
         try
         {
+            return JsonSerializer.Deserialize(payload, SqlSocketJsonContext.Default.SocketFrame);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private Task ResultAsync(long? id, IReadOnlyList<SqlResultSet> results, CancellationToken cancellationToken) => v2
+        ? SendAsync(JsonSerializer.SerializeToUtf8Bytes(new SocketServerFrame("result", id ?? 0, SqlWire.Results(results), _bookmark.Encode(), _transaction is not null, null),
+            SqlSocketJsonContext.Default.SocketServerFrame), cancellationToken)
+        : SendAsync(JsonSerializer.SerializeToUtf8Bytes(new LegacySocketResult(id, "result", SqlWire.Legacy(results).Results, _transaction is not null),
+            SqlSocketJsonContext.Default.LegacySocketResult), cancellationToken);
+
+    private Task ErrorAsync(long? id, SqlRefusal refusal, CancellationToken cancellationToken) => v2
+        ? SendAsync(JsonSerializer.SerializeToUtf8Bytes(new SocketServerFrame("error", id ?? 0, null, _bookmark.Encode(), _transaction is not null, refusal.Body),
+            SqlSocketJsonContext.Default.SocketServerFrame), cancellationToken)
+        : SendAsync(JsonSerializer.SerializeToUtf8Bytes(new LegacySocketError(id, "error",
+            new LegacySocketErrorBody(refusal.Code, refusal.Message, refusal.Statement, refusal.SqlState), _transaction is not null),
+            SqlSocketJsonContext.Default.LegacySocketError), cancellationToken);
+
+    private async Task SendAsync(byte[] payload, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await socket.SendAsync(payload, WebSocketMessageType.Text, endOfMessage: true, cancellationToken);
+        }
+        catch (WebSocketException)
+        {
+        }
+    }
+
+    private async Task<byte[]?> ReceiveAsync(CancellationToken cancellationToken)
+    {
+        var buffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
+        try
+        {
+            using var message = new MemoryStream();
             while (true)
             {
-                if (length == Math.Min(buffer.Length, maxBytes))
-                {
-                    if (length >= maxBytes)
-                    {
-                        await CloseAsync(WebSocketCloseStatus.MessageTooBig, maxBytes == SqlBatch.MaxBytes ? "a frame holds at most 1 MiB" : "the auth frame holds at most 16 KiB")
-                            .ConfigureAwait(false);
-                        Release();
-                        return null;
-                    }
-
-                    var size = Math.Min(buffer.Length * 2, maxBytes);
-                    var grown = memory.TryReserve(size, _database);
-                    if (grown is null)
-                    {
-                        await CloseAsync(WebSocketCloseStatus.InternalServerError, "organization memory budget exceeded").ConfigureAwait(false);
-                        Release();
-                        return null;
-                    }
-
-                    var larger = ArrayPool<byte>.Shared.Rent(size);
-                    buffer.AsSpan(0, length).CopyTo(larger);
-                    ArrayPool<byte>.Shared.Return(buffer);
-                    reservation.Dispose();
-                    (buffer, reservation) = (larger, grown);
-                }
-
-                var read = await socket.ReceiveAsync(buffer.AsMemory(length, Math.Min(buffer.Length, maxBytes) - length), waiting.Token).ConfigureAwait(false);
+                var read = await socket.ReceiveAsync(buffer.AsMemory(), cancellationToken);
                 if (read.MessageType == WebSocketMessageType.Close)
                 {
-                    await CloseAsync(WebSocketCloseStatus.NormalClosure, null).ConfigureAwait(false);
-                    Release();
+                    await CloseAsync(WebSocketCloseStatus.NormalClosure, "closed");
                     return null;
                 }
 
-                if (read.MessageType != WebSocketMessageType.Text)
+                if (read.MessageType == WebSocketMessageType.Binary)
                 {
-                    await CloseAsync(WebSocketCloseStatus.InvalidMessageType, "frames are JSON text").ConfigureAwait(false);
-                    Release();
+                    await CloseAsync(WebSocketCloseStatus.InvalidMessageType, "frames are JSON text");
                     return null;
                 }
 
-                length += read.Count;
+                if (message.Length + read.Count > MaxFrameBytes)
+                {
+                    await CloseAsync(WebSocketCloseStatus.MessageTooBig, "frames are at most 1 MiB");
+                    return null;
+                }
+
+                message.Write(buffer, 0, read.Count);
                 if (read.EndOfMessage)
                 {
-                    idle.Complete();
-                    input.Complete();
-                    return (buffer, length, reservation);
+                    return message.ToArray();
                 }
             }
-        }
-        catch (OperationCanceledException) when (idle.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
-        {
-            Release();
-            return null;
-        }
-        catch (WebSocketException error) when (error.WebSocketErrorCode == WebSocketError.Faulted)
-        {
-            try
-            {
-                using var drain = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                drain.CancelAfter(Shutdown.DrainBudget);
-                try
-                {
-                    await input.DrainAsync(buffer, drain.Token).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (drain.IsCancellationRequested)
-                {
-                    return null;
-                }
-
-                return null;
-            }
-            finally
-            {
-                Release();
-            }
-        }
-        catch
-        {
-            Release();
-            throw;
-        }
-        finally
-        {
-            input.Progress = null;
-            await expiry.DisposeAsync().ConfigureAwait(false);
-            await closing.ConfigureAwait(false);
-        }
-
-        async Task ExpireAsync()
-        {
-            if (transaction is not null && !idle.IsPartial)
-            {
-                await ExpireTransactionAsync().ConfigureAwait(false);
-                return;
-            }
-
-            _closed.CancelAfter(Shutdown.DrainBudget);
-            await CloseAsync(WebSocketCloseStatus.PolicyViolation, idle.IsPartial ? "incomplete message timeout exceeded" : "session idle timeout exceeded")
-                .ConfigureAwait(false);
-        }
-
-        void Release()
-        {
-            ArrayPool<byte>.Shared.Return(buffer);
-            reservation.Dispose();
-        }
-    }
-
-    private async ValueTask<bool> AnswerAsync(ReadOnlyMemory<byte> frame, CancellationToken cancellationToken)
-    {
-        var parsed = RequestJson.Read<SqlSocketRequest>(frame.Span, SqlErrors.InvalidRequest);
-        if (parsed is not SqlSocketRequest request)
-        {
-            var invalid = parsed is Validation error ? error.Message : "the frame is not a request";
-            await SendErrorAsync(null, new SqlBatchFailure(new SqlError(SqlErrors.InvalidRequest, invalid), 0), cancellationToken).ConfigureAwait(false);
-            return true;
-        }
-
-        using var running = await AdmitAsync(request.Id, cancellationToken).ConfigureAwait(false);
-        if (_fence.IsCancellationRequested)
-        {
-            await CloseAsync(ServiceRestart, WriterMoving).ConfigureAwait(false);
-            return true;
-        }
-
-        if (running is null)
-        {
-            return true;
-        }
-
-        var started = time.GetTimestamp();
-        switch (await AuthorizeAsync(cancellationToken).ConfigureAwait(false))
-        {
-            case SqlError refused:
-                await SendErrorAsync(request.Id, new SqlBatchFailure(refused, 0), cancellationToken).ConfigureAwait(false);
-                await CloseAsync(WebSocketCloseStatus.PolicyViolation, refused.Message).ConfigureAwait(false);
-                return false;
-            case Unavailable unavailable:
-                await SendErrorAsync(request.Id, new SqlBatchFailure(new SqlError(unavailable.Code, unavailable.Message), 0), cancellationToken).ConfigureAwait(false);
-                return true;
-        }
-
-        var operations = new RequestLogOperations();
-        var previous = RequestLogOperations.Current.Value;
-        RequestLogOperations.Current.Value = operations;
-        try
-        {
-            var tenant = new TenantContext(Database.OrganizationId, Database.Plan);
-            using var lease = admission.TryEnter(tenant, out var retryAfter);
-            if (lease is null)
-            {
-                var busy = new SqlError(SqlErrors.TenantBusy, $"organization request budget exceeded; retry after {retryAfter}s");
-                return await FinishAsync(request.Id, new SqlBatchFailure(busy, 0), frame.Length, started, operations, cancellationToken).ConfigureAwait(false);
-            }
-
-            using var scope = QosContext.Enter(tenant, memory);
-            Session.BeginRequest();
-            SqlBatchOutcome outcome;
-            try
-            {
-                outcome = await RunAsync(request, Listeners.ArrivedOn(context) == TerraBaseListener.Internal ? lifetime.ApplicationStopping : cancellationToken).ConfigureAwait(false);
-            }
-            catch (StorageCopyFaultedException)
-            {
-                outcome = new SqlBatchFailure(new SqlError(SqlErrors.CopyFaulted, "copy_faulted: Storage requires recovery."), 0);
-            }
-            catch (StorageProofPendingException)
-            {
-                outcome = new SqlBatchFailure(new SqlError(SqlErrors.RecoveryPending, "recovery_pending: Storage recovery proof is pending; retry."), 0);
-            }
-            catch (QosMemoryException)
-            {
-                outcome = new SqlBatchFailure(new SqlError(SqlErrors.TenantBusy, "organization memory budget exceeded"), 0);
-            }
-            finally
-            {
-                await Session.EndRequestAsync().ConfigureAwait(false);
-                running.Dispose();
-            }
-
-            return await FinishAsync(request.Id, outcome, frame.Length, started, operations, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            RequestLogOperations.Current.Value = previous;
-        }
-    }
-
-    private async Task ExpireTransactionAsync()
-    {
-        _closed.CancelAfter(Shutdown.DrainBudget);
-        await SendErrorAsync(null, new SqlBatchFailure(SqlErrors.TransactionExpired, 0), _closed.Token).ConfigureAwait(false);
-        await CloseAsync(WebSocketCloseStatus.PolicyViolation, SqlErrors.TransactionExpired.Message).ConfigureAwait(false);
-    }
-
-    private async ValueTask<RegionalIngress.Lease?> AdmitAsync(long? id, CancellationToken cancellationToken)
-    {
-        using var admitting = CancellationTokenSource.CreateLinkedTokenSource(_admitting, cancellationToken);
-        try
-        {
-            return await ingress.EnterAsync(parkWhileHeld: true, admitting.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (_fence.IsCancellationRequested)
-        {
-            return null;
-        }
-        catch (QosMemoryException)
-        {
-            await SendErrorAsync(id, new SqlBatchFailure(NodeFull, 0), cancellationToken).ConfigureAwait(false);
-            return null;
-        }
-    }
-
-    private async ValueTask<object?> AuthorizeAsync(CancellationToken cancellationToken)
-    {
-        if (_tokenExpiry is { } expires && time.GetUtcNow() >= expires)
-        {
-            return CredentialRevoked;
-        }
-
-        var authenticated = await ApiKeysExtensions.AuthenticateAgainAsync(context).ConfigureAwait(false);
-        if (!authenticated.Succeeded)
-        {
-            return TokenKeysPending.On(context)
-                ? new Unavailable(TokenKeysPending.Code + ": " + TokenKeysPending.Message)
-                : CredentialRevoked;
-        }
-
-        context.User = authenticated.Principal;
-        if (!(await authorization.AuthorizeAsync(context.User, context, ApiKeyScopes.SqlRead).ConfigureAwait(false)).Succeeded
-            || (await authorization.AuthorizeAsync(context.User, context, ApiKeyScopes.SqlWrite).ConfigureAwait(false)).Succeeded != _canWrite)
-        {
-            return CredentialRevoked;
-        }
-
-        return await CheckTenantAsync(cancellationToken).ConfigureAwait(false) switch
-        {
-            TenantContext found when found.DatabaseId == Database.DatabaseId && found.OrganizationId == Database.OrganizationId => null,
-            Unavailable error => error,
-            _ => CredentialRevoked,
-        };
-    }
-
-    private async ValueTask<TenantResult> CheckTenantAsync(CancellationToken cancellationToken)
-    {
-        try
-        {
-            return await DatabaseRoute.CheckTenantAsync(context, tenants, cancellationToken).ConfigureAwait(false);
-        }
-        catch (StorageCopyFaultedException)
-        {
-            return new Unavailable("Storage requires recovery.", SqlErrors.CopyFaulted);
-        }
-        catch (StorageProofPendingException)
-        {
-            return new Unavailable("Storage recovery proof is pending; retry.", SqlErrors.RecoveryPending);
-        }
-    }
-
-    private async ValueTask<SqlBatchOutcome> RunAsync(SqlSocketRequest request, CancellationToken cancellationToken)
-    {
-        switch (request.Type)
-        {
-            case "execute":
-                if (_failed)
-                {
-                    return new SqlBatchFailure(SqlErrors.InFailedTransaction, 0);
-                }
-
-                var outcome = SqlBatch.Commands(request.Statements) switch
-                {
-                    List<SqlPlannedCommand> commands => await SqlBatch.RunAsync(Session, commands, cancellationToken).ConfigureAwait(false),
-                    SqlBatchFailure failure => failure,
-                };
-                _failed = outcome is SqlBatchFailure && !Session.IsAutocommit;
-                return outcome;
-            case "begin":
-                return Session.IsAutocommit ? await ControlAsync("BEGIN", cancellationToken).ConfigureAwait(false) : new SqlBatchFailure(AlreadyOpen, 0);
-            case "commit" when Session.IsAutocommit:
-            case "rollback" when Session.IsAutocommit:
-                return new SqlBatchFailure(NoneOpen, 0);
-            case "commit" when _failed:
-                _failed = false;
-                _ = await ControlAsync("ROLLBACK", cancellationToken).ConfigureAwait(false);
-                return new SqlBatchFailure(FailedCommit, 0);
-            case "commit":
-            case "rollback":
-                _failed = false;
-                var ended = await ControlAsync(request.Type == "commit" ? "COMMIT" : "ROLLBACK", cancellationToken).ConfigureAwait(false);
-                if (ended is SqlBatchFailure && !Session.IsAutocommit)
-                {
-                    _ = await ControlAsync("ROLLBACK", cancellationToken).ConfigureAwait(false);
-                }
-
-                return ended;
-            default:
-                return new SqlBatchFailure(UnknownType, 0);
-        }
-    }
-
-    private async ValueTask<SqlBatchOutcome> ControlAsync(string verb, CancellationToken cancellationToken) =>
-        await Session.ExecuteAsync(SqlBatch.Control(verb), cancellationToken).ConfigureAwait(false) switch
-        {
-            SqlError error => new SqlBatchFailure(error, 0),
-            SqlResult => new SqlExecuteBody([]),
-        };
-
-    private async ValueTask<bool> FinishAsync(
-        long? id, SqlBatchOutcome outcome, long received, long started, RequestLogOperations operations, CancellationToken cancellationToken)
-    {
-        if (outcome is SqlBatchFailure { Error.Code: SqlErrors.WrongRegion })
-        {
-            await CloseAsync(ServiceRestart, WriterMoving).ConfigureAwait(false);
-            return false;
-        }
-
-        var (sent, status) = outcome switch
-        {
-            SqlExecuteBody body => (await SendAsync(new SqlSocketResult(id, "result", body.Results, !Session.IsAutocommit),
-                SqlJsonContext.Default.SqlSocketResult, cancellationToken).ConfigureAwait(false), StatusCodes.Status200OK),
-            SqlBatchFailure failure => (await SendErrorAsync(id, failure, cancellationToken).ConfigureAwait(false), failure.Error.Status),
-        };
-        var elapsed = time.GetElapsedTime(started);
-        usage.RecordRequest(Database, "OTHER", status, elapsed, received, sent);
-        if (context.GetEndpoint() is RouteEndpoint { RoutePattern.RawText: { } route })
-        {
-            var (statements, errors) = operations.Statements(Database);
-            logs.Record(Database, "OTHER", route, status, elapsed, operations.Count(Database),
-                EntityIds.New().ToString(), statements, errors);
-        }
-
-        if (outcome is SqlBatchFailure { Error.Code: SqlErrors.WriteOutcomeUnknown })
-        {
-            await CloseAsync(WebSocketCloseStatus.InternalServerError, SqlErrors.WriteOutcomeUnknown).ConfigureAwait(false);
-            return false;
-        }
-
-        return true;
-    }
-
-    private ValueTask<long> SendErrorAsync(long? id, SqlBatchFailure failure, CancellationToken cancellationToken) =>
-        SendAsync(new SqlSocketError(id, "error", SqlBatch.Body(failure, context.TraceIdentifier).Error, !Session.IsAutocommit), SqlJsonContext.Default.SqlSocketError, cancellationToken);
-
-    private async ValueTask<long> SendAsync<T>(T frame, JsonTypeInfo<T> type, CancellationToken cancellationToken)
-    {
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(frame, type);
-        await _send.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (!_closing && socket.State == WebSocketState.Open)
-            {
-                await socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, cancellationToken).ConfigureAwait(false);
-            }
-        }
-        finally
-        {
-            _send.Release();
-        }
-
-        return bytes.Length;
-    }
-
-    private async Task CloseAsync(WebSocketCloseStatus status, string? reason)
-    {
-        if (status is WebSocketCloseStatus.InvalidMessageType or WebSocketCloseStatus.PolicyViolation or WebSocketCloseStatus.MessageTooBig
-            or WebSocketCloseStatus.InternalServerError)
-        {
-            _closed.CancelAfter(Shutdown.DrainBudget);
-        }
-
-        await _send.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            if (_closing || socket.State is not (WebSocketState.Open or WebSocketState.CloseReceived))
-            {
-                return;
-            }
-
-            _closing = true;
-            await socket.CloseOutputAsync(status, reason, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception error) when (error is WebSocketException or OperationCanceledException)
         {
+            if (_target is null)
+            {
+                await CloseAsync(WebSocketCloseStatus.PolicyViolation, "authenticate within 5 seconds");
+            }
+
+            return null;
         }
         finally
         {
-            _send.Release();
+            ArrayPool<byte>.Shared.Return(buffer);
         }
     }
 
-    private async Task CloseAfterFrameAsync()
+    private async Task CloseAsync(WebSocketCloseStatus status, string reason)
     {
-        await _frame.WaitAsync().ConfigureAwait(false);
+        if (socket.State is not (WebSocketState.Open or WebSocketState.CloseReceived))
+        {
+            return;
+        }
+
         try
         {
-            if (_session is { } session)
-            {
-                await session.DisposeAsync().ConfigureAwait(false);
-            }
-            await CloseAsync(ServiceRestart, WriterMoving).ConfigureAwait(false);
+            await socket.CloseOutputAsync(status, reason, CancellationToken.None);
         }
-        finally
+        catch (WebSocketException)
         {
-            _frame.Release();
         }
-    }
-
-    public void Dispose()
-    {
-        _watches.ForEach(watch => watch.Dispose());
-        _revoked.Dispose();
-        _closed.Dispose();
-        _frame.Dispose();
-        _send.Dispose();
     }
 }

@@ -1,50 +1,51 @@
-using TerraBase.Errors;
-using TerraBase.Hosting;
-using TerraBase.Primitives;
-using TerraBase.Tenancy;
-using TerraScale.Endpoints;
 using TerraBase.Features.Callers;
+using TerraBase.Features.Catalog;
+using TerraBase.Hosting;
+using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-internal sealed class SetEnrolledProjectPlanEndpoint(IProjectCatalog catalog, PlanFanout fanout) : Endpoint<PlanRequest, IResult>
+internal sealed class SetEnrolledProjectPlanEndpoint(CatalogStore catalog)
+    : Endpoint<PlanInput, Result<ProjectBody, Validation, Forbidden, NotFound, Unavailable>>
 {
     public override void Configure()
     {
-        Metadata(new Requires("plans", "admin"));
         Put("/admin/projects/{project}/plan");
-        Name("setEnrolledProjectPlan");
+        Name("adminSetProjectPlan");
         Summary("Sets an enrolled project's plan");
-        Description("Publishes hobby (the default), starter, pro, team or enterprise for the organization TerraBase created when a signed project token created its first database. 404 not_found for an unknown project or an organization created through management routes, whose creator sets its plan.");
         Tags("Administration");
-        Produces<Organization>();
-        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
-        Produces<ErrorBody>(StatusCodes.Status404NotFound);
-        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         AllowAnonymous();
         Metadata(ListenerMetadata.Internal);
     }
 
-    public override async ValueTask<IResult> HandleAsync(PlanRequest request, CancellationToken cancellationToken)
+    public override async ValueTask<Result<ProjectBody, Validation, Forbidden, NotFound, Unavailable>> HandleAsync(PlanInput request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var project = DatabaseRoute.Project(HttpContext);
-        if (!EntityIds.IsValid(project))
+        if (!PlanFlow.IsOperator(HttpContext.Caller, "plans"))
         {
-            return ErrorResponse.From(new Validation("project must be a canonical uppercase ULID"));
+            return new Forbidden("setting a plan needs the plans grant", "forbidden_caller");
         }
 
-        return ManagementRoute.CheckPlan(request) switch
+        if (!Plans.IsPlan(request.Plan))
         {
-            Validation error => ErrorResponse.From(error),
-            PlanTier plan => await catalog.SetEnrolledPlanAsync(project, plan, cancellationToken).ConfigureAwait(false) switch
+            return new Validation("plan must be hobby, starter, pro, team or enterprise", "invalid_plan");
+        }
+
+        if (ManagementService.Id(request.Project) is not { } id)
+        {
+            return new NotFound("the project does not exist", "unknown_project");
+        }
+
+        return await catalog.SetProjectPlanAsync(id, request.Plan, cancellationToken) switch
+        {
+            Done => await catalog.GetProjectAsync(id, cancellationToken) switch
             {
-                Organization value => await fanout.PublishAsync(HttpContext, value.Id, plan, cancellationToken).ConfigureAwait(false) is { } error
-                    ? ErrorResponse.From(error) : TypedResults.Ok(value),
-                NotFound error => ErrorResponse.From(error),
-                Forbidden error => ErrorResponse.From(error),
-                Unavailable error => ErrorResponse.From(error),
+                ProjectRecord project => ProjectBody.From(project),
+                NotFound missing => missing,
+                Unavailable unavailable => unavailable,
             },
+            NotFound missing => missing,
+            Unavailable unavailable => unavailable,
         };
     }
 }

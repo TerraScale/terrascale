@@ -1,25 +1,41 @@
+using System.Text.Json.Serialization;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraBase.Features.Callers;
 
 namespace TerraBase.Features.Pressure;
 
-public sealed class PressureEndpoint(IPressureSignals pressure) : EndpointWithoutRequest<PressureBody>
+[JsonSourceGenerationOptions(System.Text.Json.JsonSerializerDefaults.Web)]
+[JsonSerializable(typeof(PressureBody))]
+internal sealed partial class PressureJsonContext : JsonSerializerContext;
+
+internal sealed class PressureEndpoint(PressureSignals pressure) : EndpointWithoutRequest<PressureBody>
 {
     public override void Configure()
     {
-        Metadata(new Requires("catalog.read"));
         Get("/v1/admin/node/pressure");
         Name("nodePressure");
-        Summary("Cached node pressure signals");
-        Description("Reports local readiness, storage admissions and measured process load. Unavailable I/O measurements remain explicit null.");
+        Summary("This node's load: connections, requests in flight, CPU, memory and disk");
         Tags("Administration");
         AllowAnonymous();
         Metadata(ListenerMetadata.Internal);
     }
-    public override ValueTask<PressureBody> HandleAsync(CancellationToken cancellationToken)
+
+    public override ValueTask<PressureBody> HandleAsync(CancellationToken cancellationToken) => ValueTask.FromResult(pressure.Sample());
+}
+
+internal static class PressureExtensions
+{
+    extension(WebApplication app)
     {
-        HttpContext.Response.Headers.CacheControl = "no-store";
-        return ValueTask.FromResult(pressure.Snapshot);
+        public WebApplication UseTerraBasePressure()
+        {
+            var pressure = app.Services.GetRequiredService<PressureSignals>();
+            app.Use(async (context, next) =>
+            {
+                using var lease = pressure.Request();
+                await next(context);
+            });
+            return app;
+        }
     }
 }

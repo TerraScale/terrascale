@@ -46,7 +46,7 @@
 
   <Target Name="ClassifyStorageNativeForSingleFile" BeforeTargets="_ComputeFilesToBundle" Condition="'$(PublishSingleFile)' == 'true'">
     <ItemGroup>
-      <ResolvedFileToPublish Update="@(ResolvedFileToPublish)" Condition="'%(Filename)%(Extension)' == 'libturso_sdk_kit.so' Or '%(Filename)%(Extension)' == 'libterrascale_sql_parser.so' Or '%(Filename)%(Extension)' == 'libsqlite3mc.so' Or '%(Filename)%(Extension)' == 'libmsquic.so.2'" AssetType="native" />
+      <ResolvedFileToPublish Update="@(ResolvedFileToPublish)" Condition="'%(Filename)%(Extension)' == 'libsqlite3mc.so' Or '%(Filename)%(Extension)' == 'libmsquic.so.2'" AssetType="native" />
     </ItemGroup>
   </Target>
 

@@ -1,11 +1,12 @@
 Third-party notices for TerraBase
 
-Turso (tursodatabase/turso) at commit 5c168be5ef6a32ac966daf5983502a4f694b37ad
-License: MIT. Source: https://github.com/tursodatabase/turso/blob/5c168be5ef6a32ac966daf5983502a4f694b37ad/LICENSE.md
+SQLite3 Multiple Ciphers (utelle/SQLite3MultipleCiphers) v2.7.1, bundling SQLite 3.54.1
+License: MIT. Source: https://github.com/utelle/SQLite3MultipleCiphers/blob/v2.7.1/LICENSE
+SQLite itself is in the public domain: https://www.sqlite.org/copyright.html
 
 MIT License
 
-Copyright 2024 the Turso authors
+Copyright (c) 2019-2025 Ulrich Telle
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of
 this software and associated documentation files (the "Software"), to deal in
@@ -24,28 +25,5 @@ COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-SqlParserCS (TylerBrinks/SqlParser-cs) at commit e1929977a96290f937e9a2a67e3c823b7dc25cd2
-License: MIT. Source: https://github.com/TylerBrinks/SqlParser-cs/tree/e1929977a96290f937e9a2a67e3c823b7dc25cd2
-Local compiler fixes and their files are listed in src/vendor/SqlParserCS/NOTICE.
-
-MIT License
-
-Copyright (c) 2023 Tyler Brinks
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+MsQuic (microsoft/msquic) v2.6.4
+License: MIT. Source: https://github.com/microsoft/msquic/blob/v2.6.4/LICENSE

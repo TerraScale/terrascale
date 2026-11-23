@@ -1,40 +1,42 @@
-using TerraBase.Errors;
-using TerraBase.Features.UserAuth;
+using TerraBase.Features.Callers;
+using TerraBase.Features.Catalog;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
-internal sealed class CreateProjectEndpoint(IManagementService management) : Endpoint<NameRequest, IResult>
+internal sealed class CreateProjectEndpoint(ManagementService management, CatalogStore catalog, TimeProvider time)
+    : Endpoint<NameInput, Result<Created<ProjectBody>, Validation, Unauthorized, NotFound, Conflict, Unavailable>>
 {
     public override void Configure()
     {
         Post(ManagementRoute.Projects);
         Name("createProject");
-        Summary("Creates a project");
-        Description("name: 1 to 128 characters with a letter or digit, unique within the organization ignoring case." + " " + ManagementRoute.IdentityDescription);
+        Summary("Creates a project in an organization the calling user owns");
         Tags(ManagementRoute.Tag);
-        Produces<Project>(StatusCodes.Status201Created);
-        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
-        Produces<ErrorBody>(StatusCodes.Status404NotFound);
-        Produces<ErrorBody>(StatusCodes.Status409Conflict);
-        Produces<ErrorBody>(StatusCodes.Status403Forbidden);
-        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
-        RequireAuthorization(UserAuthExtensions.PolicyName);
+        AllowAnonymous();
         Metadata(ListenerMetadata.Management);
     }
 
-    public override async ValueTask<IResult> HandleAsync(NameRequest request, CancellationToken cancellationToken) =>
-        ManagementRoute.CheckDisplayName(request) switch
+    public override async ValueTask<Result<Created<ProjectBody>, Validation, Unauthorized, NotFound, Conflict, Unavailable>> HandleAsync(
+        NameInput request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return await management.OwnedOrganizationAsync(HttpContext.Caller, request.Organization, cancellationToken) switch
         {
-            Validation error => ErrorResponse.From(error),
-            string name => await management.CreateProjectAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), name, cancellationToken) switch
+            OrganizationRecord organization => ManagementService.DisplayName(request.Name) switch
             {
-                Project value => TypedResults.Created($"{ManagementRoute.Organizations}/{value.OrganizationId}/projects/{value.Id}", value),
-                NotFound error => ErrorResponse.From(error),
-                Forbidden error => ErrorResponse.From(error),
-                Conflict error => ErrorResponse.From(error),
-                Unavailable error => ErrorResponse.From(error),
+                string name => await catalog.CreateProjectAsync(new ProjectRecord(Ulid.NewUlid(time.GetUtcNow()), organization.Id, name, time.GetUtcNow(), null), cancellationToken) switch
+                {
+                    ProjectRecord project => new Created<ProjectBody>(string.Concat("/v1/projects/", project.Id.ToString()), ProjectBody.From(project)),
+                    Conflict conflict => conflict,
+                    Unavailable unavailable => unavailable,
+                },
+                Validation invalid => invalid,
             },
+            Unauthorized unauthorized => unauthorized,
+            NotFound missing => missing,
+            Unavailable unavailable => unavailable,
         };
+    }
 }

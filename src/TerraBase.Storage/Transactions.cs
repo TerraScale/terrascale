@@ -43,7 +43,7 @@ internal sealed class WriteTransaction(SqlTransactionOptions options, Ulid txId)
     {
         ArgumentNullException.ThrowIfNull(statement);
         var completion = new TaskCompletionSource<Result<SqlResultSet, SqlError, StorageBusy, RequestTimeout>>(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (Volatile.Read(ref _finished) != 0 || !_commands.Writer.TryWrite(new ExecuteCommand(statement, Interlocked.Increment(ref _statements) - 1, completion)))
+        if (Volatile.Read(ref _finished) != 0 || !_commands.Writer.TryWrite(new ExecuteCommand(statement, Interlocked.Increment(ref _statements) - 1, completion, cancellationToken)))
         {
             return Expired();
         }
@@ -93,7 +93,7 @@ internal sealed class WriteTransaction(SqlTransactionOptions options, Ulid txId)
 
     internal closed record class Command;
 
-    internal sealed record class ExecuteCommand(SqlStatement Statement, int Index, TaskCompletionSource<Result<SqlResultSet, SqlError, StorageBusy, RequestTimeout>> Completion) : Command;
+    internal sealed record class ExecuteCommand(SqlStatement Statement, int Index, TaskCompletionSource<Result<SqlResultSet, SqlError, StorageBusy, RequestTimeout>> Completion, CancellationToken CancellationToken) : Command;
 
     internal sealed record class CommitCommand(TaskCompletionSource<Result<CommitMetadata, StrongRequired, SchemaMismatch, StorageBusy, RequestTimeout>> Completion) : Command;
 
@@ -130,7 +130,7 @@ internal sealed class ReadTransaction(DatabaseSession session, SqliteConnection 
             }
             else
             {
-                outcome = DatabaseSession.ExecuteOnReader(reader, statement, _statements++, _info, ReadTables) switch
+                outcome = DatabaseSession.ExecuteOnReader(reader, statement, _statements++, _info, ReadTables, cancellationToken) switch
                 {
                     SqlResultSet result => Record(result),
                     SqlError error => error,

@@ -1,42 +1,35 @@
-using TerraBase.Errors;
-using TerraBase.Features.Catalog;
-using TerraBase.Hosting;
-using TerraBase.Primitives;
-using TerraScale.Endpoints;
 using TerraBase.Features.Callers;
+using TerraBase.Features.Management;
+using TerraBase.Hosting;
+using TerraScale.Endpoints;
 
 namespace TerraBase.Features.ApiKeys;
 
-public sealed class RevokeApiKeyEndpoint(IApiKeyStore keys) : EndpointWithoutRequest<IResult>
+internal sealed class RevokeApiKeyEndpoint(ApiKeyStore keys) : Endpoint<RevokeApiKeyInput, Result<Done, Forbidden, NotFound, Unavailable>>
 {
     public override void Configure()
     {
-        Metadata(new Requires("admin"));
         Delete("/admin/api-keys/{key}");
-        Metadata(AnchoredRevocation.Instance, ListenerMetadata.Internal);
         Name("revokeApiKey");
-        Summary("Revokes an operator-issued API key");
-        Description("The key stops authenticating immediately. Served only on the internal administrative listener.");
+        Summary("Revokes an API key");
         Tags("Administration");
-        Produces(StatusCodes.Status204NoContent);
-        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
-        Produces<ErrorBody>(StatusCodes.Status404NotFound);
-        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         AllowAnonymous();
+        Metadata(ListenerMetadata.Internal);
     }
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+
+    public override async ValueTask<Result<Done, Forbidden, NotFound, Unavailable>> HandleAsync(RevokeApiKeyInput request, CancellationToken cancellationToken)
     {
-        var id = HttpContext.Request.RouteValues["key"] as string;
-        if (!EntityIds.IsValid(id))
+        ArgumentNullException.ThrowIfNull(request);
+        if (!PlanFlow.IsOperator(HttpContext.Caller, "admin"))
         {
-            return ErrorResponse.From(new Validation("key must be a canonical uppercase ULID"));
+            return new Forbidden("revoking API keys needs the admin grant", "forbidden_caller");
         }
 
-        return await keys.RevokeAsync(id!, cancellationToken) switch
+        return await keys.RevokeAsync(request.Key, cancellationToken) switch
         {
-            Done => TypedResults.NoContent(),
-            NotFound error => ErrorResponse.From(error),
-            Unavailable error => ErrorResponse.From(error),
+            Done done => done,
+            NotFound missing => missing,
+            Unavailable unavailable => unavailable,
         };
     }
 }
